@@ -20,7 +20,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth_router)
+# Every route lives under /api/v1 (Spec 6.9) — set once, here, not per-router.
+API_V1_PREFIX = "/api/v1"
+
+app.include_router(auth_router, prefix=API_V1_PREFIX)
 
 
 @app.get("/health")

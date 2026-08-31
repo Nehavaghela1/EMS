@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -31,4 +31,21 @@ class TimeStampedBase(Base):
         DateTime(timezone=True),
         nullable=True,
         default=None,
+    )
+
+
+class TenantBase(TimeStampedBase):
+    """Everything TimeStampedBase has, plus company_id. Tenant-scoped tables inherit this.
+
+    If a model inherits TenantBase, it must also have an RLS policy in the same
+    migration (Section 8) — the two go together, always.
+    """
+
+    __abstract__ = True
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
     )

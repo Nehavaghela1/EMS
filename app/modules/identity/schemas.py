@@ -27,16 +27,15 @@ class CompanyResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    company_code: str | None = None
 
 
 class TokenResponse(BaseModel):
+    # No refresh_token field: the raw refresh token is never a field on a
+    # response schema (Spec 5.3, 9.2) — it is set as an httpOnly cookie by the
+    # router and never appears in the JSON body.
     access_token: str
-    refresh_token: str
     token_type: str = "bearer"
-
-
-class RefreshRequest(BaseModel):
-    refresh_token: str
 
 
 # User
