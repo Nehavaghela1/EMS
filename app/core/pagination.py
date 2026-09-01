@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import ValidationError
+from app.core.exceptions import AppError
 
 
 class PageParams(BaseModel):
@@ -41,6 +41,18 @@ def paginate(db: Session, stmt: Select, params: PageParams) -> tuple[list, int, 
     return rows, total, pages
 
 
+class InvalidSortError(AppError):
+    """A bad `sort` query parameter is a business-rule violation (10.1's
+    status table: 400), not a request-body schema failure (422, reserved for
+    FastAPI's own RequestValidationError) — the app's `ValidationError` this
+    used to raise is 422 and was the wrong class. Caught while building
+    WP-07's gate, the first work package to actually test this path.
+    """
+
+    status_code = 400
+    code = "invalid_sort"
+
+
 def resolve_sort(sort: str | None, allowed: dict[str, Any], default: Any) -> Any:
     """`sort` is a column name, `-` prefix for descending. Only columns on an
     explicit allowlist per endpoint — never interpolate a raw client string
@@ -53,5 +65,5 @@ def resolve_sort(sort: str | None, allowed: dict[str, Any], default: Any) -> Any
     key = sort[1:] if descending else sort
     column = allowed.get(key)
     if column is None:
-        raise ValidationError(f"Invalid sort column: {key}", details={"field": "sort"})
+        raise InvalidSortError(f"Invalid sort column: {key}", details={"field": "sort"})
     return column.desc() if descending else column.asc()

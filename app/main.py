@@ -10,7 +10,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestIDMiddleware, SecurityHeadersMiddleware
 from app.core.rate_limit import limiter
 from app.db.session import SessionLocal
-from app.modules.hr.router import router as departments_router
+from app.modules.hr.router import departments_router, employees_router
 from app.modules.identity.router import companies_router
 from app.modules.identity.router import router as auth_router
 
@@ -53,6 +53,7 @@ register_exception_handlers(app)
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(companies_router, prefix=settings.API_V1_PREFIX)
 app.include_router(departments_router, prefix=settings.API_V1_PREFIX)
+app.include_router(employees_router, prefix=settings.API_V1_PREFIX)
 
 # One client, reused across requests (redis-py pools connections internally).
 # Short timeouts so a dead Redis makes /health fail fast, not hang.

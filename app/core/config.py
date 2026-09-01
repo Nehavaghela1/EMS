@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY_VERSION: int = 1
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_MINUTES: int = 15
+    # Employee invite/activation tokens (Spec 7.3 `activation_expires_at`) —
+    # no TTL is named in the spec, so this follows the same
+    # settings-not-a-literal convention as the other token lifetimes above.
+    INVITE_TOKEN_EXPIRE_DAYS: int = 7
 
     # ── CORS ────────────────────────────────────────────────────
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]

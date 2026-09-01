@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate, resolve_sort
@@ -62,6 +62,23 @@ class CompanyRepository:
             setattr(company, key, value)
         self.db.flush()
         return company
+
+    def increment_employee_seq(self, company_id: uuid.UUID) -> tuple[int, str]:
+        """Spec 11.2: concurrency-safe employee_code generation. `UPDATE ...
+        RETURNING` takes a row lock on the company for the transaction's
+        duration, so a concurrent request blocks until this one commits and
+        then gets the next number — never `count(*) + 1`, which is a race
+        condition the unique constraint would surface as a 500 under load.
+        `companies` has no RLS (7.2), so no tenant context is needed here.
+        """
+        row = self.db.execute(
+            text(
+                "UPDATE companies SET last_employee_seq = last_employee_seq + 1 "
+                "WHERE id = :company_id RETURNING last_employee_seq, code"
+            ),
+            {"company_id": str(company_id)},
+        ).one()
+        return row.last_employee_seq, row.code
 
 
 class UserRepository:
