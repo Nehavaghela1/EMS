@@ -79,10 +79,26 @@ def _migrate_test_database() -> None:
         )
 
 
+def _seed_reference_data() -> None:
+    """industry_presets (WP-05) — reference/seed data, not schema, so it
+    isn't part of the migration itself. Connects as ems_owner directly
+    (the table has no RLS — 7.8 — so this is just a normal insert).
+    """
+    from app.db.seed.industry_presets import seed_industry_presets
+
+    engine = create_engine(settings.TEST_MIGRATION_URL)
+    try:
+        with Session(bind=engine) as session:
+            seed_industry_presets(session)
+    finally:
+        engine.dispose()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _test_database_ready() -> None:
     _ensure_test_database_exists()
     _migrate_test_database()
+    _seed_reference_data()
 
 
 @pytest.fixture(scope="session")
@@ -121,8 +137,28 @@ def db(connection):
 
 @pytest.fixture
 def client(db):
+    # The rate limiter (9.5) is backed by real Redis, shared across every
+    # test in the session — without this, a handful of tests that each log
+    # in a couple of times adds up past 10/minute and later tests start
+    # failing with 429s that have nothing to do with what they're testing.
+    # Dedicated coverage of the 429 behavior itself lives elsewhere and
+    # resets it again first.
+    from app.core.rate_limit import limiter
+
+    limiter.reset()
+
     def _override_get_db():
-        yield db
+        # Mirrors app.db.session.get_db's rollback-on-exception: this
+        # override reuses the SAME session across every request in a test
+        # (deliberately, so requests and assertions share one savepoint-
+        # wrapped transaction — 15.2). A failed statement (e.g. an
+        # IntegrityError a handler turns into a clean 409) otherwise leaves
+        # the session "aborted" for every request after it in the same test.
+        try:
+            yield db
+        except Exception:
+            db.rollback()
+            raise
 
     fastapi_app.dependency_overrides[get_db] = _override_get_db
     with TestClient(fastapi_app) as test_client:
@@ -192,3 +228,33 @@ def company_a(db) -> TenantContext:
 @pytest.fixture
 def company_b(db) -> TenantContext:
     return _make_tenant(db, name="Company B", code=f"COB{uuid.uuid4().hex[:5].upper()}")
+
+
+@pytest.fixture
+def super_admin_headers(db) -> dict[str, str]:
+    """super_admin is assigned only by direct database action, never an API
+    route (Spec 8.5) — so this fixture creates one directly, exactly as a
+    real deployment's seed script would.
+    """
+    company = Company(
+        name="Platform Ops",
+        code=f"PLAT{uuid.uuid4().hex[:5].upper()}",
+        email=f"platform-{uuid.uuid4().hex[:6]}@example.test",
+        status=CompanyStatus.active,
+    )
+    db.add(company)
+    db.flush()
+    user = User(
+        company_id=company.id,
+        email=f"superadmin-{uuid.uuid4().hex[:6]}@example.test",
+        hashed_password=hash_password(TEST_PASSWORD),
+        role=UserRole.super_admin,
+        is_active=True,
+    )
+    db.add(user)
+    db.flush()
+    token = create_access_token(
+        sub=str(user.id), company_id=str(company.id), role=UserRole.super_admin.value
+    )
+    db.commit()
+    return {"Authorization": f"Bearer {token}"}

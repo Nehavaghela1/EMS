@@ -1,10 +1,13 @@
+import logging
+import secrets
 import uuid
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.exceptions import AppError, ConflictError, UnauthorizedError
+from app.core.exceptions import AppError, ConflictError, NotFoundError, UnauthorizedError
+from app.core.pagination import PageParams
 from app.core.security import (
     DUMMY_HASH,
     create_access_token,
@@ -14,17 +17,21 @@ from app.core.security import (
     verify_password,
 )
 from app.core.time import utcnow
-from app.modules.identity.models import CompanyStatus, UserRole
+from app.db.rls import bind_tenant_to_session
+from app.modules.identity.models import Company, CompanySettings, CompanyStatus, UserRole
 from app.modules.identity.repository import (
     CompanyRepository,
     RefreshTokenRepository,
     UserRepository,
 )
 from app.modules.identity.schemas import (
+    CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
     LoginRequest,
     TokenResponse,
 )
+
+logger = logging.getLogger("app")
 
 INVALID_CREDENTIALS_MESSAGE = "Invalid email or password."
 INVALID_REFRESH_TOKEN_MESSAGE = "Invalid or expired refresh token."
@@ -82,36 +89,6 @@ class AuthService:
         self.company_repo = CompanyRepository(db)
         self.user_repo = UserRepository(db)
         self.token_repo = RefreshTokenRepository(db)
-
-    def register_company(self, data: CompanyRegisterRequest):
-        if self.company_repo.get_by_email(data.company_email):
-            raise ConflictError("A company with this email already exists.")
-        # NOTE(WP-05): this whole registration flow — creating an active
-        # hr_admin user directly at registration, and checking admin_email for
-        # a duplicate before any company exists to scope it to — is carried
-        # forward as-is per the fix plan for this pass (out of scope here) and
-        # tracked in docs/RECONCILIATION.md. find_by_email is cross-company by
-        # design (7.2); a nonempty result here does not necessarily mean a real
-        # conflict once WP-05 builds the real pending -> approved workflow.
-        if self.user_repo.find_by_email(data.admin_email):
-            raise ConflictError("A user with this email already exists.")
-        company = self.company_repo.create(
-            name=data.company_name,
-            code=_generate_company_code(data.company_name),
-            email=data.company_email,
-            phone=data.phone,
-            industry=data.industry,
-            status=CompanyStatus.active,
-        )
-        self.user_repo.create(
-            company_id=company.id,
-            email=data.admin_email,
-            hashed_password=hash_password(data.admin_password),
-            role=UserRole.hr_admin,
-            is_active=True,
-        )
-        self.db.commit()
-        return company
 
     def login(
         self, payload: LoginRequest, device_info: str | None = None
@@ -206,3 +183,148 @@ class AuthService:
         self.token_repo.revoke(token_record, replaced_by=new_token)
         self.db.commit()
         return TokenResponse(access_token=access_token), raw_refresh
+
+
+class CompanyService:
+    """Routes 12-18 (10.2): public registration, super-admin list/approve/
+    reject, and self-service company profile.
+    """
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.company_repo = CompanyRepository(db)
+        self.user_repo = UserRepository(db)
+
+    def register_company(self, data: CompanyRegisterRequest) -> Company:
+        """Route 12: company self-registration only, status = pending. No
+        user is created here — the HR admin is created at approval (route
+        15), in one transaction with the rest of onboarding.
+        """
+        if self.company_repo.get_by_email(data.company_email):
+            raise ConflictError("A company with this email already exists.")
+        company = self.company_repo.create(
+            name=data.company_name,
+            code=_generate_company_code(data.company_name),
+            email=data.company_email,
+            phone=data.phone,
+            industry=data.industry,
+            country=data.country,
+            status=CompanyStatus.pending,
+        )
+        self.db.commit()
+        return company
+
+    def list_companies(
+        self,
+        *,
+        status: CompanyStatus | None,
+        q: str | None,
+        country: str | None,
+        sort: str | None,
+        page_params: PageParams,
+    ) -> tuple[list[Company], int, int]:
+        """Route 13, SA only."""
+        return self.company_repo.list_companies(
+            status=status, q=q, country=country, sort=sort, page_params=page_params
+        )
+
+    def get_company_detail(self, company_id: uuid.UUID) -> tuple[Company, dict[str, int]]:
+        """Route 14, SA only. Counts currently cover what exists: users.
+        Departments join once WP-06 lands; employees once WP-07 does.
+        """
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+        counts = {"users": self.user_repo.count_by_company(company_id)}
+        return company, counts
+
+    def approve_company(
+        self, company_id: uuid.UUID, admin_id: uuid.UUID
+    ) -> tuple[Company, str, str]:
+        """Route 15, SA only. Seeds the company's company_settings row and
+        creates the HR admin — one transaction (6.7): if any step fails,
+        the company is left exactly as it was, still pending.
+
+        Department seeding from the industry preset, and leave-type seeding,
+        are added once those tables exist (WP-06, WP-10 respectively) — see
+        the TODOs below.
+        """
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+        if company.status != CompanyStatus.pending:
+            raise ConflictError(
+                f"Company is not pending approval (current status: {company.status.value})."
+            )
+
+        # Acting on another tenant's data as the platform admin (8.5) — bind
+        # to the target company explicitly, for clarity and auditability,
+        # even though is_platform_admin=True already bypasses the check.
+        bind_tenant_to_session(self.db, company_id=company.id, is_platform_admin=True)
+
+        self.company_repo.update(
+            company, status=CompanyStatus.active, approved_at=utcnow(), approved_by=admin_id
+        )
+
+        self.db.add(CompanySettings(company_id=company.id))
+
+        # TODO(WP-06): seed default departments from the company's industry
+        # preset (app.modules.platform.repository.IndustryPresetRepository)
+        # once the departments table exists.
+        # TODO(WP-10): seed leave_types from the same preset once that table
+        # exists.
+
+        raw_password = secrets.token_urlsafe(12)
+        hr_admin = self.user_repo.create(
+            company_id=company.id,
+            email=company.email,
+            hashed_password=hash_password(raw_password),
+            role=UserRole.hr_admin,
+            is_active=True,
+            must_change_password=True,
+        )
+        # No email backend is wired up yet (WP-26 replaces this). Never log
+        # the password (6.8, rule 10) — it leaves this function exactly once,
+        # in the return value, for the router to hand back to the SA caller.
+        logger.info(
+            "hr_admin_created_at_approval",
+            extra={"company_id": str(company.id), "hr_admin_email": hr_admin.email},
+        )
+
+        self.db.commit()
+        return company, hr_admin.email, raw_password
+
+    def reject_company(self, company_id: uuid.UUID, reason: str) -> Company:
+        """Route 16, SA only."""
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+        if company.status != CompanyStatus.pending:
+            raise ConflictError(
+                f"Company is not pending approval (current status: {company.status.value})."
+            )
+        self.company_repo.update(company, status=CompanyStatus.rejected, rejection_reason=reason)
+        self.db.commit()
+        return company
+
+    def get_my_company(self, company_id: uuid.UUID) -> Company:
+        """Route 17. `company_id` is always the caller's own, from the
+        verified JWT claim — never a path parameter, so there is no
+        cross-tenant surface here to begin with.
+        """
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+        return company
+
+    def update_my_company(
+        self, company_id: uuid.UUID, data: CompanyProfileUpdateRequest
+    ) -> Company:
+        """Route 18, HR only."""
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+        updates = data.model_dump(exclude_unset=True)
+        self.company_repo.update(company, **updates)
+        self.db.commit()
+        return company

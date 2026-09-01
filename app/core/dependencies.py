@@ -6,7 +6,7 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import UnauthorizedError
+from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.security import decode_access_token
 from app.db.rls import bind_tenant_to_session
 from app.db.session import get_db
@@ -61,3 +61,17 @@ def get_tenant_db(
         is_platform_admin=(user.role == UserRole.super_admin),
     )
     return db
+
+
+def require_role(*roles: UserRole):
+    """`Depends(require_role(UserRole.hr_admin))` — is this role allowed
+    here? (5.1). Composes get_current_user rather than duplicating the
+    token/tenant-binding logic.
+    """
+
+    def _check(user: User = Depends(get_current_user)) -> User:
+        if user.role not in roles:
+            raise ForbiddenError("You do not have permission to perform this action.")
+        return user
+
+    return _check

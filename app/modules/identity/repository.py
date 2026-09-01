@@ -4,11 +4,18 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.pagination import PageParams, paginate, resolve_sort
 from app.core.time import utcnow
-from app.modules.identity.models import Company, RefreshToken, User
+from app.modules.identity.models import Company, CompanyStatus, RefreshToken, User
 
 
 class CompanyRepository:
+    SORT_COLUMNS = {
+        "name": Company.name,
+        "created_at": Company.created_at,
+        "status": Company.status,
+    }
+
     def __init__(self, db: Session):
         self.db = db
 
@@ -18,9 +25,41 @@ class CompanyRepository:
     def get_by_code(self, code: str) -> Company | None:
         return self.db.scalar(select(Company).where(func.lower(Company.code) == code.lower()))
 
+    def get_by_id(self, company_id: uuid.UUID) -> Company | None:
+        return self.db.get(Company, company_id)
+
+    def list_companies(
+        self,
+        *,
+        status: CompanyStatus | None,
+        q: str | None,
+        country: str | None,
+        sort: str | None,
+        page_params: PageParams,
+    ) -> tuple[list[Company], int, int]:
+        stmt = select(Company)
+        if status is not None:
+            stmt = stmt.where(Company.status == status)
+        if country is not None:
+            stmt = stmt.where(Company.country == country)
+        if q:
+            pattern = f"%{q.lower()}%"
+            stmt = stmt.where(
+                func.lower(Company.name).like(pattern) | func.lower(Company.code).like(pattern)
+            )
+        order = resolve_sort(sort, self.SORT_COLUMNS, default=Company.created_at.desc())
+        stmt = stmt.order_by(order)
+        return paginate(self.db, stmt, page_params)
+
     def create(self, **kwargs) -> Company:
         company = Company(**kwargs)
         self.db.add(company)
+        self.db.flush()
+        return company
+
+    def update(self, company: Company, **kwargs) -> Company:
+        for key, value in kwargs.items():
+            setattr(company, key, value)
         self.db.flush()
         return company
 
@@ -62,6 +101,14 @@ class UserRepository:
 
     def get_by_id(self, user_id: uuid.UUID, company_id: uuid.UUID) -> User | None:
         return self.db.scalar(select(User).where(User.id == user_id, User.company_id == company_id))
+
+    def count_by_company(self, company_id: uuid.UUID) -> int:
+        return (
+            self.db.scalar(
+                select(func.count()).select_from(User).where(User.company_id == company_id)
+            )
+            or 0
+        )
 
     def create(self, **kwargs) -> User:
         user = User(**kwargs)

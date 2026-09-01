@@ -17,6 +17,7 @@ from app.db.base import Base
 # Without this, autogenerate silently sees an empty schema and emits empty
 # migrations (Spec 20.2 — this was WP-01 finding 7.1).
 from app.modules.identity import models as identity_models  # noqa: E402, F401
+from app.modules.platform import models as platform_models  # noqa: E402, F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
