@@ -96,8 +96,7 @@ jobs:
       - name: Wait for Postgres and Redis
         run: |
           pg_isready -h localhost -p 5432 -U ems_owner -d ems_pro_test
-          redis-cli -h localhost ping
-
+          python -c "import redis; redis.Redis.from_url('redis://localhost:6379/0').ping(); print('redis: PONG')"
       # 7. Migrations as ems_owner — proves they apply from scratch, every time.
       - name: alembic upgrade head
         run: alembic upgrade head
