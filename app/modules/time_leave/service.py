@@ -11,6 +11,12 @@ from app.core.time import utcnow
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
 from app.modules.identity.models import CompanySettings, LeaveYearType, User, UserRole
 from app.modules.identity.repository import CompanySettingsRepository
+from app.modules.platform.service import (
+    AuditService,
+    DashboardService,
+    NotificationService,
+    jsonable,
+)
 from app.modules.time_leave.models import (
     Attendance,
     AttendanceSource,
@@ -122,6 +128,8 @@ class AttendanceService:
         self.repo = AttendanceRepository(db)
         self.employee_repo = EmployeeRepository(db)
         self.settings_repo = CompanySettingsRepository(db)
+        self.audit = AuditService(db)
+        self.notify = NotificationService(db)
 
     def _resolve_scope(self, company_id: uuid.UUID, current_user: User) -> list[uuid.UUID] | None:
         """None = unrestricted (HR/SA). A list = restricted to exactly these
@@ -154,6 +162,7 @@ class AttendanceService:
             source=AttendanceSource.web,
         )
         self.db.commit()
+        DashboardService.invalidate_company_dashboards(company_id)
         return record
 
     def check_out(self, company_id: uuid.UUID, current_user: User) -> Attendance:
@@ -181,6 +190,7 @@ class AttendanceService:
 
         self.repo.update(record, check_out=now, hours_worked=hours, status=status)
         self.db.commit()
+        DashboardService.invalidate_company_dashboards(company_id)
         return record
 
     def list_attendance(
@@ -244,9 +254,14 @@ class AttendanceService:
         data: AttendanceRegularizeRequest,
         actor: User,
     ) -> Attendance:
-        """Route 47, HR only. The previous value and reason are logged
-        structurally now — audit_logs (WP-11) will replace this with a real
-        row; see the TODO below."""
+        """Route 47, HR only. There is no separate approve/reject decision
+        workflow for attendance regularization in this codebase — this
+        direct HR correction IS the decision, audited as
+        ATTENDANCE_REGULARIZED (the WP-11 task's "regularisation approved"
+        deliverable). There is no "regularisation rejected" notification for
+        the same reason: HR either corrects the record (this) or removes it
+        (`delete_attendance`) — there is no third "reject and leave as-is"
+        action to notify about."""
         record = self.repo.get_by_id(attendance_id, company_id)
         if record is None:
             raise NotFoundError("Attendance record not found.")
@@ -259,37 +274,53 @@ class AttendanceService:
         }
         updates = data.model_dump(exclude={"reason"}, exclude_unset=True)
         self.repo.update(record, **updates)
-        # TODO(WP-11): write a real audit_logs row (action=attendance_regularized)
-        # once that table exists — this structured log line is the interim record.
-        logger.info(
-            "attendance_regularized",
-            extra={
-                "attendance_id": str(record.id),
-                "actor_id": str(actor.id),
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="ATTENDANCE_REGULARIZED",
+            entity_type="attendance",
+            entity_id=record.id,
+            details={
                 "reason": data.reason,
                 "previous": previous,
-                "new": {
-                    k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in updates.items()
-                },
+                "new": jsonable(updates),
             },
         )
+        if record.employee_id:
+            employee = self.employee_repo.get_by_id_any_status(record.employee_id, company_id)
+            if employee is not None and employee.user_id is not None:
+                self.notify.notify(
+                    company_id=company_id,
+                    user_id=employee.user_id,
+                    type="attendance_regularized",
+                    title="Attendance corrected",
+                    message=f"Your attendance for {record.date} was corrected by HR: {data.reason}",
+                    entity_type="attendance",
+                    entity_id=record.id,
+                )
         self.db.commit()
+        DashboardService.invalidate_company_dashboards(company_id)
         return record
 
     def delete_attendance(
         self, company_id: uuid.UUID, attendance_id: uuid.UUID, actor: User
     ) -> None:
         """Route 48, HR only. Soft delete (7.1's universal rule; `attendance`
-        is not append-only), audited the same interim way as regularize."""
+        is not append-only)."""
         record = self.repo.get_by_id(attendance_id, company_id)
         if record is None:
             raise NotFoundError("Attendance record not found.")
-        # TODO(WP-11): write a real audit_logs row (action=attendance_deleted).
-        logger.info(
-            "attendance_deleted", extra={"attendance_id": str(record.id), "actor_id": str(actor.id)}
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="ATTENDANCE_DELETED",
+            entity_type="attendance",
+            entity_id=record.id,
+            details={"date": jsonable(record.date), "employee_id": jsonable(record.employee_id)},
         )
         self.repo.soft_delete(record)
         self.db.commit()
+        DashboardService.invalidate_company_dashboards(company_id)
 
     def queue_export(self, company_id: uuid.UUID, data: AttendanceExportRequest) -> str:
         """Route 49: queues the real Celery job (13.1), returns its id."""
@@ -464,6 +495,8 @@ class LeaveService:
         self.employee_repo = EmployeeRepository(db)
         self.attendance_repo = AttendanceRepository(db)
         self.settings_repo = CompanySettingsRepository(db)
+        self.audit = AuditService(db)
+        self.notify = NotificationService(db)
 
     def _leave_year(self, settings_row: CompanySettings | None, on_date: date) -> int:
         if settings_row is None or settings_row.leave_year_type == LeaveYearType.calendar:
@@ -789,6 +822,33 @@ class LeaveService:
                 balance = self._get_or_allocate_balance(company_id, employee.id, leave_type, year)
                 self.balance_repo.update(balance, used=balance.used + leave.total_days)
             self._write_attendance_for_leave(company_id, settings_row, employee, leave)
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="LEAVE_APPROVED",
+                entity_type="leave",
+                entity_id=leave.id,
+                details={
+                    "employee_id": jsonable(employee.id),
+                    "start_date": jsonable(leave.start_date),
+                    "end_date": jsonable(leave.end_date),
+                },
+            )
+            if employee.user_id is not None:
+                self.notify.notify(
+                    company_id=company_id,
+                    user_id=employee.user_id,
+                    type="leave_approved",
+                    title="Leave approved",
+                    message=f"Your leave from {leave.start_date} to {leave.end_date} was approved.",
+                    entity_type="leave",
+                    entity_id=leave.id,
+                )
+            # Spec 11.10's literal wording: "on attendance mark, leave
+            # approval, and employee create/deactivate" — approval only,
+            # not rejection (a rejected leave changes nothing the cached
+            # dashboard fields summarize).
+            DashboardService.invalidate_company_dashboards(company_id)
         else:
             if not data.rejection_reason:
                 raise LeaveValidationError(
@@ -797,6 +857,28 @@ class LeaveService:
             self.repo.update(
                 leave, status=LeaveStatus.rejected, rejection_reason=data.rejection_reason
             )
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="LEAVE_REJECTED",
+                entity_type="leave",
+                entity_id=leave.id,
+                details={
+                    "employee_id": jsonable(employee.id),
+                    "rejection_reason": data.rejection_reason,
+                },
+            )
+            if employee.user_id is not None:
+                self.notify.notify(
+                    company_id=company_id,
+                    user_id=employee.user_id,
+                    type="leave_rejected",
+                    title="Leave rejected",
+                    message=f"Your leave from {leave.start_date} to {leave.end_date} was rejected: "
+                    f"{data.rejection_reason}",
+                    entity_type="leave",
+                    entity_id=leave.id,
+                )
 
         self.db.commit()
         return leave

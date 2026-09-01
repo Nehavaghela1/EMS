@@ -154,7 +154,7 @@ def create_employee(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    employee, raw_token = EmployeeService(db).create_employee(user.company_id, data)
+    employee, raw_token = EmployeeService(db).create_employee(user.company_id, data, user)
     return _to_employee_create_response(employee, raw_token)
 
 
@@ -194,7 +194,7 @@ def deactivate_employee(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    EmployeeService(db).deactivate_employee(user.company_id, employee_id)
+    EmployeeService(db).deactivate_employee(user.company_id, employee_id, user)
 
 
 @employees_router.post("/{employee_id}/toggle-active", response_model=EmployeeResponse)

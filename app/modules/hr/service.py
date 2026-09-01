@@ -18,6 +18,7 @@ from app.modules.hr.schemas import (
 )
 from app.modules.identity.models import User, UserRole
 from app.modules.identity.repository import CompanyRepository, UserRepository
+from app.modules.platform.service import AuditService, DashboardService, jsonable
 
 
 class InvalidReferenceError(AppError):
@@ -123,6 +124,7 @@ class EmployeeService:
         self.department_repo = DepartmentRepository(db)
         self.company_repo = CompanyRepository(db)
         self.user_repo = UserRepository(db)
+        self.audit = AuditService(db)
 
     def _get_or_404(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> Employee:
         employee = self.repo.get_by_id(employee_id, company_id)
@@ -193,7 +195,7 @@ class EmployeeService:
         )
 
     def create_employee(
-        self, company_id: uuid.UUID, data: EmployeeCreateRequest
+        self, company_id: uuid.UUID, data: EmployeeCreateRequest, actor: User
     ) -> tuple[Employee, str]:
         """Route 20. employee_code (11.2) and the activation token are both
         generated inside the one transaction this method commits (6.7)."""
@@ -230,7 +232,16 @@ class EmployeeService:
             activation_token_hash=hash_token(raw_token),
             activation_expires_at=utcnow() + timedelta(days=settings.INVITE_TOKEN_EXPIRE_DAYS),
         )
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEE_CREATED",
+            entity_type="employee",
+            entity_id=employee.id,
+            details={"employee_code": employee_code, "email": employee.email},
+        )
         self.db.commit()
+        DashboardService.invalidate_company_dashboards(company_id)
         return employee, raw_token
 
     def get_my_employee_record(self, company_id: uuid.UUID, current_user: User) -> Employee:
@@ -294,11 +305,31 @@ class EmployeeService:
         if "reporting_manager_id" in updates:
             self._validate_manager(company_id, updates["reporting_manager_id"], self_id=employee.id)
 
+        # `EmployeeUpdateRequest` (schemas.py) has no password/token/Aadhaar/
+        # PAN/bank field to begin with, so every key `updates` can contain
+        # is already safe to log by construction — still passed through
+        # AuditService.record's own denylist as the backstop, not the
+        # primary control (Spec 7.8).
+        diff = {
+            field: {"from": jsonable(getattr(employee, field)), "to": jsonable(new_value)}
+            for field, new_value in updates.items()
+        }
         self.repo.update(employee, **updates)
+        self.audit.record(
+            company_id=company_id,
+            actor=current_user,
+            action="EMPLOYEE_UPDATED",
+            entity_type="employee",
+            entity_id=employee.id,
+            details=diff,
+        )
         self.db.commit()
+        DashboardService.invalidate_company_dashboards(company_id)
         return employee
 
-    def deactivate_employee(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> None:
+    def deactivate_employee(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
+    ) -> None:
         """Route 24: soft deactivate — never a hard delete (6.5). The row
         stays in the database; `is_active=False` also gates it out of
         `get_by_id`, so it 404s by id afterward. The linked user (if any) is
@@ -310,7 +341,16 @@ class EmployeeService:
             user = self.user_repo.get_by_id(employee.user_id, company_id)
             if user is not None:
                 self.user_repo.update(user, company_id, is_active=False)
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEE_DEACTIVATED",
+            entity_type="employee",
+            entity_id=employee.id,
+            details={"employee_code": employee.employee_code},
+        )
         self.db.commit()
+        DashboardService.invalidate_company_dashboards(company_id)
 
     def reactivate_employee(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> Employee:
         """Route 25 (`/toggle-active`, spec's literal path name) — reactivate.

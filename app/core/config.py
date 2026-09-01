@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     # concern; this is the interim, explicit, settings-driven location.
     EXPORT_DIR: str = "var/exports"
 
+    # ── Dashboard cache (Spec 11.10) ─────────────────────────────
+    DASHBOARD_CACHE_TTL_SECONDS: int = 60
+
     # ── Platform defaults for NEW companies ─────────────────────
     # Seed a company's company_settings row at approval time and are never
     # read again afterwards. Per-tenant policy lives in company_settings

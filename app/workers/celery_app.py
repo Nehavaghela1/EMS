@@ -21,6 +21,7 @@ celery_app = Celery(
         "app.workers.tasks.example",
         "app.workers.tasks.attendance",
         "app.workers.tasks.identity",
+        "app.workers.tasks.platform",
     ],
 )
 
