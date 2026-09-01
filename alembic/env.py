@@ -19,6 +19,7 @@ from app.db.base import Base
 from app.modules.hr import models as hr_models  # noqa: E402, F401
 from app.modules.identity import models as identity_models  # noqa: E402, F401
 from app.modules.platform import models as platform_models  # noqa: E402, F401
+from app.modules.time_leave import models as time_leave_models  # noqa: E402, F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

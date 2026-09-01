@@ -177,6 +177,22 @@ class EmployeeRepository:
             )
         )
 
+    def list_direct_report_ids(
+        self, company_id: uuid.UUID, manager_employee_id: uuid.UUID
+    ) -> list[uuid.UUID]:
+        """Manager scoping, shared by WP-07's employee list and WP-09/WP-10's
+        attendance/leave lists — every "a manager sees only their team"
+        route resolves the same set this way."""
+        return list(
+            self.db.scalars(
+                select(Employee.id).where(
+                    Employee.company_id == company_id,
+                    Employee.reporting_manager_id == manager_employee_id,
+                    Employee.deleted_at.is_(None),
+                )
+            ).all()
+        )
+
     def get_by_email(self, company_id: uuid.UUID, email: str) -> Employee | None:
         return self.db.scalar(
             select(Employee).where(

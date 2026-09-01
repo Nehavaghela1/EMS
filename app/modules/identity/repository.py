@@ -6,7 +6,21 @@ from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate, resolve_sort
 from app.core.time import utcnow
-from app.modules.identity.models import Company, CompanyStatus, RefreshToken, User
+from app.modules.identity.models import Company, CompanySettings, CompanyStatus, RefreshToken, User
+
+
+class CompanySettingsRepository:
+    """`company_settings` is the single authority on the working week,
+    half-day threshold and leave-year convention (7.2) — read by both
+    WP-09 (attendance) and WP-10 (leave) rather than each re-deriving it."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_company(self, company_id: uuid.UUID) -> CompanySettings | None:
+        return self.db.scalar(
+            select(CompanySettings).where(CompanySettings.company_id == company_id)
+        )
 
 
 class CompanyRepository:

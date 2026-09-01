@@ -21,6 +21,10 @@ alembic/versions/*.pyc
 .coverage
 htmlcov/
 
+# Celery export output (Spec 13, local STORAGE_BACKEND — settings.EXPORT_DIR)
+var/
+celerybeat-schedule.db
+
 # Frontend
 node_modules/
 dist/

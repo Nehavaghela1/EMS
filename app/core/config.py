@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     SENTRY_DSN: str | None = None
     LOG_LEVEL: str = "INFO"
 
+    # ── Background jobs (Spec 13) ────────────────────────────────
+    # Where a Celery export task writes its output file, local-storage mode
+    # (STORAGE_BACKEND=local). A real object-store path is a WP-08+/S3
+    # concern; this is the interim, explicit, settings-driven location.
+    EXPORT_DIR: str = "var/exports"
+
     # ── Platform defaults for NEW companies ─────────────────────
     # Seed a company's company_settings row at approval time and are never
     # read again afterwards. Per-tenant policy lives in company_settings

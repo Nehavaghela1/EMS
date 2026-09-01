@@ -13,6 +13,8 @@ from app.db.session import SessionLocal
 from app.modules.hr.router import departments_router, employees_router
 from app.modules.identity.router import companies_router
 from app.modules.identity.router import router as auth_router
+from app.modules.platform.router import router as jobs_router
+from app.modules.time_leave.router import attendance_router, shifts_router
 
 configure_logging()
 
@@ -54,6 +56,9 @@ app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(companies_router, prefix=settings.API_V1_PREFIX)
 app.include_router(departments_router, prefix=settings.API_V1_PREFIX)
 app.include_router(employees_router, prefix=settings.API_V1_PREFIX)
+app.include_router(attendance_router, prefix=settings.API_V1_PREFIX)
+app.include_router(shifts_router, prefix=settings.API_V1_PREFIX)
+app.include_router(jobs_router, prefix=settings.API_V1_PREFIX)
 
 # One client, reused across requests (redis-py pools connections internally).
 # Short timeouts so a dead Redis makes /health fail fast, not hang.

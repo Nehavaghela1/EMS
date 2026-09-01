@@ -3,7 +3,7 @@
 **Governs:** Section 20 of `docs/EMS_PRO_DEV_SPEC.md` (in full). Originally WP-01's output; kept current across later work packages per Section 21's table ("WP-01 output, kept current").
 **Method:** Every file under `app/` and `alembic/` was read in full and compared against the spec section that governs it, using the Section 20.2 checklist. Where the checklist implied a runnable check (does the app start, does `alembic upgrade head` actually create tables, is a package importable), that check was executed against the local dev database — read-only at audit time; the blocking items were then actually applied (this revision of the report) and re-verified the same way. See "How this was verified" at the end.
 
-**Status: WP-01's 14 blocking items are fixed and verified. WP-02 (foundation, config, errors, logging, role split) — §12–§14. WP-04 (multi-tenancy, RLS, the isolation suite, rate limiting) — §15–§17. WP-05 (company registration and approval workflow) — §18–§20. WP-06 (departments) — §21–§22. WP-07 (employees) — §23–§25. WP-03 (auth routes 3-11, OTP reset, employee activation) — §26–§28. All delivered and verified. Routes 27–30 (resignation, full-and-final) belong to WP-27; the employee frontend pages are WP-13. Not proceeding further this session.**
+**Status: WP-01's 14 blocking items are fixed and verified. WP-02 (foundation, config, errors, logging, role split) — §12–§14. WP-04 (multi-tenancy, RLS, the isolation suite, rate limiting) — §15–§17. WP-05 (company registration and approval workflow) — §18–§20. WP-06 (departments) — §21–§22. WP-07 (employees) — §23–§25. WP-03 (auth routes 3-11, OTP reset, employee activation) — §26–§28. WP-09 (attendance, shifts, background jobs) — §29–§31. All delivered and verified. Routes 27–30 (resignation, full-and-final) belong to WP-27; the employee frontend pages are WP-13. Not proceeding further this session.**
 
 **Severity key**
 - **Fixed** — was blocking or should-fix; corrected in this pass and re-verified.
@@ -349,7 +349,7 @@ All of this was run live against `uvicorn` first (to see the real behavior befor
 |---|---|---|
 | 1 | Two companies register, land `pending`, no user created | **Pass.** `POST /companies/register` twice → both `201`, `status: "pending"`. `SELECT count(*) FROM users WHERE company_id = ...` → `0` for both, confirmed both live (`psql`) and in `test_register_creates_a_pending_company_with_no_user`. |
 | 2 | Approved companies get preset departments, and a `company_settings` row | **Pass.** Registered a `super_admin` directly in the database (8.5 — never via a route), approved a Technology company through the real API → `GET /departments` as its new HR admin returned exactly the 7 Technology-preset departments (Design, DevOps, Engineering, Human Resources, Product, Quality Assurance, Sales); a Retail company returned its own 6. `GET /companies/me` succeeded, confirming `company_settings` exists (RLS would return nothing otherwise). Codified in `test_approve_seeds_company_settings_departments_and_hr_admin_in_one_transaction`. |
-| 3 | A deliberately failing seed step rolls back the whole approval, company still `pending` | **Pass — proven by actually causing the failure.** Planted a `company_settings` row for a company before approving it (forces the real `UNIQUE` violation the seed step would hit), called `POST /companies/{id}/approve` → `409`, then confirmed: `status` still `pending`, `approved_at`/`approved_by` still `NULL`, zero `users` rows for that company. Live via `psql` first, then `test_a_failing_seed_step_rolls_back_the_whole_approval`. |
+| 3 | A deliberately failing seed step rolls back the whole approval, company still `pending` | **Pass — proven by actually causing the failure.** Planted a `company_settings` row for a company before approving it (forces the real `UNIQUE` violation the seed step would hit), called `POST /companies/{id}/approve` → `409`, then confirmed: `status` still `pending`, `approved_at`/`ap proved_by` still `NULL`, zero `users` rows for that company. Live via `psql` first, then `test_a_failing_seed_step_rolls_back_the_whole_approval`. |
 | 4 | Company A's HR admin gets `404`, not `403`, on company B's profile | **Substituted with `departments`, not `/companies/me` — see the note below.** `test_hr_admin_gets_404_not_403_on_another_companys_department`: HR admin X creates a department; HR admin Y requests the same id and gets `404`. Also closes WP-04's open caveat (§17). |
 | 5 | WP-04's transaction fix, gated again here: write, commit, read back within one request | **Pass.** `PUT /companies/me` writes a real field (`website`, `city`), commits inside the service, and the response serializes the same ORM object afterward — exactly the "read an attribute after commit" pattern that surfaces the listener bug from WP-04 if it regresses. No error, response reflected the write; confirmed persisted via a direct `psql` read afterward. |
 | 6 | `pytest` and `ruff` clean | **Pass** — folded into WP-06's combined run, see §22. |
@@ -531,6 +531,65 @@ Per this session's instructions (Section 19's WP-03 entry, as scoped to routes 3
 | `pytest` and `ruff` clean | **Done — verified.** See §27 row 9. |
 
 **WP-03 gate passes.** Every condition this session's instructions listed was run for real against a live server and a real database/Redis, then codified as a permanent regression test. Not proceeding further this session.
+
+---
+
+## 29. WP-09 — Attendance, shifts and background jobs
+
+**Governs:** 11.5, 13, 10.4 routes 43–54, route 136. *(Frontend page 15 is not built this session — no frontend foundation exists yet, WP-12/WP-13's job.)*
+
+**Delivered:**
+
+- **`app/modules/time_leave/`** (new module): `Attendance`, `Shift`, `EmployeeShift` models, all on `TenantBase` with `enable_rls()` in the same migration (`b4578ccda3b8`) — the first module to add three RLS-protected tables in one migration. `uq_attendance_employee_id_date` is a real database constraint, matching Spec 7.4 exactly.
+- **Check-in/check-out (routes 43-44):** check-in 409s if today's record already exists (the database constraint is the real backstop; the app's own check is just a friendlier message — proven live and in a test that inserts around the service layer entirely). Check-out finds the employee's currently-**open** record (`check_in` set, `check_out` null) rather than re-deriving "today" — a real bug caught while building this: an employee who checks in at 22:00 and checks out after midnight would otherwise have check-out look for a record dated the *new* calendar day and find nothing. `hours_worked` is plain `TIMESTAMPTZ` subtraction, which is already correct across a midnight boundary with no special-casing — the spec's "must not go negative" warning is really about not reimplementing this with the shift's own `TIME`-typed `start_time`/`end_time`, which this code never touches for the calculation.
+- **Role-scoped list (route 45) and single-record access (route 46):** employees see their own; managers see their direct reports (`EmployeeRepository.list_direct_report_ids`, a new shared helper — WP-07's employee list used inline manager-scoping logic that this pulls out so WP-09/WP-10 don't duplicate it); HR (and super_admin) see everyone.
+- **HR regularization (route 47) and delete (route 48):** both write a structured log line (`attendance_regularized` / `attendance_deleted`) carrying the actor, previous values, and reason — `audit_logs` doesn't exist until WP-11, so this is the documented interim record, with a `# TODO(WP-11)` at the exact spot a real row will replace it. Delete is a soft delete (`deleted_at`) — attendance isn't append-only, so 7.1's universal rule applies.
+- **Shifts (routes 50-54):** full CRUD; delete blocked with 409 + count when any assignment currently covers today (`effective_from <= today <= effective_to-or-ongoing`); `POST /shifts/{id}/assign` rejects a second overlapping `[effective_from, effective_to]` range for the same employee (NULL `effective_to` treated as open-ended).
+- **`app/workers/celery_app.py`, `app/workers/tasks/`** (new): the Celery app, wired to the real Redis broker/backend already configured (WP-02). `beat_schedule` has one real, working entry — `expire_activation_tokens` (13.1's "scheduled, daily" housekeeping, using only WP-07 data) — proven by actually invoking it. Every task takes IDs, not objects, opens its own session and calls `bind_tenant_to_session` explicitly (13.2 rules 1-2) — `expire_activation_tokens` binds as platform admin for its genuine cross-tenant sweep, the same narrow, explicit RLS-bypass pattern `AuthService.preview_activation` (WP-03) and `CompanyService.approve_company` (WP-05) already established.
+- **The trivial task first (13.3's own instruction):** `app/workers/tasks/example.py::add` — proven complete asynchronously on a real subprocess worker before anything else was built on the worker.
+- **CSV export (route 49) + job polling (route 136):** `POST /attendance/export` queues `export_attendance_csv_task` and returns `202` + `job_id` immediately. `GET /jobs/{job_id}` (new `platform` module route) polls Celery's own result-backend state directly — no dedicated `jobs` table exists anywhere in the spec's schema (Section 7), and the Redis result backend already persists exactly what route 136 asks for.
+- **Bug found and fixed while building this, not part of the original audit:** `AttendanceSource`'s `import` value — `import` is a Python keyword, so the enum member had to be named `import_`. SQLAlchemy's `Enum()` defaults to storing the Python member's **name** in the database, not its `.value` — every other enum in this codebase happens to have name == value, which is exactly what made this easy to miss. Without `values_callable=lambda x: [e.value for e in x]`, the database enum type would have stored the literal string `"import_"` instead of Spec 7.4's `"import"`. Caught by inspecting the generated migration before applying it, not by a failing test — fixed in the model, the migration, and (since the migration had already been applied once while investigating) via a direct `ALTER TYPE ... RENAME VALUE`, never a downgrade.
+- **`EXPORT_DIR`** (new setting, default `var/exports`, gitignored): where the CSV export writes, per `STORAGE_BACKEND=local`.
+
+**Not delivered in this pass:** frontend page 15 (no frontend foundation exists — WP-12/13); `allocate_annual_leave` as a scheduled task (not in either WP-09's or WP-10's explicit deliverable list this session — see §32's note); `payroll`/`audit_logs`/KYC-dependent background jobs (later WPs, per 13.1's own table).
+
+---
+
+## 30. WP-09 verification — actual output
+
+Run live against `uvicorn` **and a real Celery worker** first, then codified as `tests/integration/test_attendance.py` (8 tests), `test_shifts.py` (3 tests), `test_celery_tasks.py` (1 test, a real subprocess worker), and `test_attendance_export.py` (1 test) — 13 new tests, none of it a one-off.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | A second check-in on the same day returns 409, and the database constraint holds even if the app check is bypassed | **Pass — live and automated.** Live: check-in → `201`; second check-in → `409`. Automated: `test_database_constraint_holds_even_if_the_application_check_is_bypassed` inserts two `Attendance` rows directly via the ORM (no service layer involved) and confirms the second raises `IntegrityError` — the real `uq_attendance_employee_id_date` constraint, not the app's proactive check. |
+| 2 | Check-out without check-in returns 400 | **Pass — live and automated.** `{"error":{"code":"no_check_in",...}}`, `400`. |
+| 3 | `hours_worked` correct for a shift where `end_time < start_time` — positive, not negative | **Pass — live and automated, after fixing the check-out bug above.** A "Night Shift" (22:00→06:00) is created and genuinely assigned to an employee; their attendance row is dated yesterday with `check_in` at yesterday 22:00; `POST /attendance/check-out` (today, for real) → `200`, `hours_worked` positive and > 8 — proving the midnight-crossing case end to end through the live check-out logic, not a unit test of an isolated formula. |
+| 4 | A second overlapping shift assignment is rejected | **Pass — live and automated.** Two open-ended (`effective_to` null) assignments for the same employee starting the same date → the second is `409`; a third assignment for a *different* employee on the same shift succeeds (`201`) — proving the rejection is about the employee, not the shift. |
+| 5 | The trivial Celery task completes asynchronously while the API stays responsive | **Pass — proved by actually running it, not eager mode.** `test_trivial_task_completes_asynchronously_on_a_real_worker` starts a real `celery worker` subprocess (`CELERY_TASK_ALWAYS_EAGER` explicitly not used — 13.3 warns eager mode hides exactly this class of bug), calls `.delay(2, 3)`, confirms the call returned immediately with a task id (not blocked on the result), then polls until success and asserts the result is `5`. Live run separately confirmed the same worker process log shows `Task ... succeeded`. |
+| 6 | The CSV export returns 202 immediately and the file appears when the job finishes | **Pass — live, with a real worker.** `POST /attendance/export` → `202 {"job_id":"...","status":"queued"}` immediately. `GET /jobs/{job_id}` polled right after → already `success` (the real worker is fast) with `{"file_path":"var/exports/attendance_....csv","row_count":1}`; the file was read directly off disk afterward and its content matched the real attendance row exactly. The automated `test_attendance_export.py` proves the export task's own business logic (correct CSV content for given data) by monkeypatching the task's database session to the test database and calling the task function directly — Celery tasks always open their own session against the production `DATABASE_URL` (13.2 rule 2), which is a different database than pytest's `TEST_DATABASE_URL`, so the queueing/worker plumbing itself is what `test_celery_tasks.py` proves instead (check 5). |
+| 7 | Role-scoped attendance list: employee sees own, manager sees team, HR sees everyone | **Pass — automated.** `test_manager_sees_only_their_teams_attendance`: a manager's list shows exactly their one direct report's attendance, not an unrelated employee's; HR's list shows both. |
+| 8 | The isolation sweep picks up `attendance`, `shifts`, `employee_shifts` automatically, no test file edits | **Pass — verified structurally.** `tests/isolation/test_rls_policies.py` (untouched by this package) now parametrizes over all three new tables — `tenant_table_names()` discovered them from the class hierarchy the moment their models were imported. |
+| 9 | `pytest` and `ruff` clean | **Pass.** `pytest`: **80 passed** (67 from WP-01 through WP-03, 13 new). `ruff check .` / `ruff format --check .`: `All checks passed!` / all files formatted. `mypy app/`: `Success: no issues found in 52 source files` — three real findings fixed along the way (a `Result[Any]` vs `CursorResult.rowcount` mismatch in the scheduled task, a reused-variable-name type conflict in the export task, and a plain `str` vs `Literal[...]` mismatch in the job-status route). |
+
+Dev database, Redis (`pwreset:*`/broker/backend keys), and the `var/exports/` directory were all cleared back to empty at the end (`industry_presets`'s 12 seed rows correctly left intact), matching the discipline every prior work package in this session followed. The `celerybeat-schedule.db` file beat creates locally on startup is gitignored, not committed.
+
+---
+
+## 31. WP-09 exit gate — current status
+
+Per this session's instructions (Section 19's WP-09 entry, scoped to routes 43-54, route 136, and Spec 13):
+
+| Gate condition | Status |
+|---|---|
+| Second check-in same day → 409; database constraint holds even if bypassed | **Done — verified.** See §30 row 1. |
+| Check-out without check-in → 400 | **Done — verified.** See §30 row 2. |
+| `hours_worked` correct for an overnight shift — positive, not negative | **Done — verified**, after fixing a real check-out lookup bug. See §30 row 3. |
+| Second overlapping shift assignment rejected | **Done — verified.** See §30 row 4. |
+| Trivial Celery task completes asynchronously | **Done — verified**, on a real worker, not eager mode. See §30 row 5. |
+| CSV export returns 202 immediately; file appears when the job finishes | **Done — verified**, live with a real worker; the task's own logic also covered by an automated test. See §30 row 6. |
+| `pytest` and `ruff` clean | **Done — verified.** See §30 row 9. |
+
+**WP-09 gate passes.**
 
 ---
 
