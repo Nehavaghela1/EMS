@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # no TTL is named in the spec, so this follows the same
     # settings-not-a-literal convention as the other token lifetimes above.
     INVITE_TOKEN_EXPIRE_DAYS: int = 7
+    # Password-reset OTPs (Spec 7.9): 10-minute TTL, 5-attempt cap, both
+    # spec-literal numbers, kept as settings rather than inline for the same
+    # reason MAX_LOGIN_ATTEMPTS/LOCKOUT_MINUTES are.
+    OTP_TTL_MINUTES: int = 10
+    OTP_MAX_ATTEMPTS: int = 5
+    # Password policy (Spec 9.1): minimum length, enforced in the Pydantic
+    # schema layer so it fails at the edge with a clear message.
+    PASSWORD_MIN_LENGTH: int = 10
 
     # ── CORS ────────────────────────────────────────────────────
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]

@@ -1358,13 +1358,14 @@ Access token claims:
   "sub": "<user_uuid>",
   "company_id": "<company_uuid>",
   "role": "hr_admin",
-  "employee_id": "<employee_uuid_or_null>",
   "type": "access",
   "iat": 1756600000,
   "exp": 1756600900,
   "jti": "<uuid>"
 }
 ```
+
+**No `employee_id` claim.** An earlier draft of this section carried one, matching 10.1's access-key table wording below. WP-03 amended both: embedding it would mean looking up the caller's `Employee` row on every login *and* every refresh (access tokens are short-lived and refreshed often, §9.2's table), regardless of whether that request path ever needs it — HR and super_admin requests never do. `Own`/`Mgr` checks instead resolve it lazily, only on the routes that actually need it (`EmployeeRepository.get_by_user_id(company_id, user_id)`), which is fewer total lookups in the common case and touches nothing about the already-shipped token-minting contract. See Section 24's decision log.
 
 Verification rules, all of them mandatory:
 - Verify the signature with the **explicitly listed** algorithm: `jwt.decode(token, key, algorithms=["HS256"])`. Never pass the algorithm from the token header — that is the algorithm-confusion attack.
@@ -1473,8 +1474,8 @@ Add a small middleware setting, on every response: `X-Content-Type-Options: nosn
 |---|---|---|
 | `Public` | No authentication | — |
 | `Auth` | Any authenticated user | `get_current_user` |
-| `Own` | The record's own employee/user | Service check against `current_user.employee_id` |
-| `Mgr` | A manager, for their own reports only | Service check against `employees.reporting_manager_id` |
+| `Own` | The record's own employee/user | Service check against `employee.user_id == current_user.id` |
+| `Mgr` | A manager, for their own reports only | Service check against `employees.reporting_manager_id`, resolved via `EmployeeRepository.get_by_user_id` (9.2 — no `employee_id` JWT claim) |
 | `HR` | `hr_admin` | `require_role` |
 | `SA` | `super_admin` | `require_role` |
 | `Members` | A member of that project | **Service check against `project_members` — a row-level relationship, not a role.** `require_role` cannot express this. |
@@ -2876,6 +2877,7 @@ Each entry: the decision, the reasoning, and what would make it worth revisiting
 | Employer ESI excluded from the CTC balance component | `balance = CTC − (other earnings + employer contributions)` is circular when an employer contribution is a percentage of gross, because gross is not known until `balance` resolves. Excluding employer ESI (and forbidding `percentage_of='gross'` alongside a balance component) removes the circularity without an iterative solver. | A customer's CTC definition genuinely includes employer ESI — then solve the closed form and document it |
 | ESI eligibility and PT slab decided on full-month gross | Deciding them on post-LOP gross makes an employee's statutory deductions flip on and off depending on whether they took unpaid leave that month — wrong, and impossible to explain to the employee | Never |
 | Beat runs as exactly one instance | Two schedulers fire every scheduled job twice; for annual leave allocation that means every employee getting double | Never — if beat needs HA, use a scheduler with leader election, not a second instance |
+| No `employee_id` claim on the access token | An earlier draft of 9.2 showed one, matching the access-key table's original wording (10.1). Embedding it means `AuthService.login`/`.refresh` look up the caller's `Employee` row on *every* login and refresh (access tokens are short-lived and refreshed often), even for HR/SA callers who never need it. `Own`/`Mgr` checks resolve it lazily instead, via `EmployeeRepository.get_by_user_id`, only on the routes that actually need it (WP-03, closing RECONCILIATION spec gap #6) — fewer lookups in the common case, and it leaves the already-shipped WP-01 token-minting contract untouched. | Profiling shows the per-request lookup on `Own`/`Mgr` routes is a real hot path — unlikely, since it's one indexed query behind RLS |
 
 ---
 

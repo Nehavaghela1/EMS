@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate, resolve_sort
 from app.core.time import utcnow
-from app.modules.hr.models import Department, Employee, EmploymentType
+from app.modules.hr.models import Department, Employee, EmploymentType, InvitationStatus
 
 
 class DepartmentRepository:
@@ -185,6 +185,35 @@ class EmployeeRepository:
                 Employee.deleted_at.is_(None),
             )
         )
+
+    def get_by_activation_token_hash(self, token_hash: str) -> Employee | None:
+        """Public activation preview/redeem (routes 10-11, WP-03) — cross-
+        company by necessity, since there is no verified tenant context
+        before activation succeeds. `employees` IS RLS-protected (unlike
+        `users`/`refresh_tokens`), so the caller must explicitly bind
+        `is_platform_admin=True` on the session before calling this — this
+        method does not bind context itself, so that intent stays visible
+        at the call site (AuthService.preview_activation), not hidden
+        inside the repository. Reachable only by possessing the raw,
+        unexpired activation token this hash matches — the same class of
+        pre-auth exception 7.2 documents for the four `users` lookups.
+        """
+        return self.db.scalar(
+            select(Employee).where(
+                Employee.activation_token_hash == token_hash,
+                Employee.deleted_at.is_(None),
+            )
+        )
+
+    def activate(self, employee: Employee, *, user_id: uuid.UUID) -> Employee:
+        """Route 11's field-level mutation once the new User exists — the
+        token is consumed (cleared) so it can never be redeemed twice."""
+        employee.user_id = user_id
+        employee.invitation_status = InvitationStatus.activated
+        employee.activation_token_hash = None
+        employee.activation_expires_at = None
+        self.db.flush()
+        return employee
 
     def list_employees(
         self,

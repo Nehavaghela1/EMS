@@ -1,9 +1,30 @@
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, EmailStr
+from pydantic import AfterValidator, BaseModel, EmailStr
 
+from app.core.config import settings
 from app.modules.identity.models import CompanyStatus, UserRole
+
+
+def _validate_password_policy(value: str) -> str:
+    """Spec 9.1: minimum length, at least one letter and one digit — no
+    maximum below 128, no forbidden characters. Enforced here so it fails
+    at the edge with a clear message, shared by every "new password" field
+    (change-password, reset-password, activate)."""
+    if len(value) < settings.PASSWORD_MIN_LENGTH:
+        raise ValueError(f"Password must be at least {settings.PASSWORD_MIN_LENGTH} characters.")
+    if len(value) > 128:
+        raise ValueError("Password must be at most 128 characters.")
+    if not any(c.isalpha() for c in value):
+        raise ValueError("Password must contain at least one letter.")
+    if not any(c.isdigit() for c in value):
+        raise ValueError("Password must contain at least one digit.")
+    return value
+
+
+PasswordStr = Annotated[str, AfterValidator(_validate_password_policy)]
 
 
 # Company
@@ -90,3 +111,69 @@ class UserResponse(BaseModel):
     company_id: uuid.UUID
 
     model_config = {"from_attributes": True}
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: PasswordStr
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: PasswordStr
+
+
+class UsernameAvailabilityResponse(BaseModel):
+    available: bool
+
+
+class EmployeeSummary(BaseModel):
+    """The "linked employee summary" route 5 (`GET /auth/me`) asks for —
+    None when the caller has no linked Employee row (e.g. the HR admin
+    created directly at company approval, WP-05)."""
+
+    id: uuid.UUID
+    employee_code: str
+    first_name: str
+    last_name: str | None
+    department_id: uuid.UUID | None
+    position: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class MeResponse(BaseModel):
+    """Route 5. `permissions` is a small, deterministic, role-derived
+    capability list — the spec defines no dedicated permissions table or
+    schema, so this is a documented judgment call (RECONCILIATION spec
+    gaps), not a full RBAC engine."""
+
+    id: uuid.UUID
+    email: str
+    role: UserRole
+    company_id: uuid.UUID
+    is_active: bool
+    must_change_password: bool
+    employee: EmployeeSummary | None
+    permissions: list[str]
+
+
+class ActivationPreviewResponse(BaseModel):
+    """Route 10: preview an invitation before accepting — name, company,
+    expiry, nothing else (no email, no company id — this is public)."""
+
+    first_name: str
+    last_name: str | None
+    company_name: str
+    expires_at: datetime
+
+
+class ActivateAccountRequest(BaseModel):
+    token: str
+    username: str
+    password: PasswordStr

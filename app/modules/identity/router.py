@@ -10,14 +10,21 @@ from app.core.rate_limit import limiter
 from app.db.session import get_db
 from app.modules.identity.models import CompanyStatus, User, UserRole
 from app.modules.identity.schemas import (
+    ActivateAccountRequest,
+    ActivationPreviewResponse,
+    ChangePasswordRequest,
     CompanyApproveResponse,
     CompanyDetailResponse,
     CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
     CompanyRejectRequest,
     CompanyResponse,
+    ForgotPasswordRequest,
     LoginRequest,
+    MeResponse,
+    ResetPasswordRequest,
     TokenResponse,
+    UsernameAvailabilityResponse,
 )
 from app.modules.identity.service import AuthService, CompanyService
 
@@ -67,6 +74,88 @@ def refresh_token(
     raw_refresh = request.cookies.get(REFRESH_COOKIE_NAME, "")
     result, new_raw_refresh = AuthService(db).refresh(raw_refresh)
     _set_refresh_cookie(response, new_raw_refresh)
+    return result
+
+
+@router.post("/logout", status_code=204)
+def logout(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    raw_refresh = request.cookies.get(REFRESH_COOKIE_NAME, "")
+    AuthService(db).logout(raw_refresh)
+    response.delete_cookie(REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
+
+
+@router.post("/logout-all", status_code=204)
+def logout_all(
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    AuthService(db).logout_all(user.id)
+    response.delete_cookie(REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
+
+
+@router.get("/me", response_model=MeResponse)
+def get_me(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return AuthService(db).get_me(user)
+
+
+@router.post("/change-password", status_code=204)
+def change_password(
+    data: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    AuthService(db).change_password(user, data)
+
+
+@router.post("/forgot-password", status_code=200)
+@limiter.limit("5/minute")  # Spec 9.5 — this endpoint sends real email/OTPs
+def forgot_password(data: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    AuthService(db).forgot_password(data.email)
+    # Always the same body and status regardless of whether the email
+    # exists, matched more than one company, or is inactive (9.3) — the
+    # router never branches on the service call above.
+    return {"message": "If that email exists, a password reset code has been sent."}
+
+
+@router.post("/reset-password", status_code=204)
+@limiter.limit("10/minute")
+def reset_password(data: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    AuthService(db).reset_password(data)
+
+
+@router.get("/check-username/{username}", response_model=UsernameAvailabilityResponse)
+@limiter.limit("5/minute")  # "Heavily rate-limited" (10.2 route 9, 9.3)
+def check_username(username: str, request: Request, db: Session = Depends(get_db)):
+    available = AuthService(db).check_username_available(username)
+    return UsernameAvailabilityResponse(available=available)
+
+
+@router.get("/activate/{token}", response_model=ActivationPreviewResponse)
+def preview_activation(token: str, db: Session = Depends(get_db)):
+    employee, company = AuthService(db).preview_activation(token)
+    # AuthService.preview_activation already raises when this is None/expired.
+    assert employee.activation_expires_at is not None
+    return ActivationPreviewResponse(
+        first_name=employee.first_name,
+        last_name=employee.last_name,
+        company_name=company.name,
+        expires_at=employee.activation_expires_at,
+    )
+
+
+@router.post("/activate", response_model=TokenResponse)
+def activate(data: ActivateAccountRequest, response: Response, db: Session = Depends(get_db)):
+    result, raw_refresh = AuthService(db).activate_employee(data)
+    _set_refresh_cookie(response, raw_refresh)
     return result
 
 

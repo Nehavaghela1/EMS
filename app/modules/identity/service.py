@@ -6,7 +6,9 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.email import send_email
 from app.core.exceptions import AppError, ConflictError, NotFoundError, UnauthorizedError
+from app.core.otp import generate_and_store_otp, verify_otp
 from app.core.pagination import PageParams
 from app.core.security import (
     DUMMY_HASH,
@@ -14,21 +16,28 @@ from app.core.security import (
     generate_refresh_token,
     hash_password,
     hash_token,
+    needs_rehash,
     verify_password,
 )
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
-from app.modules.hr.repository import DepartmentRepository
-from app.modules.identity.models import Company, CompanySettings, CompanyStatus, UserRole
+from app.modules.hr.models import Employee, InvitationStatus
+from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
+from app.modules.identity.models import Company, CompanySettings, CompanyStatus, User, UserRole
 from app.modules.identity.repository import (
     CompanyRepository,
     RefreshTokenRepository,
     UserRepository,
 )
 from app.modules.identity.schemas import (
+    ActivateAccountRequest,
+    ChangePasswordRequest,
     CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
+    EmployeeSummary,
     LoginRequest,
+    MeResponse,
+    ResetPasswordRequest,
     TokenResponse,
 )
 from app.modules.platform.repository import IndustryPresetRepository
@@ -37,6 +46,29 @@ logger = logging.getLogger("app")
 
 INVALID_CREDENTIALS_MESSAGE = "Invalid email or password."
 INVALID_REFRESH_TOKEN_MESSAGE = "Invalid or expired refresh token."
+
+# Route 5's "permissions" — a small, deterministic, role-derived capability
+# list. The spec defines no dedicated permissions table or schema (Section 7
+# has none), so this is a documented judgment call, not a full RBAC engine —
+# see RECONCILIATION spec gaps.
+_ROLE_PERMISSIONS: dict[UserRole, list[str]] = {
+    UserRole.employee: ["view_own_profile", "apply_leave", "mark_attendance"],
+    UserRole.manager: [
+        "view_own_profile",
+        "apply_leave",
+        "mark_attendance",
+        "view_team",
+        "approve_team_leave",
+    ],
+    UserRole.hr_admin: [
+        "view_own_profile",
+        "manage_employees",
+        "manage_departments",
+        "manage_company",
+        "approve_leave",
+    ],
+    UserRole.super_admin: ["manage_platform", "approve_companies"],
+}
 
 
 class InvalidCredentialsError(UnauthorizedError):
@@ -79,6 +111,36 @@ class AccountInactiveError(AppError):
         super().__init__("Account is not active.")
 
 
+class InvalidCurrentPasswordError(UnauthorizedError):
+    """Route 6 — deliberately a distinct message from login's generic one:
+    the caller is already authenticated as themselves here, so there is no
+    enumeration risk in saying exactly what was wrong (9.3 protects an
+    anonymous caller guessing at someone else's credentials, not this)."""
+
+    def __init__(self) -> None:
+        super().__init__("Current password is incorrect.")
+
+
+class InvalidOtpError(AppError):
+    """Routes 7-8 — one generic message for "no such OTP", "wrong code",
+    "expired", and "attempts exhausted" alike, the same enumeration-safety
+    principle 9.3 applies to login."""
+
+    status_code = 400
+    code = "invalid_otp"
+
+    def __init__(self) -> None:
+        super().__init__("Invalid or expired code.")
+
+
+class InvalidActivationTokenError(NotFoundError):
+    """Routes 10-11 — one message whether the token is malformed, unknown,
+    expired, or already redeemed."""
+
+    def __init__(self) -> None:
+        super().__init__("Invitation not found or has expired.")
+
+
 def _generate_company_code(name: str) -> str:
     base = name.upper().replace(" ", "")[:6]
     suffix = uuid.uuid4().hex[:4].upper()
@@ -91,6 +153,7 @@ class AuthService:
         self.company_repo = CompanyRepository(db)
         self.user_repo = UserRepository(db)
         self.token_repo = RefreshTokenRepository(db)
+        self.employee_repo = EmployeeRepository(db)
 
     def login(
         self, payload: LoginRequest, device_info: str | None = None
@@ -134,6 +197,13 @@ class AuthService:
             raise AccountInactiveError()
 
         self.user_repo.reset_failed_attempts(user)
+        # Transparent rehash-on-login (9.1): a stored hash that predates a
+        # parameter increase is upgraded the moment we have the plaintext
+        # to do it with — this is the only place that plaintext ever exists.
+        if needs_rehash(user.hashed_password):
+            self.user_repo.update(
+                user, user.company_id, hashed_password=hash_password(payload.password)
+            )
         access_token = create_access_token(
             sub=str(user.id), company_id=str(user.company_id), role=user.role.value
         )
@@ -183,6 +253,149 @@ class AuthService:
             device_info=token_record.device_info,
         )
         self.token_repo.revoke(token_record, replaced_by=new_token)
+        self.db.commit()
+        return TokenResponse(access_token=access_token), raw_refresh
+
+    def logout(self, raw_token: str) -> None:
+        """Route 3: revoke just the presented refresh token. Idempotent —
+        an absent, already-revoked, or unrecognized cookie is a silent
+        no-op, never an error (the caller is logging out either way)."""
+        if not raw_token:
+            return
+        token_record = self.token_repo.get_by_hash(hash_token(raw_token))
+        if token_record and not token_record.is_revoked:
+            self.token_repo.revoke(token_record)
+            self.db.commit()
+
+    def logout_all(self, user_id: uuid.UUID) -> None:
+        """Route 4: revoke every active refresh token for this user, across
+        every device."""
+        for token in self.token_repo.get_active_by_user(user_id):
+            self.token_repo.revoke(token)
+        self.db.commit()
+
+    def get_me(self, user: User) -> MeResponse:
+        """Route 5: current user, linked employee summary (None if the
+        caller has no Employee row — e.g. an HR admin created directly at
+        company approval, WP-05), and role-derived permissions."""
+        employee = self.employee_repo.get_by_user_id(user.company_id, user.id)
+        return MeResponse(
+            id=user.id,
+            email=user.email,
+            role=user.role,
+            company_id=user.company_id,
+            is_active=user.is_active,
+            must_change_password=user.must_change_password,
+            employee=EmployeeSummary.model_validate(employee) if employee else None,
+            permissions=_ROLE_PERMISSIONS.get(user.role, []),
+        )
+
+    def change_password(self, user: User, data: ChangePasswordRequest) -> None:
+        """Route 6: current + new password; revokes every other session —
+        a changed password should not leave old sessions valid."""
+        if not verify_password(data.current_password, user.hashed_password):
+            raise InvalidCurrentPasswordError()
+        self.user_repo.update(
+            user, user.company_id, hashed_password=hash_password(data.new_password)
+        )
+        for token in self.token_repo.get_active_by_user(user.id):
+            self.token_repo.revoke(token)
+        self.db.commit()
+
+    def forgot_password(self, email: str) -> None:
+        """Route 7. The router always returns the same 200 regardless of
+        what happens in here (9.3) — this method's return value is never
+        branched on by the caller. Only sends when exactly one active
+        account matches: zero matches and more-than-one matches (ambiguous
+        — which account?) are both silent no-ops, indistinguishable to the
+        caller from the real case either way.
+        """
+        users = self.user_repo.find_by_email(email)
+        if len(users) == 1 and users[0].is_active:
+            otp = generate_and_store_otp(email)
+            send_email(
+                to=email,
+                subject="Your EMS Pro password reset code",
+                body=(
+                    f"Your password reset code is {otp}. "
+                    f"It expires in {settings.OTP_TTL_MINUTES} minutes."
+                ),
+            )
+
+    def reset_password(self, data: ResetPasswordRequest) -> None:
+        """Route 8: OTP + new password. Also revokes every existing
+        session, same reasoning as change-password."""
+        if not verify_otp(data.email, data.otp):
+            raise InvalidOtpError()
+        users = self.user_repo.find_by_email(data.email)
+        if len(users) != 1:
+            # Unreachable in practice — forgot_password only ever issues an
+            # OTP for exactly one match — but never silently succeed on an
+            # unexpected shape.
+            raise InvalidOtpError()
+        user = users[0]
+        self.user_repo.update(
+            user, user.company_id, hashed_password=hash_password(data.new_password)
+        )
+        for token in self.token_repo.get_active_by_user(user.id):
+            self.token_repo.revoke(token)
+        self.db.commit()
+
+    def check_username_available(self, username: str) -> bool:
+        """Route 9 — see UserRepository.username_taken_anywhere's docstring
+        for why this is platform-wide rather than per-company."""
+        return not self.user_repo.username_taken_anywhere(username)
+
+    def preview_activation(self, raw_token: str) -> tuple[Employee, Company]:
+        """Route 10, and the first half of route 11. `employees` IS RLS-
+        protected (unlike users/refresh_tokens), so this explicitly binds
+        platform-admin context to run a lookup that has no tenant yet —
+        the same reasoning CompanyService.approve_company already uses to
+        act across a tenant boundary (8.5), narrowed here to a single,
+        secret-gated read.
+        """
+        bind_tenant_to_session(self.db, company_id=None, is_platform_admin=True)
+        employee = self.employee_repo.get_by_activation_token_hash(hash_token(raw_token))
+        if (
+            employee is None
+            or employee.invitation_status == InvitationStatus.activated
+            or employee.activation_expires_at is None
+            or employee.activation_expires_at <= utcnow()
+        ):
+            raise InvalidActivationTokenError()
+        company = self.company_repo.get_by_id(employee.company_id)
+        assert company is not None  # FK guarantees this
+        return employee, company
+
+    def activate_employee(self, data: ActivateAccountRequest) -> tuple[TokenResponse, str]:
+        """Route 11: token + username + password activates the employee's
+        user account and logs them straight in — the same token pair shape
+        login() issues, so the frontend needs no separate login step right
+        after activating."""
+        employee, _company = self.preview_activation(data.token)
+
+        if self.user_repo.get_by_username(employee.company_id, data.username):
+            raise ConflictError("Username is already taken.")
+
+        user = self.user_repo.create(
+            company_id=employee.company_id,
+            email=employee.email,
+            username=data.username,
+            hashed_password=hash_password(data.password),
+            role=UserRole.employee,
+            is_active=True,
+        )
+        self.employee_repo.activate(employee, user_id=user.id)
+
+        access_token = create_access_token(
+            sub=str(user.id), company_id=str(user.company_id), role=user.role.value
+        )
+        raw_refresh = generate_refresh_token()
+        self.token_repo.create(
+            user_id=user.id,
+            token_hash=hash_token(raw_refresh),
+            expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        )
         self.db.commit()
         return TokenResponse(access_token=access_token), raw_refresh
 
