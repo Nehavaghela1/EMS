@@ -117,9 +117,7 @@ class User(TimeStampedBase):
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    company: Mapped["Company"] = relationship(
-        back_populates="users", foreign_keys=[company_id]
-    )
+    company: Mapped["Company"] = relationship(back_populates="users", foreign_keys=[company_id])
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         back_populates="user", foreign_keys="RefreshToken.user_id"
     )

@@ -1,9 +1,10 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.time import utcnow
 from app.modules.identity.models import Company, RefreshToken, User
 
 
@@ -60,9 +61,7 @@ class UserRepository:
         return self.db.scalar(select(User).where(User.id == user_id))
 
     def get_by_id(self, user_id: uuid.UUID, company_id: uuid.UUID) -> User | None:
-        return self.db.scalar(
-            select(User).where(User.id == user_id, User.company_id == company_id)
-        )
+        return self.db.scalar(select(User).where(User.id == user_id, User.company_id == company_id))
 
     def create(self, **kwargs) -> User:
         user = User(**kwargs)
@@ -87,8 +86,7 @@ class UserRepository:
     def reset_failed_attempts(self, user: User) -> None:
         user.failed_attempts = 0
         user.locked_until = None
-        # app/core/time.py::utcnow() doesn't exist yet (WP-02) — direct call for now.
-        user.last_login_at = datetime.now(timezone.utc)
+        user.last_login_at = utcnow()
         self.db.flush()
 
     def lock(self, user: User, until: datetime) -> None:
@@ -124,8 +122,7 @@ class RefreshTokenRepository:
 
     def revoke(self, token: RefreshToken, *, replaced_by: RefreshToken | None = None) -> None:
         token.is_revoked = True
-        # app/core/time.py::utcnow() doesn't exist yet (WP-02) — direct call for now.
-        token.revoked_at = datetime.now(timezone.utc)
+        token.revoked_at = utcnow()
         if replaced_by is not None:
             token.replaced_by_id = replaced_by.id
         self.db.flush()

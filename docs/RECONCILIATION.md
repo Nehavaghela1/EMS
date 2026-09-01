@@ -1,9 +1,9 @@
-# WP-01 — Reconciliation Report
+# Reconciliation Report
 
-**Governs:** Section 20 of `docs/EMS_PRO_DEV_SPEC.md` (in full).
+**Governs:** Section 20 of `docs/EMS_PRO_DEV_SPEC.md` (in full). Originally WP-01's output; kept current across later work packages per Section 21's table ("WP-01 output, kept current").
 **Method:** Every file under `app/` and `alembic/` was read in full and compared against the spec section that governs it, using the Section 20.2 checklist. Where the checklist implied a runnable check (does the app start, does `alembic upgrade head` actually create tables, is a package importable), that check was executed against the local dev database — read-only at audit time; the blocking items were then actually applied (this revision of the report) and re-verified the same way. See "How this was verified" at the end.
 
-**Status: all 14 blocking items are fixed and re-verified. WP-02 is not yet started, per instruction.**
+**Status: WP-01's 14 blocking items are fixed and verified. WP-02 (foundation, config, errors, logging, role split) is now also delivered and verified — see §12–§14. Not proceeding to WP-03.**
 
 **Severity key**
 - **Fixed** — was blocking or should-fix; corrected in this pass and re-verified.
@@ -44,7 +44,7 @@ Two defects were found and fixed *during this pass*, not in the original audit �
 | # | File | Spec requires | Code does | Status | Note |
 |---|---|---|---|---|---|
 | 2.1 | `app/modules/identity/repository.py` | Repository "does not commit — the service owns transaction boundaries" (5.2, 6.7) | Was: every repo method called `self.db.commit()`/`.refresh()` | **Fixed** | All three repository classes now `add()` + `flush()` only. `AuthService` owns every `commit()` — one per logical operation (register, login-success, login-failure/lockout, refresh-success, refresh-reuse-detected). |
-| 2.2 | `app/modules/identity/service.py` | Service "raises `AppError` subclasses ... never `HTTPException` directly" (5.2, 6.6) | Raises `HTTPException` throughout | **Later (WP-02)** — *reclassified from Blocking on 2026-08-31, before this fix pass.* | `app/core/exceptions.py` doesn't exist yet. Every raise site now carries `# TODO(WP-02): AppError` naming the specific subclass (`ConflictError`, `UnauthorizedError`, `AccountLockedError`, `AccountInactiveError`) so the WP-02 migration is mechanical. |
+| 2.2 | `app/modules/identity/service.py` | Service "raises `AppError` subclasses ... never `HTTPException` directly" (5.2, 6.6) | Was: raised `HTTPException` throughout, with `# TODO(WP-02): AppError` markers | **Closed in WP-02.** | `app/core/exceptions.py` now has the six base classes from 6.6 (`NotFoundError`, `ValidationError`, `ConflictError`, `ForbiddenError`, `UnauthorizedError`, `RateLimitedError`) plus handlers for `AppError`, `RequestValidationError`, `IntegrityError` and a catch-all, registered in `main.py`. Every `# TODO(WP-02)` site in `service.py` was resolved: `InvalidCredentialsError`, `CompanyRequiredError`, `AccountLockedError`, `AccountInactiveError` are identity-specific subclasses defined in `service.py` itself (matching 5.3's worked example, which names classes beyond the base six). `grep -rn HTTPException app/modules/` → no hits. |
 | 2.3 | `app/modules/identity/repository.py` | No `HTTPException`, no business decisions | Compliant | — | Unchanged. |
 | 2.4 | `app/modules/identity/router.py` | Router body is 1–3 lines | Compliant | — | Unchanged; still true after the cookie-handling additions (the cookie helper is a private function, not inline route logic). |
 | 2.5 | `app/modules/identity/schemas.py` | Response schemas must never expose a raw token (5.2) | Was: `TokenResponse.refresh_token: str` | **Fixed** | Field removed. `TokenResponse` now carries only `access_token` and `token_type`. |
@@ -61,7 +61,7 @@ Two defects were found and fixed *during this pass*, not in the original audit �
 | 3.3 | `app/modules/identity/models.py` — `User.locked_until` | `TIMESTAMPTZ` (6.3, "no exceptions") | Was: naive `DateTime`, and `Mapped[DateTime]` (wrong type hint) | **Fixed** | `DateTime(timezone=True)`, `Mapped[datetime | None]`. Verified via `psql \d users`: `timestamp with time zone`. |
 | 3.4 | `app/modules/identity/models.py` — `RefreshToken.expires_at` | `TIMESTAMPTZ` (6.3) | Same defect as 3.3 | **Fixed** | Same fix. Verified via `psql \d refresh_tokens`: `timestamp with time zone`. |
 | 3.5 | Primary keys, all models | UUID, generated in Python (6.4) | Compliant | — | Unchanged. |
-| 3.6 | `datetime.utcnow()` / shared time helper | `app/core/time.py::utcnow()` (6.3) | `app/core/time.py` still doesn't exist; direct `datetime.now(timezone.utc)` calls remain, now in more places (repository lockout/rotation code) | **Later (WP-02)** | Every new direct call is commented `# app/core/time.py::utcnow() doesn't exist yet (WP-02)` so the eventual swap is a grep-and-replace, not a rediscovery. |
+| 3.6 | `datetime.utcnow()` / shared time helper | `app/core/time.py::utcnow()` (6.3) | Was: direct `datetime.now(timezone.utc)` calls in `security.py`, `service.py`, `repository.py` | **Closed in WP-02.** | `app/core/time.py::utcnow()` created. Every direct call site swapped to import and use it. `grep -rn "datetime.now(timezone.utc)" app/` → no hits outside `app/core/time.py` itself. |
 | 3.7 | `app/modules/identity/models.py` — `Company` | Spec's `companies` table (7.2), column for column | Was: wrong types (`code` 50 chars, `country` free text defaulting to `"India"`, `currency` 10 chars), missing `rejected` status, no `lower(email)` uniqueness, missing `gst_number`…`last_employee_seq`, missing `approved_by` | **Fixed** | Rewritten column-for-column against 7.2: `code VARCHAR(20)`, `country VARCHAR(2) DEFAULT 'IN'`, `currency VARCHAR(3) DEFAULT 'INR'`, `CompanyStatus` includes `rejected`, functional unique index on `lower(email)` (the plain column-level `UNIQUE` was deliberately *not* also kept — one enforcement mechanism, not two), plus every other column in the spec's table. `approved_by` added via the `use_alter=True` follow-up migration per the 7.2 cycle note (see §7). |
 | 3.8 | `app/modules/identity/models.py` — `User` | `uq_users_company_id_email`, `uq_users_company_id_username`, `last_login_at` | Missing username uniqueness and `last_login_at` | **Fixed** | Both added. Uniqueness on both `email` and `username` is a composite `(company_id, lower(...))` index per the spec amendment resolving spec-gap #1 (see §10). |
 | 3.9 | `app/modules/identity/models.py` — `RefreshToken` | `replaced_by_id`, `revoked_at`, `ip_address` (7.2) | None existed | **Fixed** | All three added. `replaced_by_id` is a self-referential nullable FK to `refresh_tokens.id`. Verified via `psql \d refresh_tokens`. |
@@ -88,11 +88,11 @@ Two defects were found and fixed *during this pass*, not in the original audit �
 | 4.12 | `app/modules/identity/service.py` — `refresh` | Reuse of a revoked token revokes the whole family (9.2 step 4) | Was: impossible — no `replaced_by_id`, and revoked tokens were filtered out of the lookup entirely | **Fixed** | `get_by_hash` no longer filters `is_revoked`; `refresh()` checks `is_revoked` explicitly and, if true, revokes every active token for that user via `get_active_by_user` + `revoke`. Verified live end-to-end: rotated token A → B; replaying A returns 401 **and** B (not just A) is now `is_revoked = true` in the database; a subsequent refresh attempt with B also returns 401. Audit-log write is still **Later (WP-11)** — no `audit_logs` table exists yet. |
 | 4.13 | `app/modules/identity/models.py` — `RefreshToken` | See 3.9 | See 3.9 | **Fixed** | Same item as 3.9. |
 | 4.14 | `app/core/security.py` | `needs_rehash` / rehash-on-login (9.1) | Function didn't exist | **Fixed (function) / Later (wiring, WP-03)** | `needs_rehash()` now exists on `PasswordHasher`. It is not yet called anywhere in `login()` — transparent rehash-on-successful-login is a small, self-contained addition better done alongside WP-03's fuller auth-hardening pass than bolted on here. |
-| 4.15 | `app/modules/identity/service.py` — `login` | Lockout after 5 failures → `423` (9.4); `DUMMY_HASH` timing defense (9.3) | Neither existed | **Fixed** | Both implemented as part of 5.3's worked example: `failed_attempts` increments per unmatched candidate, `locked_until` is set once `failed_attempts >= MAX_LOGIN_ATTEMPTS`, a locked account gets `423` with the unlock time, and a successful login resets both `failed_attempts` and `locked_until`. **New should-fix introduced by this fix:** `MAX_LOGIN_ATTEMPTS = 5` and `LOCKOUT_MINUTES = 15` are module-level constants in `service.py`, not `settings` fields — `app/core/config.py` isn't in this pass's scope and doesn't have them yet. Move to `settings.MAX_LOGIN_ATTEMPTS`/`settings.LOCKOUT_MINUTES` in WP-02 (both are already named in the spec's `.env.example`, 17.2). |
-| 4.16 | `app/main.py` | CORS: explicit origin list from `settings.CORS_ORIGINS`, explicit method/header allowlist (9.7) | Hardcoded origin, `allow_methods=["*"]`, `allow_headers=["*"]` | **Should-fix (open)** | Not touched in this pass — `config.py` doesn't have `CORS_ORIGINS` yet and adding it is WP-02 scope. Still not a live risk today (single hardcoded dev origin, not a wildcard-with-credentials). |
+| 4.15 | `app/modules/identity/service.py` — `login` | Lockout after 5 failures → `423` (9.4); `DUMMY_HASH` timing defense (9.3); thresholds live in config, not as Python literals (17.2) | Neither lockout nor `DUMMY_HASH` existed; once added (WP-01), `MAX_LOGIN_ATTEMPTS`/`LOCKOUT_MINUTES` were module-level constants in `service.py`, not settings | **Fixed, and closed in WP-02.** | Lockout and `DUMMY_HASH` implemented in WP-01 as part of 5.3's worked example. The residual should-fix from that pass is now closed: `MAX_LOGIN_ATTEMPTS` and `LOCKOUT_MINUTES` moved into `app/core/config.py::Settings` (defaults 5 / 15, matching 17.2's `.env.example`); `service.py` reads `settings.MAX_LOGIN_ATTEMPTS`/`settings.LOCKOUT_MINUTES`, no local constants remain. |
+| 4.16 | `app/main.py` | CORS: explicit origin list from `settings.CORS_ORIGINS`, explicit method/header allowlist including `X-Requested-With` (9.7) | Was: hardcoded origin, `allow_methods=["*"]`, `allow_headers=["*"]` | **Closed in WP-02.** | `settings.CORS_ORIGINS` (default `["http://localhost:5173"]`, JSON-array env var). `allow_methods` is the explicit `["GET","POST","PUT","PATCH","DELETE","OPTIONS"]` list from 9.7; `allow_headers` is `["Authorization","Content-Type","Idempotency-Key","X-Request-ID","X-Requested-With"]`. No wildcards anywhere. |
 | 4.17 | `app/main.py` | Rate limiting, security headers, request-ID middleware (9.5, 9.8, 16.2) | None present | **Later (WP-02/WP-04)** | Unchanged. |
 | 4.18 | `.env`, git history | Never committed, no defaulted secret | Compliant | — | Unchanged. |
-| 4.19 | `alembic.ini` | No casually-committed credential (spirit of 9.10) | Plaintext local DB URL committed | **Should-fix (open)** | Not touched — fixing this properly means `alembic/env.py` reading `ALEMBIC_DATABASE_URL` from settings/environment, which is WP-02's role-split work. Low real risk (local Docker Compose password only). |
+| 4.19 | `alembic.ini` | No casually-committed credential (spirit of 9.10) | Was: plaintext local DB URL committed (`sqlalchemy.url = postgresql://ems_user:ems_pass@...`) | **Closed in WP-02.** | `alembic.ini`'s `sqlalchemy.url` is now blank with a comment explaining why. `alembic/env.py` overrides it at runtime with `config.set_main_option("sqlalchemy.url", settings.ALEMBIC_DATABASE_URL)`, read from the environment like every other setting. Verified: `alembic current`/`alembic upgrade head` both connect correctly using only the exported `ALEMBIC_DATABASE_URL`, with no credential in the tracked `.ini` file. |
 | 4.20 | `app/modules/identity/models.py` — `Company`/`User` relationships | N/A — not a spec item, a bug introduced and caught during this pass | Adding `Company.approved_by` (FK to `users.id`) created a **second** FK path between `companies` and `users` alongside `users.company_id`. SQLAlchemy's `relationship()` on both sides then can't auto-resolve which FK to join on and refuses to configure the ORM mappers at all. | **Fixed** | Caught by the end-to-end smoke test (`app.main` imported fine — the error only surfaces when a query actually touches both mappers — a live `POST /register` call raised `sqlalchemy.exc.InvalidRequestError`). Both `Company.users` and `User.company` now pass `foreign_keys=` explicitly, pinned to `User.company_id`. Re-verified: full register → login → refresh flow now runs clean with no server-side errors. |
 | 4.21 | `app/modules/identity/service.py` — `register_company` | N/A — a bug introduced and caught during this pass | After `UserRepository.get_by_email` was renamed to `find_by_email` (returning a list, §4.2/4.3), `register_company`'s duplicate-admin-email check still called the old name and raised `AttributeError` on every request. | **Fixed** | Caught by the same smoke test. Updated to call `find_by_email` and check for a nonempty list. The check's *business meaning* is unchanged and still carried forward to WP-05 per §2.6 — this fix only keeps the existing (deferred-as-is) behavior from crashing. |
 
@@ -119,7 +119,7 @@ Two defects were found and fixed *during this pass*, not in the original audit �
 | 6.1 | One error envelope vs. `{"detail": ...}` | Unchanged — still FastAPI's default shape. Tracked with §2.2 (WP-02). |
 | 6.2 | `os.getenv` outside `config.py` | Still none. Compliant. |
 | 6.3 | `print()` instead of a logger | Still none. Compliant. |
-| 6.4 | Structured JSON logging | Still doesn't exist. **Later (WP-02)**. |
+| 6.4 | Structured JSON logging | **Closed in WP-02.** `app/core/logging.py::configure_logging()` — JSON to stdout, `request_id` merged into every log line automatically via a contextvar set by `RequestIDMiddleware` (16.2), `LOG_LEVEL` from settings. Verified live: a raised `NotFoundError` produced `{"timestamp":...,"level":"WARNING","logger":"app","message":"Employee not found.","request_id":"demo-request-id-42","code":"not_found","status_code":404}` on stdout, with the same `request_id` in the response header. |
 
 ---
 
@@ -140,20 +140,21 @@ Two defects were found and fixed *during this pass*, not in the original audit �
 
 ---
 
-## 9. Everything correctly not built yet ("Later") — updated
+## 9. Everything correctly not built yet ("Later") — updated after WP-02
 
-- `pyproject.toml`, ruff config, mypy config (WP-02)
-- `app/db/seed/bootstrap_roles.sql`, the `ems_owner`/`ems_app` role split, `ALTER DEFAULT PRIVILEGES` (WP-02, 8.2)
-- `app/core/time.py`, `exceptions.py`, `dependencies.py`, `pagination.py`, `rate_limit.py`, `middleware.py`, `logging.py`, `encryption.py` (WP-02/03/04/08)
-- `app/db/rls.py`, `TenantBase` usage on a real table, `company_settings`, `tests/isolation/` (WP-04)
+Delivered by WP-02, removed from this list: `pyproject.toml`/ruff/mypy config, `bootstrap_roles.sql` and the `ems_owner`/`ems_app` role split, `app/core/time.py`/`exceptions.py`/`logging.py`/`middleware.py`, `CORS_ORIGINS`/lockout settings/security headers, `docker-compose.yml`'s Postgres+Redis definition, `.github/workflows/ci.yml`, `.env.example`, the `.gitignore` fix (see §12–§14 for detail).
+
+Still correctly deferred:
+
+- `app/core/dependencies.py` (`get_current_user`, `require_role`), `app/core/pagination.py`, `app/core/rate_limit.py`, `app/core/encryption.py` (WP-03/04/08)
+- `app/db/rls.py`, `TenantBase` usage on a real table, `company_settings`, `tests/isolation/`, rate limiting on `/auth/login` (WP-04)
 - `app/workers/celery_app.py`, `app/workers/tasks/` (WP-09)
-- `Dockerfile`, `README.md` content, `docker-compose.yml`'s two-role setup (WP-02, WP-15)
+- `Dockerfile` content, `README.md` content (WP-02's `Dockerfile` deliverable was not part of this pass's explicit scope — see §12; WP-15 for `README.md`)
 - `frontend/` contents beyond the empty `src/` scaffold (WP-12)
 - Company approval workflow (`pending` → `active`), `company_settings`/department/leave-type seeding, industry presets, HR-admin creation at approval rather than registration (WP-05 — see §2.6)
-- `MAX_LOGIN_ATTEMPTS`/`LOCKOUT_MINUTES` moving from `service.py` constants to `settings` (WP-02 — new, §4.15)
-- Rehash-on-login wiring for `needs_rehash` (WP-03 — the function itself now exists, §4.14)
-- CORS from settings, security headers, rate limiting, request-ID middleware (WP-02/04)
-- Sentry wiring (WP-02 per 16.3)
+- Rehash-on-login wiring for `needs_rehash` (WP-03 — the function itself exists since WP-01, §4.14)
+- Actual Sentry SDK initialization (WP-02 added the `SENTRY_DSN` setting per explicit instruction; wiring `sentry_sdk.init(...)` itself was not part of this pass's scope and is not yet done, despite 16.3 suggesting Phase 0)
+- `tests/unit/`, `tests/integration/` real coverage — WP-02 added exactly the trivial/foundation-proving tests its own gate needs (`test_time.py`, `test_exceptions.py`, `test_exception_handlers.py`); feature test suites land with WP-03 onward per 15.5
 
 ---
 
@@ -172,15 +173,82 @@ Per Section 19: *the audit report exists; every item is fixed or assigned; `alem
 | Gate condition | Status |
 |---|---|
 | `docs/RECONCILIATION.md` exists | **Done** |
-| Every item fixed or assigned to a WP | **Done** — 14 blocking items fixed (§1–§4), 2 should-fix items remain intentionally open and are not blocking (§4.16, §4.19), everything else is assigned a work package by name |
+| Every item fixed or assigned to a WP | **Done** — 14 blocking items fixed (§1–§4), 2 should-fix items open at the time and intentionally not blocking (§4.16, §4.19 — both since closed in WP-02, see §12), everything else is assigned a work package by name |
 | `alembic upgrade head` runs clean on an empty database, creating real tables | **Done — verified.** See §7.1. |
 | App starts, `/health` returns 200 | **Done — verified.** `import app.main` succeeds; live server: `GET /health` → `200 {"status":"ok","environment":"development"}`. |
 
-**WP-01 gate passes.** Not proceeding to WP-02 per instruction.
+**WP-01 gate passed.** WP-02 followed; see below.
 
 ---
 
-## How this was verified
+## 12. WP-02 — Foundation, config, errors, logging, role split
+
+**Governs:** Section 19 WP-02 (as amended — see the `docs(spec)` commit reconciling Section 19 with what WP-01 already delivered).
+
+**Delivered:**
+
+- **Packaging:** `pyproject.toml` (pinned deps, ruff config, pytest config) replacing `requirements.txt` (deleted). `ruff`/`mypy`/`pytest-cov`/`httpx`/`redis` added as dependencies.
+- **`docker-compose.yml`:** rewritten to Postgres 16 + Redis 7 only, with healthchecks. Bootstrap superuser is `postgres` (not `ems_owner` directly) — `bootstrap_roles.sql` is the thing that creates `ems_owner`/`ems_app` against it, per its own header.
+- **`.github/workflows/ci.yml`:** the exact step order from 18.1 (lint → format → mypy → services → migrate as `ems_owner` → bootstrap `ems_app` + grants → pytest as `ems_app`). The Postgres service's `POSTGRES_USER` is `ems_owner` itself, which is CI-specific — see the comment block in the workflow explaining why that ordering does *not* generalize to docker-compose/production (bootstrap-then-migrate there, not migrate-then-bootstrap).
+- **`app/db/seed/bootstrap_roles.sql`:** creates `ems_owner` (CREATEDB, so it can provision `ems_pro_test` and scratch databases) and `ems_app` (`NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`); `ALTER DEFAULT PRIVILEGES` for both tables and sequences; `REASSIGN OWNED BY ems_user TO ems_owner` to migrate WP-01's objects (guarded, no-op where `ems_user` doesn't exist); `\set ON_ERROR_STOP on` so a failed statement aborts the script instead of silently continuing (found the hard way — see §13).
+- **`app/core/config.py`:** every variable in 17.2 — `CORS_ORIGINS`, `MAX_LOGIN_ATTEMPTS`, `LOCKOUT_MINUTES`, `ALEMBIC_DATABASE_URL`, `TEST_DATABASE_URL`, `TEST_MIGRATION_URL`, `REDIS_URL`, `LOG_LEVEL`, `SENTRY_DSN`, and the rest. `ALGORITHM` renamed to `JWT_ALGORITHM` to match the spec's env var name (`security.py` updated to match).
+- **`app/core/time.py`, `exceptions.py`, `logging.py`, `middleware.py`:** built as specified — see the closed rows in §2, §3, §6 above for exactly what each replaced.
+- **`app/db/session.py`:** pool size/overflow/echo now read from `settings` instead of being hardcoded.
+- **`app/main.py`:** exception handlers registered; `RequestIDMiddleware` and `SecurityHeadersMiddleware` wired (CORS outermost, matching 5.1's request lifecycle diagram); `configure_logging()` called at startup; `/health` now genuinely checks PostgreSQL (`SELECT 1`) and Redis (`PING`), returning `200` only when both succeed and `503` with a per-dependency breakdown otherwise — never a hardcoded `"ok"`.
+- **`.env.example`:** written in full, matching 17.2. **`.gitignore`:** fixed a real bug found while writing it — the existing `.env.*` pattern silently excluded `.env.example` from ever being committed; now has an explicit `!.env.example` negation. Also added the standard tooling-cache/frontend-build entries that were missing.
+- **`alembic/env.py`:** now sets `config.set_main_option("sqlalchemy.url", settings.ALEMBIC_DATABASE_URL)`, so `alembic.ini` carries no credential (closes §4.19). Import order fixed to resolve a real `ruff` E402 finding along the way.
+- **`docs/EMS_PRO_DEV_SPEC.md`:** three amendments (spec gap #3 resolved by naming `get_by_id_for_token_refresh` as a fourth pre-auth lookup; the `Company`/`User` `foreign_keys=` note added to the migration-ordering paragraph; WP-02/WP-03 Deliver lines rewritten to match what WP-01 actually shipped) — committed separately as `docs(spec): reconcile Section 19 with WP-01 delivery`, before any WP-02 code.
+- **Reconciliation items closed:** 2.2, 3.6, 4.15 (residual constants), 4.16, 4.19, 6.4 — see their rows above, now marked accordingly.
+
+**Not delivered in this pass** (see §9 for the full updated "Later" list): `app/core/dependencies.py`, `pagination.py`, `rate_limit.py`, `encryption.py`; `Dockerfile` content; actual `sentry_sdk.init(...)` wiring (only the `SENTRY_DSN` setting was added, per the explicit instruction list); rate limiting itself (still WP-04, per the original spec).
+
+---
+
+## 13. WP-02 verification — actual output
+
+Every check below was run for real, most against the local dev database and a locally started `uvicorn`. **Docker itself is not available in this sandbox** — there is no `docker`/`docker-compose` binary — so `docker compose up -d` could not be executed literally. `docker-compose.yml` was validated for YAML correctness instead, and every check that would normally run against its containers was run against the equivalent native Homebrew Postgres 16 / Redis 7 services already present in this environment, which is as close a substitute as exists here. This is a real gap between "verified in this session" and "verified via the actual `docker compose up -d` command" — worth re-running once on a machine with Docker before this gate is fully closed end to end.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `docker compose up -d`, Postgres + Redis reachable | **Docker unavailable in this sandbox (see above).** `docker-compose.yml` parsed as valid YAML. Substitute: `pg_isready` → `accepting connections`; `redis-cli ping` → `PONG` (native services). |
+| 2 | `psql` as `ems_app`: SELECT and INSERT on `companies` | **Pass.** `SELECT count(*)` → `0`; `INSERT ... RETURNING name, code` → succeeded, row visible, cleaned up after. |
+| 3 | Scratch table created as `ems_owner` via a real Alembic migration; `ems_app` reads/writes it with no manual grant | **Pass.** Generated `alembic revision`, hand-wrote `op.create_table("scratch_default_privileges_check", ...)`, ran `alembic upgrade head` as `ems_owner`. `ems_app` immediately `INSERT`ed and `SELECT`ed the row with zero grants issued in between — this is the actual proof `ALTER DEFAULT PRIVILEGES` took, not just the one-time `GRANT`. Cleaned up via a direct `DROP TABLE` (as `ems_owner`) plus `alembic stamp` back to the prior head — **not** `alembic downgrade`, which is banned. |
+| 4 | `ems_app` is not the owner of `companies` | **Pass.** `psql` connected as `ems_app`, `\dt companies` → `Owner: ems_owner`. |
+| 5 | A route raising `NotFoundError` returns the exact 6.6 envelope, with `request_id` in the response header **and** the log line | **Pass — after fixing a real bug.** First attempt raised `KeyError: "Attempt to overwrite 'message' in LogRecord"` — Python's stdlib `logging` reserves the `message` attribute name, and the handler was passing it inside `extra={...}`. Fixed by making `exc.message` the log call's own message argument instead of an `extra` field. Re-verified: HTTP response `404`, `X-Request-ID: demo-request-id-42`, body matching the envelope exactly; stdout log line `{"...,"level":"WARNING","message":"Employee not found.","request_id":"demo-request-id-42","code":"not_found","status_code":404}` — same `request_id` in both places. |
+| 6 | Unset `SECRET_KEY` → app refuses to start | **Pass.** Run from `/tmp` (so the real `.env` isn't discovered) with `SECRET_KEY` explicitly unset via `env -u`: `Settings()` raises `pydantic_core.ValidationError: SECRET_KEY / Field required`, exit code 1. `.env` itself was never read or modified. |
+| 7 | `GET /health` with Redis stopped → reports Redis down, not a blind `200` | **Pass.** Baseline: `200 {"status":"ok",...,"checks":{"database":"ok","redis":"ok"}}`. After `brew services stop redis`: `503 {"status":"unavailable",...,"checks":{"database":"ok","redis":"error: Error 61 connecting to localhost:6379. Connection refused."}}`. Redis restarted immediately after (`brew services start redis` → `PONG`). |
+| 8 | `grep -rn "datetime.now(timezone.utc)" app/` → no hits outside `app/core/time.py` | **Pass.** Zero matches elsewhere. |
+| 9 | `grep -rn "HTTPException" app/modules/` → no hits | **Pass.** Zero matches. |
+| 10 | `ruff check . && ruff format --check .` | **Pass, after real fixes.** Initial run found 16 lint errors (mostly Alembic's own generated-code style, plus a genuine `E402` in the hand-edited `alembic/env.py`) and `ruff format` reaching into fenced ```python blocks inside `docs/EMS_PRO_DEV_SPEC.md`. Fixed: `env.py`'s import order; `pyproject.toml` excludes `alembic/versions` (generated code, never linted — matches the project's own `.claude/settings.json` convention of only auto-formatting `app/`/`tests/`) and `docs` (markdown, not executable code); `UP042`/`B008` deliberately ignored (they'd fight Spec 7.1's `str, enum.Enum` convention and FastAPI's own `Depends(...)` default-argument idiom, respectively). Final: `All checks passed!` / `35 files already formatted`. |
+| 11 | CI green | **Not run via actual GitHub Actions** (no push/PR triggered one). Simulated locally instead, step by step, against a freshly created `ems_pro_test` database: lint ✓, format ✓, mypy ✓ (0 issues after a one-line `# type: ignore[call-arg]` for the well-known pydantic-settings/mypy false positive on required-field constructors), migrate as `ems_owner` ✓, bootstrap `ems_app` + grants ✓, `pytest -v --cov=app` ✓ (5 passed). **One real bug found and fixed in the process:** running migrate-then-bootstrap (CI's literal order) against a database *not* owned by `ems_owner` from creation fails with `permission dended for schema public` — `ems_owner` needs `bootstrap_roles.sql`'s `GRANT CREATE ON SCHEMA public` first. This is fine for CI itself (its `ems_owner` owns the database from container init — see §12's `ci.yml` note) but exposed that `bootstrap_roles.sql` needed `ON_ERROR_STOP` so a failure like this can never be silently swallowed by a downstream script; added and re-verified (the same failing case now aborts with a nonzero exit instead of continuing). |
+
+mypy (advisory): `Success: no issues found in 26 source files.`
+
+pytest (with coverage): `5 passed` — `test_time.py`, `test_exceptions.py` (2 tests), `test_exception_handlers.py` (2 tests, covering the NotFoundError-envelope check above as a permanent regression test, not just a one-off script).
+
+---
+
+## 14. WP-02 exit gate — current status
+
+Per Section 19: *`docker compose up` gives a reachable database and Redis; `/health` reports both dependencies honestly; a deliberately raised `NotFoundError` returns the exact error envelope from 6.6 including a `request_id`; the app refuses to start when `SECRET_KEY` is unset; `alembic upgrade head` succeeds against a completely empty database; connecting as `ems_app` can read and write the `companies` table (proving the default-privileges grant works, not just the one-time grant); CI is green.*
+
+| Gate condition | Status |
+|---|---|
+| `docker compose up` reachable DB + Redis | **Substitute-verified** (native services; Docker unavailable in this sandbox — see §13 row 1). `docker-compose.yml` itself is written and YAML-valid but has not been run for real. |
+| `/health` reports both dependencies honestly | **Done — verified**, including the honest-failure case (Redis stopped → `503`, not `200`). See §13 row 7. |
+| `NotFoundError` → exact 6.6 envelope, `request_id` in header and log line | **Done — verified**, after fixing a real logging bug. See §13 row 5. |
+| App refuses to start without `SECRET_KEY` | **Done — verified.** See §13 row 6. |
+| `alembic upgrade head` succeeds against a completely empty database | **Done — verified**, twice: once by fully clearing `ems_pro`, once against a freshly created `ems_pro_test`. See §13 rows 3 and 11. |
+| `ems_app` can read/write `companies`, proving `ALTER DEFAULT PRIVILEGES` | **Done — verified**, both directly on `companies` and via a scratch table created after the grant, which is the stronger proof. See §13 rows 2–3. |
+| CI is green | **Simulated, not run via actual GitHub Actions** — see §13 row 11's caveat. |
+
+**WP-02 gate substantially passes**, with two honest caveats explicitly flagged rather than glossed over: (1) `docker compose up -d` itself was never executed, only its equivalent; (2) CI was simulated locally step-by-step, not confirmed green by GitHub Actions itself. Both are environment limitations of this sandbox, not known defects in the deliverables — but re-running both for real on a machine with Docker and a GitHub remote is the honest next step before treating this gate as unconditionally closed.
+
+Not proceeding to WP-03 per instruction.
+
+---
+
+## How WP-01 was verified
 
 Everything below was run against the local dev database and a locally started `uvicorn` instance; no destructive action was taken against anything outside this repo's own dev DB and no code outside the files listed in this report's fix rows was modified:
 

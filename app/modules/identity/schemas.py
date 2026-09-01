@@ -1,9 +1,11 @@
 import uuid
+
 from pydantic import BaseModel, EmailStr
-from app.modules.identity.models import UserRole, CompanyStatus
+
+from app.modules.identity.models import CompanyStatus, UserRole
 
 
-# Company 
+# Company
 class CompanyRegisterRequest(BaseModel):
     company_name: str
     company_email: EmailStr

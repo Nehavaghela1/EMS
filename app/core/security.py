@@ -1,13 +1,14 @@
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 from app.core.config import settings
+from app.core.time import utcnow
 
 # 64 MiB memory cost, per Spec 9.1 — memory-hard, GPU-resistant.
 _hasher = PasswordHasher(memory_cost=65536, time_cost=3, parallelism=4)
@@ -38,7 +39,7 @@ def needs_rehash(hashed: str) -> bool:
 
 
 def create_access_token(*, sub: str, company_id: str, role: str) -> str:
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     payload = {
         "sub": sub,
         "company_id": company_id,
@@ -48,13 +49,13 @@ def create_access_token(*, sub: str, company_id: str, role: str) -> str:
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         "jti": str(uuid.uuid4()),
     }
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
 def decode_access_token(token: str) -> dict:
     # Algorithm is explicitly listed, never taken from the token header (9.2) —
     # that is the algorithm-confusion attack.
-    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
     if payload.get("type") != "access":
         # A refresh token must never be usable as an access token (9.2).
         raise jwt.InvalidTokenError("Not an access token.")

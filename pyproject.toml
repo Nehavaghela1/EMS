@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ems-pro"
+version = "0.1.0"
+description = "EMS Pro — Multi-Tenant HRMS + Payroll + Projects SaaS"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
+    "sqlalchemy==2.0.52",
+    "alembic==1.19.1",
+    "psycopg2-binary==2.9.12",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.15.0",
+    "email-validator==2.3.0",
+    "python-dotenv==1.2.3",
+    "argon2-cffi==25.1.0",
+    "pyjwt==2.13.0",
+    "redis==8.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "httpx==0.28.1",
+    "ruff==0.16.5",
+    "mypy==2.3.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Alembic-generated migrations use Alembic's own formatting, not ours — the
+# project's own PostToolUse hook (Spec 18.4) only ever auto-formats app/ and
+# tests/, never alembic/, for the same reason. env.py and script.py.mako are
+# hand-maintained and stay linted normally. docs/ is excluded because ruff
+# format reaches into fenced ```python blocks inside markdown — the spec's
+# worked examples are documentation, not code this project executes.
+extend-exclude = ["alembic/versions", "docs"]
+
+[tool.ruff.lint]
+# Errors, pyflakes, isort, bugbear, and the modern-typing rule that catches
+# Optional[X]/List[X] instead of X | None / list[X] (Spec 6.2).
+select = ["E", "F", "I", "B", "UP"]
+ignore = [
+    "UP042",  # Spec 7.1 mandates `class X(str, enum.Enum)`, not enum.StrEnum
+    "B008",   # Depends(...) as a default arg is correct FastAPI usage (Spec 5.3)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.12"
+# Advisory, not blocking (Spec 3.1) — do not let it block progress early on.
+warn_return_any = false
+ignore_missing_imports = true

@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  # The Postgres service's POSTGRES_USER is ems_owner itself, and
+  # POSTGRES_DB is set alongside it — the official postgres image makes
+  # POSTGRES_USER a real superuser AND the owner of POSTGRES_DB at
+  # container init. That's the only reason step 7 (migrate) can run before
+  # step 8 (bootstrap ems_app): ems_owner already owns this database and
+  # its public schema, with no bootstrap step required first.
+  #
+  # This is CI-specific and does NOT generalize to docker-compose or a
+  # fresh production database, where ems_owner is an ordinary role created
+  # BY bootstrap_roles.sql and has no schema privileges until that script's
+  # `GRANT CREATE, USAGE ON SCHEMA public TO ems_owner` runs — there,
+  # bootstrap_roles.sql must run BEFORE the first `alembic upgrade head`
+  # (Appendix A's quick-start order, and Spec 8.2). Verified the hard way
+  # during WP-02: running them in CI's order against a plain
+  # superuser-created database fails with "permission denied for schema
+  # public" until bootstrap_roles.sql grants ems_owner CREATE on it.
+  # ems_owner's password comes from the Postgres service container's own
+  # POSTGRES_PASSWORD below (it already exists as the container's bootstrap
+  # superuser). ems_app doesn't exist until step 8 creates it, hardcoded in
+  # app/db/seed/bootstrap_roles.sql as ems_app_dev_only — this must match
+  # that file's literal value, not an independently-chosen CI secret.
+  PGHOST: localhost
+  PGPORT: 5432
+  PGUSER: ems_owner
+  PGPASSWORD: ci_ems_owner_only
+  PGDATABASE: ems_pro_test
+  ALEMBIC_DATABASE_URL: postgresql+psycopg2://ems_owner:ci_ems_owner_only@localhost:5432/ems_pro_test
+  DATABASE_URL: postgresql+psycopg2://ems_app:ems_app_dev_only@localhost:5432/ems_pro_test
+  TEST_DATABASE_URL: postgresql+psycopg2://ems_app:ems_app_dev_only@localhost:5432/ems_pro_test
+  TEST_MIGRATION_URL: postgresql+psycopg2://ems_owner:ci_ems_owner_only@localhost:5432/ems_pro_test
+  REDIS_URL: redis://localhost:6379/0
+  SECRET_KEY: ci_only_secret_key_not_a_real_secret
+  ENVIRONMENT: staging
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ems_owner
+          POSTGRES_PASSWORD: ci_ems_owner_only
+          POSTGRES_DB: ems_pro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ems_owner -d ems_pro_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      # 1. Checkout, set up Python 3.12
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # 2. Install dependencies (cached)
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      # 3. Lint
+      - name: ruff check
+        run: ruff check .
+
+      # 4. Formatting
+      - name: ruff format --check
+        run: ruff format --check .
+
+      # 5. Type check (advisory — allowed to fail early on, tightened later)
+      - name: mypy
+        run: mypy app/ || true
+
+      # 6. Postgres + Redis are already up as service containers above.
+      - name: Wait for Postgres and Redis
+        run: |
+          pg_isready -h localhost -p 5432 -U ems_owner -d ems_pro_test
+          redis-cli -h localhost ping
+
+      # 7. Migrations as ems_owner — proves they apply from scratch, every time.
+      - name: alembic upgrade head
+        run: alembic upgrade head
+
+      # 8. Create ems_app and apply grants.
+      - name: Bootstrap ems_app role and grants
+        run: psql -h localhost -U ems_owner -d ems_pro_test -f app/db/seed/bootstrap_roles.sql
+        env:
+          PGPASSWORD: ci_ems_owner_only
+
+      # 9. Tests as ems_app, so RLS is genuinely exercised once it exists (WP-04+).
+      - name: pytest
+        run: pytest -v --cov=app --cov-report=term-missing
+
+      # 10. Frontend — arrives with WP-12; steps added there, not before.

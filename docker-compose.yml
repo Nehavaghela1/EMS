@@ -3,19 +3,33 @@ services:
     image: postgres:16
     restart: always
     environment:
-      POSTGRES_USER: ems_user
-      POSTGRES_PASSWORD: ems_pass
-      POSTGRES_DB: ems_db
+      # Bootstrap-only superuser — creates the database, then app/db/seed/
+      # bootstrap_roles.sql (run once, by a human, against this superuser)
+      # creates ems_owner and ems_app (Spec 8.2). The API and Alembic never
+      # connect as this role.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_dev_only
+      POSTGRES_DB: ems_pro
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ems_pro"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7
     restart: always
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   pgdata:

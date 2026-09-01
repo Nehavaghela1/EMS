@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -44,9 +44,7 @@ def login(
     response: Response,
     db: Session = Depends(get_db),
 ):
-    result, raw_refresh = AuthService(db).login(
-        data, device_info=request.headers.get("user-agent")
-    )
+    result, raw_refresh = AuthService(db).login(data, device_info=request.headers.get("user-agent"))
     _set_refresh_cookie(response, raw_refresh)  # httpOnly cookie — never in the JSON body (9.2)
     return result
 
@@ -57,13 +55,10 @@ def refresh_token(
     response: Response,
     db: Session = Depends(get_db),
 ):
-    raw_refresh = request.cookies.get(REFRESH_COOKIE_NAME)
-    if not raw_refresh:
-        # TODO(WP-02): AppError (UnauthorizedError)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No refresh token provided.",
-        )
+    # An empty/missing cookie fails the same lookup a forged one would (no
+    # matching token_hash), so the service's usual "invalid or expired" path
+    # handles it — no separate branch needed here.
+    raw_refresh = request.cookies.get(REFRESH_COOKIE_NAME, "")
     result, new_raw_refresh = AuthService(db).refresh(raw_refresh)
     _set_refresh_cookie(response, new_raw_refresh)
     return result

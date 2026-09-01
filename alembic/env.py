@@ -1,18 +1,10 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
-config = context.config
-
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+from app.core.config import settings
+from app.db.base import Base
 
 # add your model's MetaData object here
 # for 'autogenerate' support
@@ -24,10 +16,24 @@ if config.config_file_name is not None:
 # Base.metadata as a side effect of its model class being imported somewhere.
 # Without this, autogenerate silently sees an empty schema and emits empty
 # migrations (Spec 20.2 — this was WP-01 finding 7.1).
-from app.db.base import Base
-from app.modules.identity import models as identity_models  # noqa: F401
+from app.modules.identity import models as identity_models  # noqa: E402, F401
+
+# this is the Alembic Config object, which provides
+# access to the values within the .ini file in use.
+config = context.config
+
+# Interpret the config file for Python logging.
+# This line sets up loggers basically.
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+
+# The migration role (ems_owner), never the alembic.ini placeholder — Alembic
+# runs as the schema owner, the API runs as ems_app (Spec 8.2). Overriding
+# here means alembic.ini itself never needs to carry a real connection
+# string or credential.
+config.set_main_option("sqlalchemy.url", settings.ALEMBIC_DATABASE_URL)
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -73,9 +79,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

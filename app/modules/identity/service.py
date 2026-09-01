@@ -1,10 +1,10 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
-from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.exceptions import AppError, ConflictError, UnauthorizedError
 from app.core.security import (
     DUMMY_HASH,
     create_access_token,
@@ -13,6 +13,7 @@ from app.core.security import (
     hash_token,
     verify_password,
 )
+from app.core.time import utcnow
 from app.modules.identity.models import CompanyStatus, UserRole
 from app.modules.identity.repository import (
     CompanyRepository,
@@ -25,10 +26,48 @@ from app.modules.identity.schemas import (
     TokenResponse,
 )
 
-# Spec 9.4 defaults. Not yet in app/core/config.py (that buildout is WP-02) — move
-# these to settings.MAX_LOGIN_ATTEMPTS / settings.LOCKOUT_MINUTES when it lands.
-MAX_LOGIN_ATTEMPTS = 5
-LOCKOUT_MINUTES = 15
+INVALID_CREDENTIALS_MESSAGE = "Invalid email or password."
+INVALID_REFRESH_TOKEN_MESSAGE = "Invalid or expired refresh token."
+
+
+class InvalidCredentialsError(UnauthorizedError):
+    """Deliberately generic — wrong email and wrong password look identical
+    to the caller (9.3)."""
+
+    def __init__(self) -> None:
+        super().__init__(INVALID_CREDENTIALS_MESSAGE)
+
+
+class CompanyRequiredError(ConflictError):
+    """The email matched more than one company; the client must resubmit
+    with `company_code` (7.2's design note, 9.2 route 1)."""
+
+    code = "company_required"
+
+    def __init__(self, companies: list[str]) -> None:
+        super().__init__(
+            "This email is registered at more than one company.",
+            details={"companies": companies},
+        )
+
+
+class AccountLockedError(AppError):
+    status_code = 423
+    code = "account_locked"
+
+    def __init__(self, until: datetime) -> None:
+        super().__init__(
+            f"Account is locked until {until.isoformat()}.",
+            details={"locked_until": until.isoformat()},
+        )
+
+
+class AccountInactiveError(AppError):
+    status_code = 403
+    code = "account_inactive"
+
+    def __init__(self) -> None:
+        super().__init__("Account is not active.")
 
 
 def _generate_company_code(name: str) -> str:
@@ -46,11 +85,7 @@ class AuthService:
 
     def register_company(self, data: CompanyRegisterRequest):
         if self.company_repo.get_by_email(data.company_email):
-            # TODO(WP-02): AppError (ConflictError)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A company with this email already exists.",
-            )
+            raise ConflictError("A company with this email already exists.")
         # NOTE(WP-05): this whole registration flow — creating an active
         # hr_admin user directly at registration, and checking admin_email for
         # a duplicate before any company exists to scope it to — is carried
@@ -59,11 +94,7 @@ class AuthService:
         # design (7.2); a nonempty result here does not necessarily mean a real
         # conflict once WP-05 builds the real pending -> approved workflow.
         if self.user_repo.find_by_email(data.admin_email):
-            # TODO(WP-02): AppError (ConflictError)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A user with this email already exists.",
-            )
+            raise ConflictError("A user with this email already exists.")
         company = self.company_repo.create(
             name=data.company_name,
             code=_generate_company_code(data.company_name),
@@ -82,7 +113,9 @@ class AuthService:
         self.db.commit()
         return company
 
-    def login(self, payload: LoginRequest, device_info: str | None = None) -> tuple[TokenResponse, str]:
+    def login(
+        self, payload: LoginRequest, device_info: str | None = None
+    ) -> tuple[TokenResponse, str]:
         """Spec 5.3's worked example, in full: cross-company lookup, constant-time
         failure on no match, generic message on wrong password, 409 disambiguation
         on more than one match, lockout and active checks only after a proven
@@ -102,46 +135,24 @@ class AuthService:
         if not matched:
             for u in candidates:
                 self.user_repo.increment_failed_attempts(u)
-                if u.failed_attempts >= MAX_LOGIN_ATTEMPTS:
-                    self.user_repo.lock(
-                        u, datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
-                    )
+                if u.failed_attempts >= settings.MAX_LOGIN_ATTEMPTS:
+                    self.user_repo.lock(u, utcnow() + timedelta(minutes=settings.LOCKOUT_MINUTES))
             self.db.commit()
-            # TODO(WP-02): AppError (UnauthorizedError) — deliberately generic (9.3)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password.",
-            )
+            raise InvalidCredentialsError()
 
         if len(matched) > 1:
             # Same email AND same password at two companies. Only someone who
             # already proved the password reaches this branch, so the company
             # names leak nothing.
-            # TODO(WP-02): AppError (ConflictError with code="company_required")
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "company_required",
-                    "message": "This email is registered at more than one company.",
-                    "companies": [u.company.name for u in matched],
-                },
-            )
+            raise CompanyRequiredError(companies=[u.company.name for u in matched])
 
         user = matched[0]
 
         # Both checks come after a proven password, for the same reason (9.3).
-        if user.locked_until and user.locked_until > datetime.now(timezone.utc):
-            # TODO(WP-02): AppError (AccountLockedError) — 423, not 401 (9.4)
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail=f"Account is locked until {user.locked_until.isoformat()}.",
-            )
+        if user.locked_until and user.locked_until > utcnow():
+            raise AccountLockedError(until=user.locked_until)
         if not user.is_active:
-            # TODO(WP-02): AppError (AccountInactiveError)
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is not active.",
-            )
+            raise AccountInactiveError()
 
         self.user_repo.reset_failed_attempts(user)
         access_token = create_access_token(
@@ -151,7 +162,7 @@ class AuthService:
         self.token_repo.create(
             user_id=user.id,
             token_hash=hash_token(raw_refresh),
-            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+            expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
             device_info=device_info,
         )
         self.db.commit()
@@ -164,11 +175,7 @@ class AuthService:
         """
         token_record = self.token_repo.get_by_hash(hash_token(raw_token))
         if not token_record:
-            # TODO(WP-02): AppError (UnauthorizedError)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired refresh token.",
-            )
+            raise UnauthorizedError(INVALID_REFRESH_TOKEN_MESSAGE)
 
         if token_record.is_revoked:
             # Reuse of an already-rotated token means the token was stolen (9.2
@@ -177,26 +184,14 @@ class AuthService:
                 self.token_repo.revoke(active)
             self.db.commit()
             # TODO(WP-11): write an audit_logs entry once the table exists.
-            # TODO(WP-02): AppError (UnauthorizedError)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired refresh token.",
-            )
+            raise UnauthorizedError(INVALID_REFRESH_TOKEN_MESSAGE)
 
-        if token_record.expires_at <= datetime.now(timezone.utc):
-            # TODO(WP-02): AppError (UnauthorizedError)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired refresh token.",
-            )
+        if token_record.expires_at <= utcnow():
+            raise UnauthorizedError(INVALID_REFRESH_TOKEN_MESSAGE)
 
         user = self.user_repo.get_by_id_for_token_refresh(token_record.user_id)
         if user is None or not user.is_active:
-            # TODO(WP-02): AppError (UnauthorizedError)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired refresh token.",
-            )
+            raise UnauthorizedError(INVALID_REFRESH_TOKEN_MESSAGE)
 
         access_token = create_access_token(
             sub=str(user.id), company_id=str(user.company_id), role=user.role.value
@@ -205,7 +200,7 @@ class AuthService:
         new_token = self.token_repo.create(
             user_id=user.id,
             token_hash=hash_token(raw_refresh),
-            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+            expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
             device_info=token_record.device_info,
         )
         self.token_repo.revoke(token_record, replaced_by=new_token)
