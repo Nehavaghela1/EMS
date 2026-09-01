@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.db.session import get_db
 from app.modules.identity.schemas import (
     CompanyRegisterRequest,
@@ -38,6 +39,7 @@ def register_company(data: CompanyRegisterRequest, db: Session = Depends(get_db)
 
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit("10/minute")  # Spec 9.5 — blocks credential-stuffing
 def login(
     data: LoginRequest,
     request: Request,

@@ -4,6 +4,7 @@ import uuid
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger("app")
@@ -104,6 +105,24 @@ def register_exception_handlers(app: FastAPI) -> None:
                 "validation_error",
                 "The request body failed validation.",
                 details={"errors": exc.errors()},
+                request_id=request_id,
+            ),
+            headers={"X-Request-ID": request_id},
+        )
+
+    @app.exception_handler(RateLimitExceeded)
+    async def handle_rate_limit_exceeded(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+        request_id = _request_id(request)
+        logger.warning(
+            "rate_limited",
+            extra={"request_id": request_id, "limit": str(exc.limit.limit if exc.limit else None)},
+        )
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content=_envelope(
+                "rate_limited",
+                "Too many requests. Please try again later.",
+                details=None,
                 request_id=request_id,
             ),
             headers={"X-Request-ID": request_id},

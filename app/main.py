@@ -1,12 +1,14 @@
 import redis
 from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestIDMiddleware, SecurityHeadersMiddleware
+from app.core.rate_limit import limiter
 from app.db.session import SessionLocal
 from app.modules.identity.router import router as auth_router
 
@@ -20,12 +22,15 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+app.state.limiter = limiter
+
 # Middleware order matters: add_middleware stacks LIFO, so the LAST one added
 # is OUTERMOST — it sees the request first and the response last. This
 # mirrors the request lifecycle in Spec 5.1: CORS outermost (so a preflight
-# OPTIONS is handled before anything else runs), then request-id/logging.
+# OPTIONS is handled before anything else runs) -> rate limit -> request-id.
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIDMiddleware)
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,  # explicit list from config — never "*" (9.7)

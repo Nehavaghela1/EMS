@@ -49,3 +49,23 @@ class TenantBase(TimeStampedBase):
         nullable=False,
         index=True,
     )
+
+
+def tenant_table_names() -> list[str]:
+    """Every table whose model inherits TenantBase, discovered from the class
+    hierarchy rather than a maintained list — so the isolation suite's
+    parametrized sweep (Spec 8.6) automatically covers a table added later
+    with TenantBase but no RLS policy, with nothing to remember to update.
+    Requires every module's models.py to have been imported first (main.py
+    does this transitively via each module's router).
+    """
+    names: set[str] = set()
+
+    def _walk(cls: type) -> None:
+        for sub in cls.__subclasses__():
+            if "__tablename__" in sub.__dict__:
+                names.add(sub.__tablename__)  # type: ignore[attr-defined]
+            _walk(sub)
+
+    _walk(TenantBase)
+    return sorted(names)

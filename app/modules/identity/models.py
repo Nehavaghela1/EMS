@@ -1,13 +1,26 @@
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, Text, text
-from sqlalchemy.dialects.postgresql import INET
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    SmallInteger,
+    String,
+    Text,
+    text,
+)
+from sqlalchemy.dialects.postgresql import ARRAY, INET
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import TimeStampedBase
+from app.db.base import TenantBase, TimeStampedBase
 
 
 class CompanyStatus(str, enum.Enum):
@@ -146,3 +159,48 @@ class RefreshToken(TimeStampedBase):
     ip_address: Mapped[str | None] = mapped_column(INET, nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="refresh_tokens", foreign_keys=[user_id])
+
+
+class LeaveYearType(str, enum.Enum):
+    calendar = "calendar"
+    financial = "financial"
+
+
+class PayrollWorkingDaysBasis(str, enum.Enum):
+    calendar_days = "calendar_days"
+    working_days = "working_days"
+    fixed_30 = "fixed_30"
+
+
+class CompanySettings(TenantBase):
+    """RLS: Yes — the first RLS-protected table in the system (Spec 7.2, 8.3).
+
+    One row per company. `company_id` is unique (enforced below, on top of
+    the plain FK+index TenantBase already provides).
+    """
+
+    __tablename__ = "company_settings"
+    __table_args__ = (Index("uq_company_settings_company_id", "company_id", unique=True),)
+
+    # The single authority on the working week (Spec 7.2) — ISO weekday
+    # numbers, Mon=1. '{7}' is a six-day week; '{6,7}' is five days.
+    weekend_days: Mapped[list[int]] = mapped_column(
+        ARRAY(SmallInteger), nullable=False, default=lambda: [6, 7]
+    )
+    half_day_hours_threshold: Mapped[Decimal] = mapped_column(
+        Numeric(4, 2), nullable=False, default=Decimal("4")
+    )
+    full_day_hours: Mapped[Decimal] = mapped_column(
+        Numeric(4, 2), nullable=False, default=Decimal("8")
+    )
+    leave_year_type: Mapped[LeaveYearType] = mapped_column(
+        Enum(LeaveYearType, name="leave_year_type"),
+        nullable=False,
+        default=LeaveYearType.financial,
+    )
+    leave_year_start_month: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=4)
+    payroll_working_days_basis: Mapped[PayrollWorkingDaysBasis] = mapped_column(
+        Enum(PayrollWorkingDaysBasis, name="payroll_working_days_basis"),
+        nullable=False,
+        default=PayrollWorkingDaysBasis.working_days,
+    )
