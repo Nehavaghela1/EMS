@@ -3,7 +3,7 @@
 **Governs:** Section 20 of `docs/EMS_PRO_DEV_SPEC.md` (in full). Originally WP-01's output; kept current across later work packages per Section 21's table ("WP-01 output, kept current").
 **Method:** Every file under `app/` and `alembic/` was read in full and compared against the spec section that governs it, using the Section 20.2 checklist. Where the checklist implied a runnable check (does the app start, does `alembic upgrade head` actually create tables, is a package importable), that check was executed against the local dev database — read-only at audit time; the blocking items were then actually applied (this revision of the report) and re-verified the same way. See "How this was verified" at the end.
 
-**Status: WP-01's 14 blocking items are fixed and verified. WP-02 (foundation, config, errors, logging, role split) is delivered and verified — see §12–§14. WP-04 (multi-tenancy, RLS, the isolation suite, rate limiting) is delivered and verified — see §15–§17. WP-03 is deliberately skipped for now (per instruction); not proceeding to WP-05.**
+**Status: WP-01's 14 blocking items are fixed and verified. WP-02 (foundation, config, errors, logging, role split) — §12–§14. WP-04 (multi-tenancy, RLS, the isolation suite, rate limiting) — §15–§17. WP-05 (company registration and approval workflow) — §18–§20. WP-06 (departments) — §21–§22. All delivered and verified. WP-03 is deliberately skipped for now (per instruction); not proceeding to WP-07.**
 
 **Severity key**
 - **Fixed** — was blocking or should-fix; corrected in this pass and re-verified.
@@ -48,7 +48,7 @@ Two defects were found and fixed *during this pass*, not in the original audit �
 | 2.3 | `app/modules/identity/repository.py` | No `HTTPException`, no business decisions | Compliant | — | Unchanged. |
 | 2.4 | `app/modules/identity/router.py` | Router body is 1–3 lines | Compliant | — | Unchanged; still true after the cookie-handling additions (the cookie helper is a private function, not inline route logic). |
 | 2.5 | `app/modules/identity/schemas.py` | Response schemas must never expose a raw token (5.2) | Was: `TokenResponse.refresh_token: str` | **Fixed** | Field removed. `TokenResponse` now carries only `access_token` and `token_type`. |
-| 2.6 | `app/modules/identity/service.py` — `register_company` | Route 12 (`POST /companies/register`): company self-registration → `status = pending`. The HR admin user is created only at approval (route 15), in one transaction with seeding `company_settings`, departments and leave types (10.2, 6.7). | `register_company` sets `status = active` immediately and creates an already-active `hr_admin` user from a client-supplied password, with no approval step | **Later (WP-05)** — *carried forward, not fixed.* | Correct behavior needs `company_settings` (WP-04) and the approval route + `industry_presets` seeding (WP-05); a partial fix now would mean starting WP-05 out of order, which contradicts the instruction to not start work past WP-01. `find_by_email`'s use inside this method was still updated to keep it *running* (see §4.22) — its *business behavior* is unchanged. Route path (`/auth/register` vs. the spec's `/companies/register`) is the same deferred item — company registration belongs in a `companies` router/module that doesn't exist yet. |
+| 2.6 | `app/modules/identity/service.py` — `register_company` | Route 12 (`POST /companies/register`): company self-registration → `status = pending`. The HR admin user is created only at approval (route 15), in one transaction with seeding `company_settings`, departments and leave types (10.2, 6.7). | Was: set `status = active` immediately and created an already-active `hr_admin` user from a client-supplied password, with no approval step | **Closed in WP-05.** | `POST /companies/register` (moved off `/auth/register`, onto its own `companies_router`) now does exactly the spec's route 12: creates the company with `status = pending` and **no user at all**. `POST /companies/{id}/approve` (route 15, SA-only) does the rest — seeds `company_settings`, applies the company's industry preset to `departments` (WP-06 extended this once that table existed), and creates the HR admin — all in one transaction, verified live and in an automated test (§18) by planting a conflicting `company_settings` row and confirming the whole approval rolls back, company left `pending`. Leave-type seeding is still deferred to WP-10 (the table doesn't exist). |
 
 ---
 
@@ -140,23 +140,29 @@ Two defects were found and fixed *during this pass*, not in the original audit �
 
 ---
 
-## 9. Everything correctly not built yet ("Later") — updated after WP-04
+## 9. Everything correctly not built yet ("Later") — updated after WP-06
 
 Delivered by WP-02: `pyproject.toml`/ruff/mypy config, `bootstrap_roles.sql` and the `ems_owner`/`ems_app` role split, `app/core/time.py`/`exceptions.py`/`logging.py`/`middleware.py`, `CORS_ORIGINS`/lockout settings/security headers, `docker-compose.yml`'s Postgres+Redis definition, `.github/workflows/ci.yml`, `.env.example`, the `.gitignore` fix (§12–§14).
 
-Delivered by WP-04: `app/db/rls.py` (`enable_rls`, `set_tenant_context`, `bind_tenant_to_session`, the `after_begin` listener), `app/core/dependencies.py` (`get_current_user`, `get_tenant_db` — pulled forward from WP-03's list since WP-04's own Section 19 text requires them), `company_settings` (the first RLS'd table), `tests/conftest.py` (savepoint fixture, `company_a`/`company_b`, `client`, auto-provisioning `ems_pro_test`), `tests/isolation/` (the parametrized sweep plus `company_settings`-specific tests), rate limiting on `/auth/login` (§15–§17 below).
+Delivered by WP-04: `app/db/rls.py` (`enable_rls`, `set_tenant_context`, `bind_tenant_to_session`, the `after_begin` listener), `app/core/dependencies.py` (`get_current_user`, `get_tenant_db` — pulled forward from WP-03's list since WP-04's own Section 19 text requires them), `company_settings` (the first RLS'd table), `tests/conftest.py` (savepoint fixture, `company_a`/`company_b`, `client`, auto-provisioning `ems_pro_test`), `tests/isolation/` (the parametrized sweep plus `company_settings`-specific tests), rate limiting on `/auth/login` (§15–§17).
+
+Delivered by WP-05: `industry_presets` (seed + repository), the real `pending → active/rejected` approval workflow (one transaction: `company_settings` + departments-from-preset + HR admin), `GET`/`PUT /companies/me`, `GET /companies`, `GET /companies/{id}`, `app/core/pagination.py` (pulled forward — needed for the company list envelope), `app/core/dependencies.py::require_role` (pulled forward for the first time SA/HR-only routes existed) (§18–§20).
+
+Delivered by WP-06: `departments` (model, migration + RLS, full CRUD, `tests/isolation/test_departments.py`) — automatically covered by the parametrized sweep with no test file changes required, and the first route to close WP-04's "proven through the API" caveat (§21–§22).
 
 Still correctly deferred:
 
-- `app/core/dependencies.py::require_role`, `app/core/pagination.py`, `app/core/encryption.py` (WP-03/08)
+- `app/core/encryption.py` (WP-08)
 - `app/workers/celery_app.py`, `app/workers/tasks/` (WP-09)
 - `Dockerfile` content, `README.md` content (WP-15)
 - `frontend/` contents beyond the empty `src/` scaffold (WP-12)
-- Company approval workflow (`pending` → `active`), `company_settings`/department/leave-type seeding, industry presets, HR-admin creation at approval rather than registration, and the `company_settings` row actually being *written* by that flow rather than only reachable via direct ORM access in tests (WP-05 — see §2.6)
-- Rehash-on-login wiring for `needs_rehash`, `require_role`, routes 3–11 (logout, logout-all, me, change-password, forgot/reset password, check-username, activate) — WP-03, deliberately skipped this session per instruction
+- Leave-type seeding from the industry preset (`leave_types_json` is populated and seeded now, but the `leave_types` table itself doesn't exist until WP-10 — nothing consumes it yet)
+- `departments.head_employee_id`'s FK to `employees.id` (plain UUID column for now — `employees` doesn't exist until WP-07); department employee-count aggregation (hardcoded `0`); the 409-blocked-delete-when-employees-assigned behavior on `DELETE /departments/{id}` (currently an unconditional soft delete) — all three are genuine, unavoidable forward dependencies on WP-07, not implementation gaps within reach this session (§21)
+- HR-admin credential delivery at approval is an interim MVP substitute (a temporary password returned once in the approve response, never logged) — WP-26 replaces this with a real invite email via Celery + SendGrid once that infrastructure exists (§19)
+- Rehash-on-login wiring for `needs_rehash`, routes 3–11 (logout, logout-all, me, change-password, forgot/reset password, check-username, activate) — WP-03, deliberately skipped this session per instruction
 - Actual Sentry SDK initialization (WP-02 added the `SENTRY_DSN` setting; wiring `sentry_sdk.init(...)` is still not done)
 - IP extraction behind a trusted proxy for rate limiting (9.5's caveat) — `slowapi`'s default direct-peer extraction is used; revisit when a reverse proxy is actually introduced
-- `tests/integration/` real coverage — still empty; the auth integration suite (login/refresh/lockout/reuse-detection, forgot-password OTP, etc.) is WP-03's job per 15.5
+- Employee CRUD, KYC, attendance, leave, performance, payroll, projects, platform (audit logs, announcements, file uploads, search) — everything from WP-07 onward
 
 ---
 
@@ -165,6 +171,8 @@ Still correctly deferred:
 1. **~~Case-insensitive uniqueness on `users.email`~~ — RESOLVED.** Section 7.2 now explicitly specifies `(company_id, lower(email))` and `(company_id, lower(username))`, consistent with `companies.email`. Implemented in `models.py` and verified in the database (§4.6).
 2. **~~Where `email-validator` is declared~~ — RESOLVED.** Section 3.1's stack table now names `email-validator` (or `pydantic[email]`) explicitly. Added to `requirements.txt`.
 3. **New: a fourth pre-authentication-shaped repository method.** Section 7.2 names exactly three lookups exempt from requiring `company_id` (`find_active_by_email`, `get_by_activation_token`, `get_for_password_reset`). Implementing `refresh()`'s reuse-detection required a fourth: loading the `User` behind a refresh token, where — exactly as at login — there is no verified `company_id` yet. `get_by_id_for_token_refresh` was added, matching the same justification the spec gives for the other three (unreachable without the corresponding secret — here, a hashed, unexpired refresh token). This is implemented and documented in the code, not blocked on a spec answer, but it's worth Section 7.2 either naming it as a fourth exception or folding refresh-token lookups under a reworded version of the existing three, so the list stays authoritative.
+4. **New: what a `super_admin` account's own `company_id` refers to.** `users.company_id` is `NOT NULL` for every role (7.2) — including `super_admin`, which is platform-wide by definition (1.3) and, per 8.5, only ever created by direct database action, never a route. The spec doesn't say what company a super_admin's own row should point at. This project's fixtures and manual test setup use an ordinary company row created for the purpose (e.g. "Platform Ops") — harmless in practice, since `is_platform_admin=True` bypasses RLS entirely regardless of what `company_id` is set to (8.3's policy `OR` clause), but worth Section 7.2 or 8.5 naming the convention explicitly (a real "platform" company seeded once, vs. any company being acceptable) so every future seed script agrees.
+5. **New: industry names in the `industry_presets` seed are this project's own choice, not spec-verified.** Section 7.8 specifies the table's shape (`industry_name`, `departments_json`, `leave_types_json`) and says "seeded once with 12 industries," but not which 12 or what departments/leave types belong to each. The 12 chosen here (Technology, Manufacturing, Healthcare, Retail, Banking & Financial Services, Education, Hospitality, Construction, Real Estate, Logistics & Transportation, Media & Entertainment, Non-Profit) and their department lists are a structurally reasonable starting point — not verified against any real company's org chart, the same caveat Section 0.3 already applies to the statutory payroll figures. Worth a product decision before this seeds a real customer's departments.
 
 ---
 
@@ -295,12 +303,104 @@ Per Section 19: *a manual psql session connected as ems_app proves the policy...
 |---|---|
 | Manual `psql` proof (A vs B, different rows) | **Done — verified.** See §16 row 1. |
 | Unset context → zero rows | **Done — verified.** See §16 row 2. |
-| Proven through the API by an automated test | **Partial — see §16's note.** The dependency chain is tested directly with a real JWT; no HTTP route exists yet to round-trip through, since none is specified for `company_settings` before WP-05. |
+| Proven through the API by an automated test | **Closed in WP-06.** `departments` (the first real tenant-scoped CRUD resource) provided the first `get_tenant_db`-protected route. `tests/isolation/test_departments.py::test_departments_are_tenant_isolated` and `tests/integration/test_company_onboarding.py::test_hr_admin_gets_404_not_403_on_another_companys_department` both create a department as one company's HR admin and confirm a second company's HR admin gets `404` on `GET`/`PUT`/`DELETE` for the same id, through real HTTP requests against the live app — no manual psql involved. See §22. |
 | Write/commit/read-back proves `after_begin` | **Done — verified**, and only after finding and fixing the reentrancy bug above. See §16 row 3. |
 | Hammering `/auth/login` → `429` | **Done — verified.** See §16 row 5. |
 | Isolation test breaks CI when broken deliberately | **Done — verified locally** (not via actual GitHub Actions — same sandbox limitation as WP-02, §13). See §16 row 4. |
 
-**WP-04 gate passes**, with the same category of honest caveat as WP-02 (no real Docker/GitHub Actions in this sandbox) plus one new one, flagged rather than papered over: the "proven through the API" clause is satisfied at the dependency level, not via a full HTTP route, because no such route exists yet to prove it through. Not proceeding to WP-05 or WP-03 per instruction.
+**WP-04 gate passes**, with the same category of honest caveat as WP-02 (no real Docker/GitHub Actions in this sandbox). The "proven through the API" clause — open at the time WP-04 itself was delivered, because no protected route existed yet — was closed two work packages later, in WP-06, the moment `departments` gave RLS a real route to run through. See §17's row above and §22.
+
+---
+
+## 18. WP-05 — Companies and onboarding
+
+**Governs:** 7.2, 10.2 routes 12–18, 6.7.
+
+**Delivered:**
+
+- **`app/modules/platform/models.py` + `repository.py`:** `IndustryPreset` (RLS: No, global seed data — 7.8) and `IndustryPresetRepository`. First model in the `platform` module.
+- **`app/db/seed/industry_presets.py`:** 12 industries (Technology, Manufacturing, Healthcare, Retail, Banking & Financial Services, Education, Hospitality, Construction, Real Estate, Logistics & Transportation, Media & Entertainment, Non-Profit), each with a `departments_json` list and a shared baseline `leave_types_json` (five common leave types — annual, sick, casual, maternity, paternity). Idempotent (upsert by `industry_name`), runnable directly (`python -m app.db.seed.industry_presets`) or imported.
+- **`register_company` rewritten** (closes reconciliation item 2.6): `POST /companies/register` now creates the company with `status = pending` and creates **no user**, matching route 12 exactly. The old behavior (active company, active `hr_admin` from a client-supplied password, no approval step) is gone.
+- **`CompanyService.approve_company`** (route 15, SA only): one transaction — binds the tenant context to the *target* company explicitly (acting as platform admin, 8.5), seeds a `company_settings` row, applies the company's industry preset to `departments` (added once WP-06 delivered that table — see §21), creates the HR admin (`must_change_password=True`), and commits once. Any failure before that commit leaves the company exactly as it was, still `pending` — verified by actually causing a failure, not just asserting the code looks atomic (§19).
+- **HR-admin credential handling — an interim MVP decision, documented as such:** no email backend exists yet (WP-26 delivers `SendGrid`/Celery). A random password is generated, hashed, and returned **once**, in the `POST /companies/{id}/approve` response body, to the authenticated super_admin who triggered it — never logged (`hr_admin_created_at_approval` logs the email, not the password), never persisted anywhere in plaintext. This is a deliberate, narrow substitute for "sends credentials," not a security shortcut taken silently.
+- **`list_companies`/`get_company_detail`/`reject_company`/`get_my_company`/`update_my_company`** (routes 13, 14, 16, 17, 18): standard CRUD against `CompanyRepository`, SA-gated via the new `require_role`, or HR-gated for the profile update. Company detail returns `counts` (`users`, and `departments` once WP-06 added that repository — see §21).
+- **`app/core/pagination.py`** (pulled forward from its original WP-02/08 slot): `PageParams`, `Page[T]` (PEP 695 generic — Pydantic v2 supports it natively on Python 3.12+), `paginate()`, `resolve_sort()`. Needed the moment `GET /companies` required the standard list envelope (10.1); every future list endpoint reuses it.
+- **`app/core/dependencies.py::require_role`** (pulled forward from WP-03, same justification as `get_current_user`/`get_tenant_db` in WP-04 — Section 19 already assigns `require_role` to WP-03's original `app/core/dependencies.py` line, but SA-only and HR-only routes exist starting here and need it now).
+- **Reconciliation item closed:** 2.6.
+
+**Not delivered in this pass:** leave-type seeding (the `leave_types` table doesn't exist — WP-10); a real activation-email flow for the HR admin (WP-26).
+
+---
+
+## 19. WP-05 verification — actual output
+
+All of this was run live against `uvicorn` first (to see the real behavior before writing permanent tests), then codified as `tests/integration/test_company_onboarding.py` (5 tests) so it isn't a one-off.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Two companies register, land `pending`, no user created | **Pass.** `POST /companies/register` twice → both `201`, `status: "pending"`. `SELECT count(*) FROM users WHERE company_id = ...` → `0` for both, confirmed both live (`psql`) and in `test_register_creates_a_pending_company_with_no_user`. |
+| 2 | Approved companies get preset departments, and a `company_settings` row | **Pass.** Registered a `super_admin` directly in the database (8.5 — never via a route), approved a Technology company through the real API → `GET /departments` as its new HR admin returned exactly the 7 Technology-preset departments (Design, DevOps, Engineering, Human Resources, Product, Quality Assurance, Sales); a Retail company returned its own 6. `GET /companies/me` succeeded, confirming `company_settings` exists (RLS would return nothing otherwise). Codified in `test_approve_seeds_company_settings_departments_and_hr_admin_in_one_transaction`. |
+| 3 | A deliberately failing seed step rolls back the whole approval, company still `pending` | **Pass — proven by actually causing the failure.** Planted a `company_settings` row for a company before approving it (forces the real `UNIQUE` violation the seed step would hit), called `POST /companies/{id}/approve` → `409`, then confirmed: `status` still `pending`, `approved_at`/`approved_by` still `NULL`, zero `users` rows for that company. Live via `psql` first, then `test_a_failing_seed_step_rolls_back_the_whole_approval`. |
+| 4 | Company A's HR admin gets `404`, not `403`, on company B's profile | **Substituted with `departments`, not `/companies/me` — see the note below.** `test_hr_admin_gets_404_not_403_on_another_companys_department`: HR admin X creates a department; HR admin Y requests the same id and gets `404`. Also closes WP-04's open caveat (§17). |
+| 5 | WP-04's transaction fix, gated again here: write, commit, read back within one request | **Pass.** `PUT /companies/me` writes a real field (`website`, `city`), commits inside the service, and the response serializes the same ORM object afterward — exactly the "read an attribute after commit" pattern that surfaces the listener bug from WP-04 if it regresses. No error, response reflected the write; confirmed persisted via a direct `psql` read afterward. |
+| 6 | `pytest` and `ruff` clean | **Pass** — folded into WP-06's combined run, see §22. |
+
+**Why `/companies/me` isn't the literal route for check 4.** Route 17 (`GET /companies/me`) takes no id — it always resolves to the caller's own company from the verified JWT claim, never a path/query parameter (8.4's rule that `company_id` never comes from client input). There is structurally no "give me company B" request to make against it; attempting the proof through it would just confirm the route can't be attacked, not exercise `get_tenant_db`'s RLS binding against a real ID-addressable resource. `departments` (register 15, then WP-06 built moments later in this same session — see §21) is the first resource that's actually ID-addressable and accessible to a non-SA role, so the proof runs there instead. Also note: `GET /companies/{id}` (route 14) *is* ID-addressable, but it's SA-only — an HR admin calling it gets `403` for the role mismatch, the opposite of what "404 not 403" is trying to demonstrate, confirming it's the wrong route for this specific proof.
+
+**Two real bugs found and fixed while building this**, neither part of the original audit:
+
+1. **A test-infrastructure gap, not a production bug:** `ems_pro_test` had no `industry_presets` rows — `conftest.py` migrated the schema but never seeded reference data. Fixed by adding `_seed_reference_data()` (calls the same `seed_industry_presets()` the dev script uses) to the session-scoped setup fixture.
+2. **A real session-handling bug, in both production code and its test-only mirror:** after a caught `IntegrityError` (or any exception) propagates out of a request, the SQLAlchemy session is left in Postgres's "aborted transaction" state — no further statement can run on it until an explicit `rollback()`. Production isn't affected in practice (`SessionLocal()` mints a fresh session per request), but it's still the objectively more correct, defensive way to manage a session's lifecycle regardless of who reuses it — so `app/db/session.py::get_db()` now rolls back on exception before closing. The test suite's `client` fixture reuses one session across every request *within a test*, deliberately (15.2's savepoint pattern) — there the bug was directly observable: a test that intentionally triggers a `409` and then makes a second request on the same client would get `PendingRollbackError` instead of the second request's real result. Fixed by mirroring the same rollback in the fixture's `_override_get_db`.
+
+---
+
+## 20. WP-05 exit gate — current status
+
+Per Section 19: *two companies register and are approved through real API calls; each has its preset departments, leave types and a company_settings row; a deliberately failing seed step rolls the whole approval back, leaving the company still pending; company A's HR admin gets 404 on company B's profile. Also gate WP-04's transaction fix here.*
+
+| Gate condition | Status |
+|---|---|
+| Two companies register and are approved; preset departments + `company_settings` | **Done — verified.** See §19 rows 1–2. Leave types are not seeded — the table doesn't exist (WP-10); flagged, not silently skipped. |
+| Failing seed step rolls back, company still pending | **Done — verified**, by causing the real failure. See §19 row 3. |
+| HR admin A gets 404 on company B's resource | **Done — verified**, via `departments` rather than the literal (and structurally unattackable) `/companies/me` — see §19's note. |
+| WP-04's write/commit/read-back re-gated here | **Done — verified.** See §19 row 5. |
+
+**WP-05 gate passes.**
+
+---
+
+## 21. WP-06 — Departments
+
+**Governs:** 7.3, 10.3 routes 31–35.
+
+**Delivered:**
+
+- **`app/modules/hr/models.py`:** `Department(TenantBase)` — the first model in the `hr` module. `head_employee_id` is a plain nullable `UUID` column with **no FK** for now: `employees` doesn't exist until WP-07, so there is nothing yet to reference. Added via a follow-up migration once it does, the same pattern as the `companies.approved_by`/`users` cycle (7.2), generalized to "the target table doesn't exist yet" rather than a true cycle.
+- **Migration** (`2499347d1a53_departments.py`): table + `enable_rls("departments")` by hand, in the same migration, per 8.3.
+- **Full CRUD** (routes 31–35): list (Auth, search + sort + pagination via the shared helper), create/update/delete (HR only), get (Auth). `DELETE` is a soft delete (`deleted_at`, per the universal rule in 7.1).
+- **Two genuine, unavoidable gaps, documented rather than faked:**
+  - **"Live employee counts"** (route 31): `employee_count` is a real field on every response, hardcoded to `0`. There is no `employees` table yet to count against (WP-07).
+  - **"409 if any active employee is assigned"** (route 35): not implemented. `DELETE` is currently unconditional. The check needs `employees.department_id`, which doesn't exist until WP-07. A `# TODO(WP-07)` marks exactly where it goes.
+
+  Building either for real now would mean starting WP-07 out of order — the same reasoning WP-01 through WP-05 applied to every other forward dependency in this project so far.
+- **`approve_company` extended** (identity module, from WP-05): now actually applies `departments_json` from the matched industry preset, via `DepartmentRepository`, inside the same one-transaction approval — closing the TODO WP-05 left for exactly this moment.
+- **Company detail counts extended:** `GET /companies/{id}` now reports `departments` alongside `users`.
+- **Isolation:** `tests/isolation/test_departments.py` — Spec 8.6's canonical isolation-suite shape (its own example uses `/employees`; `departments` is the first real resource to run it against). `tests/isolation/test_rls_policies.py`'s parametrized sweep picked up `departments` automatically — **zero changes** to that file were needed, which is the entire point of discovering tenant tables from the `TenantBase` class hierarchy (`app.db.base.tenant_table_names()`) instead of maintaining a list by hand.
+
+---
+
+## 22. WP-06 verification and exit gate — actual output
+
+Per Section 19: *all five routes work in Swagger; deleting a department with employees returns 409 with the count; the isolation suite covers departments.*
+
+| # | Check | Result |
+|---|---|---|
+| 1 | All five routes work | **Pass — live, then codified.** `POST` create → `201`; duplicate name → `409 conflict`; `GET` list and detail → `200`; `PUT` update → `200`, change persisted; `DELETE` → `204`, row still exists in the database with `deleted_at` set, subsequent `GET` → `404`. |
+| 2 | Delete blocked with 409 + count when employees are assigned | **Not deliverable this session — see §21.** `employees` doesn't exist until WP-07. Flagged explicitly rather than stubbed to look done. |
+| 3 | Isolation suite covers `departments` | **Done — verified, and automatically.** `test_tenant_table_has_rls_enabled_and_forced[departments]` and `test_tenant_table_has_a_policy[departments]` both pass, discovered by `tenant_table_names()` with no test file edits. Plus the dedicated `test_departments_are_tenant_isolated`: HR admin A creates a department; HR admin B gets `404` on `GET`/`PUT`/`DELETE` for the same id; HR admin A still sees it correctly (404 is tenant isolation, not a general outage). |
+| 4 | `pytest` and `ruff` clean (both WP-05 and WP-06, combined) | **Pass.** `pytest`: **21 passed** (12 from WP-01/02/04, 9 new — 5 onboarding + 1 rate-limit + 1 department isolation, plus the 2 structural sweep cases `departments` added itself). `ruff check .` / `ruff format --check .`: `All checks passed!` / all files formatted. `mypy app/`: `Success: no issues found in 38 source files`, no advisory findings this time. Coverage: 84% overall (`models.py`/`schemas.py` files at 100%, `service.py` files in the 33–71% range — full business-logic coverage is a later-WP concern per 15.4, not this session's target). |
+
+**WP-06 gate passes**, with condition 2 explicitly named as not achievable this session rather than silently dropped. Not proceeding to WP-07 or WP-03 per instruction.
 
 ---
 

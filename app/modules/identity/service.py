@@ -18,6 +18,7 @@ from app.core.security import (
 )
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
+from app.modules.hr.repository import DepartmentRepository
 from app.modules.identity.models import Company, CompanySettings, CompanyStatus, UserRole
 from app.modules.identity.repository import (
     CompanyRepository,
@@ -30,6 +31,7 @@ from app.modules.identity.schemas import (
     LoginRequest,
     TokenResponse,
 )
+from app.modules.platform.repository import IndustryPresetRepository
 
 logger = logging.getLogger("app")
 
@@ -194,6 +196,8 @@ class CompanyService:
         self.db = db
         self.company_repo = CompanyRepository(db)
         self.user_repo = UserRepository(db)
+        self.department_repo = DepartmentRepository(db)
+        self.industry_preset_repo = IndustryPresetRepository(db)
 
     def register_company(self, data: CompanyRegisterRequest) -> Company:
         """Route 12: company self-registration only, status = pending. No
@@ -229,25 +233,27 @@ class CompanyService:
         )
 
     def get_company_detail(self, company_id: uuid.UUID) -> tuple[Company, dict[str, int]]:
-        """Route 14, SA only. Counts currently cover what exists: users.
-        Departments join once WP-06 lands; employees once WP-07 does.
+        """Route 14, SA only. Counts currently cover what exists: users and
+        departments. Employees join once WP-07 lands.
         """
         company = self.company_repo.get_by_id(company_id)
         if company is None:
             raise NotFoundError("Company not found.")
-        counts = {"users": self.user_repo.count_by_company(company_id)}
+        counts = {
+            "users": self.user_repo.count_by_company(company_id),
+            "departments": self.department_repo.count_by_company(company_id),
+        }
         return company, counts
 
     def approve_company(
         self, company_id: uuid.UUID, admin_id: uuid.UUID
     ) -> tuple[Company, str, str]:
-        """Route 15, SA only. Seeds the company's company_settings row and
-        creates the HR admin — one transaction (6.7): if any step fails,
-        the company is left exactly as it was, still pending.
-
-        Department seeding from the industry preset, and leave-type seeding,
-        are added once those tables exist (WP-06, WP-10 respectively) — see
-        the TODOs below.
+        """Route 15, SA only. Seeds the company's company_settings row,
+        default departments from its industry preset (when it has a
+        recognized industry), and creates the HR admin — one transaction
+        (6.7): if any step fails, the company is left exactly as it was,
+        still pending. Leave-type seeding is added once that table exists
+        (WP-10) — see the TODO below.
         """
         company = self.company_repo.get_by_id(company_id)
         if company is None:
@@ -268,9 +274,11 @@ class CompanyService:
 
         self.db.add(CompanySettings(company_id=company.id))
 
-        # TODO(WP-06): seed default departments from the company's industry
-        # preset (app.modules.platform.repository.IndustryPresetRepository)
-        # once the departments table exists.
+        if company.industry:
+            preset = self.industry_preset_repo.get_by_name(company.industry)
+            if preset:
+                for dept in preset.departments_json:
+                    self.department_repo.create(company_id=company.id, name=dept["name"])
         # TODO(WP-10): seed leave_types from the same preset once that table
         # exists.
 
