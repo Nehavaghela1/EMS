@@ -2,6 +2,7 @@ import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -41,6 +42,7 @@ from app.modules.identity.schemas import (
     TokenResponse,
 )
 from app.modules.platform.repository import IndustryPresetRepository
+from app.modules.time_leave.repository import LeaveTypeRepository
 
 logger = logging.getLogger("app")
 
@@ -410,6 +412,7 @@ class CompanyService:
         self.company_repo = CompanyRepository(db)
         self.user_repo = UserRepository(db)
         self.department_repo = DepartmentRepository(db)
+        self.leave_type_repo = LeaveTypeRepository(db)
         self.industry_preset_repo = IndustryPresetRepository(db)
 
     def register_company(self, data: CompanyRegisterRequest) -> Company:
@@ -462,11 +465,10 @@ class CompanyService:
         self, company_id: uuid.UUID, admin_id: uuid.UUID
     ) -> tuple[Company, str, str]:
         """Route 15, SA only. Seeds the company's company_settings row,
-        default departments from its industry preset (when it has a
-        recognized industry), and creates the HR admin — one transaction
-        (6.7): if any step fails, the company is left exactly as it was,
-        still pending. Leave-type seeding is added once that table exists
-        (WP-10) — see the TODO below.
+        default departments and leave types from its industry preset (when
+        it has a recognized industry), and creates the HR admin — one
+        transaction (6.7): if any step fails, the company is left exactly
+        as it was, still pending.
         """
         company = self.company_repo.get_by_id(company_id)
         if company is None:
@@ -492,8 +494,17 @@ class CompanyService:
             if preset:
                 for dept in preset.departments_json:
                     self.department_repo.create(company_id=company.id, name=dept["name"])
-        # TODO(WP-10): seed leave_types from the same preset once that table
-        # exists.
+                for leave_type in preset.leave_types_json:
+                    self.leave_type_repo.create(
+                        company_id=company.id,
+                        name=leave_type["name"],
+                        code=leave_type["code"],
+                        annual_allowance=Decimal(str(leave_type["annual_allowance"])),
+                        carry_forward_limit=Decimal(str(leave_type["carry_forward_limit"])),
+                        max_consecutive_days=leave_type["max_consecutive_days"],
+                        is_paid=leave_type["is_paid"],
+                        is_encashable=leave_type["is_encashable"],
+                    )
 
         raw_password = secrets.token_urlsafe(12)
         hr_admin = self.user_repo.create(

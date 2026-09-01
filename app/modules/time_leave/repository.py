@@ -1,13 +1,24 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate
 from app.core.time import utcnow
 from app.modules.hr.models import Employee
-from app.modules.time_leave.models import Attendance, AttendanceStatus, EmployeeShift, Shift
+from app.modules.time_leave.models import (
+    Attendance,
+    AttendanceSource,
+    AttendanceStatus,
+    EmployeeShift,
+    Holiday,
+    Leave,
+    LeaveBalance,
+    LeaveStatus,
+    LeaveType,
+    Shift,
+)
 
 
 class AttendanceRepository:
@@ -147,6 +158,33 @@ class AttendanceRepository:
         attendance.deleted_at = utcnow()
         self.db.flush()
 
+    def upsert_for_leave(
+        self,
+        *,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        on_date: date,
+        status: AttendanceStatus,
+    ) -> None:
+        """Spec 11.3: leave approval upserts via a real `ON CONFLICT
+        (employee_id, date) DO UPDATE` — not a Python select-then-branch —
+        since the employee may already have marked attendance that day."""
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        stmt = pg_insert(Attendance).values(
+            id=uuid.uuid4(),
+            company_id=company_id,
+            employee_id=employee_id,
+            date=on_date,
+            status=status,
+            source=AttendanceSource.system,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["employee_id", "date"],
+            set_={"status": status, "source": AttendanceSource.system, "deleted_at": None},
+        )
+        self.db.execute(stmt)
+
 
 class ShiftRepository:
     def __init__(self, db: Session):
@@ -238,3 +276,214 @@ class EmployeeShiftRepository:
         self.db.add(employee_shift)
         self.db.flush()
         return employee_shift
+
+
+class HolidayRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_id(self, holiday_id: uuid.UUID, company_id: uuid.UUID) -> Holiday | None:
+        return self.db.scalar(
+            select(Holiday).where(
+                Holiday.id == holiday_id,
+                Holiday.company_id == company_id,
+                Holiday.deleted_at.is_(None),
+            )
+        )
+
+    def list_by_year(self, company_id: uuid.UUID, year: int) -> list[Holiday]:
+        stmt = (
+            select(Holiday)
+            .where(
+                Holiday.company_id == company_id,
+                Holiday.deleted_at.is_(None),
+                func.extract("year", Holiday.date) == year,
+            )
+            .order_by(Holiday.date.asc())
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def list_in_range(
+        self,
+        company_id: uuid.UUID,
+        start_date: date,
+        end_date: date,
+        department_id: uuid.UUID | None,
+    ) -> list[Holiday]:
+        """Holidays that count against a leave spanning [start_date,
+        end_date] — company-wide (`applies_to_department_id IS NULL`) plus
+        the employee's own department's, if any (Spec 11.3)."""
+        department_clause: ColumnElement[bool] = Holiday.applies_to_department_id.is_(None)
+        if department_id is not None:
+            department_clause = or_(
+                Holiday.applies_to_department_id.is_(None),
+                Holiday.applies_to_department_id == department_id,
+            )
+        stmt = select(Holiday).where(
+            Holiday.company_id == company_id,
+            Holiday.deleted_at.is_(None),
+            Holiday.date >= start_date,
+            Holiday.date <= end_date,
+            department_clause,
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def create(self, **kwargs) -> Holiday:
+        holiday = Holiday(**kwargs)
+        self.db.add(holiday)
+        self.db.flush()
+        return holiday
+
+    def soft_delete(self, holiday: Holiday) -> None:
+        holiday.deleted_at = utcnow()
+        self.db.flush()
+
+
+class LeaveTypeRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_id(self, leave_type_id: uuid.UUID, company_id: uuid.UUID) -> LeaveType | None:
+        return self.db.scalar(
+            select(LeaveType).where(
+                LeaveType.id == leave_type_id,
+                LeaveType.company_id == company_id,
+                LeaveType.deleted_at.is_(None),
+            )
+        )
+
+    def get_by_code(self, company_id: uuid.UUID, code: str) -> LeaveType | None:
+        return self.db.scalar(
+            select(LeaveType).where(
+                LeaveType.company_id == company_id,
+                func.lower(LeaveType.code) == code.lower(),
+                LeaveType.deleted_at.is_(None),
+            )
+        )
+
+    def list_all(self, company_id: uuid.UUID) -> list[LeaveType]:
+        stmt = (
+            select(LeaveType)
+            .where(LeaveType.company_id == company_id, LeaveType.deleted_at.is_(None))
+            .order_by(LeaveType.name.asc())
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def create(self, **kwargs) -> LeaveType:
+        leave_type = LeaveType(**kwargs)
+        self.db.add(leave_type)
+        self.db.flush()
+        return leave_type
+
+    def update(self, leave_type: LeaveType, **kwargs) -> LeaveType:
+        for key, value in kwargs.items():
+            setattr(leave_type, key, value)
+        self.db.flush()
+        return leave_type
+
+
+class LeaveRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_id(self, leave_id: uuid.UUID, company_id: uuid.UUID) -> Leave | None:
+        return self.db.scalar(
+            select(Leave).where(
+                Leave.id == leave_id, Leave.company_id == company_id, Leave.deleted_at.is_(None)
+            )
+        )
+
+    def get_overlapping(
+        self,
+        *,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        start_date: date,
+        end_date: date,
+    ) -> list[Leave]:
+        """Spec 11.3 step 7: overlap against any existing `pending` or
+        `approved` leave for this employee — `existing.start <= new.end AND
+        existing.end >= new.start`."""
+        stmt = select(Leave).where(
+            Leave.company_id == company_id,
+            Leave.employee_id == employee_id,
+            Leave.deleted_at.is_(None),
+            Leave.status.in_([LeaveStatus.pending, LeaveStatus.approved]),
+            Leave.start_date <= end_date,
+            Leave.end_date >= start_date,
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def list_leaves(
+        self,
+        *,
+        company_id: uuid.UUID,
+        allowed_employee_ids: list[uuid.UUID] | None,
+        employee_id: uuid.UUID | None,
+        status: LeaveStatus | None,
+        leave_type_id: uuid.UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        page_params: PageParams,
+    ) -> tuple[list[Leave], int, int]:
+        stmt = select(Leave).where(Leave.company_id == company_id, Leave.deleted_at.is_(None))
+        if allowed_employee_ids is not None:
+            stmt = stmt.where(Leave.employee_id.in_(allowed_employee_ids))
+        if employee_id is not None:
+            stmt = stmt.where(Leave.employee_id == employee_id)
+        if status is not None:
+            stmt = stmt.where(Leave.status == status)
+        if leave_type_id is not None:
+            stmt = stmt.where(Leave.leave_type_id == leave_type_id)
+        if date_from is not None:
+            stmt = stmt.where(Leave.end_date >= date_from)
+        if date_to is not None:
+            stmt = stmt.where(Leave.start_date <= date_to)
+        stmt = stmt.order_by(Leave.start_date.desc())
+        return paginate(self.db, stmt, page_params)
+
+    def create(self, **kwargs) -> Leave:
+        leave = Leave(**kwargs)
+        self.db.add(leave)
+        self.db.flush()
+        return leave
+
+    def update(self, leave: Leave, **kwargs) -> Leave:
+        for key, value in kwargs.items():
+            setattr(leave, key, value)
+        self.db.flush()
+        return leave
+
+
+class LeaveBalanceRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get(
+        self, employee_id: uuid.UUID, leave_type_id: uuid.UUID, year: int
+    ) -> LeaveBalance | None:
+        return self.db.scalar(
+            select(LeaveBalance).where(
+                LeaveBalance.employee_id == employee_id,
+                LeaveBalance.leave_type_id == leave_type_id,
+                LeaveBalance.year == year,
+            )
+        )
+
+    def list_for_employee_year(self, employee_id: uuid.UUID, year: int) -> list[LeaveBalance]:
+        stmt = select(LeaveBalance).where(
+            LeaveBalance.employee_id == employee_id, LeaveBalance.year == year
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def create(self, **kwargs) -> LeaveBalance:
+        balance = LeaveBalance(**kwargs)
+        self.db.add(balance)
+        self.db.flush()
+        return balance
+
+    def update(self, balance: LeaveBalance, **kwargs) -> LeaveBalance:
+        for key, value in kwargs.items():
+            setattr(balance, key, value)
+        self.db.flush()
+        return balance

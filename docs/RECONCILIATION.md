@@ -3,7 +3,7 @@
 **Governs:** Section 20 of `docs/EMS_PRO_DEV_SPEC.md` (in full). Originally WP-01's output; kept current across later work packages per Section 21's table ("WP-01 output, kept current").
 **Method:** Every file under `app/` and `alembic/` was read in full and compared against the spec section that governs it, using the Section 20.2 checklist. Where the checklist implied a runnable check (does the app start, does `alembic upgrade head` actually create tables, is a package importable), that check was executed against the local dev database — read-only at audit time; the blocking items were then actually applied (this revision of the report) and re-verified the same way. See "How this was verified" at the end.
 
-**Status: WP-01's 14 blocking items are fixed and verified. WP-02 (foundation, config, errors, logging, role split) — §12–§14. WP-04 (multi-tenancy, RLS, the isolation suite, rate limiting) — §15–§17. WP-05 (company registration and approval workflow) — §18–§20. WP-06 (departments) — §21–§22. WP-07 (employees) — §23–§25. WP-03 (auth routes 3-11, OTP reset, employee activation) — §26–§28. WP-09 (attendance, shifts, background jobs) — §29–§31. All delivered and verified. Routes 27–30 (resignation, full-and-final) belong to WP-27; the employee frontend pages are WP-13. Not proceeding further this session.**
+**Status: WP-01's 14 blocking items are fixed and verified. WP-02 (foundation, config, errors, logging, role split) — §12–§14. WP-04 (multi-tenancy, RLS, the isolation suite, rate limiting) — §15–§17. WP-05 (company registration and approval workflow) — §18–§20. WP-06 (departments) — §21–§22. WP-07 (employees) — §23–§25. WP-03 (auth routes 3-11, OTP reset, employee activation) — §26–§28. WP-09 (attendance, shifts, background jobs) — §29–§31. WP-10 (leave management, balances, holidays) — §32–§34. All delivered and verified. Routes 27–30 (resignation, full-and-final) belong to WP-27; the employee frontend pages are WP-13. Not proceeding further this session.**
 
 **Severity key**
 - **Fixed** — was blocking or should-fix; corrected in this pass and re-verified.
@@ -48,7 +48,7 @@ Two defects were found and fixed *during this pass*, not in the original audit �
 | 2.3 | `app/modules/identity/repository.py` | No `HTTPException`, no business decisions | Compliant | — | Unchanged. |
 | 2.4 | `app/modules/identity/router.py` | Router body is 1–3 lines | Compliant | — | Unchanged; still true after the cookie-handling additions (the cookie helper is a private function, not inline route logic). |
 | 2.5 | `app/modules/identity/schemas.py` | Response schemas must never expose a raw token (5.2) | Was: `TokenResponse.refresh_token: str` | **Fixed** | Field removed. `TokenResponse` now carries only `access_token` and `token_type`. |
-| 2.6 | `app/modules/identity/service.py` — `register_company` | Route 12 (`POST /companies/register`): company self-registration → `status = pending`. The HR admin user is created only at approval (route 15), in one transaction with seeding `company_settings`, departments and leave types (10.2, 6.7). | Was: set `status = active` immediately and created an already-active `hr_admin` user from a client-supplied password, with no approval step | **Closed in WP-05.** | `POST /companies/register` (moved off `/auth/register`, onto its own `companies_router`) now does exactly the spec's route 12: creates the company with `status = pending` and **no user at all**. `POST /companies/{id}/approve` (route 15, SA-only) does the rest — seeds `company_settings`, applies the company's industry preset to `departments` (WP-06 extended this once that table existed), and creates the HR admin — all in one transaction, verified live and in an automated test (§18) by planting a conflicting `company_settings` row and confirming the whole approval rolls back, company left `pending`. Leave-type seeding is still deferred to WP-10 (the table doesn't exist). |
+| 2.6 | `app/modules/identity/service.py` — `register_company` | Route 12 (`POST /companies/register`): company self-registration → `status = pending`. The HR admin user is created only at approval (route 15), in one transaction with seeding `company_settings`, departments and leave types (10.2, 6.7). | Was: set `status = active` immediately and created an already-active `hr_admin` user from a client-supplied password, with no approval step | **Closed in WP-05, leave-type seeding closed in WP-10.** | `POST /companies/register` (moved off `/auth/register`, onto its own `companies_router`) now does exactly the spec's route 12: creates the company with `status = pending` and **no user at all**. `POST /companies/{id}/approve` (route 15, SA-only) does the rest — seeds `company_settings`, applies the company's industry preset to `departments` (WP-06 extended this once that table existed) and now `leave_types` too (WP-10, once that table existed — §32), and creates the HR admin — all in one transaction, verified live and in an automated test (§18) by planting a conflicting `company_settings` row and confirming the whole approval rolls back, company left `pending`. |
 
 ---
 
@@ -140,7 +140,7 @@ Two defects were found and fixed *during this pass*, not in the original audit �
 
 ---
 
-## 9. Everything correctly not built yet ("Later") — updated after WP-03
+## 9. Everything correctly not built yet ("Later") — updated after WP-10
 
 Delivered by WP-02: `pyproject.toml`/ruff/mypy config, `bootstrap_roles.sql` and the `ems_owner`/`ems_app` role split, `app/core/time.py`/`exceptions.py`/`logging.py`/`middleware.py`, `CORS_ORIGINS`/lockout settings/security headers, `docker-compose.yml`'s Postgres+Redis definition, `.github/workflows/ci.yml`, `.env.example`, the `.gitignore` fix (§12–§14).
 
@@ -154,18 +154,22 @@ Delivered by WP-07: `employees` (model, migration + RLS, full CRUD with search/f
 
 Delivered by WP-03: routes 3-11 in full — `logout`, `logout-all`, `me` (current user + linked employee summary + role-derived permissions), `change-password`, the Redis-backed `forgot-password`/`reset-password` OTP flow (7.9), `check-username`, and `activate`/`activate/{token}` — the pair that redeems WP-07's activation tokens, closing that package's open gate condition. Also: rehash-on-login wiring for `needs_rehash` (9.1); `app/core/otp.py` and `app/core/email.py` (new, small, single-purpose helpers); the `employee_id` JWT-claim spec gap (#6) resolved by amending the spec to match the code, not the other way around — see §10 and the spec's own Section 24 decision log (§26–§28).
 
+Delivered by WP-09: `attendance`, `shifts`, `employee_shifts` (model, migration + RLS, check-in/check-out with midnight-crossing hours calculation, role-scoped list, HR regularization/delete, shift CRUD + overlap-rejecting assignment); `app/workers/celery_app.py` and `app/workers/tasks/` (the Celery app, worker, and beat, proven with a trivial task on a real subprocess worker before anything else was built on it); attendance CSV export as a real background job + `GET /jobs/{job_id}` polling Celery's own result backend (no dedicated `jobs` table exists in the spec's schema) (§29–§31).
+
+Delivered by WP-10: `leave_types`, `leaves`, `leave_balances`, `holidays` (model, migration + RLS); all eight Spec 11.3 application validations, in order; `total_days` excluding weekends and holidays; approval upserting `on_leave` attendance rows via a real `ON CONFLICT ... DO UPDATE`, with the balance recompute in the same transaction; cancellation reversing both. Also closes the leave-type-seeding gap carried since WP-05 (item 2.6) — `CompanyService.approve_company` now seeds `leave_types` from the industry preset alongside departments (§32–§34).
+
 Still correctly deferred:
 
 - `app/core/encryption.py` (WP-08)
-- `app/workers/celery_app.py`, `app/workers/tasks/` (WP-09) — `EMAIL_BACKEND=sendgrid` (`app/core/email.py`) raises `NotImplementedError` until then; `console` (the default) prints to stdout instead, dev/test only
+- `EMAIL_BACKEND=sendgrid` (`app/core/email.py`) raises `NotImplementedError` until WP-26; `console` (the default) prints to stdout instead, dev/test only
 - `Dockerfile` content, `README.md` content (WP-15)
-- `frontend/` contents beyond the empty `src/` scaffold (WP-12)
-- Leave-type seeding from the industry preset (`leave_types_json` is populated and seeded now, but the `leave_types` table itself doesn't exist until WP-10 — nothing consumes it yet)
+- `frontend/` contents beyond the empty `src/` scaffold (WP-12), including frontend page 15 (shifts) — WP-09's Section 19 entry named it, but no frontend foundation exists yet (WP-12/WP-13)
+- `allocate_annual_leave` as a Celery beat scheduled task (13.1's bulk annual rollover with carry-forward) — not in either WP-09's or WP-10's explicit deliverable list this session. `LeaveService._get_or_allocate_balance` (WP-10) lazily materializes a balance the first time an employee needs one, which is what makes leave usable today, but it does not apply carry-forward the way a real rollover job would — see spec gap #12 below.
 - Routes 27-30 (resignation, full-and-final) — WP-27. The `employees` table already carries `resignation_status`/`resignation_date`/`last_working_date`/`notice_waived`/`notice_recovery_days` (created in WP-07's migration, per the spec's own column-for-column table), but no route in this session reads or writes them.
 - HR-admin credential delivery at approval, and the employee invite-token hand-off in the `POST /employees`/`resend-invite` response, are both interim MVP substitutes (a secret returned once in the response body, never logged) — WP-26 replaces both with real email delivery via Celery + SendGrid once that infrastructure exists (§19, §23)
 - Actual Sentry SDK initialization (WP-02 added the `SENTRY_DSN` setting; wiring `sentry_sdk.init(...)` is still not done)
 - IP extraction behind a trusted proxy for rate limiting (9.5's caveat) — `slowapi`'s default direct-peer extraction is used; revisit when a reverse proxy is actually introduced
-- KYC, attendance, leave, performance, payroll, projects, platform (audit logs, announcements, file uploads, search) — everything from WP-08 onward
+- KYC, performance, payroll, projects, platform (audit logs, announcements, file uploads, search) — everything from WP-08, WP-11 onward
 
 ---
 
@@ -182,6 +186,7 @@ Still correctly deferred:
 9. **New: route 5's `GET /auth/me` "permissions" list is this project's own choice, not spec-verified.** The spec's route table (10.2) says the response carries "current user + linked employee summary + permissions," but Section 7 defines no permissions table or schema, and no other route reads or writes a permission set. `AuthService._ROLE_PERMISSIONS` (identity/service.py) is a small, static, role-keyed list of capability strings — a documented judgment call standing in for a real RBAC system, not one. Worth a product decision (a real permissions table, or a formal statement that role IS the permission model) before any frontend starts branching UI on these specific strings.
 10. **New: `GET /auth/check-username/{username}` (route 9) checks platform-wide, not per-company.** `username` is only unique *within* a company (`uq_users_company_id_username`, 7.2), but this route is `Public` and has no company parameter in its path (10.2), so there is no tenant to scope the check to at call time. `UserRepository.username_taken_anywhere` is a conservative, cross-company availability hint — it can say "taken" for a username that is actually still free in the caller's own company. The real, correctly-scoped enforcement is `POST /auth/activate` (route 11) via `UserRepository.get_by_username(company_id, ...)` plus the database's own unique constraint; this route is a UX pre-check only, not a source of truth. Worth Section 10.2 either accepting the platform-wide simplification explicitly or adding a `company_code` query parameter if per-company accuracy ever matters to the frontend.
 11. **New: a fifth pre-authentication-shaped `UserRepository` method.** 7.2 names four exceptions to "every method requires `company_id`" (`find_active_by_email`, `get_by_activation_token`, `get_for_password_reset`, and `get_by_id_for_token_refresh` added in WP-01/WP-04, spec gap #3 above). WP-03 added a fifth: `username_taken_anywhere` (item #10 above), for the same class of reason — reachable pre-authentication, with no tenant context yet — but it doesn't guard a secret the way the other four do (a username isn't sensitive), so it is a genuinely different shape (never returns a `User`, never leaks more than a boolean). Worth Section 7.2 naming it explicitly as a distinct, fifth category ("public existence checks") rather than folding it into the "unreachable without a secret" framing the other four share.
+12. **New: leave balances are allocated lazily, not by a bulk annual-rollover job.** 11.4 says `allocated` comes "from `leave_types.annual_allowance` at allocation time" and 13.1 lists `allocate_annual_leave` as a scheduled job, but neither WP-09's nor WP-10's Section 19 deliverable list names it explicitly this session. `LeaveService._get_or_allocate_balance` materializes a `leave_balances` row — `allocated = leave_type.annual_allowance`, `opening_balance = 0` — the first time an employee needs one for a given leave type and year, which is what makes a newly created employee's leave usable immediately rather than blocked until some later scheduled job runs. What this deliberately does **not** do is what a real `allocate_annual_leave` run would: apply `carry_forward_limit` from the prior year's unused balance into `opening_balance`. Worth a product decision on whether lazy allocation with `opening_balance` fixed at 0 is acceptable long-term, or whether `allocate_annual_leave` needs to be built (and this lazy path kept only as the new-employee fallback it was designed as).
 
 ---
 
@@ -337,7 +342,7 @@ Per Section 19: *a manual psql session connected as ems_app proves the policy...
 - **`app/core/dependencies.py::require_role`** (pulled forward from WP-03, same justification as `get_current_user`/`get_tenant_db` in WP-04 — Section 19 already assigns `require_role` to WP-03's original `app/core/dependencies.py` line, but SA-only and HR-only routes exist starting here and need it now).
 - **Reconciliation item closed:** 2.6.
 
-**Not delivered in this pass:** leave-type seeding (the `leave_types` table doesn't exist — WP-10); a real activation-email flow for the HR admin (WP-26).
+**Not delivered in this pass:** leave-type seeding — the `leave_types` table didn't exist yet; **closed in WP-10, §32**; a real activation-email flow for the HR admin (WP-26).
 
 ---
 
@@ -369,7 +374,7 @@ Per Section 19: *two companies register and are approved through real API calls;
 
 | Gate condition | Status |
 |---|---|
-| Two companies register and are approved; preset departments + `company_settings` | **Done — verified.** See §19 rows 1–2. Leave types are not seeded — the table doesn't exist (WP-10); flagged, not silently skipped. |
+| Two companies register and are approved; preset departments + `company_settings` | **Done — verified.** See §19 rows 1–2. Leave types were not seeded at the time — the table didn't exist yet; flagged, not silently skipped — **closed in WP-10, §32**, verified live: approving a Technology company now returns the same 5 leave types (`annual`, `sick`, `casual`, `maternity`, `paternity`) `app/db/seed/industry_presets.py` defines. |
 | Failing seed step rolls back, company still pending | **Done — verified**, by causing the real failure. See §19 row 3. |
 | HR admin A gets 404 on company B's resource | **Done — verified**, via `departments` rather than the literal (and structurally unattackable) `/companies/me` — see §19's note. |
 | WP-04's write/commit/read-back re-gated here | **Done — verified.** See §19 row 5. |
@@ -590,6 +595,63 @@ Per this session's instructions (Section 19's WP-09 entry, scoped to routes 43-5
 | `pytest` and `ruff` clean | **Done — verified.** See §30 row 9. |
 
 **WP-09 gate passes.**
+
+---
+
+## 32. WP-10 — Leave management
+
+**Governs:** 11.3, 11.4, 7.4, 10.4 routes 55–66.
+
+**Delivered:**
+
+- **`Holiday`, `LeaveType`, `Leave`, `LeaveBalance`** (new model classes in `app/modules/time_leave/models.py`, alongside WP-09's `Attendance`/`Shift`/`EmployeeShift`), all on `TenantBase` with `enable_rls()` in the same migration (`00a7236ac838`). `holidays` carries the spec's `UNIQUE NULLS NOT DISTINCT (company_id, date, applies_to_department_id)` constraint verbatim (PostgreSQL 16, so it's available) — verified live and in a test that a duplicate company-wide holiday on the same date is genuinely rejected by the database, not just an app-level check.
+- **All eight leave-application validations (11.3), in the spec's exact order, each returning the first failure with a clear message:** (1) employee exists in this company, (2) caller is that employee/HR/their manager, (3) `end_date >= start_date`, (4) leave type exists and is active in this company, (5) `start_date >= today` unless HR (HR may back-date; logged), (6) `max_consecutive_days` not exceeded, (7) no overlap with an existing `pending`/`approved` leave — `409` naming the conflicting leave's id and dates, (8) sufficient balance unless the leave type is `is_paid=false` (unpaid is never blocked — becomes LOP in payroll, a later WP's concern). Each has its own dedicated test that triggers exactly that validation and no other.
+- **`total_days`** excludes weekends (`company_settings.weekend_days`, never a hardcoded Saturday/Sunday) and holidays applying to the employee's department (company-wide `applies_to_department_id IS NULL` plus their own department's). `is_half_day` with `start_date == end_date` short-circuits to `0.5`.
+- **Approval (route 64) upserts real `on_leave`/`source=system` attendance rows** via `AttendanceRepository.upsert_for_leave` — a genuine `INSERT ... ON CONFLICT (employee_id, date) DO UPDATE`, not a Python select-then-branch, exactly because the employee may already have marked attendance that day (11.3's own wording). The balance recompute (`used += total_days`) happens inside the same transaction as the status change — one commit, at the end (6.7).
+- **Cancellation (route 65)** reverses both: an employee may cancel their own **pending** leave; HR may additionally cancel an **approved** one, which soft-deletes the `on_leave`/`source=system` attendance rows the approval wrote and restores the balance (`used -= total_days`, floored at 0). A day the employee had already marked for real before approval overwrote it is not recoverable — the schema keeps no pre-upsert history — documented at the exact point in the code this applies.
+- **Leave-type seeding at company approval — closes reconciliation item 2.6, carried since WP-05.** `CompanyService.approve_company` (identity module) now seeds `leave_types` from the matched industry preset's `leave_types_json` alongside departments, in the same one-transaction approval. Verified live: approving a "Technology" company returns exactly the 5 leave types `app/db/seed/industry_presets.py` defines (`annual`, `sick`, `casual`, `maternity`, `paternity`), with the right `annual_allowance`/`carry_forward_limit`/`is_encashable` values.
+- **Balance allocation is lazy**, not a bulk annual-rollover job — `LeaveService._get_or_allocate_balance` materializes a `leave_balances` row (`allocated = leave_type.annual_allowance`, `opening_balance = 0`) the first time an employee needs one. This is a deliberate, documented scope decision, not an oversight — see spec gap #12.
+- **Routes 55-60** (holidays, leave types) and **61-66** (leaves): full CRUD/list/apply/decide/cancel/balance, role-scoped exactly like WP-09's attendance list (own/team/everyone), reusing `EmployeeRepository.list_direct_report_ids` (pulled out of WP-07's employee list during WP-09, not duplicated a third time here).
+- **Reconciliation items closed:** 2.6's leave-type-seeding half (§2.6, §9, §18-§20).
+
+**Not delivered in this pass:** `allocate_annual_leave` as a scheduled task (spec gap #12); leave encashment at exit (`is_encashable`, `leave_balances.encashed`) — that's WP-27's full-and-final settlement, not this session's; KYC/performance/payroll/projects (later WPs).
+
+---
+
+## 33. WP-10 verification — actual output
+
+Run live against `uvicorn` first (register → approve a Technology company, confirm real leave types appeared, apply → approve → cancel a leave spanning a holiday, watch the attendance rows and balance move in real time), then codified as `tests/integration/test_leaves.py` (14 tests, one per validation plus total_days/approval/cancellation/scoping), `test_holidays_and_leave_types.py` (4 tests), and `tests/isolation/test_leaves.py` (1 test) — 19 new tests, none of it a one-off.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Every validation in 11.3 has a test that triggers it | **Pass — automated, one test per validation, numbered 1-8 in `test_leaves.py` to match the spec's own list.** Validation 5 additionally proves the HR back-dating exception in the same test (employee blocked, HR allowed). Validation 8 additionally proves unpaid leave is never balance-blocked in the same test. |
+| 2 | An overlapping application returns 409 naming the conflicting dates | **Pass — live and automated.** Live: `{"error":{"code":"leave_overlap",...,"details":{"conflicts":[{"id":"...","start_date":"2026-09-14","end_date":"2026-09-15"}]}}}`, `409`. |
+| 3 | A leave spanning a company holiday counts one day fewer | **Pass — live and automated.** Live: a Monday-Friday application (5 weekdays) with a Wednesday holiday inside it → `"total_days":"4.0"`. |
+| 4 | Approving a leave creates `on_leave` attendance rows for exactly the working days covered | **Pass — live and automated.** Live: a Friday→Monday application (spans a weekend) approved → `psql` shows exactly Friday and Monday as `on_leave`/`system`; Saturday and Sunday have no attendance row at all — proven both live and in `test_approving_a_leave_creates_on_leave_attendance_for_exactly_the_working_days`. |
+| 5 | Cancelling an approved leave removes the attendance rows and restores the balance | **Pass — live and automated.** Live: balance `used` went `4.0 → 0.0`, `available` `14.0 → 18.0`; all 4 attendance rows confirmed `deleted_at IS NOT NULL` via direct `psql`, matching the automated test. |
+| 6 | The isolation sweep picks up all seven new tenant tables (three from WP-09, four from WP-10), no test file edits | **Pass — verified structurally.** `tests/isolation/test_rls_policies.py` (still untouched) now parametrizes over `attendance`, `shifts`, `employee_shifts`, `holidays`, `leave_types`, `leaves`, `leave_balances` — 14 additional sweep cases (2 per table) beyond WP-01 through WP-07's baseline, discovered automatically from `TenantBase.__subclasses__()`. `tests/isolation/test_leaves.py` adds the dedicated HTTP-level cross-tenant proof for `leaves`/`leave-types`, the same shape as every prior resource's isolation test. |
+| 7 | `pytest` and `ruff` clean | **Pass.** `pytest`: **107 passed** (80 from WP-01 through WP-09, 19 new, plus 8 more isolation-sweep cases counted within that same total). `ruff check .` / `ruff format --check .`: `All checks passed!` / all files formatted. `mypy app/`: `Success: no issues found in 52 source files` — one real finding fixed along the way (a `ColumnElement[bool]` vs `BinaryExpression[bool]` reassignment in `HolidayRepository.list_in_range`, fixed by widening the variable's declared type rather than narrowing the expression). |
+
+Dev database and Redis were both cleared back to empty at the end (`industry_presets`'s 12 seed rows correctly left intact), matching the discipline every prior work package in this session followed.
+
+---
+
+## 34. WP-10 exit gate — current status
+
+Per this session's instructions (Section 19's WP-10 entry):
+
+| Gate condition | Status |
+|---|---|
+| Every validation in 11.3 has a test that triggers it | **Done — verified.** See §33 row 1. |
+| Overlapping application → 409 naming conflicting dates | **Done — verified.** See §33 row 2. |
+| Leave spanning a holiday counts one day fewer | **Done — verified.** See §33 row 3. |
+| Approval creates `on_leave` attendance for exactly the working days covered | **Done — verified.** See §33 row 4. |
+| Cancelling an approved leave removes attendance rows and restores the balance | **Done — verified.** See §33 row 5. |
+| Isolation sweep covers all seven new tenant tables automatically | **Done — verified.** See §33 row 6. |
+| `pytest` and `ruff` clean | **Done — verified.** See §33 row 7. |
+| Leave-type seeding gap carried since WP-05 (item 2.6) closed | **Done — verified**, live and automated. See §32. |
+
+**WP-10 gate passes.**
 
 ---
 
