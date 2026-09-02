@@ -9,7 +9,7 @@ interface LocationState {
 }
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, sessionExpired } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const locationState = location.state as LocationState | null;
@@ -47,12 +47,15 @@ export function LoginPage() {
     <div className="center-screen">
       <form className="card stack auth-card" onSubmit={handleSubmit}>
         <div>
-          <h1>EMS Pro</h1>
+          <h1>EMS</h1>
           <p className="subtitle">Sign in to your account</p>
         </div>
 
         {!error && locationState?.passwordReset && (
           <div className="alert alert-success">Password reset. Sign in with your new password.</div>
+        )}
+        {!error && !locationState?.passwordReset && sessionExpired && (
+          <div className="alert alert-error">Your session expired. Sign in again to continue.</div>
         )}
         {error && <div className="alert alert-error">{error.message}</div>}
 

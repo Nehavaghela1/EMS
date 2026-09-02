@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     # ── Application ─────────────────────────────────────────────
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     DEBUG: bool = True
-    APP_NAME: str = "EMS Pro"
+    APP_NAME: str = "EMS"
     API_V1_PREFIX: str = "/api/v1"
 
     # ── Database ────────────────────────────────────────────────

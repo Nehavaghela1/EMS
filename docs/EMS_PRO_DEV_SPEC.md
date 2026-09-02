@@ -1987,6 +1987,17 @@ Cache invalidation: on attendance mark, leave approval, and employee create/deac
 
 ## 12. India statutory payroll — MVP scope
 
+> ⚠️ **UNVERIFIED RATES — DO NOT COMPUTE REAL PAY FROM THIS SECTION UNTIL THIS WARNING IS RESOLVED.**
+>
+> Every EPF, ESI, Professional Tax, LWF, and TDS figure below (§12.2) came from this project's own research document, not from a primary source. Nobody has confirmed a single one of them against current law. They are a structurally correct model of how Indian statutory payroll composes — the shape is right — but the numbers themselves are placeholders until proven otherwise.
+>
+> Before any payroll run is allowed to compute a real person's pay:
+> 1. Confirm every rate against its official source — EPFO for EPF, ESIC for ESI, the relevant state Professional Tax authority for PT/LWF, the Income Tax Department for TDS slabs.
+> 2. Record the confirming source in the `source_note` column on the row that rate lives in (§12.2, §0.3, CLAUDE.md's Accuracy note) — a rate with no `source_note` is still unverified, full stop, regardless of how long it's been in the table.
+> 3. Do not remove or soften this warning until every rate in §12.2 carries a recorded `source_note`.
+>
+> This is WP-16's first task, before any salary-structure or payslip logic is built on top of these numbers. Treat an unverified rate as current law and someone gets paid the wrong amount — that is not a bug to fix later, it's a reason WP-16 does not start with a Python literal.
+
 **Read Section 0.3 before using anything in this section.** These figures come from the project's earlier research document. They are a structurally correct model of how Indian payroll composes; they are **not** verified against current government notifications, and they must be confirmed against the official source before they compute a real person's pay.
 
 ### 12.1 Salary components

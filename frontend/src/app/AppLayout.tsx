@@ -32,8 +32,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="sidebar-brand">EMS Pro</div>
-        <nav className="stack" style={{ gap: 2 }}>
+        <div className="sidebar-brand">EMS</div>
+        <nav className="sidebar-nav">
           {items.map((item) => (
             <NavLink
               key={item.to}

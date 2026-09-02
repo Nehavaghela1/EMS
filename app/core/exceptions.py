@@ -1,5 +1,6 @@
 import logging
 import uuid
+from collections.abc import Sequence
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -72,6 +73,51 @@ def _request_id(request: Request) -> str:
     return getattr(request.state, "request_id", None) or str(uuid.uuid4())
 
 
+# Mirrors app.modules.platform.service._BANNED_DETAIL_KEYS's intent (CLAUDE.md
+# rule 10) but is kept local: app/core must not import from app/modules (5.2's
+# dependency direction is the other way), and this denylist only ever needs
+# to cover request-body field *names*, not the audit log's own key shapes.
+_SENSITIVE_FIELD_NAMES = {
+    "password",
+    "current_password",
+    "new_password",
+    "otp",
+    "token",
+    "refresh_token",
+    "access_token",
+    "aadhaar",
+    "aadhaar_number",
+    "pan",
+    "pan_number",
+    "bank_account",
+    "bank_account_number",
+    "ifsc",
+}
+
+
+def _sanitize_validation_errors(errors: Sequence[dict]) -> list[dict]:
+    """Two problems in Pydantic's own `errors()` output, found by actually
+    submitting a request that fails a custom validator (a too-short
+    password): 1) `ctx.error`, when the failure came from an
+    AfterValidator/model_validator raising a plain exception, holds that
+    exception OBJECT — not JSON-serializable, so `JSONResponse` crashes
+    building the 422 response into an unhandled 500. 2) `input` echoes the
+    raw submitted value verbatim — for a password/OTP/token field, this is
+    exactly what CLAUDE.md rule 10 ("never log or return passwords, tokens,
+    Aadhaar, PAN, or bank details") forbids returning, response body or not.
+    """
+    sanitized = []
+    for err in errors:
+        err = dict(err)
+        err.pop("ctx", None)
+        loc = err.get("loc") or ()
+        field = str(loc[-1]) if loc else ""
+        if field.lower() in _SENSITIVE_FIELD_NAMES:
+            err["input"] = "***redacted***"
+        sanitized.append(err)
+    return sanitized
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
@@ -104,7 +150,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=_envelope(
                 "validation_error",
                 "The request body failed validation.",
-                details={"errors": exc.errors()},
+                details={"errors": _sanitize_validation_errors(exc.errors())},
                 request_id=request_id,
             ),
             headers={"X-Request-ID": request_id},

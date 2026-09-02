@@ -42,6 +42,7 @@ from app.modules.identity.schemas import (
     TokenResponse,
 )
 from app.modules.platform.repository import IndustryPresetRepository
+from app.modules.platform.service import AuditService
 from app.modules.time_leave.repository import LeaveTypeRepository
 
 logger = logging.getLogger("app")
@@ -231,10 +232,26 @@ class AuthService:
         if token_record.is_revoked:
             # Reuse of an already-rotated token means the token was stolen (9.2
             # step 4) — revoke every refresh token for this user, not just this one.
-            for active in self.token_repo.get_active_by_user(token_record.user_id):
+            active_tokens = self.token_repo.get_active_by_user(token_record.user_id)
+            for active in active_tokens:
                 self.token_repo.revoke(active)
+            # audit_logs has no RLS (7.8) — company_id is best-effort context
+            # for the reader, not an access-control boundary here. The actor
+            # is the compromised token's own user, not an authenticated
+            # caller (there is none at this point), which is exactly why this
+            # is worth a permanent record: this is the one audit row in the
+            # system describing what a session did to itself, not what an
+            # authenticated actor did to something else.
+            stolen_user = self.user_repo.get_by_id_for_token_refresh(token_record.user_id)
+            AuditService(self.db).record(
+                company_id=stolen_user.company_id if stolen_user else None,
+                actor=stolen_user,
+                action="REFRESH_TOKEN_REUSE_DETECTED",
+                entity_type="user",
+                entity_id=token_record.user_id,
+                details={"revoked_token_count": len(active_tokens)},
+            )
             self.db.commit()
-            # TODO(WP-11): write an audit_logs entry once the table exists.
             raise UnauthorizedError(INVALID_REFRESH_TOKEN_MESSAGE)
 
         if token_record.expires_at <= utcnow():
@@ -317,7 +334,7 @@ class AuthService:
             otp = generate_and_store_otp(email)
             send_email(
                 to=email,
-                subject="Your EMS Pro password reset code",
+                subject="Your EMS password reset code",
                 body=(
                     f"Your password reset code is {otp}. "
                     f"It expires in {settings.OTP_TTL_MINUTES} minutes."

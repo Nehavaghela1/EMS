@@ -81,6 +81,6 @@ def export_audit_logs_csv_task(
             "audit_logs_csv_exported",
             extra={"company_id": company_id, "file_path": file_path, "row_count": len(rows)},
         )
-        return {"file_path": file_path, "row_count": len(rows)}
+        return {"company_id": company_id, "file_path": file_path, "row_count": len(rows)}
     finally:
         db.close()

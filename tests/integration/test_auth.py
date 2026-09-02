@@ -104,6 +104,51 @@ def test_refresh_token_used_as_access_token_returns_401(client, company_a):
     assert resp.status_code == 401
 
 
+def test_a_token_signed_with_the_wrong_secret_is_rejected(client, company_a):
+    """Attack: forge a super_admin token without knowing SECRET_KEY.
+    is_platform_admin is derived entirely from the verified `role` claim
+    (app/core/dependencies.py) — nothing a client sends can set it directly,
+    so the only lever is smuggling `role: "super_admin"` into a token that
+    still verifies. It doesn't, because the signature doesn't match."""
+    forged = jwt.encode(
+        {
+            "sub": str(uuid.uuid4()),
+            "company_id": str(company_a.company_id),
+            "role": "super_admin",
+            "type": "access",
+            "iat": datetime.now(UTC),
+            "exp": datetime.now(UTC) + timedelta(minutes=15),
+            "jti": str(uuid.uuid4()),
+        },
+        "an-attacker-controlled-secret-not-settings.SECRET_KEY",
+        algorithm=settings.JWT_ALGORITHM,
+    )
+    resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {forged}"})
+    assert resp.status_code == 401
+
+
+def test_an_unsigned_none_algorithm_token_is_rejected(client, company_a):
+    """Attack: the classic JWT `alg: none` bypass. decode_access_token pins
+    `algorithms=[settings.JWT_ALGORITHM]` explicitly rather than trusting
+    the token's own header (9.2), so this must fail even though PyJWT can
+    technically encode it."""
+    forged = jwt.encode(
+        {
+            "sub": str(uuid.uuid4()),
+            "company_id": str(company_a.company_id),
+            "role": "super_admin",
+            "type": "access",
+            "iat": datetime.now(UTC),
+            "exp": datetime.now(UTC) + timedelta(minutes=15),
+            "jti": str(uuid.uuid4()),
+        },
+        key=None,
+        algorithm="none",
+    )
+    resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {forged}"})
+    assert resp.status_code == 401
+
+
 def test_refresh_rotates_and_reuse_of_old_token_revokes_the_family(client, super_admin_headers):
     approve = _register_and_approve(client, super_admin_headers, "Rotate Co", "admin@rotateco.com")
     login_resp = _login(client, approve["hr_admin_email"], approve["temporary_password"])
@@ -122,6 +167,23 @@ def test_refresh_rotates_and_reuse_of_old_token_revokes_the_family(client, super
     # family was revoked, not just the replayed token.
     second_use_resp = client.post("/api/v1/auth/refresh", cookies={"refresh_token": new_refresh})
     assert second_use_resp.status_code == 401
+
+    # Hardening pass: reuse detection used to revoke the family silently —
+    # a real theft signal with no forensic trail. It must now write an
+    # audit row (the stale "once the table exists" TODO predated WP-11,
+    # which built the table this session never came back to wire it into).
+    fresh_login = _login(client, approve["hr_admin_email"], approve["temporary_password"])
+    fresh_token = fresh_login.json()["access_token"]
+    audit_resp = client.get(
+        "/api/v1/audit-logs",
+        headers={"Authorization": f"Bearer {fresh_token}"},
+        params={"action": "REFRESH_TOKEN_REUSE_DETECTED"},
+    )
+    assert audit_resp.status_code == 200
+    # Two rows, not one: the replay of old_refresh revokes the whole family
+    # (including new_refresh), so the next call — presenting new_refresh,
+    # itself now revoked too — is its own independent reuse event.
+    assert audit_resp.json()["total"] == 2
 
 
 def test_five_bad_passwords_lock_the_account_and_the_sixth_returns_423(client, super_admin_headers):

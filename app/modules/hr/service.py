@@ -127,7 +127,14 @@ class EmployeeService:
         self.audit = AuditService(db)
 
     def _get_or_404(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> Employee:
-        employee = self.repo.get_by_id(employee_id, company_id)
+        # any-status, not get_by_id: a deactivated employee's row still
+        # exists (6.5's soft-delete rule) and HR must still be able to view,
+        # edit, or reactivate it — the previous is_active-filtered lookup
+        # here 404'd a deactivated employee's own profile route, which is
+        # exactly the page the frontend's "Reactivate" button lives on,
+        # making that button structurally unreachable. is_active is now
+        # visible on the response instead of hidden behind a 404.
+        employee = self.repo.get_by_id_any_status(employee_id, company_id)
         if employee is None:
             raise NotFoundError("Employee not found.")
         return employee

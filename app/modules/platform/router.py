@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
+from app.core.exceptions import NotFoundError
 from app.core.pagination import Page, PageParams, page_params
 from app.db.session import get_db
 from app.modules.identity.models import User, UserRole
@@ -59,13 +60,27 @@ _STATE_MAP: dict[str, JobState] = {
 
 
 @router.get("/{job_id}", response_model=JobStatusResponse)
-def get_job_status(job_id: str, _user: User = Depends(get_current_user)) -> JobStatusResponse:
+def get_job_status(job_id: str, user: User = Depends(get_current_user)) -> JobStatusResponse:
     async_result = celery_app.AsyncResult(job_id)
     status = _STATE_MAP.get(async_result.state, "queued")
+    result = async_result.result if status == "success" else None
+    if (
+        result is not None
+        and user.role != UserRole.super_admin
+        and isinstance(result, dict)
+        and result.get("company_id") != str(user.company_id)
+    ):
+        # Every export task's result carries the company_id it ran for — a
+        # job_id supplied by the client is exactly the kind of id a service
+        # must re-scope rather than trust, even though Celery's own task ids
+        # are high-entropy UUIDs and not practically guessable. 404, not 403
+        # (10.1): the caller should not learn that a job with this id exists
+        # at all.
+        raise NotFoundError("Job not found.")
     return JobStatusResponse(
         job_id=job_id,
         status=status,
-        result=async_result.result if status == "success" else None,
+        result=result,
         error=str(async_result.result) if status == "failure" else None,
     )
 

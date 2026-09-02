@@ -86,7 +86,7 @@ DEMO_COMPANY_NAME = "Bluepeak Demo Technologies"
 DEMO_COMPANY_EMAIL = "admin@bluepeak-demo.example"
 DEMO_PASSWORD = "DemoPass123!"  # fixed and printed below — obviously not a real secret
 
-SEED_ADMIN_COMPANY_NAME = "EMS Pro Seed Admin (internal)"
+SEED_ADMIN_COMPANY_NAME = "EMS Seed Admin (internal)"
 SEED_ADMIN_EMAIL = "seed-admin@ems-pro.internal"
 
 LEVELS = ["L1", "L2", "L3", "L4", "L5"]

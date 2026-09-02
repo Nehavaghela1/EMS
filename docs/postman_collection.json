@@ -1,8 +1,8 @@
 {
   "info": {
     "_postman_id": "41bf30f8-07d8-461c-9643-888e2277740a",
-    "name": "EMS Pro API",
-    "description": "Every route the frontend calls, grouped by module, against a local `uvicorn app.main:app --reload` instance (see the repo README for setup).\n\n**Auth**: the collection-level Bearer auth reads `{{access_token}}` from the environment. A test script on every request auto-captures `access_token` whenever a response body contains one (login, activation) \u2014 you never need to copy/paste it by hand.\n\n**Run in this order for a first pass** (see the \"Suggested order\" folder for the exact requests):\n1. `POST /companies/register` \u2014 creates a company in `pending` status.\n2. Approve it as a `super_admin`. There is no self-serve way to get a `super_admin` account \u2014 Spec \u00a78.5 deliberately makes that role assignable only by direct database action, never a route. Create one locally with:\n\n```bash\npython3 - <<'EOF'\nfrom app.db.session import SessionLocal\nfrom app.core.security import hash_password\nfrom app.modules.identity.models import Company, CompanyStatus, User, UserRole\n\nwith SessionLocal() as db:\n    company = Company(name=\"Platform Admin\", code=\"PLATADMIN\", email=\"platform@example.com\", status=CompanyStatus.active)\n    db.add(company)\n    db.flush()\n    db.add(User(company_id=company.id, email=\"admin@example.com\",\n                hashed_password=hash_password(\"ChangeMe123!\"), role=UserRole.super_admin, is_active=True))\n    db.commit()\nEOF\n```\n\n   Then run `POST /auth/login` with that email/password, then `POST /companies/{company_id}/approve` (grab the id from the register response, or `GET /companies?status=pending`).\n3. `POST /auth/login` again, this time as the `hr_admin` the approve step just created (its email/temp password come back in the approve response).\n4. `POST /employees` to create an employee \u2014 the response includes an activation token; `POST /auth/activate` with it logs the new employee straight in.\n\nFaster path for exploring everything else: skip steps 1-2 and run `scripts/seed_demo.py` (see README) for a company with 25 employees, attendance, leave and shifts already in every state, then just log in."
+    "name": "EMS API",
+    "description": "Every route the frontend calls, grouped by module, against a local `uvicorn app.main:app --reload` instance (see the repo README for setup).\n\n**Auth**: the collection-level Bearer auth reads `{{access_token}}` from the environment. A test script on every request auto-captures `access_token` whenever a response body contains one (login, activation) — you never need to copy/paste it by hand.\n\n**Run in this order for a first pass** (see the \"Suggested order\" folder for the exact requests):\n1. `POST /companies/register` — creates a company in `pending` status.\n2. Approve it as a `super_admin`. There is no self-serve way to get a `super_admin` account — Spec §8.5 deliberately makes that role assignable only by direct database action, never a route. Create one locally with:\n\n```bash\npython3 - <<'EOF'\nfrom app.db.session import SessionLocal\nfrom app.core.security import hash_password\nfrom app.modules.identity.models import Company, CompanyStatus, User, UserRole\n\nwith SessionLocal() as db:\n    company = Company(name=\"Platform Admin\", code=\"PLATADMIN\", email=\"platform@example.com\", status=CompanyStatus.active)\n    db.add(company)\n    db.flush()\n    db.add(User(company_id=company.id, email=\"admin@example.com\",\n                hashed_password=hash_password(\"ChangeMe123!\"), role=UserRole.super_admin, is_active=True))\n    db.commit()\nEOF\n```\n\n   Then run `POST /auth/login` with that email/password, then `POST /companies/{company_id}/approve` (grab the id from the register response, or `GET /companies?status=pending`).\n3. `POST /auth/login` again, this time as the `hr_admin` the approve step just created (its email/temp password come back in the approve response).\n4. `POST /employees` to create an employee — the response includes an activation token; `POST /auth/activate` with it logs the new employee straight in.\n\nFaster path for exploring everything else: skip steps 1-2 and run `scripts/seed_demo.py` (see README) for a company with 25 employees, attendance, leave and shifts already in every state, then just log in."
   },
   "auth": {
     "type": "bearer",
@@ -27,7 +27,7 @@
           "    if (body && body.access_token) {",
           "        pm.environment.set('access_token', body.access_token);",
           "    }",
-          "} catch (e) { /* non-JSON or empty body \u2014 nothing to capture */ }"
+          "} catch (e) { /* non-JSON or empty body — nothing to capture */ }"
         ]
       }
     }
@@ -50,7 +50,7 @@
                 "health"
               ]
             },
-            "description": "Outside /api/v1 \u2014 checks DB and Redis are both reachable. No auth.",
+            "description": "Outside /api/v1 — checks DB and Redis are both reachable. No auth.",
             "auth": {
               "type": "noauth"
             }
@@ -83,7 +83,7 @@
                 "register"
               ]
             },
-            "description": "Route 1 (public). Creates the company in `pending` status. Note the returned `id` \u2014 you'll need it for the approve step.",
+            "description": "Route 1 (public). Creates the company in `pending` status. Note the returned `id` — you'll need it for the approve step.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"company_name\": \"Acme Manufacturing\",\n  \"company_email\": \"hr@acme.example\",\n  \"industry\": \"Technology\",\n  \"phone\": \"+91-9800000000\",\n  \"country\": \"IN\"\n}",
@@ -150,7 +150,7 @@
                 "approve"
               ]
             },
-            "description": "super_admin only. Creates the company's first hr_admin user and returns its email + a generated temporary password \u2014 copy both, you'll need them to log in as HR next."
+            "description": "super_admin only. Creates the company's first hr_admin user and returns its email + a generated temporary password — copy both, you'll need them to log in as HR next."
           },
           "response": []
         },
@@ -175,7 +175,7 @@
                 "reject"
               ]
             },
-            "description": "super_admin only. Alternative to approve \u2014 left here for completeness, not part of the suggested order.",
+            "description": "super_admin only. Alternative to approve — left here for completeness, not part of the suggested order.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"reason\": \"Duplicate registration.\"\n}",
@@ -208,7 +208,7 @@
                 "login"
               ]
             },
-            "description": "`company_code` is only needed if the same email exists at more than one company (rare \u2014 omit it normally). Sets a refresh-token cookie and returns an access token; the collection's test script captures the access token automatically.",
+            "description": "`company_code` is only needed if the same email exists at more than one company (rare — omit it normally). Sets a refresh-token cookie and returns an access token; the collection's test script captures the access token automatically.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"hr@acme.example\",\n  \"password\": \"ChangeMe123!\",\n  \"company_code\": \"\"\n}",
@@ -239,7 +239,7 @@
                 "refresh"
               ]
             },
-            "description": "Reads the refresh-token cookie Postman's cookie jar captured from Login \u2014 no body needed.",
+            "description": "Reads the refresh-token cookie Postman's cookie jar captured from Login — no body needed.",
             "auth": {
               "type": "noauth"
             }
@@ -356,7 +356,7 @@
                 "forgot-password"
               ]
             },
-            "description": "Always returns the same message whether or not the email exists (Spec \u00a79.3 enumeration safety) \u2014 check server logs / the OTP table locally to get the code, there's no email backend wired up in dev.",
+            "description": "Always returns the same message whether or not the email exists (Spec §9.3 enumeration safety) — check server logs / the OTP table locally to get the code, there's no email backend wired up in dev.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"hr@acme.example\"\n}",
@@ -447,7 +447,7 @@
                 "{{activation_token}}"
               ]
             },
-            "description": "Public preview shown before an invited employee sets their password \u2014 404 once expired or already redeemed.",
+            "description": "Public preview shown before an invited employee sets their password — 404 once expired or already redeemed.",
             "auth": {
               "type": "noauth"
             }
@@ -474,7 +474,7 @@
                 "activate"
               ]
             },
-            "description": "Logs the employee straight in on success (Spec: no second login step) \u2014 response includes an access_token, auto-captured like Login.",
+            "description": "Logs the employee straight in on success (Spec: no second login step) — response includes an access_token, auto-captured like Login.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"token\": \"{{activation_token}}\",\n  \"username\": \"jane.doe\",\n  \"password\": \"NewPassw0rd!\"\n}",
@@ -491,7 +491,7 @@
           "response": []
         }
       ],
-      "description": "Routes 1-11 and the /companies collection (Spec \u00a714.3). See the collection description for why approving a company needs a manually created super_admin."
+      "description": "Routes 1-11 and the /companies collection (Spec §14.3). See the collection description for why approving a company needs a manually created super_admin."
     },
     {
       "name": "Companies",
@@ -563,7 +563,7 @@
                 "{{company_id}}"
               ]
             },
-            "description": "super_admin only \u2014 includes employee/department counts."
+            "description": "super_admin only — includes employee/department counts."
           },
           "response": []
         }
@@ -758,7 +758,7 @@
                 }
               ]
             },
-            "description": "Scope depends on caller role (Spec \u00a710.4): HR sees everyone, a manager sees their team, an employee sees only themself."
+            "description": "Scope depends on caller role (Spec §10.4): HR sees everyone, a manager sees their team, an employee sees only themself."
           },
           "response": []
         },
@@ -781,7 +781,7 @@
                 "employees"
               ]
             },
-            "description": "hr_admin only. `employee_code` is generated server-side, never client-supplied. Response includes an invite with an activation_token \u2014 copy it into the `activation_token` environment variable to try Auth > Activate account.",
+            "description": "hr_admin only. `employee_code` is generated server-side, never client-supplied. Response includes an invite with an activation_token — copy it into the `activation_token` environment variable to try Auth > Activate account.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"first_name\": \"Jane\",\n  \"last_name\": \"Doe\",\n  \"email\": \"jane.doe@acme.example\",\n  \"personal_email\": \"jane.personal@example.com\",\n  \"phone\": \"+91-9800000002\",\n  \"department_id\": \"{{department_id}}\",\n  \"position\": \"Software Engineer\",\n  \"level\": \"L2\",\n  \"reporting_manager_id\": null,\n  \"employment_type\": \"full_time\",\n  \"hire_date\": \"2026-01-15\",\n  \"probation_end_date\": \"2026-04-15\",\n  \"notice_period_days\": 30\n}",
@@ -881,7 +881,7 @@
                 "toggle-active"
               ]
             },
-            "description": "hr_admin only. Row stays in the database; deactivation just revokes login and drops the employee out of active lists (never a hard delete \u2014 Spec \u00a710.1)."
+            "description": "hr_admin only. Row stays in the database; deactivation just revokes login and drops the employee out of active lists (never a hard delete — Spec §10.1)."
           },
           "response": []
         },
@@ -1095,7 +1095,7 @@
                 "export"
               ]
             },
-            "description": "Queues a Celery job and returns a job_id \u2014 poll Jobs > Get job status with it.",
+            "description": "Queues a Celery job and returns a job_id — poll Jobs > Get job status with it.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"employee_id\": null,\n  \"date_from\": \"2026-01-01\",\n  \"date_to\": \"2026-01-31\",\n  \"status\": null,\n  \"department_id\": null\n}",
@@ -1380,7 +1380,7 @@
                 "leave-types"
               ]
             },
-            "description": "hr_admin only. Copy the returned id into `leave_type_id`. A company's industry preset seeds a starter set on approval \u2014 this is for adding more.",
+            "description": "hr_admin only. Copy the returned id into `leave_type_id`. A company's industry preset seeds a starter set on approval — this is for adding more.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Annual Leave\",\n  \"code\": \"annual\",\n  \"annual_allowance\": \"18\",\n  \"carry_forward_limit\": \"6\",\n  \"max_consecutive_days\": null,\n  \"requires_approval\": true,\n  \"is_paid\": true,\n  \"is_encashable\": false\n}",
@@ -1640,7 +1640,7 @@
                 "dashboard"
               ]
             },
-            "description": "Shape of the response depends on caller role (Spec \u00a716) \u2014 an employee sees their own attendance/leave snapshot, a manager also sees team stats, hr_admin sees company-wide numbers."
+            "description": "Shape of the response depends on caller role (Spec §16) — an employee sees their own attendance/leave snapshot, a manager also sees team stats, hr_admin sees company-wide numbers."
           },
           "response": []
         }
@@ -1701,7 +1701,7 @@
                 }
               ]
             },
-            "description": "hr_admin only. Append-only at the database level \u2014 see the README's \"audit_logs is append-only\" section for how that's enforced."
+            "description": "hr_admin only. Append-only at the database level — see the README's \"audit_logs is append-only\" section for how that's enforced."
           },
           "response": []
         },
@@ -1725,7 +1725,7 @@
                 "export"
               ]
             },
-            "description": "hr_admin only. Queues a Celery job \u2014 poll Jobs > Get job status with the returned job_id.",
+            "description": "hr_admin only. Queues a Celery job — poll Jobs > Get job status with the returned job_id.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"action\": null,\n  \"actor_email\": null,\n  \"entity_type\": null,\n  \"date_from\": null,\n  \"date_to\": null\n}",
@@ -1833,7 +1833,7 @@
                 "industry-presets"
               ]
             },
-            "description": "Public \u2014 powers the industry dropdown on the company registration form. Seeded by scripts/setup.sh, never hand-edited.",
+            "description": "Public — powers the industry dropdown on the company registration form. Seeded by scripts/setup.sh, never hand-edited.",
             "auth": {
               "type": "noauth"
             }

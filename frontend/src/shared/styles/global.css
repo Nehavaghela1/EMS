@@ -116,6 +116,12 @@ code {
   padding: 0 var(--space-2) var(--space-4);
 }
 
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .sidebar-link {
   display: block;
   padding: var(--space-2) var(--space-3);
@@ -400,8 +406,40 @@ code {
   .form-grid {
     grid-template-columns: 1fr;
   }
+  /* Hardening pass: this used to be `.sidebar { display: none; }` with no
+     replacement — on a narrow window every nav link (and the log-out
+     button) simply vanished, leaving whatever page you loaded on as a dead
+     end. Reflowed into a horizontal, scrollable strip instead of hidden;
+     still no JS, no hamburger state, no animation — every link a wide
+     viewport has stays reachable, just laid out differently. */
+  .app-shell {
+    flex-direction: column;
+  }
   .sidebar {
-    display: none;
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    padding: var(--space-2) var(--space-3);
+    overflow-x: auto;
+  }
+  .sidebar-brand {
+    padding: 0 var(--space-3) 0 0;
+  }
+  .sidebar-nav {
+    flex-direction: row;
+    flex-shrink: 0;
+  }
+  .sidebar-footer {
+    flex-direction: row;
+    align-items: center;
+    margin-top: 0;
+    margin-left: var(--space-3);
+    padding-top: 0;
+    padding-left: var(--space-3);
+    border-top: none;
+    border-left: 1px solid var(--color-border);
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   .main {
     padding: var(--space-4);

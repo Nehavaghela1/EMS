@@ -47,9 +47,29 @@ apiClient.interceptors.request.use((config) => {
 // another refresh attempt and loop forever (Spec 14.2's explicit warning).
 const refreshClient = axios.create({ baseURL: API_BASE_URL, withCredentials: true });
 
+// Single-flight guard (hardening pass): the refresh token ROTATES on every
+// use (Spec 9.2) and a reused, already-rotated token trips reuse detection,
+// which revokes the whole session family — by design, that's how theft
+// gets caught. But react-query fires several queries in parallel (e.g. a
+// dashboard loading three widgets at once), and if the access token expires
+// mid-page every one of those requests gets its own 401 at nearly the same
+// moment. Without this guard, each 401 called refreshAccessToken()
+// independently; the first refresh call rotates the cookie, and every
+// concurrent call after it presents the now-already-rotated token — which
+// looks exactly like theft to the backend and force-logs-out a user who did
+// nothing wrong. One in-flight refresh is shared by every caller instead.
+let refreshPromise: Promise<string> | null = null;
+
 async function refreshAccessToken(): Promise<string> {
-  const { data } = await refreshClient.post<{ access_token: string }>("/auth/refresh");
-  return data.access_token;
+  if (!refreshPromise) {
+    refreshPromise = refreshClient
+      .post<{ access_token: string }>("/auth/refresh")
+      .then(({ data }) => data.access_token)
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
 }
 
 interface RetryableConfig extends InternalAxiosRequestConfig {

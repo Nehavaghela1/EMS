@@ -1,4 +1,4 @@
-# EMS Pro
+# EMS
 
 A multi-tenant HRMS, payroll and projects platform for small-to-mid Indian
 companies. One deployment serves many companies, each seeing only its own

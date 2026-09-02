@@ -225,7 +225,15 @@ def test_hr_can_update_hr_only_fields(client, company_a):
     assert resp.json()["level"] == "L4"
 
 
-def test_deactivated_employee_row_still_exists_but_404s_by_id(client, company_a, db):
+def test_deactivated_employee_row_still_exists_and_stays_visible_by_id(client, company_a, db):
+    """Hardening pass: GET-by-id used to 404 a deactivated employee (it
+    filtered on is_active, same as the list's default view), which made the
+    frontend's own "Reactivate" button on that exact page unreachable — HR
+    could never load the page it lived on. is_active=False is now a visible
+    field on the response instead of a 404 (6.5: the row is soft-deactivated,
+    never hard-deleted, so hiding it from a direct id lookup was never
+    required for isolation — company_id, not is_active, is the tenant
+    boundary)."""
     employee = _create_employee(
         client, company_a.hr_headers, first_name="Diana", email="diana@companya.com"
     )
@@ -235,7 +243,8 @@ def test_deactivated_employee_row_still_exists_but_404s_by_id(client, company_a,
     assert delete_resp.status_code == 204
 
     get_resp = client.get(f"/api/v1/employees/{employee_id}", headers=company_a.hr_headers)
-    assert get_resp.status_code == 404
+    assert get_resp.status_code == 200
+    assert get_resp.json()["is_active"] is False
 
     row = db.get(Employee, uuid.UUID(employee_id))
     assert row is not None
@@ -249,10 +258,9 @@ def test_toggle_active_reactivates_a_deactivated_employee(client, company_a):
     )
     employee_id = employee["id"]
     client.delete(f"/api/v1/employees/{employee_id}", headers=company_a.hr_headers)
-    assert (
-        client.get(f"/api/v1/employees/{employee_id}", headers=company_a.hr_headers).status_code
-        == 404
-    )
+    deactivated_get = client.get(f"/api/v1/employees/{employee_id}", headers=company_a.hr_headers)
+    assert deactivated_get.status_code == 200
+    assert deactivated_get.json()["is_active"] is False
 
     reactivate_resp = client.post(
         f"/api/v1/employees/{employee_id}/toggle-active", headers=company_a.hr_headers
@@ -262,6 +270,7 @@ def test_toggle_active_reactivates_a_deactivated_employee(client, company_a):
 
     get_resp = client.get(f"/api/v1/employees/{employee_id}", headers=company_a.hr_headers)
     assert get_resp.status_code == 200
+    assert get_resp.json()["is_active"] is True
 
 
 def test_deactivating_an_employee_also_deactivates_their_linked_user(client, company_a, db):

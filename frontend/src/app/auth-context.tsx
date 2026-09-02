@@ -40,6 +40,12 @@ interface AuthContextValue {
    * `/auth/login` a second time. */
   establishSession: (accessToken: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** True only when the API interceptor's refresh-and-retry both failed on
+   * an already-in-flight request (a session that was good, then wasn't) —
+   * never on the ordinary "never logged in yet" boot check. LoginPage reads
+   * this to explain the redirect instead of showing a blank form with no
+   * indication anything happened. */
+  sessionExpired: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -52,6 +58,7 @@ async function fetchMe(): Promise<CurrentUser> {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [user, setUser] = useState<CurrentUser | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   const clearSession = useCallback(() => {
     setAccessToken(null);
@@ -60,9 +67,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // The interceptor calls this when a refresh-and-retry both fail — the
-  // session is over from an already-in-flight request, not just at boot.
+  // session is over from an already-in-flight request, not just at boot,
+  // which is the one case worth telling the user about on the way back to
+  // the login page.
   useEffect(() => {
-    setOnSessionExpired(clearSession);
+    setOnSessionExpired(() => {
+      setSessionExpired(true);
+      clearSession();
+    });
   }, [clearSession]);
 
   useEffect(() => {
@@ -95,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const me = await fetchMe();
     setUser(me);
     setStatus("authenticated");
+    setSessionExpired(false);
   }, []);
 
   const login = useCallback(
@@ -118,8 +131,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearSession]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, user, login, establishSession, logout }),
-    [status, user, login, establishSession, logout],
+    () => ({ status, user, login, establishSession, logout, sessionExpired }),
+    [status, user, login, establishSession, logout, sessionExpired],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -63,6 +63,7 @@ def login(
 
 
 @router.post("/refresh", response_model=TokenResponse)
+@limiter.limit("30/minute")  # Spec 9.5
 def refresh_token(
     request: Request,
     response: Response,
@@ -117,7 +118,7 @@ def change_password(
 
 
 @router.post("/forgot-password", status_code=200)
-@limiter.limit("5/minute")  # Spec 9.5 — this endpoint sends real email/OTPs
+@limiter.limit("3/hour")  # Spec 9.5 — this endpoint sends real email/OTPs
 def forgot_password(data: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
     AuthService(db).forgot_password(data.email)
     # Always the same body and status regardless of whether the email
@@ -133,7 +134,7 @@ def reset_password(data: ResetPasswordRequest, request: Request, db: Session = D
 
 
 @router.get("/check-username/{username}", response_model=UsernameAvailabilityResponse)
-@limiter.limit("5/minute")  # "Heavily rate-limited" (10.2 route 9, 9.3)
+@limiter.limit("20/minute")  # Spec 9.5
 def check_username(username: str, request: Request, db: Session = Depends(get_db)):
     available = AuthService(db).check_username_available(username)
     return UsernameAvailabilityResponse(available=available)
