@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
+from app.db.session import get_db
 from app.modules.identity.models import User, UserRole
 from app.modules.platform.models import AuditLog, Notification
 from app.modules.platform.schemas import (
@@ -19,13 +20,29 @@ from app.modules.platform.schemas import (
     NotificationListResponse,
     NotificationResponse,
 )
-from app.modules.platform.service import AuditService, DashboardService, NotificationService
+from app.modules.platform.service import (
+    AuditService,
+    DashboardService,
+    IndustryPresetService,
+    NotificationService,
+)
 from app.workers.celery_app import celery_app
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 dashboard_router = APIRouter(tags=["Dashboard"])
 audit_logs_router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 notifications_router = APIRouter(prefix="/notifications", tags=["Notifications"])
+industry_presets_router = APIRouter(prefix="/industry-presets", tags=["Industry Presets"])
+
+
+@industry_presets_router.get("", response_model=list[str])
+def list_industry_presets(db: Session = Depends(get_db)):
+    """Public, no tenant context (`industry_presets` has no RLS — Spec
+    7.8, global seed data). Names only, not the full
+    `departments_json`/`leave_types_json` payloads a caller has no use
+    for before a company even exists. No route number is assigned to
+    this in Section 10's table — see RECONCILIATION.md's spec gaps."""
+    return IndustryPresetService(db).list_names()
 
 JobState = Literal["queued", "started", "success", "failure"]
 

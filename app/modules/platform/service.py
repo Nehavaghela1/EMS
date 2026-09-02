@@ -16,6 +16,7 @@ from app.modules.platform.models import AuditLog, Notification
 from app.modules.platform.repository import (
     AuditRepository,
     DashboardRepository,
+    IndustryPresetRepository,
     NotificationRepository,
 )
 from app.modules.time_leave.repository import LeaveTypeRepository
@@ -64,6 +65,19 @@ def _assert_details_safe(details: dict[str, Any] | None) -> None:
             )
         if isinstance(value, dict):
             _assert_details_safe(value)
+
+
+class IndustryPresetService:
+    """WP-14: backs the public `GET /industry-presets` list the company
+    registration frontend page needs (Spec 14.3 page 2) — no route number
+    exists for this in Section 10's table (spec gap, recorded in
+    RECONCILIATION.md rather than inventing one)."""
+
+    def __init__(self, db: Session):
+        self.repo = IndustryPresetRepository(db)
+
+    def list_names(self) -> list[str]:
+        return [preset.industry_name for preset in self.repo.list_all()]
 
 
 class AuditService:
