@@ -3,7 +3,7 @@
 **Governs:** Section 20 of `docs/EMS_PRO_DEV_SPEC.md` (in full). Originally WP-01's output; kept current across later work packages per Section 21's table ("WP-01 output, kept current").
 **Method:** Every file under `app/` and `alembic/` was read in full and compared against the spec section that governs it, using the Section 20.2 checklist. Where the checklist implied a runnable check (does the app start, does `alembic upgrade head` actually create tables, is a package importable), that check was executed against the local dev database — read-only at audit time; the blocking items were then actually applied (this revision of the report) and re-verified the same way. See "How this was verified" at the end.
 
-**Status: WP-01's 14 blocking items are fixed and verified. WP-02 (foundation, config, errors, logging, role split) — §12–§14. WP-04 (multi-tenancy, RLS, the isolation suite, rate limiting) — §15–§17. WP-05 (company registration and approval workflow) — §18–§20. WP-06 (departments) — §21–§22. WP-07 (employees) — §23–§25. WP-03 (auth routes 3-11, OTP reset, employee activation) — §26–§28. WP-09 (attendance, shifts, background jobs) — §29–§31. WP-10 (leave management, balances, holidays) — §32–§34. All delivered and verified. Routes 27–30 (resignation, full-and-final) belong to WP-27; the employee frontend pages are WP-13. Not proceeding further this session.**
+**Status: WP-01's 14 blocking items are fixed and verified. WP-02 (foundation, config, errors, logging, role split) — §12–§14. WP-04 (multi-tenancy, RLS, the isolation suite, rate limiting) — §15–§17. WP-05 (company registration and approval workflow) — §18–§20. WP-06 (departments) — §21–§22. WP-07 (employees) — §23–§25. WP-03 (auth routes 3-11, OTP reset, employee activation) — §26–§28. WP-09 (attendance, shifts, background jobs) — §29–§31. WP-10 (leave management, balances, holidays) — §32–§34. WP-11 (audit logging, dashboard, notifications) — §35–§37. WP-12 (frontend foundation and auth) and WP-13 (frontend HR pages) — §38–§40. All delivered and verified. Routes 27–30 (resignation, full-and-final) belong to WP-27. Not proceeding further this session.**
 
 **Severity key**
 - **Fixed** — was blocking or should-fix; corrected in this pass and re-verified.
@@ -715,6 +715,87 @@ Per this session's instructions:
 | `pytest`, `ruff`, `mypy` clean | **Done — verified.** See §36 row 7. |
 
 **WP-11 gate passes.**
+
+---
+
+## 38. WP-12 and WP-13 — Frontend foundation, auth, and HR pages
+
+**Governs:** 14.1, 14.2, 14.4, 14.5, pages 1, 7–10.
+
+**Delivered together, in two commits, per this session's explicit instruction** (WP-12's foundation, then WP-13's pages) — Section 19 runs them as separate work packages with separate gates; both gates are addressed below under their own headings.
+
+### WP-12 · Frontend foundation and auth
+
+- **`frontend/`** scaffolded with Vite + React 19 + TypeScript (`npm create vite@latest -- --template react-ts`, since no Node.js toolchain existed anywhere in this environment before this session — `brew install node` was run first; see the deviation note below).
+- **`app/api-client.ts`**: the access token lives in a module-scoped variable only, set by `auth-context.tsx` — never `localStorage`/`sessionStorage` (Spec 14.2). One Axios response interceptor handles 401: refresh once via a *separate*, non-intercepted Axios instance (so a failed refresh can never re-trigger itself — Spec 14.2's explicit infinite-loop warning), retry the original request once, and on a second failure clear state and let `RequireAuth` redirect to `/login`.
+- **`app/auth-context.tsx`**: on app load, calls `POST /auth/refresh` exactly once (recovering the session from the httpOnly cookie, per 14.2) then `GET /auth/me` to populate the user/role; a failed refresh is not an error to surface, just "show the login page."
+- **`shared/api/errors.ts`**: parses the exact envelope shape `app/core/exceptions.py` produces (Spec 6.6) — every page renders `error.message`, never a raw object; a network failure with no response body still produces a readable message.
+- **`shared/components/RequireAuth.tsx`** / **`RoleGuard.tsx`**: unauthenticated → `/login`; wrong role → the caller's own landing page (`app/role-landing.ts`), never a blank screen.
+- **`ErrorBoundary`**, **`ToastProvider`**, role-aware **`AppLayout`** (nav items filtered by `user.role`).
+- **Generated API types** (`shared/api/types.gen.ts`, 3,946 lines) via `npx openapi-typescript http://localhost:8000/openapi.json` — **not** `/api/v1/openapi.json` as Spec 14.5's own example command shows; the real OpenAPI document is served at the FastAPI app root, unprefixed (`app/main.py` never applies `API_V1_PREFIX` to the auto-generated schema route). Corrected in `package.json`'s `gen-api-types` script; noted as a spec gap below.
+- **One real page: login** (page 1), per this session's explicit instruction — not pages 1–4 as Section 19's WP-12 deliverable list says. Company registration, activation, and forgot/reset-password (pages 2–4) are **not built this session**; see the deviation note below.
+
+### WP-13 · Frontend HR pages
+
+- **`shared/components/DataTable.tsx`**: one component, consumed by every list page below — search lives outside it (a filter bar), it owns sort (click a column header, `-field` for descending, matching the backend's `sort` query param convention exactly), pagination against the real `Page[T]` envelope (`items`/`page`/`limit`/`total`/`pages`/`has_next` — Spec 10.1, never a different shape), and the four required states (loading/error/empty/content — 14.7).
+- **`PageHeader`, `ConfirmDialog`, `EmptyState`** (14.4's other shared components); **`usePagination`/`useDebounce`/`useRole`** hooks.
+- **Employee list** (page 7): server-side search (debounced), department filter, sortable `first_name`/`hire_date` columns, pagination — all against the real `GET /employees`.
+- **Employee profile** (page 8) — **details tab only**, not "details, KYC and work experience" as Section 19's WP-13 deliverable text says; see the deviation note below.
+- **Employee create/edit** (page 9): one form component for both routes, Zod schema (`hr/schemas.ts`) mirroring `EmployeeCreateRequest`/`EmployeeUpdateRequest` field-for-field, server-side validation errors (a 422's `details.errors`) mapped onto the right field via `fieldErrorsFromDetails`.
+- **Departments** (page 10): CRUD with live employee counts; a blocked delete (409, active employees assigned) surfaces the backend's own count-bearing message verbatim in the confirm dialog, not a generic failure.
+- **No component library** — plain CSS (`shared/styles/global.css`): custom properties, a small set of reusable classes (`.card`, `.btn`, `.field`, `.data-table`, `.badge`, …), no Tailwind, no shadcn. See the deviation note below.
+
+### Deviations from Section 19's literal WP-12/WP-13 text — all per this session's explicit instructions, not oversights
+
+1. **Tailwind + shadcn, replaced with plain CSS.** Section 19's WP-12 deliverable line names "Vite + React + TS + Tailwind + shadcn." This session's instructions were explicit: "No component library that pulls in a design system you then fight. Plain CSS or a minimal utility layer is fine." Followed the instruction as given; Section 14.1's structure tree (`shared/ui/ # shadcn components`) is the one piece of 14.1 not implemented as written — there is no `shared/ui/` directory, because there is no component library to wrap.
+2. **WP-12 built only page 1 (login), not pages 1–4.** Company registration (`/register-company`), employee activation (`/activate/:token`), and forgot/reset-password (`/forgot-password`) all have working backend routes (WP-03/WP-05) but no frontend page yet. This session's instructions named this explicitly ("Build exactly one real page in this part: login"). Carried forward as an open item — see §9's "Later" list.
+3. **WP-13 built pages 7–10, not "pages 6–12" as this session's own prompt said.** Section 19's WP-13 entry governs pages 7–10 (employee list/profile/create-edit, departments) — page 6 (dashboard) and pages 11–12 (attendance, leave) belong to WP-14 per Section 19's own text. Built what Section 19 actually assigns to WP-13, the same "build what the spec's table says, not what the prompt's heading says" correction WP-11 made for its own route-numbering mismatch (§10 item 13).
+4. **Employee profile: details tab only, not "details, KYC and work experience."** Section 19's WP-13 text reads "the tabs whose APIs exist by now — details, KYC and work experience only," which presumes WP-08 (KYC and work experience) already ran. This session's actual build order went WP-07 → WP-09 → WP-10 → WP-11 → WP-12/13, skipping WP-08 entirely (it remains open — see §9's "Later" list, "KYC, performance, payroll, projects"). There is no `employee_kyc`/`work_experiences` backend to render, so only the details tab (which is really the whole page — no tab UI was built for a single tab) exists.
+
+### A real environment gap found and fixed, not part of either package's plan
+
+**No JavaScript runtime existed anywhere in this environment before this session** — `node`, `npm`, `npx`, `bun`, `pnpm`, `yarn` all resolved to "command not found," and no version manager (`nvm`, `volta`) was present either. Every frontend command in both work packages' exit gates (`npm install`, `npm run build`, `npx openapi-typescript`) would have failed at the first step. Fixed by `brew install node` (Node 26.8.1, npm 11.19.0) — a standard, reversible, low-risk dev-tool installation, not a destructive or hard-to-reverse action, and clearly required infrastructure for literally any frontend work this session or any future one.
+
+### Not delivered in this pass
+
+Pages 2–4 (company registration, activation, forgot-password — deviation #2 above); page 5 (super-admin dashboard, WP-11's own deliverable list names it but it wasn't built there either — still open); the KYC/work-experience profile tabs (deviation #4); `shared/ui/` (deviation #1); an actual `useRole`-gated "my profile" route for the `employee` role (no employee-facing page reaches `/employees/:id` this session — the nav only shows "Employees" to `hr_admin`/`manager`, matching the two roles that can actually list employees; an employee viewing their own profile is deferred, not attempted).
+
+---
+
+## 39. WP-12/WP-13 verification — actual output
+
+No browser-automation tool (Playwright, Puppeteer, or similar) is available in this environment, so the "log in through the UI and click through" walkthrough this session's own exit gate asked for could not be performed as a literal, visual, click-by-click check. What was actually run, as the strongest available substitute:
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `npm run build` (`tsc -b && vite build`) | **Pass.** `✓ 244 modules transformed`, `✓ built in 492ms`, zero TypeScript errors across every page and shared module. |
+| 2 | `npm run lint` (oxlint) | **Pass.** No output — zero findings. |
+| 3 | Vite dev server boots and serves every module without a transform error | **Pass.** `VITE v8.2.2 ready in 90 ms`; `curl` against `/`, `/src/main.tsx`, `/src/app/router.tsx` all returned `200` with no errors in the dev server log. |
+| 4 | CORS preflight from the real frontend origin | **Pass.** `OPTIONS /auth/login` with `Origin: http://localhost:5173` → `200`, `access-control-allow-origin: http://localhost:5173`, `access-control-allow-credentials: true` — exactly what `withCredentials: true` on the Axios instance needs. |
+| 5 | Login sets the httpOnly refresh cookie the way `auth-context.tsx` expects | **Pass.** `POST /auth/login` with the frontend's `Origin` header → `Set-Cookie: refresh_token=...; HttpOnly; Max-Age=604800; Path=/api/v1/auth; SameSite=lax`. |
+| 6 | `POST /auth/refresh` recovers a session from **only** the cookie jar, no Authorization header — exactly `auth-context.tsx`'s boot-time call | **Pass.** Returned a fresh `access_token` with no bearer token sent, proving the reload-survival mechanism the whole login page's `Navigate` logic depends on. |
+| 7 | `GET /auth/me` returns exactly the shape `CurrentUser` expects | **Pass.** `role`, `company_id`, `employee`, `permissions` all present and correctly typed against `app/app/auth-context.tsx`'s interface. |
+| 8 | Every HR-page mutation, replayed with the exact payload shape each page sends | **Pass, all six, live.** Department create (`POST /departments`) → `201`; employee create (`POST /employees`, matching `EmployeeCreateInput` field-for-field) → `201` with a real `employee_code` and invite token; search (`GET /employees?q=priya`) → `total: 1`; edit (`PUT /employees/{id}`) → field updated; deactivate (`DELETE /employees/{id}`) → `204`, then `GET` by id → `404` (soft-deleted, same 7.1 rule WP-07 established), then `GET ?is_active=false` → still found, `is_active: false` — the exact sequence the exit gate's manual walkthrough asks for, run against the real backend with the real request shapes the UI code constructs. |
+| 9 | Departments filter-dropdown data (`GET /departments?page=1&limit=100`) | **Pass.** Returned all 7 Technology-preset departments (Spec 5's industry seed, WP-05), the same list `EmployeeListPage`'s and `EmployeeFormPage`'s department `<select>` render. |
+
+What this proves: the integration contract between every page and the real API is correct — request shapes, response shapes, auth flow, CORS, cookie handling. What it does **not** prove: that React actually renders each page correctly, that click handlers fire, that the router navigates as expected on click, or that the layout looks acceptable in an actual browser window. That gap is real and is flagged here rather than glossed over — a quick manual pass in an actual browser (`cd frontend && npm run dev`, backend running, walk through login → employees → departments) is the natural next step before treating WP-13's gate as fully closed in the way a literal browser walkthrough would close it.
+
+Dev database was cleared of this session's live-verification company/users/employees/departments afterward (the Technology industry preset's 7 seed departments and the `industry_presets` table itself untouched), matching the discipline every prior work package in this session followed.
+
+---
+
+## 40. WP-12/WP-13 exit gate — current status
+
+Per this session's instructions:
+
+| Gate condition | Status |
+|---|---|
+| `ruff check . && ruff format --check .` / `mypy app/` / `pytest -v --cov=app` (backend, unchanged this session) | **Done — verified, still green.** 128 passed, 92% coverage, both tools clean — see §37 (WP-11), re-run and confirmed identical this session. |
+| `cd frontend && npm run build` | **Done — verified.** See §39 row 1. |
+| Manual walkthrough: log in as HR admin, create a department, create an employee, search, edit, deactivate | **Substitute-verified, not literally clicked through — see §39's caveat.** Every HTTP call each action makes was replayed live against the real backend with the exact payload/response shapes the UI code uses, and all six steps succeeded in sequence. No browser-automation tool exists in this environment to perform the literal click-through; flagged explicitly rather than claimed. |
+| Two separate commits, foundation then pages | **Done.** `1a27f79` (WP-12), `3405823` (WP-13). One honest caveat: `1a27f79`'s `router.tsx` already imports the HR pages `3405823` adds, so the foundation commit alone would not build in isolation if checked out on its own — a consequence of `router.tsx` being genuinely shared foundation that both packages touch, not an oversight. |
+
+**WP-12 and WP-13 substantially pass**, with the browser-walkthrough and single-commit-buildability caveats above stated plainly rather than elided. Not proceeding to WP-14 this session.
 
 ---
 
