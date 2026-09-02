@@ -802,6 +802,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/industry-presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Industry Presets
+         * @description Public, no tenant context (`industry_presets` has no RLS — Spec
+         *     7.8, global seed data). Names only, not the full
+         *     `departments_json`/`leave_types_json` payloads a caller has no use
+         *     for before a company even exists. No route number is assigned to
+         *     this in Section 10's table — see RECONCILIATION.md's spec gaps.
+         */
+        get: operations["list_industry_presets_api_v1_industry_presets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -3917,6 +3941,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_industry_presets_api_v1_industry_presets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
                 };
             };
         };

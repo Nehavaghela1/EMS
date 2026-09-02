@@ -27,6 +27,13 @@ export async function registerCompany(input: RegisterCompanyInput): Promise<Comp
   return data;
 }
 
+/** GET /industry-presets (WP-14, no route number assigned in Section 10 —
+ * see RECONCILIATION.md). Public, names only. */
+export async function listIndustryPresets(): Promise<string[]> {
+  const { data } = await apiClient.get<string[]>("/industry-presets");
+  return data;
+}
+
 export interface ActivationPreview {
   first_name: string;
   last_name: string | null;

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { registerCompany } from "../api";
+import { useQuery } from "@tanstack/react-query";
+import { listIndustryPresets, registerCompany } from "../api";
 import { registerCompanySchema } from "../schemas";
 import { parseApiError, fieldErrorsFromDetails } from "../../../shared/api/errors";
 
@@ -17,6 +18,7 @@ const EMPTY: FormState = { company_name: "", company_email: "", industry: "", ph
  * no user is created here (10.2), so this page must not imply the caller
  * can log in yet. */
 export function RegisterCompanyPage() {
+  const industriesQuery = useQuery({ queryKey: ["industry-presets"], queryFn: listIndustryPresets });
   const [form, setForm] = useState<FormState>(EMPTY);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -119,15 +121,27 @@ export function RegisterCompanyPage() {
 
         <div className="field">
           <label htmlFor="industry">Industry (optional)</label>
-          <input
+          <select
             id="industry"
-            placeholder="e.g. Technology, Healthcare, Retail…"
             value={form.industry}
             onChange={(e) => setField("industry", e.target.value)}
-          />
+            disabled={industriesQuery.isLoading}
+          >
+            <option value="">— None —</option>
+            {industriesQuery.data?.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          {industriesQuery.isError && (
+            <span className="field-error">
+              Couldn't load the industry list ({parseApiError(industriesQuery.error).message}) —
+              you can still register without one.
+            </span>
+          )}
           <span className="text-muted" style={{ fontSize: 12 }}>
-            Used to pre-populate departments and leave types once approved. There's no lookup
-            for valid values yet — an unrecognized industry just means nothing gets pre-filled.
+            Used to pre-populate departments and leave types once approved.
           </span>
         </div>
 
