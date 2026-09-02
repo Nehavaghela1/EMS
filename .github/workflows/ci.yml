@@ -5,27 +5,37 @@ on:
   pull_request:
 
 env:
-  # The Postgres service's POSTGRES_USER is ems_owner itself, and
-  # POSTGRES_DB is set alongside it — the official postgres image makes
-  # POSTGRES_USER a real superuser AND the owner of POSTGRES_DB at
-  # container init. That's the only reason step 7 (migrate) can run before
-  # step 8 (bootstrap ems_app): ems_owner already owns this database and
-  # its public schema, with no bootstrap step required first.
+  # Bootstrap-then-migrate, matching docker-compose and production (Appendix
+  # A's quick-start order, Spec 8.2) — CI no longer runs a different order
+  # than every other environment. It used to: migrate-then-bootstrap worked
+  # here (and only here) because the Postgres service's POSTGRES_USER makes
+  # ems_owner a real superuser at container init, which already owns this
+  # database and its public schema, so `alembic upgrade head` could create
+  # tables with no bootstrap step first. That stopped being sufficient the
+  # moment a migration needed a ROLE to already exist, not just schema
+  # ownership: WP-11's 6f86b03e8caa runs `REVOKE UPDATE, DELETE ON
+  # audit_logs FROM ems_app`, and `ems_app` doesn't exist until
+  # bootstrap_roles.sql creates it. No amount of ems_owner's superuser
+  # privilege makes REVOKE ... FROM a role that isn't there yet succeed —
+  # this was a correctness gap in the ordering, not a permissions gap, and
+  # was going to break the first time any migration referenced ems_app by
+  # name. Verified (not assumed) that bootstrapping first still works now:
+  # a fresh Postgres 16 cluster initialized the same way the postgres:16
+  # image does for POSTGRES_USER=ems_owner (initdb --username=ems_owner,
+  # making it a genuine superuser) ran bootstrap_roles.sql cleanly against
+  # an empty, freshly created database with zero tables — CREATE ROLE,
+  # ALTER SCHEMA public OWNER, the GRANTs and ALTER DEFAULT PRIVILEGES all
+  # succeed before any table exists, because none of them require one to.
+  # `alembic upgrade head` then ran clean afterward, including the
+  # audit_logs REVOKE, because ems_app already existed. Reproduced in full
+  # (see the commit this comment shipped with for the actual command
+  # output) rather than assumed from the docker-compose/production case.
   #
-  # This is CI-specific and does NOT generalize to docker-compose or a
-  # fresh production database, where ems_owner is an ordinary role created
-  # BY bootstrap_roles.sql and has no schema privileges until that script's
-  # `GRANT CREATE, USAGE ON SCHEMA public TO ems_owner` runs — there,
-  # bootstrap_roles.sql must run BEFORE the first `alembic upgrade head`
-  # (Appendix A's quick-start order, and Spec 8.2). Verified the hard way
-  # during WP-02: running them in CI's order against a plain
-  # superuser-created database fails with "permission denied for schema
-  # public" until bootstrap_roles.sql grants ems_owner CREATE on it.
   # ems_owner's password comes from the Postgres service container's own
   # POSTGRES_PASSWORD below (it already exists as the container's bootstrap
-  # superuser). ems_app doesn't exist until step 8 creates it, hardcoded in
-  # app/db/seed/bootstrap_roles.sql as ems_app_dev_only — this must match
-  # that file's literal value, not an independently-chosen CI secret.
+  # superuser). ems_app doesn't exist until bootstrap_roles.sql creates it,
+  # hardcoded there as ems_app_dev_only — this must match that file's
+  # literal value, not an independently-chosen CI secret.
   #
   # DATABASE_URL and TEST_DATABASE_URL must name DIFFERENT databases —
   # conftest.py refuses to run otherwise (15.2's "never run tests against
@@ -78,8 +88,8 @@ jobs:
 
     steps:
       # 1. Checkout, set up Python 3.12
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -106,15 +116,19 @@ jobs:
         run: |
           pg_isready -h localhost -p 5432 -U ems_owner -d ems_pro_test
           python -c "import redis; redis.Redis.from_url('redis://localhost:6379/0').ping(); print('redis: PONG')"
-      # 7. Migrations as ems_owner — proves they apply from scratch, every time.
-      - name: alembic upgrade head
-        run: alembic upgrade head
 
-      # 8. Create ems_app and apply grants.
+      # 7. Bootstrap ems_app + grants FIRST — see the env block's comment
+      # for why this must precede migrations now, not follow them.
       - name: Bootstrap ems_app role and grants
         run: psql -h localhost -U ems_owner -d ems_pro_test -f app/db/seed/bootstrap_roles.sql
         env:
           PGPASSWORD: ci_ems_owner_only
+
+      # 8. Migrations as ems_owner — proves they apply from scratch, every
+      # time, against a database that already has ems_app (some migrations,
+      # e.g. WP-11's audit_logs REVOKE, name that role directly).
+      - name: alembic upgrade head
+        run: alembic upgrade head
 
       # 9. Tests as ems_app, so RLS is genuinely exercised once it exists (WP-04+).
       - name: pytest
@@ -122,8 +136,10 @@ jobs:
 
       # 10. Frontend — landed in WP-12/WP-13. openapi-typescript's generated
       # output is committed (Spec 14.5), so CI never needs a running backend
-      # to type-check the frontend against it.
-      - uses: actions/setup-node@v4
+      # to type-check the frontend against it. `npm ci`, not `npm install` —
+      # fails loudly if package-lock.json ever drifts from package.json,
+      # instead of silently resolving around it.
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -134,5 +150,3 @@ jobs:
       - name: Frontend build (tsc -b && vite build)
         working-directory: frontend
         run: npm run build
-
-      # 10. Frontend — arrives with WP-12; steps added there, not before.
