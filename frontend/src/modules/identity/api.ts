@@ -1,0 +1,71 @@
+import { apiClient } from "../../app/api-client";
+
+/** Mirrors app/modules/identity/schemas.py::CompanyRegisterRequest exactly
+ * (field names read from the generated shared/api/types.gen.ts, not
+ * guessed) — `country` is omitted when unset so the backend's own
+ * `= "IN"` default applies. */
+export interface RegisterCompanyInput {
+  company_name: string;
+  company_email: string;
+  industry?: string;
+  phone?: string;
+}
+
+export interface CompanyResponse {
+  id: string;
+  name: string;
+  code: string;
+  email: string;
+  industry: string | null;
+  country: string;
+  status: string;
+  created_at: string;
+}
+
+export async function registerCompany(input: RegisterCompanyInput): Promise<CompanyResponse> {
+  const { data } = await apiClient.post<CompanyResponse>("/companies/register", input);
+  return data;
+}
+
+export interface ActivationPreview {
+  first_name: string;
+  last_name: string | null;
+  company_name: string;
+  expires_at: string;
+}
+
+export async function previewActivation(token: string): Promise<ActivationPreview> {
+  const { data } = await apiClient.get<ActivationPreview>(`/auth/activate/${encodeURIComponent(token)}`);
+  return data;
+}
+
+export interface ActivateAccountInput {
+  token: string;
+  username: string;
+  password: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export async function activateAccount(input: ActivateAccountInput): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>("/auth/activate", input);
+  return data;
+}
+
+export async function forgotPassword(email: string): Promise<{ message: string }> {
+  const { data } = await apiClient.post<{ message: string }>("/auth/forgot-password", { email });
+  return data;
+}
+
+export interface ResetPasswordInput {
+  email: string;
+  otp: string;
+  new_password: string;
+}
+
+export async function resetPassword(input: ResetPasswordInput): Promise<void> {
+  await apiClient.post("/auth/reset-password", input);
+}

@@ -34,6 +34,11 @@ interface AuthContextValue {
   status: AuthStatus;
   user: CurrentUser | null;
   login: (email: string, password: string, companyCode?: string) => Promise<void>;
+  /** `POST /auth/activate` (route 11) already logs the caller in and
+   * returns the same token shape login() does (Spec 10.2) — this adopts
+   * an access token already obtained elsewhere instead of calling
+   * `/auth/login` a second time. */
+  establishSession: (accessToken: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -85,17 +90,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [clearSession]);
 
-  const login = useCallback(async (email: string, password: string, companyCode?: string) => {
-    const { data } = await apiClient.post<TokenResponse>("/auth/login", {
-      email,
-      password,
-      company_code: companyCode || undefined,
-    });
-    setAccessToken(data.access_token);
+  const establishSession = useCallback(async (accessToken: string) => {
+    setAccessToken(accessToken);
     const me = await fetchMe();
     setUser(me);
     setStatus("authenticated");
   }, []);
+
+  const login = useCallback(
+    async (email: string, password: string, companyCode?: string) => {
+      const { data } = await apiClient.post<TokenResponse>("/auth/login", {
+        email,
+        password,
+        company_code: companyCode || undefined,
+      });
+      await establishSession(data.access_token);
+    },
+    [establishSession],
+  );
 
   const logout = useCallback(async () => {
     try {
@@ -106,8 +118,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearSession]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, user, login, logout }),
-    [status, user, login, logout],
+    () => ({ status, user, login, establishSession, logout }),
+    [status, user, login, establishSession, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
