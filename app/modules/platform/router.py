@@ -44,6 +44,7 @@ def list_industry_presets(db: Session = Depends(get_db)):
     this in Section 10's table — see RECONCILIATION.md's spec gaps."""
     return IndustryPresetService(db).list_names()
 
+
 JobState = Literal["queued", "started", "success", "failure"]
 
 # Celery's own task states map onto route 136's four-value contract.
