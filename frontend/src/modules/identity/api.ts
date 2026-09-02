@@ -1,4 +1,5 @@
 import { apiClient } from "../../app/api-client";
+import type { Page } from "../../shared/api/pagination";
 
 /** Mirrors app/modules/identity/schemas.py::CompanyRegisterRequest exactly
  * (field names read from the generated shared/api/types.gen.ts, not
@@ -75,4 +76,29 @@ export interface ResetPasswordInput {
 
 export async function resetPassword(input: ResetPasswordInput): Promise<void> {
   await apiClient.post("/auth/reset-password", input);
+}
+
+// --- Companies (page 5, super_admin) --------------------------------------
+
+export async function listPendingCompanies(page: number, limit: number): Promise<Page<CompanyResponse>> {
+  const { data } = await apiClient.get<Page<CompanyResponse>>("/companies", {
+    params: { status: "pending", page, limit },
+  });
+  return data;
+}
+
+export interface CompanyApproveResult {
+  company: CompanyResponse;
+  hr_admin_email: string;
+  temporary_password: string;
+}
+
+export async function approveCompany(id: string): Promise<CompanyApproveResult> {
+  const { data } = await apiClient.post<CompanyApproveResult>(`/companies/${id}/approve`);
+  return data;
+}
+
+export async function rejectCompany(id: string, reason: string): Promise<CompanyResponse> {
+  const { data } = await apiClient.post<CompanyResponse>(`/companies/${id}/reject`, { reason });
+  return data;
 }

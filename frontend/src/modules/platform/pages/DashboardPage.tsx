@@ -3,12 +3,31 @@ import { PageHeader } from "../../../shared/components/PageHeader";
 import { parseApiError } from "../../../shared/api/errors";
 import { fetchDashboard } from "../api";
 
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="card">
+      <div className="text-muted" style={{ fontSize: 12 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 24, fontWeight: 600 }}>{value}</div>
+    </div>
+  );
+}
+
+const statGrid: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+  gap: 12,
+};
+
 /**
- * A genuine, working integration with route 121 (`GET /dashboard`,
- * WP-11) — not a mock. Page 6's role-shaped, designed layout is WP-14's
- * job (Spec 14.3); this is deliberately the "placeholder dashboard" WP-12's
- * gate asks for: proof that login → protected route → a real authenticated
- * API call all work end to end.
+ * Page 6 (Spec 14.3): one page against GET /dashboard, rendering whichever
+ * of Spec 11.10's four role shapes comes back — not four separate pages.
+ * super_admin also has its own page (5, `/admin`) with the platform-stats
+ * subset of this same payload plus pending-company approve/reject actions
+ * this endpoint doesn't provide; this page still renders the super_admin
+ * shape too so the route works for any authenticated role, per Spec
+ * 14.3's "Auth" access column.
  */
 export function DashboardPage() {
   const { data, isLoading, isError, error } = useQuery({
@@ -19,41 +38,113 @@ export function DashboardPage() {
   return (
     <div>
       <PageHeader title="Dashboard" breadcrumb="Overview" />
-      <div className="card">
-        {isLoading && (
-          <div className="row">
-            <div className="spinner" />
-            <span className="text-muted">Loading…</span>
-          </div>
-        )}
-        {isError && <div className="alert alert-error">{parseApiError(error).message}</div>}
-        {data && (
-          <div className="stack">
-            <div className="row">
-              <span className="badge badge-muted">{data.role}</span>
-              <span className="text-muted" style={{ fontSize: 12 }}>
-                as of {new Date(data.generated_at).toLocaleString()}
-              </span>
-            </div>
-            <div className="form-grid">
-              {Object.entries(data.data).map(([key, value]) => (
-                <div key={key} className="field">
-                  <label>{key.replace(/_/g, " ")}</label>
-                  <div>
-                    {typeof value === "object" ? (
-                      <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
-                        {JSON.stringify(value, null, 2)}
-                      </pre>
-                    ) : (
-                      String(value)
-                    )}
-                  </div>
-                </div>
+
+      {isLoading && (
+        <div className="row">
+          <div className="spinner" />
+          <span className="text-muted">Loading…</span>
+        </div>
+      )}
+      {isError && <div className="alert alert-error">{parseApiError(error).message}</div>}
+
+      {data && (
+        <div className="stack">
+          <span className="text-muted" style={{ fontSize: 12 }}>
+            Updated {new Date(data.generated_at).toLocaleString()}
+          </span>
+
+          {data.role === "super_admin" && (
+            <div style={statGrid}>
+              <Stat label="Pending approvals" value={data.data.pending_approvals} />
+              <Stat label="Platform users" value={data.data.platform_user_count} />
+              {Object.entries(data.data.company_counts_by_status).map(([status, count]) => (
+                <Stat key={status} label={`Companies — ${status}`} value={count} />
               ))}
             </div>
-          </div>
-        )}
-      </div>
+          )}
+
+          {data.role === "hr_admin" && (
+            <>
+              <div style={statGrid}>
+                <Stat label="Headcount" value={data.data.headcount} />
+                <Stat label="Present today" value={data.data.present_today} />
+                <Stat label="On leave today" value={data.data.on_leave_today} />
+                <Stat label="Pending leave requests" value={data.data.pending_leave_requests} />
+              </div>
+              <div className="card">
+                <h3 style={{ marginTop: 0 }}>Department distribution</h3>
+                {Object.keys(data.data.department_distribution).length === 0 ? (
+                  <span className="text-muted">No departments yet.</span>
+                ) : (
+                  <div className="stack" style={{ gap: 6 }}>
+                    {Object.entries(data.data.department_distribution).map(([name, count]) => (
+                      <div key={name} className="row-between">
+                        <span>{name}</span>
+                        <span className="text-muted">{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="card">
+                <h3 style={{ marginTop: 0 }}>Recent hires</h3>
+                {data.data.recent_hires.length === 0 ? (
+                  <span className="text-muted">No recent hires.</span>
+                ) : (
+                  <div className="stack" style={{ gap: 6 }}>
+                    {data.data.recent_hires.map((h) => (
+                      <div key={h.id} className="row-between">
+                        <span>
+                          {h.first_name}
+                          {h.last_name ? ` ${h.last_name}` : ""}
+                        </span>
+                        <span className="text-muted">{h.hire_date}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {data.role === "manager" && (
+            <div style={statGrid}>
+              <Stat label="Team headcount" value={data.data.team_headcount} />
+              <Stat label="Team present today" value={data.data.team_present_today} />
+              <Stat
+                label="Team leave requests awaiting you"
+                value={data.data.team_leave_requests_awaiting}
+              />
+            </div>
+          )}
+
+          {data.role === "employee" && (
+            <>
+              <div style={statGrid}>
+                <Stat label="Pending requests" value={data.data.pending_requests} />
+                {Object.entries(data.data.attendance_this_month).map(([status, count]) => (
+                  <Stat key={status} label={`This month — ${status.replace("_", " ")}`} value={count} />
+                ))}
+              </div>
+              <div className="card">
+                <h3 style={{ marginTop: 0 }}>Leave balances</h3>
+                {data.data.leave_balances.length === 0 ? (
+                  <span className="text-muted">No leave balances yet.</span>
+                ) : (
+                  <div className="stack" style={{ gap: 6 }}>
+                    {data.data.leave_balances.map((b) => (
+                      <div key={b.leave_type_id} className="row-between">
+                        <span>{b.leave_type_name ?? "Unknown leave type"}</span>
+                        <span className="text-muted">{b.available} available</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

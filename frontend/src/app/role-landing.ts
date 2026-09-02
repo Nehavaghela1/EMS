@@ -1,10 +1,10 @@
 import type { UserRole } from "./auth-context";
 
-/** Every role lands on the same placeholder dashboard for now — the
- * role-shaped `/dashboard` (page 6) and the dedicated super-admin page 5
- * are WP-14's job. Kept as a function, not a redirect to a literal string
- * everywhere, so wiring in real per-role landing pages later is a
- * one-line change here. */
-export function landingPathForRole(_role: UserRole): string {
-  return "/dashboard";
+/** `super_admin` lands on the dedicated admin page (5, `/admin`) — the
+ * actionable one, with pending companies and approve/reject. Every other
+ * role lands on the role-shaped dashboard (6, `/dashboard`). Kept as a
+ * function, not a redirect to a literal string everywhere, so a future
+ * per-role landing page is a one-line change here. */
+export function landingPathForRole(role: UserRole): string {
+  return role === "super_admin" ? "/admin" : "/dashboard";
 }
