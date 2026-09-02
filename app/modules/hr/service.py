@@ -4,6 +4,7 @@ from datetime import timedelta
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.email_templates import employee_invitation_email
 from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.core.pagination import PageParams
 from app.core.security import generate_refresh_token, hash_token
@@ -19,6 +20,7 @@ from app.modules.hr.schemas import (
 from app.modules.identity.models import User, UserRole
 from app.modules.identity.repository import CompanyRepository, UserRepository
 from app.modules.platform.service import AuditService, DashboardService, jsonable
+from app.workers.tasks.email import send_email_task
 
 
 class InvalidReferenceError(AppError):
@@ -201,6 +203,31 @@ class EmployeeService:
             page_params=page_params,
         )
 
+    def _send_activation_email(
+        self, company_id: uuid.UUID, employee: Employee, raw_token: str
+    ) -> str:
+        """Shared by create_employee and resend_invite. Sent to the
+        employee's PERSONAL email, never their work one — they cannot reach
+        a work inbox before they have an account to reach it with. Falls
+        back to the work email only when no personal one was given, so
+        invitation creation is never blocked on it (personal_email stays an
+        optional field — see Part 3 recommendations for making it required).
+        Returns the address it was sent to, for the API response.
+        """
+        company = self.company_repo.get_by_id(company_id)
+        assert company is not None  # FK guarantees this
+        sent_to = employee.personal_email or employee.email
+        activation_link = f"{settings.FRONTEND_BASE_URL}/activate/{raw_token}"
+        assert employee.activation_expires_at is not None
+        subject, text_body, html_body = employee_invitation_email(
+            first_name=employee.first_name,
+            company_name=company.name,
+            activation_link=activation_link,
+            expires_at=employee.activation_expires_at,
+        )
+        send_email_task.delay(to=sent_to, subject=subject, text_body=text_body, html_body=html_body)
+        return sent_to
+
     def create_employee(
         self, company_id: uuid.UUID, data: EmployeeCreateRequest, actor: User
     ) -> tuple[Employee, str]:
@@ -231,10 +258,6 @@ class EmployeeService:
             hire_date=data.hire_date,
             probation_end_date=data.probation_end_date,
             notice_period_days=data.notice_period_days,
-            # No email backend/Celery queue exists yet (WP-09/WP-26) — the
-            # token is handed directly to the HR caller instead, the same
-            # MVP substitute WP-05 used for the HR-admin temporary password.
-            # That hand-off is the closest available analogue of "sent".
             invitation_status=InvitationStatus.sent,
             activation_token_hash=hash_token(raw_token),
             activation_expires_at=utcnow() + timedelta(days=settings.INVITE_TOKEN_EXPIRE_DAYS),
@@ -249,7 +272,8 @@ class EmployeeService:
         )
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
-        return employee, raw_token
+        sent_to = self._send_activation_email(company_id, employee, raw_token)
+        return employee, sent_to
 
     def get_my_employee_record(self, company_id: uuid.UUID, current_user: User) -> Employee:
         """Route 21."""
@@ -375,9 +399,9 @@ class EmployeeService:
         return employee
 
     def resend_invite(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> tuple[Employee, str]:
-        """Route 26: new activation token, re-queue email (queueing is a
-        forward dependency on WP-09's Celery worker — see the invite-token
-        note on `create_employee`)."""
+        """Route 26: a fresh activation token, on a fresh clock — invalidates
+        whatever link was already sent (a new hash overwrites the old one),
+        then re-sends via _send_activation_email."""
         employee = self._get_or_404(company_id, employee_id)
         raw_token = generate_refresh_token()
         self.repo.update(
@@ -387,4 +411,5 @@ class EmployeeService:
             activation_expires_at=utcnow() + timedelta(days=settings.INVITE_TOKEN_EXPIRE_DAYS),
         )
         self.db.commit()
-        return employee, raw_token
+        sent_to = self._send_activation_email(company_id, employee, raw_token)
+        return employee, sent_to

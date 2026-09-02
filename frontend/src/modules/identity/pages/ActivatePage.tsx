@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../../../app/auth-context";
 import { landingPathForRole } from "../../../app/role-landing";
 import { parseApiError, fieldErrorsFromDetails } from "../../../shared/api/errors";
+import { PasswordInput } from "../../../shared/components/PasswordInput";
 import { activateAccount, previewActivation } from "../api";
 import { activateAccountSchema } from "../schemas";
 
@@ -120,17 +121,14 @@ export function ActivatePage() {
           {fieldErrors.username && <span className="field-error">{fieldErrors.username}</span>}
         </div>
 
-        <div className={"field" + (fieldErrors.password ? " has-error" : "")}>
-          <label htmlFor="password">Choose a password</label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          {fieldErrors.password && <span className="field-error">{fieldErrors.password}</span>}
-        </div>
+        <PasswordInput
+          id="password"
+          label="Choose a password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="new-password"
+          error={fieldErrors.password}
+        />
 
         <button className="btn btn-primary" type="submit" disabled={submitting}>
           {submitting ? "Activating…" : "Activate account"}

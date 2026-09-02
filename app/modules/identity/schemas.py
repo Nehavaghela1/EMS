@@ -65,15 +65,11 @@ class CompanyRejectRequest(BaseModel):
 
 
 class CompanyApproveResponse(BaseModel):
-    """MVP interim only: no email backend is wired up yet (WP-26 replaces
-    this with a real invite email via Celery + SendGrid). The temporary
-    password is returned exactly once, to the authenticated super_admin who
-    triggered the approval, and is never logged or stored anywhere.
-    """
+    """The temporary password is never returned here (CLAUDE.md rule 10) —
+    it goes to the new HR admin's own email instead (Spec 13, WP-26)."""
 
     company: CompanyResponse
     hr_admin_email: str
-    temporary_password: str
 
 
 class CompanyProfileUpdateRequest(BaseModel):

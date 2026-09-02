@@ -42,3 +42,11 @@ export const resetPasswordSchema = z.object({
 });
 
 export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>;
+
+/** Mirrors ChangePasswordRequest (route 6, the settings page). */
+export const changePasswordSchema = z.object({
+  current_password: z.string().min(1, "Enter your current password"),
+  new_password: passwordPolicySchema,
+});
+
+export type ChangePasswordValues = z.infer<typeof changePasswordSchema>;

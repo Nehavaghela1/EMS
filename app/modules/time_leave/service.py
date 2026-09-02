@@ -5,6 +5,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.orm import Session
 
+from app.core.email_templates import leave_decision_email
 from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.core.pagination import PageParams
 from app.core.time import utcnow
@@ -50,6 +51,7 @@ from app.modules.time_leave.schemas import (
     ShiftCreateRequest,
     ShiftUpdateRequest,
 )
+from app.workers.tasks.email import send_email_task
 
 logger = logging.getLogger("app")
 
@@ -844,6 +846,9 @@ class LeaveService:
                     entity_type="leave",
                     entity_id=leave.id,
                 )
+            self._send_leave_decision_email(
+                employee, leave, status="approved", rejection_reason=None
+            )
             # Spec 11.10's literal wording: "on attendance mark, leave
             # approval, and employee create/deactivate" — approval only,
             # not rejection (a rejected leave changes nothing the cached
@@ -879,9 +884,31 @@ class LeaveService:
                     entity_type="leave",
                     entity_id=leave.id,
                 )
+            self._send_leave_decision_email(
+                employee, leave, status="rejected", rejection_reason=data.rejection_reason
+            )
 
         self.db.commit()
         return leave
+
+    def _send_leave_decision_email(
+        self, employee, leave: Leave, *, status: str, rejection_reason: str | None
+    ) -> None:
+        """Matches the in-app notification above (Spec 11.10) — sent to the
+        employee's work email, unlike the pre-activation invitation email,
+        since deciding a leave only happens after the employee already has
+        a working account (or, for HR applying on someone's behalf, is at
+        least reachable at their work address either way)."""
+        subject, text_body, html_body = leave_decision_email(
+            first_name=employee.first_name,
+            status=status,
+            start_date=leave.start_date.isoformat(),
+            end_date=leave.end_date.isoformat(),
+            rejection_reason=rejection_reason,
+        )
+        send_email_task.delay(
+            to=employee.email, subject=subject, text_body=text_body, html_body=html_body
+        )
 
     def cancel_leave(self, company_id: uuid.UUID, leave_id: uuid.UUID, actor: User) -> Leave:
         """Route 65: the employee cancels their own **pending** leave; HR

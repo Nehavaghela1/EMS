@@ -10,11 +10,13 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
+from app.core import email as email_module
 from app.core.config import settings
 from app.core.security import create_access_token, hash_password
 from app.db.session import get_db
 from app.main import app as fastapi_app
 from app.modules.identity.models import Company, CompanySettings, CompanyStatus, User, UserRole
+from app.workers.tasks.email import send_email_task
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -258,3 +260,39 @@ def super_admin_headers(db) -> dict[str, str]:
     )
     db.commit()
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_email_sending(monkeypatch):
+    """Runs for every test, not just ones that inspect email content:
+    without this, any test that reaches an email-sending flow (employee
+    creation, leave decisions, password resets, company approval...) left a
+    message sitting unconsumed in the REAL Redis broker forever — nothing
+    in a normal test run drains it. That silently starved
+    test_celery_tasks.py's real-worker test, which suddenly had a growing
+    backlog to work through before it ever got to the trivial task it was
+    actually queuing — found by that test timing out for no visible reason.
+
+    send_email_task specifically is safe to always run synchronously this
+    way (unlike the export tasks, which open their own database session
+    against the real DATABASE_URL — forcing those eager in tests would
+    contaminate the real dev database, not the test one, so they keep their
+    normal non-eager .delay() and stay untouched here).
+    """
+    monkeypatch.setattr(
+        send_email_task, "delay", lambda **kwargs: send_email_task.apply(kwargs=kwargs)
+    )
+    email_module.console_outbox.clear()
+    yield
+    email_module.console_outbox.clear()
+
+
+@pytest.fixture
+def email_outbox() -> list[dict[str, str]]:
+    """What EMAIL_BACKEND=console (the test default) recorded instead of
+    actually delivering — recipient, subject, whether a link/OTP is present
+    — captured by the always-on _isolate_email_sending fixture above.
+    Request this fixture only when a test wants to assert on that content;
+    every test gets the safe, non-leaking send_email_task behavior either
+    way."""
+    return email_module.console_outbox

@@ -44,16 +44,23 @@ def _link_user_to_employee(db, company_id, employee_id: str, role: UserRole) -> 
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_create_employee_generates_sequential_codes_and_an_activation_token(client, company_a):
+def test_create_employee_generates_sequential_codes_and_sends_an_invitation(
+    client, company_a, email_outbox
+):
     first = _create_employee(client, company_a.hr_headers, first_name="Alice")
     second = _create_employee(client, company_a.hr_headers, first_name="Bob")
 
     assert first["employee_code"].endswith("-0001")
     assert second["employee_code"].endswith("-0002")
     assert first["employee_code"].split("-0001")[0] == second["employee_code"].split("-0002")[0]
-    assert first["invite"]["activation_token"]
+    # No raw token in the response (CLAUDE.md rule 10) — just where it went.
+    assert first["invite"]["sent_to"] == first["email"]
     assert first["invite"]["expires_at"]
     assert first["invitation_status"] == "sent"
+
+    sent = [e for e in email_outbox if e["to"] == first["email"] and "invited" in e["subject"]]
+    assert sent, email_outbox
+    assert "/activate/" in sent[-1]["text_body"]
     assert first["is_active"] is True
     assert first["user_id"] is None
 

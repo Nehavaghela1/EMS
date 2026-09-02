@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { parseApiError } from "../../../shared/api/errors";
+import { TodayAttendanceCard } from "../../time_leave/components/TodayAttendanceCard";
 import { fetchDashboard } from "../api";
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
@@ -30,6 +31,12 @@ export function DashboardPage() {
   return (
     <div>
       <PageHeader title="Dashboard" breadcrumb="Overview" />
+
+      {/* Part 2: check in/out from the landing page directly — no need to
+          visit the shared attendance screen. Renders nothing for a role
+          with no linked employee record (e.g. an HR admin created at
+          company approval, WP-05). */}
+      <TodayAttendanceCard showWhenNoEmployee={false} />
 
       {isLoading && (
         <div className="row">

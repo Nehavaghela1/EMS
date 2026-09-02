@@ -131,11 +131,8 @@ export function AdminDashboardPage() {
       {approved && (
         <div className="alert alert-success stack mb-4">
           <div>
-            Approved <strong>{approved.company.name}</strong>. HR admin credentials (shown once —
-            share them with the company now):
-          </div>
-          <div>
-            <code>{approved.hr_admin_email}</code> / <code>{approved.temporary_password}</code>
+            Approved <strong>{approved.company.name}</strong>. Login credentials for{" "}
+            <code>{approved.hr_admin_email}</code> have been emailed to them directly.
           </div>
           <button
             className="btn btn-sm btn-ghost"

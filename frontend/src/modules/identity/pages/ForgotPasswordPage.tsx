@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { forgotPassword, resetPassword } from "../api";
 import { forgotPasswordEmailSchema, resetPasswordSchema } from "../schemas";
 import { parseApiError, fieldErrorsFromDetails } from "../../../shared/api/errors";
+import { PasswordInput } from "../../../shared/components/PasswordInput";
 
 type Step = "request" | "reset";
 
@@ -134,17 +135,14 @@ export function ForgotPasswordPage() {
           {fieldErrors.otp && <span className="field-error">{fieldErrors.otp}</span>}
         </div>
 
-        <div className={"field" + (fieldErrors.new_password ? " has-error" : "")}>
-          <label htmlFor="new_password">New password</label>
-          <input
-            id="new_password"
-            type="password"
-            autoComplete="new-password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-          />
-          {fieldErrors.new_password && <span className="field-error">{fieldErrors.new_password}</span>}
-        </div>
+        <PasswordInput
+          id="new_password"
+          label="New password"
+          value={newPassword}
+          onChange={setNewPassword}
+          autoComplete="new-password"
+          error={fieldErrors.new_password}
+        />
 
         <button className="btn btn-primary" type="submit" disabled={submitting}>
           {submitting ? "Resetting…" : "Reset password"}

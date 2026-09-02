@@ -5,6 +5,7 @@ import { RegisterCompanyPage } from "../modules/identity/pages/RegisterCompanyPa
 import { ActivatePage } from "../modules/identity/pages/ActivatePage";
 import { ForgotPasswordPage } from "../modules/identity/pages/ForgotPasswordPage";
 import { AdminDashboardPage } from "../modules/identity/pages/AdminDashboardPage";
+import { SettingsPage } from "../modules/identity/pages/SettingsPage";
 import { DashboardPage } from "../modules/platform/pages/DashboardPage";
 import { EmployeeListPage } from "../modules/hr/pages/EmployeeListPage";
 import { EmployeeProfilePage } from "../modules/hr/pages/EmployeeProfilePage";
@@ -152,6 +153,15 @@ export function AppRouter() {
         element={
           <Protected roles={["hr_admin"]}>
             <DepartmentListPage />
+          </Protected>
+        }
+      />
+
+      <Route
+        path="/settings"
+        element={
+          <Protected roles={ALL_ROLES}>
+            <SettingsPage />
           </Protected>
         }
       />

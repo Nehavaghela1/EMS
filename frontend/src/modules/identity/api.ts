@@ -90,7 +90,6 @@ export async function listPendingCompanies(page: number, limit: number): Promise
 export interface CompanyApproveResult {
   company: CompanyResponse;
   hr_admin_email: string;
-  temporary_password: string;
 }
 
 export async function approveCompany(id: string): Promise<CompanyApproveResult> {
@@ -101,4 +100,17 @@ export async function approveCompany(id: string): Promise<CompanyApproveResult> 
 export async function rejectCompany(id: string, reason: string): Promise<CompanyResponse> {
   const { data } = await apiClient.post<CompanyResponse>(`/companies/${id}/reject`, { reason });
   return data;
+}
+
+// --- Settings page (page 27) -----------------------------------------------
+
+export interface ChangePasswordInput {
+  current_password: string;
+  new_password: string;
+}
+
+/** Route 6 — revokes every other signed-in session (Spec 9's own rule).
+ * The settings page must tell the user that before they submit. */
+export async function changePassword(input: ChangePasswordInput): Promise<void> {
+  await apiClient.post("/auth/change-password", input);
 }

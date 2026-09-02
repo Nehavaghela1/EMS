@@ -6,10 +6,10 @@ import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import { parseApiError } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
-import { deactivateEmployee, getEmployee, reactivateEmployee } from "../api";
+import { deactivateEmployee, getEmployee, reactivateEmployee, resendInvite } from "../api";
 
 interface InviteState {
-  invite?: { activation_token: string; expires_at: string };
+  invite?: { sent_to: string; expires_at: string };
 }
 
 /**
@@ -29,6 +29,8 @@ export function EmployeeProfilePage() {
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [resent, setResent] = useState<{ sent_to: string; expires_at: string } | null>(null);
+  const [resendBusy, setResendBusy] = useState(false);
 
   const employeeQuery = useQuery({
     queryKey: ["employee", id],
@@ -36,8 +38,23 @@ export function EmployeeProfilePage() {
     enabled: Boolean(id),
   });
 
-  const invite = (location.state as InviteState | null)?.invite;
+  const invite = resent ?? (location.state as InviteState | null)?.invite;
   const isHr = user?.role === "hr_admin";
+
+  async function handleResendInvite() {
+    if (!id) return;
+    setResendBusy(true);
+    try {
+      const result = await resendInvite(id);
+      setResent(result.invite);
+      notify(`Invitation re-sent to ${result.invite.sent_to}.`);
+      await queryClient.invalidateQueries({ queryKey: ["employee", id] });
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setResendBusy(false);
+    }
+  }
 
   async function handleToggleActive() {
     if (!id || !employeeQuery.data) return;
@@ -82,6 +99,11 @@ export function EmployeeProfilePage() {
         action={
           isHr && (
             <div className="row">
+              {e.invitation_status !== "activated" && (
+                <button className="btn" onClick={handleResendInvite} disabled={resendBusy}>
+                  {resendBusy ? "Resending…" : "Resend invitation"}
+                </button>
+              )}
               <button className="btn" onClick={() => navigate(`/employees/${e.id}/edit`)}>
                 Edit
               </button>
@@ -98,8 +120,7 @@ export function EmployeeProfilePage() {
 
       {invite && (
         <div className="alert alert-success mb-4">
-          Invite created — activation token (shown once, share it with the employee):{" "}
-          <code>{invite.activation_token}</code>, expires{" "}
+          Invitation sent to <strong>{invite.sent_to}</strong>, expires{" "}
           {new Date(invite.expires_at).toLocaleString()}.
         </div>
       )}

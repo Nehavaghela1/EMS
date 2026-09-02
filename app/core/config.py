@@ -62,9 +62,20 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 
     # ── Email ───────────────────────────────────────────────────
-    EMAIL_BACKEND: Literal["console", "sendgrid"] = "console"
-    SENDGRID_API_KEY: str | None = None
+    # console is the only backend ever exercised in dev/tests (Spec 13) —
+    # switching to smtp or resend is this one line, never a code change.
+    EMAIL_BACKEND: Literal["console", "smtp", "resend"] = "console"
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str | None = None
+    # An app password, never an account password (Gmail and most
+    # providers require one for SMTP auth) — never logged (9.10).
+    SMTP_PASSWORD: str | None = None
+    SMTP_USE_TLS: bool = True
+    RESEND_API_KEY: str | None = None
     EMAIL_FROM: str = "noreply@example.com"
+    # Base URL for building activation/reset links inside an email body —
+    # the frontend's own origin, not the API's.
     FRONTEND_BASE_URL: str = "http://localhost:5173"
 
     # ── File storage ────────────────────────────────────────────

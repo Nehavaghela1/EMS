@@ -6,23 +6,14 @@ import { usePagination } from "../../../shared/hooks/usePagination";
 import { parseApiError } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
-import {
-  checkIn,
-  checkOut,
-  listAttendance,
-  regularizeAttendance,
-  type Attendance,
-  type AttendanceStatus,
-} from "../api";
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+import { TodayAttendanceCard } from "../components/TodayAttendanceCard";
+import { listAttendance, regularizeAttendance, type Attendance, type AttendanceStatus } from "../api";
 
 const STATUS_OPTIONS: AttendanceStatus[] = ["present", "absent", "half_day", "wfh", "on_leave"];
 
 /**
- * Page 11 (Spec 14.3): check-in/check-out with today's state visible, plus
+ * Page 11 (Spec 14.3): check-in/check-out with today's state visible (via
+ * TodayAttendanceCard — the same widget the dashboard uses, Part 2), plus
  * the role-scoped history — own for an employee, team for a manager,
  * everyone for HR (all three via the same `GET /attendance` call; the
  * backend resolves the scope from the caller's role, Spec 10.4). HR gets
@@ -30,60 +21,14 @@ const STATUS_OPTIONS: AttendanceStatus[] = ["present", "absent", "half_day", "wf
  */
 export function AttendancePage() {
   const { user } = useAuth();
-  const { notify } = useToast();
   const queryClient = useQueryClient();
   const isHr = user?.role === "hr_admin";
-  const today = todayIso();
-
-  const todayQuery = useQuery({
-    queryKey: ["attendance", "today", user?.employee?.id],
-    queryFn: () =>
-      listAttendance({
-        employee_id: user!.employee!.id,
-        date_from: today,
-        date_to: today,
-        page: 1,
-        limit: 1,
-      }),
-    enabled: Boolean(user?.employee),
-  });
-
-  const [checkBusy, setCheckBusy] = useState(false);
-  const [checkError, setCheckError] = useState<string | null>(null);
 
   async function refreshAll() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["attendance"] }),
       queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
     ]);
-  }
-
-  async function handleCheckIn() {
-    setCheckBusy(true);
-    setCheckError(null);
-    try {
-      await checkIn();
-      notify("Checked in.");
-      await refreshAll();
-    } catch (err) {
-      setCheckError(parseApiError(err).message);
-    } finally {
-      setCheckBusy(false);
-    }
-  }
-
-  async function handleCheckOut() {
-    setCheckBusy(true);
-    setCheckError(null);
-    try {
-      await checkOut();
-      notify("Checked out.");
-      await refreshAll();
-    } catch (err) {
-      setCheckError(parseApiError(err).message);
-    } finally {
-      setCheckBusy(false);
-    }
   }
 
   const { page, limit, setPage } = usePagination();
@@ -94,8 +39,6 @@ export function AttendancePage() {
   });
 
   const [regularizing, setRegularizing] = useState<Attendance | null>(null);
-
-  const todayRecord = todayQuery.data?.items[0] ?? null;
 
   const columns: DataTableColumn<Attendance>[] = [
     { key: "date", label: "Date", render: (a) => a.date },
@@ -127,47 +70,7 @@ export function AttendancePage() {
     <div>
       <PageHeader title="Attendance" breadcrumb="Time & leave" />
 
-      <div className="card mb-6">
-        {!user?.employee ? (
-          <span className="text-muted">
-            No employee record is linked to this account — attendance check-in/out doesn't apply.
-          </span>
-        ) : todayQuery.isLoading ? (
-          <div className="row">
-            <div className="spinner" />
-            <span className="text-muted">Loading today's status…</span>
-          </div>
-        ) : (
-          <div className="stack">
-            {checkError && <div className="alert alert-error">{checkError}</div>}
-            {!todayRecord && (
-              <div className="row-between">
-                <span>You haven't checked in today.</span>
-                <button className="btn btn-primary" onClick={handleCheckIn} disabled={checkBusy}>
-                  {checkBusy ? "Checking in…" : "Check in"}
-                </button>
-              </div>
-            )}
-            {todayRecord && !todayRecord.check_out && (
-              <div className="row-between">
-                <span>
-                  Checked in at {new Date(todayRecord.check_in!).toLocaleTimeString()}. Still clocked in.
-                </span>
-                <button className="btn btn-primary" onClick={handleCheckOut} disabled={checkBusy}>
-                  {checkBusy ? "Checking out…" : "Check out"}
-                </button>
-              </div>
-            )}
-            {todayRecord && todayRecord.check_out && (
-              <div>
-                Done for today — {new Date(todayRecord.check_in!).toLocaleTimeString()} to{" "}
-                {new Date(todayRecord.check_out).toLocaleTimeString()} ({todayRecord.hours_worked}h,{" "}
-                {todayRecord.status.replace("_", " ")}).
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      <TodayAttendanceCard />
 
       <PageHeader
         title={isHr ? "All attendance" : user?.role === "manager" ? "Team attendance" : "My attendance"}

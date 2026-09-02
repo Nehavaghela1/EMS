@@ -95,17 +95,13 @@ class EmployeeResponse(BaseModel):
 
 
 class EmployeeInviteInfo(BaseModel):
-    """MVP interim only, same rationale as `CompanyApproveResponse` (WP-05):
-    no email backend or Celery queue exists yet (WP-09/WP-26 deliver those).
-    The raw activation token is returned once, to the authenticated HR
-    caller who triggered it, never logged or stored anywhere in plaintext
-    beyond this response. `POST /auth/activate` itself is WP-03's and was
-    deliberately skipped this session, so the token cannot be redeemed yet —
-    it is generated and safely hashed into storage now so nothing needs
-    regenerating once that route exists.
-    """
+    """The raw activation token is never returned here (CLAUDE.md rule 10) —
+    it goes out by email instead (Spec 13, WP-26). `sent_to` is the address
+    it was sent to (the employee's personal email, or their work email if
+    no personal one was given), so HR can confirm at a glance where to tell
+    the employee to check."""
 
-    activation_token: str
+    sent_to: str
     expires_at: datetime
 
 

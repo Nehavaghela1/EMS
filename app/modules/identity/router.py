@@ -232,13 +232,10 @@ def approve_company(
     db: Session = Depends(get_tenant_db),
     admin: User = Depends(require_role(UserRole.super_admin)),
 ):
-    company, hr_admin_email, temporary_password = CompanyService(db).approve_company(
-        company_id, admin.id
-    )
+    company, hr_admin_email = CompanyService(db).approve_company(company_id, admin.id)
     return CompanyApproveResponse(
         company=CompanyResponse.model_validate(company),
         hr_admin_email=hr_admin_email,
-        temporary_password=temporary_password,
     )
 
 

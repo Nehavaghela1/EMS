@@ -498,7 +498,7 @@ def test_employee_can_cancel_their_own_pending_leave_but_not_an_approved_one(cli
 
 
 def test_manager_can_approve_their_reports_leave_but_not_an_unrelated_employees(
-    client, company_a, db
+    client, company_a, db, email_outbox
 ):
     manager_employee = _create_employee(client, company_a.hr_headers, email="mgr@leaveco.com")
     manager_headers = _link_user_to_employee(
@@ -548,9 +548,57 @@ def test_manager_can_approve_their_reports_leave_but_not_an_unrelated_employees(
     )
     assert approve_own_report.status_code == 200
 
+    # Part 1: matches WP-11's in-app notification, now also by email.
+    approved_emails = [
+        e for e in email_outbox if e["to"] == "report@leaveco.com" and "approved" in e["subject"]
+    ]
+    assert approved_emails
+
     approve_outsider = client.put(
         f"/api/v1/leaves/{outsider_leave['id']}",
         headers=manager_headers,
         json={"status": "approved"},
     )
     assert approve_outsider.status_code == 403
+
+
+def test_hr_rejecting_a_leave_requires_a_reason_and_sends_an_email(
+    client, company_a, db, email_outbox
+):
+    employee = _create_employee(client, company_a.hr_headers, email="rejectee@leaveco.com")
+    employee_headers = _link_user_to_employee(
+        db, company_a.company_id, employee["id"], UserRole.employee
+    )
+    leave_type = _create_leave_type(client, company_a.hr_headers, annual_allowance="10")
+    monday, friday = _next_monday_through_friday()
+
+    leave = client.post(
+        "/api/v1/leaves",
+        headers=employee_headers,
+        json={
+            "leave_type_id": leave_type["id"],
+            "start_date": monday.isoformat(),
+            "end_date": friday.isoformat(),
+            "reason": "Vacation",
+        },
+    ).json()
+
+    missing_reason = client.put(
+        f"/api/v1/leaves/{leave['id']}", headers=company_a.hr_headers, json={"status": "rejected"}
+    )
+    assert missing_reason.status_code == 400
+    assert missing_reason.json()["error"]["details"]["field"] == "rejection_reason"
+
+    rejected = client.put(
+        f"/api/v1/leaves/{leave['id']}",
+        headers=company_a.hr_headers,
+        json={"status": "rejected", "rejection_reason": "Team is short-staffed that week"},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+
+    rejected_emails = [
+        e for e in email_outbox if e["to"] == "rejectee@leaveco.com" and "rejected" in e["subject"]
+    ]
+    assert rejected_emails
+    assert "Team is short-staffed" in rejected_emails[-1]["text_body"]

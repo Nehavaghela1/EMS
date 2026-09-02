@@ -7,7 +7,11 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.email import send_email
+from app.core.email_templates import (
+    hr_admin_credentials_email,
+    password_changed_email,
+    password_reset_otp_email,
+)
 from app.core.exceptions import AppError, ConflictError, NotFoundError, UnauthorizedError
 from app.core.otp import generate_and_store_otp, verify_otp
 from app.core.pagination import PageParams
@@ -44,6 +48,7 @@ from app.modules.identity.schemas import (
 from app.modules.platform.repository import IndustryPresetRepository
 from app.modules.platform.service import AuditService
 from app.modules.time_leave.repository import LeaveTypeRepository
+from app.workers.tasks.email import send_email_task
 
 logger = logging.getLogger("app")
 
@@ -309,6 +314,20 @@ class AuthService:
             permissions=_ROLE_PERMISSIONS.get(user.role, []),
         )
 
+    def _greeting_name(self, user: User) -> str:
+        """Best-effort first name for an email greeting — a User has none of
+        its own (Employee does); an HR admin created at company approval
+        (WP-05) has no linked Employee row at all, so this falls back to a
+        generic greeting rather than requiring one."""
+        employee = self.employee_repo.get_by_user_id(user.company_id, user.id)
+        return employee.first_name if employee else "there"
+
+    def _send_password_changed_email(self, user: User) -> None:
+        subject, text_body, html_body = password_changed_email(first_name=self._greeting_name(user))
+        send_email_task.delay(
+            to=user.email, subject=subject, text_body=text_body, html_body=html_body
+        )
+
     def change_password(self, user: User, data: ChangePasswordRequest) -> None:
         """Route 6: current + new password; revokes every other session —
         a changed password should not leave old sessions valid."""
@@ -320,6 +339,7 @@ class AuthService:
         for token in self.token_repo.get_active_by_user(user.id):
             self.token_repo.revoke(token)
         self.db.commit()
+        self._send_password_changed_email(user)
 
     def forgot_password(self, email: str) -> None:
         """Route 7. The router always returns the same 200 regardless of
@@ -332,13 +352,11 @@ class AuthService:
         users = self.user_repo.find_by_email(email)
         if len(users) == 1 and users[0].is_active:
             otp = generate_and_store_otp(email)
-            send_email(
-                to=email,
-                subject="Your EMS password reset code",
-                body=(
-                    f"Your password reset code is {otp}. "
-                    f"It expires in {settings.OTP_TTL_MINUTES} minutes."
-                ),
+            subject, text_body, html_body = password_reset_otp_email(
+                otp=otp, expires_minutes=settings.OTP_TTL_MINUTES
+            )
+            send_email_task.delay(
+                to=email, subject=subject, text_body=text_body, html_body=html_body
             )
 
     def reset_password(self, data: ResetPasswordRequest) -> None:
@@ -354,11 +372,21 @@ class AuthService:
             raise InvalidOtpError()
         user = users[0]
         self.user_repo.update(
-            user, user.company_id, hashed_password=hash_password(data.new_password)
+            user,
+            user.company_id,
+            hashed_password=hash_password(data.new_password),
+            # Part 3: an OTP is a stronger proof of identity than the
+            # password just being replaced — without this, a locked-out
+            # user who successfully resets their password was still locked
+            # out until the 15-minute timer expired on its own, even though
+            # they'd already proven who they are.
+            failed_attempts=0,
+            locked_until=None,
         )
         for token in self.token_repo.get_active_by_user(user.id):
             self.token_repo.revoke(token)
         self.db.commit()
+        self._send_password_changed_email(user)
 
     def check_username_available(self, username: str) -> bool:
         """Route 9 — see UserRepository.username_taken_anywhere's docstring
@@ -478,9 +506,7 @@ class CompanyService:
         }
         return company, counts
 
-    def approve_company(
-        self, company_id: uuid.UUID, admin_id: uuid.UUID
-    ) -> tuple[Company, str, str]:
+    def approve_company(self, company_id: uuid.UUID, admin_id: uuid.UUID) -> tuple[Company, str]:
         """Route 15, SA only. Seeds the company's company_settings row,
         default departments and leave types from its industry preset (when
         it has a recognized industry), and creates the HR admin — one
@@ -532,16 +558,24 @@ class CompanyService:
             is_active=True,
             must_change_password=True,
         )
-        # No email backend is wired up yet (WP-26 replaces this). Never log
-        # the password (6.8, rule 10) — it leaves this function exactly once,
-        # in the return value, for the router to hand back to the SA caller.
+        # Never log the password (6.8, rule 10) — it leaves this function in
+        # only one place now: the email sent below, never the return value.
         logger.info(
             "hr_admin_created_at_approval",
             extra={"company_id": str(company.id), "hr_admin_email": hr_admin.email},
         )
 
         self.db.commit()
-        return company, hr_admin.email, raw_password
+        subject, text_body, html_body = hr_admin_credentials_email(
+            company_name=company.name,
+            email=hr_admin.email,
+            temporary_password=raw_password,
+            login_link=f"{settings.FRONTEND_BASE_URL}/login",
+        )
+        send_email_task.delay(
+            to=hr_admin.email, subject=subject, text_body=text_body, html_body=html_body
+        )
+        return company, hr_admin.email
 
     def reject_company(self, company_id: uuid.UUID, reason: str) -> Company:
         """Route 16, SA only."""

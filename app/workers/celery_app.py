@@ -20,6 +20,7 @@ celery_app = Celery(
     include=[
         "app.workers.tasks.example",
         "app.workers.tasks.attendance",
+        "app.workers.tasks.email",
         "app.workers.tasks.identity",
         "app.workers.tasks.platform",
     ],

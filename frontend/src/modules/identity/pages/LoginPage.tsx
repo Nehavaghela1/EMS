@@ -2,10 +2,27 @@ import { useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../../app/auth-context";
 import { parseApiError, type ParsedApiError } from "../../../shared/api/errors";
+import { PasswordInput } from "../../../shared/components/PasswordInput";
 
 interface LocationState {
   from?: string;
   passwordReset?: boolean;
+}
+
+/** Part 3: a locked-out user should be told when the lock clears, not just
+ * that it's locked (Spec 9.4 already returns `locked_until` — this is the
+ * one place in the app that formats it for a human instead of showing the
+ * server's raw ISO timestamp verbatim). Every other error still surfaces
+ * the server's own message unchanged. */
+function formatLoginError(error: ParsedApiError): string {
+  if (error.code === "account_locked" && typeof error.details?.locked_until === "string") {
+    const until = new Date(error.details.locked_until).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    return `Too many failed attempts. Try again after ${until}, or reset your password below.`;
+  }
+  return error.message;
 }
 
 export function LoginPage() {
@@ -57,7 +74,7 @@ export function LoginPage() {
         {!error && !locationState?.passwordReset && sessionExpired && (
           <div className="alert alert-error">Your session expired. Sign in again to continue.</div>
         )}
-        {error && <div className="alert alert-error">{error.message}</div>}
+        {error && <div className="alert alert-error">{formatLoginError(error)}</div>}
 
         <div className="field">
           <label htmlFor="email">Email</label>
@@ -71,17 +88,14 @@ export function LoginPage() {
           />
         </div>
 
-        <div className="field">
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </div>
+        <PasswordInput
+          id="password"
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="current-password"
+          required
+        />
 
         {companies && (
           <div className="field">

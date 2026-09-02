@@ -191,6 +191,12 @@ export function EmployeeFormPage() {
               onChange={(e) => setField("personal_email", e.target.value)}
             />
             {fieldErrors.personal_email && <span className="field-error">{fieldErrors.personal_email}</span>}
+            {!isEdit && (
+              <span className="field-hint">
+                The activation invite goes here — they can't reach their work email until they've
+                activated. Falls back to the work email above if left blank.
+              </span>
+            )}
           </div>
 
           <div className="field">

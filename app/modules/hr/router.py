@@ -101,15 +101,13 @@ def _to_employee_response(employee: Employee) -> EmployeeResponse:
     return EmployeeResponse.model_validate(employee)
 
 
-def _to_employee_create_response(employee: Employee, raw_token: str) -> EmployeeCreateResponse:
+def _to_employee_create_response(employee: Employee, sent_to: str) -> EmployeeCreateResponse:
     # Always set by EmployeeService.create_employee/resend_invite in the same
-    # transaction that generated raw_token — never actually None here.
+    # transaction that generated the activation token — never actually None here.
     assert employee.activation_expires_at is not None
     return EmployeeCreateResponse(
         **EmployeeResponse.model_validate(employee).model_dump(),
-        invite=EmployeeInviteInfo(
-            activation_token=raw_token, expires_at=employee.activation_expires_at
-        ),
+        invite=EmployeeInviteInfo(sent_to=sent_to, expires_at=employee.activation_expires_at),
     )
 
 
@@ -154,8 +152,8 @@ def create_employee(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    employee, raw_token = EmployeeService(db).create_employee(user.company_id, data, user)
-    return _to_employee_create_response(employee, raw_token)
+    employee, sent_to = EmployeeService(db).create_employee(user.company_id, data, user)
+    return _to_employee_create_response(employee, sent_to)
 
 
 @employees_router.get("/me", response_model=EmployeeResponse)
@@ -213,5 +211,5 @@ def resend_invite(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    employee, raw_token = EmployeeService(db).resend_invite(user.company_id, employee_id)
-    return _to_employee_create_response(employee, raw_token)
+    employee, sent_to = EmployeeService(db).resend_invite(user.company_id, employee_id)
+    return _to_employee_create_response(employee, sent_to)

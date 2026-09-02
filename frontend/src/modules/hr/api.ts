@@ -65,7 +65,7 @@ export interface EmployeeCreateInput {
 export type EmployeeUpdateInput = Partial<EmployeeCreateInput>;
 
 export interface EmployeeCreateResponse extends Employee {
-  invite: { activation_token: string; expires_at: string };
+  invite: { sent_to: string; expires_at: string };
 }
 
 export interface ListEmployeesParams {
@@ -103,6 +103,16 @@ export async function deactivateEmployee(id: string): Promise<void> {
 
 export async function reactivateEmployee(id: string): Promise<Employee> {
   const { data } = await apiClient.post<Employee>(`/employees/${id}/toggle-active`);
+  return data;
+}
+
+export async function resendInvite(id: string): Promise<EmployeeCreateResponse> {
+  const { data } = await apiClient.post<EmployeeCreateResponse>(`/employees/${id}/resend-invite`);
+  return data;
+}
+
+export async function getMyEmployee(): Promise<Employee> {
+  const { data } = await apiClient.get<Employee>("/employees/me");
   return data;
 }
 
