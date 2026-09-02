@@ -198,7 +198,7 @@ function ShiftForm({
   }
 
   return (
-    <form className="card stack" onSubmit={handleSubmit} style={{ marginBottom: 16, maxWidth: 480 }}>
+    <form className="card stack mb-4" onSubmit={handleSubmit} style={{ maxWidth: 480 }}>
       {error && <div className="alert alert-error">{error}</div>}
       <div className="field">
         <label>Name</label>
@@ -275,7 +275,7 @@ function AssignDialog({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-        <h3 style={{ margin: 0 }}>Assign "{shift.name}"</h3>
+        <h3>Assign "{shift.name}"</h3>
         {error && <div className="alert alert-error">{error}</div>}
         <div className="field">
           <label>Employee</label>
@@ -297,7 +297,7 @@ function AssignDialog({
           <label>Effective to (optional — open-ended if blank)</label>
           <input type="date" value={effectiveTo} onChange={(e) => setEffectiveTo(e.target.value)} />
         </div>
-        <div className="row" style={{ justifyContent: "flex-end" }}>
+        <div className="row-end">
           <button className="btn" onClick={onClose} disabled={submitting}>
             Cancel
           </button>

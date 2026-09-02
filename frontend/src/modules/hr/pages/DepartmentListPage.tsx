@@ -174,7 +174,7 @@ function DepartmentForm({
   }
 
   return (
-    <form className="card stack" onSubmit={handleSubmit} style={{ marginBottom: 16, maxWidth: 480 }}>
+    <form className="card stack mb-4" onSubmit={handleSubmit} style={{ maxWidth: 480 }}>
       {error && <div className="alert alert-error">{error}</div>}
       <div className={"field" + (fieldError ? " has-error" : "")}>
         <label>Name</label>

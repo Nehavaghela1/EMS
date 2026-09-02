@@ -191,23 +191,23 @@ export function LeavePage() {
       <PageHeader title="Leave" breadcrumb="Time & leave" />
 
       {user?.employee && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <h3 style={{ marginTop: 0 }}>My balances</h3>
+        <div className="card mb-6">
+          <h3>My balances</h3>
           {balancesQuery.isLoading && <span className="text-muted">Loading…</span>}
           {balancesQuery.isError && (
             <div className="alert alert-error">{parseApiError(balancesQuery.error).message}</div>
           )}
           {balancesQuery.data && balancesQuery.data.length === 0 && (
-            <span className="text-muted">No balances yet — they're created the first time you need one.</span>
+            <span className="text-muted">
+              No balances yet — they're created the first time you need one.
+            </span>
           )}
           {balancesQuery.data && balancesQuery.data.length > 0 && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+            <div className="stat-grid">
               {balancesQuery.data.map((b) => (
                 <div className="card" key={b.leave_type_id}>
-                  <div className="text-muted" style={{ fontSize: 12 }}>
-                    {b.leave_type_name}
-                  </div>
-                  <div style={{ fontSize: 24, fontWeight: 600 }}>{b.available}</div>
+                  <div className="stat-label">{b.leave_type_name}</div>
+                  <div className="stat-value">{b.available}</div>
                 </div>
               ))}
             </div>
@@ -223,7 +223,7 @@ export function LeavePage() {
       />
 
       <PageHeader title="Requests" />
-      <div className="row" style={{ marginBottom: 16 }}>
+      <div className="row mb-4">
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as LeaveStatus | "")}>
           {STATUS_FILTERS.map((f) => (
             <option key={f.value} value={f.value}>
@@ -249,9 +249,7 @@ export function LeavePage() {
       {decisionTarget && (
         <div className="modal-backdrop" onClick={() => setDecisionTarget(null)}>
           <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: 0 }}>
-              {decisionTarget.status === "approved" ? "Approve" : "Reject"} this leave request?
-            </h3>
+            <h3>{decisionTarget.status === "approved" ? "Approve" : "Reject"} this leave request?</h3>
             {decisionError && <div className="alert alert-error">{decisionError}</div>}
             {decisionTarget.status === "rejected" && (
               <div className="field">
@@ -264,7 +262,7 @@ export function LeavePage() {
                 />
               </div>
             )}
-            <div className="row" style={{ justifyContent: "flex-end" }}>
+            <div className="row-end">
               <button className="btn" onClick={() => setDecisionTarget(null)} disabled={decisionBusy}>
                 Cancel
               </button>
@@ -337,8 +335,8 @@ function ApplyLeaveForm({
   }
 
   return (
-    <form className="card stack" onSubmit={handleSubmit} style={{ marginBottom: 20 }}>
-      <h3 style={{ margin: 0 }}>Apply for leave</h3>
+    <form className="card stack mb-6" onSubmit={handleSubmit}>
+      <h3>Apply for leave</h3>
       {error && <div className="alert alert-error">{error}</div>}
       <div className="form-grid">
         {canPickEmployee && (
@@ -375,7 +373,7 @@ function ApplyLeaveForm({
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </div>
       </div>
-      <label className="row" style={{ fontSize: 13 }}>
+      <label className="row text-sm">
         <input type="checkbox" checked={isHalfDay} onChange={(e) => setIsHalfDay(e.target.checked)} />
         Half day
       </label>
@@ -383,7 +381,12 @@ function ApplyLeaveForm({
         <label>Reason</label>
         <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
       </div>
-      <button className="btn btn-primary" type="submit" disabled={submitting} style={{ width: "fit-content" }}>
+      <button
+        className="btn btn-primary"
+        type="submit"
+        disabled={submitting}
+        style={{ width: "fit-content" }}
+      >
         {submitting ? "Submitting…" : "Apply"}
       </button>
     </form>

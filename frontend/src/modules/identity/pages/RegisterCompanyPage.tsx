@@ -67,13 +67,13 @@ export function RegisterCompanyPage() {
   if (submitted) {
     return (
       <div className="center-screen">
-        <div className="card stack" style={{ width: 420 }}>
-          <h1 style={{ margin: "0 0 4px", fontSize: 20 }}>Registration complete</h1>
+        <div className="card stack auth-card auth-card-wide">
+          <h1>Registration complete</h1>
           <div className="alert alert-success">
             <strong>{submitted.name}</strong> (code {submitted.code}) is registered and now{" "}
             <strong>awaiting approval</strong>.
           </div>
-          <p className="text-muted" style={{ margin: 0 }}>
+          <p className="subtitle">
             There is no account to sign in with yet — a platform administrator still has to
             approve the company. HR admin credentials are issued only once that happens, and
             will be sent to you then. There is nothing further to do right now.
@@ -88,10 +88,10 @@ export function RegisterCompanyPage() {
 
   return (
     <div className="center-screen">
-      <form className="card stack" style={{ width: 420 }} onSubmit={handleSubmit}>
+      <form className="card stack auth-card auth-card-wide" onSubmit={handleSubmit}>
         <div>
-          <h1 style={{ margin: "0 0 4px", fontSize: 20 }}>Register your company</h1>
-          <p className="text-muted" style={{ margin: 0 }}>
+          <h1>Register your company</h1>
+          <p className="subtitle">
             Your company is reviewed before it goes live — no account is created yet.
           </p>
         </div>
@@ -140,9 +140,7 @@ export function RegisterCompanyPage() {
               you can still register without one.
             </span>
           )}
-          <span className="text-muted" style={{ fontSize: 12 }}>
-            Used to pre-populate departments and leave types once approved.
-          </span>
+          <span className="field-hint">Used to pre-populate departments and leave types once approved.</span>
         </div>
 
         <div className="field">
@@ -154,7 +152,7 @@ export function RegisterCompanyPage() {
           {submitting ? "Registering…" : "Register company"}
         </button>
 
-        <div style={{ fontSize: 13 }}>
+        <div className="text-sm">
           <Link to="/login">Back to sign in</Link>
         </div>
       </form>

@@ -6,19 +6,11 @@ import { fetchDashboard } from "../api";
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="card">
-      <div className="text-muted" style={{ fontSize: 12 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 24, fontWeight: 600 }}>{value}</div>
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{value}</div>
     </div>
   );
 }
-
-const statGrid: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-  gap: 12,
-};
 
 /**
  * Page 6 (Spec 14.3): one page against GET /dashboard, rendering whichever
@@ -49,12 +41,12 @@ export function DashboardPage() {
 
       {data && (
         <div className="stack">
-          <span className="text-muted" style={{ fontSize: 12 }}>
+          <span className="text-xs text-faint">
             Updated {new Date(data.generated_at).toLocaleString()}
           </span>
 
           {data.role === "super_admin" && (
-            <div style={statGrid}>
+            <div className="stat-grid">
               <Stat label="Pending approvals" value={data.data.pending_approvals} />
               <Stat label="Platform users" value={data.data.platform_user_count} />
               {Object.entries(data.data.company_counts_by_status).map(([status, count]) => (
@@ -65,18 +57,18 @@ export function DashboardPage() {
 
           {data.role === "hr_admin" && (
             <>
-              <div style={statGrid}>
+              <div className="stat-grid">
                 <Stat label="Headcount" value={data.data.headcount} />
                 <Stat label="Present today" value={data.data.present_today} />
                 <Stat label="On leave today" value={data.data.on_leave_today} />
                 <Stat label="Pending leave requests" value={data.data.pending_leave_requests} />
               </div>
               <div className="card">
-                <h3 style={{ marginTop: 0 }}>Department distribution</h3>
+                <h3>Department distribution</h3>
                 {Object.keys(data.data.department_distribution).length === 0 ? (
                   <span className="text-muted">No departments yet.</span>
                 ) : (
-                  <div className="stack" style={{ gap: 6 }}>
+                  <div className="stack-sm">
                     {Object.entries(data.data.department_distribution).map(([name, count]) => (
                       <div key={name} className="row-between">
                         <span>{name}</span>
@@ -87,11 +79,11 @@ export function DashboardPage() {
                 )}
               </div>
               <div className="card">
-                <h3 style={{ marginTop: 0 }}>Recent hires</h3>
+                <h3>Recent hires</h3>
                 {data.data.recent_hires.length === 0 ? (
                   <span className="text-muted">No recent hires.</span>
                 ) : (
-                  <div className="stack" style={{ gap: 6 }}>
+                  <div className="stack-sm">
                     {data.data.recent_hires.map((h) => (
                       <div key={h.id} className="row-between">
                         <span>
@@ -108,7 +100,7 @@ export function DashboardPage() {
           )}
 
           {data.role === "manager" && (
-            <div style={statGrid}>
+            <div className="stat-grid">
               <Stat label="Team headcount" value={data.data.team_headcount} />
               <Stat label="Team present today" value={data.data.team_present_today} />
               <Stat
@@ -120,18 +112,18 @@ export function DashboardPage() {
 
           {data.role === "employee" && (
             <>
-              <div style={statGrid}>
+              <div className="stat-grid">
                 <Stat label="Pending requests" value={data.data.pending_requests} />
                 {Object.entries(data.data.attendance_this_month).map(([status, count]) => (
                   <Stat key={status} label={`This month — ${status.replace("_", " ")}`} value={count} />
                 ))}
               </div>
               <div className="card">
-                <h3 style={{ marginTop: 0 }}>Leave balances</h3>
+                <h3>Leave balances</h3>
                 {data.data.leave_balances.length === 0 ? (
                   <span className="text-muted">No leave balances yet.</span>
                 ) : (
-                  <div className="stack" style={{ gap: 6 }}>
+                  <div className="stack-sm">
                     {data.data.leave_balances.map((b) => (
                       <div key={b.leave_type_id} className="row-between">
                         <span>{b.leave_type_name ?? "Unknown leave type"}</span>

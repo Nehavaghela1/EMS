@@ -28,7 +28,7 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="center-screen">
           <div className="card stack" style={{ maxWidth: 420 }}>
-            <h2 style={{ margin: 0 }}>Something went wrong</h2>
+            <h2 className="mt-0 mb-0">Something went wrong</h2>
             <p className="text-muted">
               This page hit an unexpected error. Reloading usually fixes it.
             </p>

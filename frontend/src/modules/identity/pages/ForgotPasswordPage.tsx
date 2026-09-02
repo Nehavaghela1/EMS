@@ -84,10 +84,10 @@ export function ForgotPasswordPage() {
   if (step === "request") {
     return (
       <div className="center-screen">
-        <form className="card stack" style={{ width: 360 }} onSubmit={handleRequest}>
+        <form className="card stack auth-card" onSubmit={handleRequest}>
           <div>
-            <h1 style={{ margin: "0 0 4px", fontSize: 20 }}>Forgot password</h1>
-            <p className="text-muted" style={{ margin: 0 }}>
+            <h1>Forgot password</h1>
+            <p className="subtitle">
               Enter your account email and we'll send a reset code if it matches an account.
             </p>
           </div>
@@ -110,7 +110,7 @@ export function ForgotPasswordPage() {
             {submitting ? "Sending…" : "Send reset code"}
           </button>
 
-          <div style={{ fontSize: 13 }}>
+          <div className="text-sm">
             <Link to="/login">Back to sign in</Link>
           </div>
         </form>
@@ -120,9 +120,9 @@ export function ForgotPasswordPage() {
 
   return (
     <div className="center-screen">
-      <form className="card stack" style={{ width: 360 }} onSubmit={handleReset}>
+      <form className="card stack auth-card" onSubmit={handleReset}>
         <div>
-          <h1 style={{ margin: "0 0 4px", fontSize: 20 }}>Enter your reset code</h1>
+          <h1>Enter your reset code</h1>
         </div>
 
         {requestMessage && <div className="alert alert-success">{requestMessage}</div>}
@@ -150,7 +150,7 @@ export function ForgotPasswordPage() {
           {submitting ? "Resetting…" : "Reset password"}
         </button>
 
-        <div className="row-between" style={{ fontSize: 13 }}>
+        <div className="row-between text-sm">
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setStep("request")}>
             Use a different email
           </button>

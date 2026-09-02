@@ -32,6 +32,12 @@ dev = [
     "ruff==0.16.5",
     "mypy==2.3.1",
 ]
+# Only scripts/seed_demo.py imports this — never the app itself, never CI.
+# A separate extra so the ordinary `pip install -e ".[dev]"` install (what
+# CI and the setup instructions use) never pulls it in.
+demo = [
+    "faker==40.38.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

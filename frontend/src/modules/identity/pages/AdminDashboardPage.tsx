@@ -110,35 +110,26 @@ export function AdminDashboardPage() {
       <PageHeader title="Platform admin" breadcrumb="Super admin" />
 
       {stats && (
-        <div
-          className="stack"
-          style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}
-        >
+        <div className="stat-grid mb-6">
           <div className="card">
-            <div className="text-muted" style={{ fontSize: 12 }}>
-              Pending approvals
-            </div>
-            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.pending_approvals}</div>
+            <div className="stat-label">Pending approvals</div>
+            <div className="stat-value">{stats.pending_approvals}</div>
           </div>
           <div className="card">
-            <div className="text-muted" style={{ fontSize: 12 }}>
-              Platform users
-            </div>
-            <div style={{ fontSize: 24, fontWeight: 600 }}>{stats.platform_user_count}</div>
+            <div className="stat-label">Platform users</div>
+            <div className="stat-value">{stats.platform_user_count}</div>
           </div>
           {Object.entries(stats.company_counts_by_status).map(([status, count]) => (
             <div className="card" key={status}>
-              <div className="text-muted" style={{ fontSize: 12 }}>
-                Companies — {status}
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 600 }}>{count}</div>
+              <div className="stat-label">Companies — {status}</div>
+              <div className="stat-value">{count}</div>
             </div>
           ))}
         </div>
       )}
 
       {approved && (
-        <div className="alert alert-success stack" style={{ marginBottom: 16 }}>
+        <div className="alert alert-success stack mb-4">
           <div>
             Approved <strong>{approved.company.name}</strong>. HR admin credentials (shown once —
             share them with the company now):
@@ -146,7 +137,11 @@ export function AdminDashboardPage() {
           <div>
             <code>{approved.hr_admin_email}</code> / <code>{approved.temporary_password}</code>
           </div>
-          <button className="btn btn-sm btn-ghost" style={{ width: "fit-content" }} onClick={() => setApproved(null)}>
+          <button
+            className="btn btn-sm btn-ghost"
+            style={{ width: "fit-content" }}
+            onClick={() => setApproved(null)}
+          >
             Dismiss
           </button>
         </div>
@@ -186,7 +181,7 @@ export function AdminDashboardPage() {
       {rejectTarget && (
         <div className="modal-backdrop" onClick={() => setRejectTarget(null)}>
           <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: 0 }}>Reject {rejectTarget.name}?</h3>
+            <h3>Reject {rejectTarget.name}?</h3>
             {actionError && <div className="alert alert-error">{actionError}</div>}
             <div className="field">
               <label htmlFor="reject_reason">Reason</label>
@@ -198,7 +193,7 @@ export function AdminDashboardPage() {
                 autoFocus
               />
             </div>
-            <div className="row" style={{ justifyContent: "flex-end" }}>
+            <div className="row-end">
               <button
                 className="btn"
                 onClick={() => {

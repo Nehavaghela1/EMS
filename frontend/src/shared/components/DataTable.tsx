@@ -81,7 +81,7 @@ export function DataTable<T>({
             {isLoading && (
               <tr>
                 <td colSpan={columns.length}>
-                  <div className="row" style={{ padding: "16px 0" }}>
+                  <div className="row" style={{ padding: "var(--space-4) 0" }}>
                     <div className="spinner" />
                     <span className="text-muted">Loading…</span>
                   </div>
@@ -91,7 +91,7 @@ export function DataTable<T>({
             {!isLoading && isError && (
               <tr>
                 <td colSpan={columns.length}>
-                  <div className="alert alert-error" style={{ margin: "8px 0" }}>
+                  <div className="alert alert-error" style={{ margin: "var(--space-2) 0" }}>
                     {parseApiError(error).message}
                   </div>
                 </td>

@@ -1,0 +1,1847 @@
+{
+  "info": {
+    "_postman_id": "41bf30f8-07d8-461c-9643-888e2277740a",
+    "name": "EMS Pro API",
+    "description": "Every route the frontend calls, grouped by module, against a local `uvicorn app.main:app --reload` instance (see the repo README for setup).\n\n**Auth**: the collection-level Bearer auth reads `{{access_token}}` from the environment. A test script on every request auto-captures `access_token` whenever a response body contains one (login, activation) \u2014 you never need to copy/paste it by hand.\n\n**Run in this order for a first pass** (see the \"Suggested order\" folder for the exact requests):\n1. `POST /companies/register` \u2014 creates a company in `pending` status.\n2. Approve it as a `super_admin`. There is no self-serve way to get a `super_admin` account \u2014 Spec \u00a78.5 deliberately makes that role assignable only by direct database action, never a route. Create one locally with:\n\n```bash\npython3 - <<'EOF'\nfrom app.db.session import SessionLocal\nfrom app.core.security import hash_password\nfrom app.modules.identity.models import Company, CompanyStatus, User, UserRole\n\nwith SessionLocal() as db:\n    company = Company(name=\"Platform Admin\", code=\"PLATADMIN\", email=\"platform@example.com\", status=CompanyStatus.active)\n    db.add(company)\n    db.flush()\n    db.add(User(company_id=company.id, email=\"admin@example.com\",\n                hashed_password=hash_password(\"ChangeMe123!\"), role=UserRole.super_admin, is_active=True))\n    db.commit()\nEOF\n```\n\n   Then run `POST /auth/login` with that email/password, then `POST /companies/{company_id}/approve` (grab the id from the register response, or `GET /companies?status=pending`).\n3. `POST /auth/login` again, this time as the `hr_admin` the approve step just created (its email/temp password come back in the approve response).\n4. `POST /employees` to create an employee \u2014 the response includes an activation token; `POST /auth/activate` with it logs the new employee straight in.\n\nFaster path for exploring everything else: skip steps 1-2 and run `scripts/seed_demo.py` (see README) for a company with 25 employees, attendance, leave and shifts already in every state, then just log in."
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Auto-capture: any response carrying an access_token (login, activate)",
+          "// is saved to the environment so later requests authenticate automatically.",
+          "try {",
+          "    const body = pm.response.json();",
+          "    if (body && body.access_token) {",
+          "        pm.environment.set('access_token', body.access_token);",
+          "    }",
+          "} catch (e) { /* non-JSON or empty body \u2014 nothing to capture */ }"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Outside /api/v1 \u2014 checks DB and Redis are both reachable. No auth.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Auth & company onboarding",
+      "item": [
+        {
+          "name": "Register company",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/companies/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "companies",
+                "register"
+              ]
+            },
+            "description": "Route 1 (public). Creates the company in `pending` status. Note the returned `id` \u2014 you'll need it for the approve step.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"Acme Manufacturing\",\n  \"company_email\": \"hr@acme.example\",\n  \"industry\": \"Technology\",\n  \"phone\": \"+91-9800000000\",\n  \"country\": \"IN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List companies (super_admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/companies?status=pending&page=1&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "companies"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending",
+                  "disabled": true
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "super_admin only. Use to find the id of a company you just registered."
+          },
+          "response": []
+        },
+        {
+          "name": "Approve company (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/companies/{{company_id}}/approve",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "companies",
+                "{{company_id}}",
+                "approve"
+              ]
+            },
+            "description": "super_admin only. Creates the company's first hr_admin user and returns its email + a generated temporary password \u2014 copy both, you'll need them to log in as HR next."
+          },
+          "response": []
+        },
+        {
+          "name": "Reject company (super_admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/companies/{{company_id}}/reject",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "companies",
+                "{{company_id}}",
+                "reject"
+              ]
+            },
+            "description": "super_admin only. Alternative to approve \u2014 left here for completeness, not part of the suggested order.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Duplicate registration.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "`company_code` is only needed if the same email exists at more than one company (rare \u2014 omit it normally). Sets a refresh-token cookie and returns an access token; the collection's test script captures the access token automatically.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"hr@acme.example\",\n  \"password\": \"ChangeMe123!\",\n  \"company_code\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Reads the refresh-token cookie Postman's cookie jar captured from Login \u2014 no body needed.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Revokes the current refresh token."
+          },
+          "response": []
+        },
+        {
+          "name": "Logout all sessions",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/logout-all",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "logout-all"
+              ]
+            },
+            "description": "Revokes every refresh token issued to this user."
+          },
+          "response": []
+        },
+        {
+          "name": "Get current user (me)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Returns the caller's role, company, linked employee summary and permission list."
+          },
+          "response": []
+        },
+        {
+          "name": "Change password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/change-password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "change-password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"ChangeMe123!\",\n  \"new_password\": \"NewPassw0rd!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/forgot-password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "forgot-password"
+              ]
+            },
+            "description": "Always returns the same message whether or not the email exists (Spec \u00a79.3 enumeration safety) \u2014 check server logs / the OTP table locally to get the code, there's no email backend wired up in dev.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"hr@acme.example\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reset password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/reset-password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "reset-password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"hr@acme.example\",\n  \"otp\": \"{{reset_otp}}\",\n  \"new_password\": \"NewPassw0rd!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Check username availability",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/check-username/{{username}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "check-username",
+                "{{username}}"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Preview activation invite",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/activate/{{activation_token}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "activate",
+                "{{activation_token}}"
+              ]
+            },
+            "description": "Public preview shown before an invited employee sets their password \u2014 404 once expired or already redeemed.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Activate account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/activate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "activate"
+              ]
+            },
+            "description": "Logs the employee straight in on success (Spec: no second login step) \u2014 response includes an access_token, auto-captured like Login.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{activation_token}}\",\n  \"username\": \"jane.doe\",\n  \"password\": \"NewPassw0rd!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Routes 1-11 and the /companies collection (Spec \u00a714.3). See the collection description for why approving a company needs a manually created super_admin."
+    },
+    {
+      "name": "Companies",
+      "item": [
+        {
+          "name": "Get my company",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/companies/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "companies",
+                "me"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update my company",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/companies/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "companies",
+                "me"
+              ]
+            },
+            "description": "hr_admin only.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Manufacturing Pvt Ltd\",\n  \"phone\": \"+91-9800000001\",\n  \"industry\": \"Technology\",\n  \"address\": \"221B Example Street\",\n  \"city\": \"Bengaluru\",\n  \"state\": \"KA\",\n  \"pincode\": \"560001\",\n  \"website\": \"https://acme.example\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get company detail (super_admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/companies/{{company_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "companies",
+                "{{company_id}}"
+              ]
+            },
+            "description": "super_admin only \u2014 includes employee/department counts."
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Departments",
+      "item": [
+        {
+          "name": "List departments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/departments?page=1&limit=20&sort=name",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "departments"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true
+                },
+                {
+                  "key": "sort",
+                  "value": "name",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Create department",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/departments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "departments"
+              ]
+            },
+            "description": "hr_admin only. Copy the returned id into the `department_id` environment variable for the requests below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Engineering\",\n  \"description\": \"Product engineering\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get department",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/departments/{{department_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "departments",
+                "{{department_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update department",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/departments/{{department_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "departments",
+                "{{department_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Engineering\",\n  \"description\": \"Product & platform engineering\",\n  \"head_employee_id\": \"{{employee_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete department",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/departments/{{department_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "departments",
+                "{{department_id}}"
+              ]
+            },
+            "description": "Blocked (409) while any active employee is still assigned to it."
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Employees",
+      "item": [
+        {
+          "name": "List employees",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/employees?page=1&limit=20&q=&department_id=&sort=first_name",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "employees"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "department_id",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "sort",
+                  "value": "first_name",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Scope depends on caller role (Spec \u00a710.4): HR sees everyone, a manager sees their team, an employee sees only themself."
+          },
+          "response": []
+        },
+        {
+          "name": "Create employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/employees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "employees"
+              ]
+            },
+            "description": "hr_admin only. `employee_code` is generated server-side, never client-supplied. Response includes an invite with an activation_token \u2014 copy it into the `activation_token` environment variable to try Auth > Activate account.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Jane\",\n  \"last_name\": \"Doe\",\n  \"email\": \"jane.doe@acme.example\",\n  \"personal_email\": \"jane.personal@example.com\",\n  \"phone\": \"+91-9800000002\",\n  \"department_id\": \"{{department_id}}\",\n  \"position\": \"Software Engineer\",\n  \"level\": \"L2\",\n  \"reporting_manager_id\": null,\n  \"employment_type\": \"full_time\",\n  \"hire_date\": \"2026-01-15\",\n  \"probation_end_date\": \"2026-04-15\",\n  \"notice_period_days\": 30\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get my employee record",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/employees/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "employees",
+                "me"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get employee",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/employees/{{employee_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "employees",
+                "{{employee_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Update employee",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/employees/{{employee_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "employees",
+                "{{employee_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"position\": \"Senior Software Engineer\",\n  \"level\": \"L3\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Deactivate / reactivate employee",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/employees/{{employee_id}}/toggle-active",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "employees",
+                "{{employee_id}}",
+                "toggle-active"
+              ]
+            },
+            "description": "hr_admin only. Row stays in the database; deactivation just revokes login and drops the employee out of active lists (never a hard delete \u2014 Spec \u00a710.1)."
+          },
+          "response": []
+        },
+        {
+          "name": "Resend activation invite",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/employees/{{employee_id}}/resend-invite",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "employees",
+                "{{employee_id}}",
+                "resend-invite"
+              ]
+            },
+            "description": "hr_admin only. Only valid while invitation_status is still pending."
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Attendance",
+      "item": [
+        {
+          "name": "Check in",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/attendance/check-in",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "attendance",
+                "check-in"
+              ]
+            },
+            "description": "Always logs against today's date."
+          },
+          "response": []
+        },
+        {
+          "name": "Check out",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/attendance/check-out",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "attendance",
+                "check-out"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List attendance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/attendance?page=1&limit=20&employee_id=&date_from=&date_to=&status=&department_id=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "attendance"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true
+                },
+                {
+                  "key": "employee_id",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "date_from",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "date_to",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "department_id",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Scope depends on caller role, same as Employees > List."
+          },
+          "response": []
+        },
+        {
+          "name": "Get attendance record",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/attendance/{{attendance_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "attendance",
+                "{{attendance_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Regularize attendance",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/attendance/{{attendance_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "attendance",
+                "{{attendance_id}}"
+              ]
+            },
+            "description": "hr_admin only. `reason` is required and goes to audit_logs.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"check_in\": \"2026-01-20T09:15:00Z\",\n  \"check_out\": \"2026-01-20T18:05:00Z\",\n  \"status\": \"present\",\n  \"notes\": \"Forgot to check out yesterday.\",\n  \"reason\": \"Manual correction \\u2014 employee reported a missed check-out.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete attendance record",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/attendance/{{attendance_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "attendance",
+                "{{attendance_id}}"
+              ]
+            },
+            "description": "hr_admin only."
+          },
+          "response": []
+        },
+        {
+          "name": "Export attendance (async)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/attendance/export",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "attendance",
+                "export"
+              ]
+            },
+            "description": "Queues a Celery job and returns a job_id \u2014 poll Jobs > Get job status with it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employee_id\": null,\n  \"date_from\": \"2026-01-01\",\n  \"date_to\": \"2026-01-31\",\n  \"status\": null,\n  \"department_id\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Shifts",
+      "item": [
+        {
+          "name": "List shifts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/shifts?page=1&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "shifts"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Create shift",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/shifts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "shifts"
+              ]
+            },
+            "description": "hr_admin only. Copy the returned id into `shift_id`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Day Shift\",\n  \"start_time\": \"09:00:00\",\n  \"end_time\": \"18:00:00\",\n  \"break_minutes\": 60,\n  \"night_allowance\": \"0\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update shift",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/shifts/{{shift_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "shifts",
+                "{{shift_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Day Shift\",\n  \"break_minutes\": 45\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete shift",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/shifts/{{shift_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "shifts",
+                "{{shift_id}}"
+              ]
+            },
+            "description": "Blocked while any assignment currently covers today."
+          },
+          "response": []
+        },
+        {
+          "name": "Assign shift to employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/shifts/{{shift_id}}/assign",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "shifts",
+                "{{shift_id}}",
+                "assign"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employee_id\": \"{{employee_id}}\",\n  \"effective_from\": \"2026-02-01\",\n  \"effective_to\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Holidays",
+      "item": [
+        {
+          "name": "List holidays",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/holidays",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "holidays"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Create holiday",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/holidays",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "holidays"
+              ]
+            },
+            "description": "hr_admin only. Copy the returned id into `holiday_id`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Republic Day\",\n  \"date\": \"2026-01-26\",\n  \"is_optional\": false,\n  \"applies_to_department_id\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete holiday",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/holidays/{{holiday_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "holidays",
+                "{{holiday_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Leave types",
+      "item": [
+        {
+          "name": "List leave types",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/leave-types",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "leave-types"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Create leave type",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/leave-types",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "leave-types"
+              ]
+            },
+            "description": "hr_admin only. Copy the returned id into `leave_type_id`. A company's industry preset seeds a starter set on approval \u2014 this is for adding more.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Annual Leave\",\n  \"code\": \"annual\",\n  \"annual_allowance\": \"18\",\n  \"carry_forward_limit\": \"6\",\n  \"max_consecutive_days\": null,\n  \"requires_approval\": true,\n  \"is_paid\": true,\n  \"is_encashable\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update leave type",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/leave-types/{{leave_type_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "leave-types",
+                "{{leave_type_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"annual_allowance\": \"20\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Leaves",
+      "item": [
+        {
+          "name": "List leave requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/leaves?page=1&limit=20&status=&employee_id=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "leaves"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "employee_id",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Scope depends on caller role, same as Employees > List."
+          },
+          "response": []
+        },
+        {
+          "name": "Apply for leave",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/leaves",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "leaves"
+              ]
+            },
+            "description": "Omit employee_id when applying for yourself. A manager or hr_admin applying on someone else's behalf must supply it. Copy the returned id into `leave_id`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employee_id\": null,\n  \"leave_type_id\": \"{{leave_type_id}}\",\n  \"start_date\": \"2026-03-10\",\n  \"end_date\": \"2026-03-12\",\n  \"is_half_day\": false,\n  \"reason\": \"Family function.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get leave balances",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/leaves/balance/{{employee_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "leaves",
+                "balance",
+                "{{employee_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get leave request",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/leaves/{{leave_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "leaves",
+                "{{leave_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Approve / reject leave request",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/leaves/{{leave_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "leaves",
+                "{{leave_id}}"
+              ]
+            },
+            "description": "manager or hr_admin only. Set status to \"rejected\" and fill rejection_reason to try the other path.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"approved\",\n  \"rejection_reason\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel leave request",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/leaves/{{leave_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "leaves",
+                "{{leave_id}}"
+              ]
+            },
+            "description": "The requester can cancel their own pending/approved request."
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Jobs",
+      "item": [
+        {
+          "name": "Get job status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/jobs/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "jobs",
+                "{{job_id}}"
+              ]
+            },
+            "description": "Poll with the job_id returned by an export endpoint (queued -> started -> success/failure)."
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "Get dashboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/dashboard",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dashboard"
+              ]
+            },
+            "description": "Shape of the response depends on caller role (Spec \u00a716) \u2014 an employee sees their own attendance/leave snapshot, a manager also sees team stats, hr_admin sees company-wide numbers."
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Audit logs",
+      "item": [
+        {
+          "name": "List audit logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/audit-logs?page=1&limit=20&action=&actor_email=&entity_type=&date_from=&date_to=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "audit-logs"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true
+                },
+                {
+                  "key": "action",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "actor_email",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "entity_type",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "date_from",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "date_to",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "hr_admin only. Append-only at the database level \u2014 see the README's \"audit_logs is append-only\" section for how that's enforced."
+          },
+          "response": []
+        },
+        {
+          "name": "Export audit logs (async)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/audit-logs/export",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "audit-logs",
+                "export"
+              ]
+            },
+            "description": "hr_admin only. Queues a Celery job \u2014 poll Jobs > Get job status with the returned job_id.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": null,\n  \"actor_email\": null,\n  \"entity_type\": null,\n  \"date_from\": null,\n  \"date_to\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "List notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/notifications?page=1&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Mark all notifications read",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/notifications/read-all",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "notifications",
+                "read-all"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Mark one notification read",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/notifications/{{notification_id}}/read",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "notifications",
+                "{{notification_id}}",
+                "read"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "Industry presets",
+      "item": [
+        {
+          "name": "List industry presets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/industry-presets",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "industry-presets"
+              ]
+            },
+            "description": "Public \u2014 powers the industry dropdown on the company registration form. Seeded by scripts/setup.sh, never hand-edited.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": ""
+    }
+  ]
+}

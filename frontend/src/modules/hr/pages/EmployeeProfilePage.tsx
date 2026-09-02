@@ -97,7 +97,7 @@ export function EmployeeProfilePage() {
       />
 
       {invite && (
-        <div className="alert alert-success" style={{ marginBottom: 16 }}>
+        <div className="alert alert-success mb-4">
           Invite created — activation token (shown once, share it with the employee):{" "}
           <code>{invite.activation_token}</code>, expires{" "}
           {new Date(invite.expires_at).toLocaleString()}.

@@ -50,6 +50,12 @@ env:
   PGUSER: ems_owner
   PGPASSWORD: ci_ems_owner_only
   PGDATABASE: ems_pro_test
+  # scripts/setup.sh's own bootstrap role — see its header. In CI this is
+  # ems_owner itself (already a superuser via the service container's own
+  # POSTGRES_USER); locally it defaults to your OS username instead, since
+  # ems_owner doesn't exist yet the first time setup.sh runs there.
+  PG_BOOTSTRAP_USER: ems_owner
+  PG_BOOTSTRAP_PASSWORD: ci_ems_owner_only
   ALEMBIC_DATABASE_URL: postgresql+psycopg2://ems_owner:ci_ems_owner_only@localhost:5432/ems_pro_test
   DATABASE_URL: postgresql+psycopg2://ems_app:ems_app_dev_only@localhost:5432/ems_pro
   TEST_DATABASE_URL: postgresql+psycopg2://ems_app:ems_app_dev_only@localhost:5432/ems_pro_test
@@ -117,18 +123,15 @@ jobs:
           pg_isready -h localhost -p 5432 -U ems_owner -d ems_pro_test
           python -c "import redis; redis.Redis.from_url('redis://localhost:6379/0').ping(); print('redis: PONG')"
 
-      # 7. Bootstrap ems_app + grants FIRST — see the env block's comment
-      # for why this must precede migrations now, not follow them.
-      - name: Bootstrap ems_app role and grants
-        run: psql -h localhost -U ems_owner -d ems_pro_test -f app/db/seed/bootstrap_roles.sql
-        env:
-          PGPASSWORD: ci_ems_owner_only
-
-      # 8. Migrations as ems_owner — proves they apply from scratch, every
-      # time, against a database that already has ems_app (some migrations,
-      # e.g. WP-11's audit_logs REVOKE, name that role directly).
-      - name: alembic upgrade head
-        run: alembic upgrade head
+      # 7-8. Bootstrap ems_app + grants, then migrate — via scripts/setup.sh,
+      # not a separate copy of the same sequence. That's the whole point
+      # (WP-15): CI and a developer's machine run the identical script, so
+      # they cannot diverge the way this ordering did before. The database
+      # already exists (POSTGRES_DB above), so setup.sh's own
+      # create-if-absent step no-ops here; bootstrapping still runs before
+      # migrating, which is why the audit_logs REVOKE now succeeds.
+      - name: Set up database (scripts/setup.sh)
+        run: scripts/setup.sh
 
       # 9. Tests as ems_app, so RLS is genuinely exercised once it exists (WP-04+).
       - name: pytest

@@ -76,7 +76,7 @@ export function EmployeeListPage() {
         }
       />
 
-      <div className="row" style={{ marginBottom: 16 }}>
+      <div className="row mb-4">
         <input
           placeholder="Search by name, email or code…"
           value={q}

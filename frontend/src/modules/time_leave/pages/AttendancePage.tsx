@@ -127,7 +127,7 @@ export function AttendancePage() {
     <div>
       <PageHeader title="Attendance" breadcrumb="Time & leave" />
 
-      <div className="card" style={{ marginBottom: 20 }}>
+      <div className="card mb-6">
         {!user?.employee ? (
           <span className="text-muted">
             No employee record is linked to this account — attendance check-in/out doesn't apply.
@@ -237,7 +237,7 @@ function RegularizeDialog({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-        <h3 style={{ margin: 0 }}>Regularize attendance — {record.date}</h3>
+        <h3>Regularize attendance — {record.date}</h3>
         {error && <div className="alert alert-error">{error}</div>}
         <div className="field">
           <label>Status</label>
@@ -257,7 +257,7 @@ function RegularizeDialog({
           <label>Reason (required)</label>
           <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
         </div>
-        <div className="row" style={{ justifyContent: "flex-end" }}>
+        <div className="row-end">
           <button className="btn" onClick={onClose} disabled={busy}>
             Cancel
           </button>

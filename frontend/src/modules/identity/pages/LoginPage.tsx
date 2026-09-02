@@ -45,12 +45,10 @@ export function LoginPage() {
 
   return (
     <div className="center-screen">
-      <form className="card stack" style={{ width: 360 }} onSubmit={handleSubmit}>
+      <form className="card stack auth-card" onSubmit={handleSubmit}>
         <div>
-          <h1 style={{ margin: "0 0 4px", fontSize: 20 }}>EMS Pro</h1>
-          <p className="text-muted" style={{ margin: 0 }}>
-            Sign in to your account
-          </p>
+          <h1>EMS Pro</h1>
+          <p className="subtitle">Sign in to your account</p>
         </div>
 
         {!error && locationState?.passwordReset && (
@@ -94,9 +92,7 @@ export function LoginPage() {
               value={companyCode}
               onChange={(e) => setCompanyCode(e.target.value)}
             />
-            <span className="text-muted" style={{ fontSize: 12 }}>
-              Companies on this email: {companies.join(", ")}
-            </span>
+            <span className="text-xs text-muted">Companies on this email: {companies.join(", ")}</span>
           </div>
         )}
 
@@ -104,7 +100,7 @@ export function LoginPage() {
           {submitting ? "Signing in…" : "Sign in"}
         </button>
 
-        <div className="row-between" style={{ fontSize: 13 }}>
+        <div className="row-between text-sm">
           <Link to="/register-company">Register your company</Link>
           <Link to="/forgot-password">Forgot password?</Link>
         </div>

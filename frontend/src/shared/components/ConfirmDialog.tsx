@@ -25,11 +25,9 @@ export function ConfirmDialog({
   return (
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-        <h3 style={{ margin: 0 }}>{title}</h3>
-        <p className="text-muted" style={{ margin: 0 }}>
-          {message}
-        </p>
-        <div className="row" style={{ justifyContent: "flex-end" }}>
+        <h3>{title}</h3>
+        <p className="text-muted mt-0 mb-0">{message}</p>
+        <div className="row-end">
           <button className="btn" onClick={onCancel} disabled={busy}>
             Cancel
           </button>

@@ -79,9 +79,9 @@ export function ActivatePage() {
     // expired.") is already the clear, non-raw state this page needs.
     return (
       <div className="center-screen">
-        <div className="card stack" style={{ width: 380 }}>
-          <h1 style={{ margin: "0 0 4px", fontSize: 20 }}>Invitation no longer valid</h1>
-          <p className="text-muted" style={{ margin: 0 }}>
+        <div className="card stack auth-card">
+          <h1>Invitation no longer valid</h1>
+          <p className="subtitle">
             {parseApiError(previewQuery.error).message} Ask your HR admin to resend the
             invitation.
           </p>
@@ -95,13 +95,13 @@ export function ActivatePage() {
 
   return (
     <div className="center-screen">
-      <form className="card stack" style={{ width: 380 }} onSubmit={handleSubmit}>
+      <form className="card stack auth-card" onSubmit={handleSubmit}>
         <div>
-          <h1 style={{ margin: "0 0 4px", fontSize: 20 }}>
+          <h1>
             Welcome, {preview.first_name}
             {preview.last_name ? ` ${preview.last_name}` : ""}
           </h1>
-          <p className="text-muted" style={{ margin: 0 }}>
+          <p className="subtitle">
             Finish setting up your account at <strong>{preview.company_name}</strong>. This
             invitation expires {new Date(preview.expires_at).toLocaleString()}.
           </p>
