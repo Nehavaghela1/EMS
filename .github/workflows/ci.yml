@@ -26,13 +26,22 @@ env:
   # superuser). ems_app doesn't exist until step 8 creates it, hardcoded in
   # app/db/seed/bootstrap_roles.sql as ems_app_dev_only — this must match
   # that file's literal value, not an independently-chosen CI secret.
+  #
+  # DATABASE_URL and TEST_DATABASE_URL must name DIFFERENT databases —
+  # conftest.py refuses to run otherwise (15.2's "never run tests against
+  # the development database" guard). The Postgres service container only
+  # ever provisions ems_pro_test (POSTGRES_DB below); DATABASE_URL naming
+  # "ems_pro" here doesn't need that database to exist — nothing in CI
+  # actually connects through it. SQLAlchemy's create_engine() is lazy
+  # (app/db/session.py), so Settings() only needs a syntactically valid,
+  # differently-named URL to satisfy the guard, never a live connection.
   PGHOST: localhost
   PGPORT: 5432
   PGUSER: ems_owner
   PGPASSWORD: ci_ems_owner_only
   PGDATABASE: ems_pro_test
   ALEMBIC_DATABASE_URL: postgresql+psycopg2://ems_owner:ci_ems_owner_only@localhost:5432/ems_pro_test
-  DATABASE_URL: postgresql+psycopg2://ems_app:ems_app_dev_only@localhost:5432/ems_pro_test
+  DATABASE_URL: postgresql+psycopg2://ems_app:ems_app_dev_only@localhost:5432/ems_pro
   TEST_DATABASE_URL: postgresql+psycopg2://ems_app:ems_app_dev_only@localhost:5432/ems_pro_test
   TEST_MIGRATION_URL: postgresql+psycopg2://ems_owner:ci_ems_owner_only@localhost:5432/ems_pro_test
   REDIS_URL: redis://localhost:6379/0
@@ -110,5 +119,20 @@ jobs:
       # 9. Tests as ems_app, so RLS is genuinely exercised once it exists (WP-04+).
       - name: pytest
         run: pytest -v --cov=app --cov-report=term-missing
+
+      # 10. Frontend — landed in WP-12/WP-13. openapi-typescript's generated
+      # output is committed (Spec 14.5), so CI never needs a running backend
+      # to type-check the frontend against it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Frontend build (tsc -b && vite build)
+        working-directory: frontend
+        run: npm run build
 
       # 10. Frontend — arrives with WP-12; steps added there, not before.
