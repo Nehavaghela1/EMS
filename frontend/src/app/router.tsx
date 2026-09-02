@@ -4,11 +4,15 @@ import { LoginPage } from "../modules/identity/pages/LoginPage";
 import { RegisterCompanyPage } from "../modules/identity/pages/RegisterCompanyPage";
 import { ActivatePage } from "../modules/identity/pages/ActivatePage";
 import { ForgotPasswordPage } from "../modules/identity/pages/ForgotPasswordPage";
+import { AdminDashboardPage } from "../modules/identity/pages/AdminDashboardPage";
 import { DashboardPage } from "../modules/platform/pages/DashboardPage";
 import { EmployeeListPage } from "../modules/hr/pages/EmployeeListPage";
 import { EmployeeProfilePage } from "../modules/hr/pages/EmployeeProfilePage";
 import { EmployeeFormPage } from "../modules/hr/pages/EmployeeFormPage";
 import { DepartmentListPage } from "../modules/hr/pages/DepartmentListPage";
+import { AttendancePage } from "../modules/time_leave/pages/AttendancePage";
+import { LeavePage } from "../modules/time_leave/pages/LeavePage";
+import { ShiftsPage } from "../modules/time_leave/pages/ShiftsPage";
 import { RequireAuth } from "../shared/components/RequireAuth";
 import { RoleGuard } from "../shared/components/RoleGuard";
 import { PublicOnly } from "../shared/components/PublicOnly";
@@ -73,6 +77,39 @@ export function AppRouter() {
         element={
           <Protected roles={ALL_ROLES}>
             <DashboardPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <Protected roles={["super_admin"]}>
+            <AdminDashboardPage />
+          </Protected>
+        }
+      />
+
+      <Route
+        path="/attendance"
+        element={
+          <Protected roles={ALL_ROLES}>
+            <AttendancePage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/leaves"
+        element={
+          <Protected roles={ALL_ROLES}>
+            <LeavePage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/shifts"
+        element={
+          <Protected roles={["hr_admin"]}>
+            <ShiftsPage />
           </Protected>
         }
       />

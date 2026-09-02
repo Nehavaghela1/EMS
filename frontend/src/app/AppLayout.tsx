@@ -9,9 +9,13 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { to: "/admin", label: "Admin", roles: ["super_admin"] },
   { to: "/dashboard", label: "Dashboard", roles: ["employee", "manager", "hr_admin", "super_admin"] },
+  { to: "/attendance", label: "Attendance", roles: ["employee", "manager", "hr_admin", "super_admin"] },
+  { to: "/leaves", label: "Leave", roles: ["employee", "manager", "hr_admin", "super_admin"] },
   { to: "/employees", label: "Employees", roles: ["hr_admin", "manager"] },
   { to: "/departments", label: "Departments", roles: ["hr_admin"] },
+  { to: "/shifts", label: "Shifts", roles: ["hr_admin"] },
 ];
 
 export function AppLayout({ children }: { children: ReactNode }) {
