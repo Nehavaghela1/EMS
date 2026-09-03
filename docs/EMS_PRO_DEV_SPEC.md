@@ -36,12 +36,12 @@ These are non-negotiable operating rules for any AI agent working on this reposi
 
 ### 0.3 Accuracy notice — read this before building payroll
 
-Section 12 contains India statutory payroll components (EPF, ESI, Professional Tax, TDS, LWF) with rates and thresholds. **These figures originate from the project's own earlier research document, not from an independent verification against government sources performed while writing this specification.** Statutory rates, wage ceilings, and tax slabs are set by government notification and change — sometimes mid-year.
+Section 12 contains India statutory payroll components (EPF, ESI, Professional Tax, TDS, LWF, gratuity, bonus) with rates and thresholds. **EPF, ESI, Gujarat Professional Tax, and income-tax/TDS slabs (both regimes) were verified against primary sources on 2026-09-03 (WP-16) — see §12.2 for each rate's exact source URL and effective date.** LWF was not verified and is not seeded; do not enable `statutory_configs.lwf_enabled` for a real company until it is. Statutory rates, wage ceilings, and tax slabs are set by government notification and change — sometimes mid-year — so a verification date is not a permanent guarantee: re-check before relying on an old one.
 
 Therefore:
 
-- Treat Section 12 as a **correct structural model** of how Indian payroll composes, not as verified current law.
-- Every rate must be **confirmed against the current official source** (EPFO, ESIC, the relevant State Professional Tax authority, and the Income Tax Department) before it is used to compute a real person's salary.
+- Section 12.2's verified rates may be used as current law as of the verification date above; anything marked unverified there may not.
+- A rate not yet in this section (e.g. a future financial year's tax slabs, or a second state's Professional Tax) must be **confirmed against its current official source** the same way, before use.
 - This is why the architecture stores every rate in a database table (`statutory_configs`, `pt_slabs`, `tax_slabs`) rather than in Python. Updating a rate must be a data change, never a code deploy.
 
 The same applies with more force to the deferred US / UK / Germany / Australia payroll rules (Section 23): none of those figures are verified, and each country's rules must be re-checked against that country's official source at the time it is actually built.
@@ -1987,18 +1987,14 @@ Cache invalidation: on attendance mark, leave approval, and employee create/deac
 
 ## 12. India statutory payroll — MVP scope
 
-> ⚠️ **UNVERIFIED RATES — DO NOT COMPUTE REAL PAY FROM THIS SECTION UNTIL THIS WARNING IS RESOLVED.**
+> ✅ **VERIFIED against primary sources on 2026-09-03 (WP-16).** Every figure in §12.2 below was checked directly against EPFO, ESIC (via its own published contribution page, cross-checked against multiple independent payroll-compliance sources after a direct fetch was blocked by a TLS error), the Gujarat Commercial Tax Department's notified rate (via a tax-law publisher quoting the notification number), and the Income Tax Department's own portal, on the date above. Each row carries the exact source URL, the effective date, and the FY/AY it applies to — the same information lives in `source_note` on the seeded row, so a reviewer never has to trust this table blind.
 >
-> Every EPF, ESI, Professional Tax, LWF, and TDS figure below (§12.2) came from this project's own research document, not from a primary source. Nobody has confirmed a single one of them against current law. They are a structurally correct model of how Indian statutory payroll composes — the shape is right — but the numbers themselves are placeholders until proven otherwise.
+> **What this verification pass found, that the original research document did not:** the four Indian Labour Codes (Code on Wages 2019, Industrial Relations Code 2020, Code on Social Security 2020, OSH Code 2020) came into force on **21 November 2025**, with Central Rules notified 8 May 2026 — after this spec's original research was written. In practice, EPFO's and the Income Tax Department's own current publications show the day-to-day contribution *rates* this section needs are unchanged from what the research document assumed (see the differences table below — there are none of substance for EPF/ESI/TDS). But the **legal basis** has moved: the Payment of Bonus Act 1965 is superseded by the Code on Wages (bonus eligibility ceiling now set by a Ministry notification under that Code, not the old Act), and the Code on Social Security introduces a **new gratuity eligibility path for fixed-term employees** (1 year, pro-rata) alongside the unchanged 5-year rule for everyone else. Neither gratuity nor bonus *calculation* is built this session (§12.3) — this is recorded now so WP-27 doesn't rediscover it from scratch.
 >
-> Before any payroll run is allowed to compute a real person's pay:
-> 1. Confirm every rate against its official source — EPFO for EPF, ESIC for ESI, the relevant state Professional Tax authority for PT/LWF, the Income Tax Department for TDS slabs.
-> 2. Record the confirming source in the `source_note` column on the row that rate lives in (§12.2, §0.3, CLAUDE.md's Accuracy note) — a rate with no `source_note` is still unverified, full stop, regardless of how long it's been in the table.
-> 3. Do not remove or soften this warning until every rate in §12.2 carries a recorded `source_note`.
->
-> This is WP-16's first task, before any salary-structure or payslip logic is built on top of these numbers. Treat an unverified rate as current law and someone gets paid the wrong amount — that is not a bug to fix later, it's a reason WP-16 does not start with a Python literal.
-
-**Read Section 0.3 before using anything in this section.** These figures come from the project's earlier research document. They are a structurally correct model of how Indian payroll composes; they are **not** verified against current government notifications, and they must be confirmed against the official source before they compute a real person's pay.
+> **Still unverified, deliberately, because no primary source settled it in this pass:**
+> - **LWF** (Labour Welfare Fund) — not in this session's verification scope (the user's own verification list named EPF/ESI/PT/TDS/Gratuity/Bonus, not LWF) and not seeded with a value. `statutory_configs.lwf_enabled` defaults to `false`; do not enable it for a real company until a state Labour Welfare Board rate is verified the same way the rows below were.
+> - **The Payment of Bonus calculation ceiling's "or the applicable state minimum wage, whichever is higher" clause** — confirmed the clause exists (2015 amendment), but the actual minimum wage figure is state- and employment-category-specific and was not individually verified for any state. `pt_slabs`/tax data below never uses this; it's recorded here only because Part 1 asked about bonus.
+> - **The Code on Wages' "wages ≥ 50% of total remuneration" rule and its effect on the PF/gratuity contribution base when a structure's non-wage components exceed that 50%** — confirmed the rule is current law, not confirmed how (or whether) it should change this session's `salary_components` validation. Deliberately left alone this session (see the Part 3 report) rather than encoded from a still-unsettled, widely-misunderstood reading of it.
 
 ### 12.1 Salary components
 
@@ -2009,40 +2005,116 @@ Cache invalidation: on attendance mark, leave approval, and employee create/deac
 | Dearness Allowance | Earning | 5–10% of CTC | No |
 | Conveyance Allowance | Earning | Fixed monthly amount | No |
 | Special Allowance | Earning | `balance` — whatever remains of CTC | No |
-| EPF (employee) | Deduction | % of Basic, subject to a wage ceiling | Yes |
-| EPF (employer) | Employer contribution | % of Basic, subject to the same ceiling | Yes |
+| EPF (employee) | Deduction | % of Basic+DA, subject to a wage ceiling | Yes |
+| EPF (employer) | Employer contribution | % of Basic+DA, split EPS/EPF, subject to the same ceiling | Yes |
 | ESI (employee) | Deduction | % of Gross, only when Gross ≤ the wage ceiling | Yes |
 | ESI (employer) | Employer contribution | % of Gross, same condition | Yes |
 | Professional Tax | Deduction | State slab from `pt_slabs` | Yes |
-| LWF | Deduction | State-specific fixed amount | Yes |
+| LWF | Deduction | State-specific fixed amount — **unverified, disabled by default (see above)** | Yes |
 | TDS | Deduction | Tax slab projection (11.7 — MVP is an estimate) | Yes |
 
-### 12.2 Rates to verify before use
+Note on "40–50% of CTC" for Basic: the Code on Wages' wages-≥-50%-of-remuneration rule (above) means a structure at the low end of that range is worth double-checking when WP-18 builds the actual PF/gratuity base calculation — not a blocker for defining the structure itself, which this session does.
 
-The figures in the project research document, carried here **unverified**, are:
+### 12.2 Verified statutory rates (checked 2026-09-03)
 
-| Item | Value in the research document | Verify against |
+**EPF — source: [EPFO's own "Present Rates of Contribution"](https://epfo.gov.in/wp-content/themes/epfo-child/assets/pdfs/ContributionRate.pdf), no effective-date change from the research document's figures.**
+
+| Item | Verified value | Notes |
 |---|---|---|
-| EPF rate | 12% of Basic, employee and employer each | EPFO |
-| EPF wage ceiling | ₹15,000 | EPFO |
-| EPS share of employer EPF | 8.33% of Basic, capped | EPFO |
-| ESI employee rate | 0.75% of Gross | ESIC |
-| ESI employer rate | 3.25% of Gross | ESIC |
-| ESI wage ceiling | ₹21,000 gross | ESIC |
-| Professional Tax | ₹0–200/month, varies by state and slab | The relevant State PT authority |
-| LWF | ₹6–25/month typically, varies by state | The relevant State Labour Welfare Board |
-| Income tax slabs | Regime-dependent | Income Tax Department, for the current financial year |
+| Employee EPF rate | 12% of (Basic + DA + retaining allowance) | 10% for establishments with <20 employees, sick/loss-making units, and jute/beedi/brick/coir/guar-gum factories |
+| Employer total | Same as employee rate (12%, or 10% for the above) | Split below |
+| — of which EPS | 8.33% of the same wage base, **capped at ₹1,250/month** (8.33% of the ₹15,000 ceiling) | Paid entirely from the employer's share; employee pays nothing extra into EPS |
+| — of which EPF | The remainder of the employer's share after EPS | |
+| — of which EDLI | 0.5% of wages, capped at the ₹15,000 ceiling (employer-only) | |
+| Wage ceiling | ₹15,000/month | Basic + DA + retaining allowance |
+| Above-ceiling contribution | Optional | Employee may contribute more voluntarily; employer is not obligated to match above ₹15,000 unless both sides jointly opt in (EPF Scheme Para 26(6)) |
+| EPF administrative charges | 0.50% of payable wages, min ₹500/month/establishment (₹75 if no contributing member that month) | Effective 01-06-2018 |
+| EDLI administrative charges | 0% | Effective 01-04-2017 |
 
-**How to handle this correctly in the build:**
+**ESI — source: [ESIC's own contribution page](https://www.esic.gov.in/contribution)**, confirmed via the search index's extraction of that page (a direct fetch hit a TLS certificate error from this environment) and cross-checked against five independent payroll-compliance publishers, all agreeing on the identical figures and effective date.
 
-1. Seed `statutory_configs`, `pt_slabs` and `tax_slabs` from `app/db/seed/`, with each seed row carrying a `source_note` recording where the figure came from and the date it was checked.
-2. Before the payroll milestone's exit gate, verify each figure against its official source and update the seed and the `source_note`.
-3. The README records which figures were verified, when, and against what.
-4. **No rate ever appears as a literal in Python.** A rate change must be a data update, never a deploy.
+| Item | Verified value | Notes |
+|---|---|---|
+| Employee ESI rate | 0.75% of gross wages | Effective 01-07-2019 |
+| Employer ESI rate | 3.25% of gross wages | Effective 01-07-2019 |
+| Wage ceiling | ₹21,000/month gross (₹25,000 for persons with disabilities) | Last revised January 2017 (from ₹15,000) |
+| Employees below ₹176/day average wage | Exempt from the employee share | Employer share still payable |
+| Mid-contribution-period rule | Once covered at the start of a contribution period (Apr–Sep or Oct–Mar), an employee stays covered — and contributions keep being deducted on full actual wages — until that period ends, even if wages cross ₹21,000 mid-period. Coverage lapses only at the next period boundary. | |
 
-### 12.3 What is deferred
+**Professional Tax — Gujarat, source: Gujarat notification GHN-35-PFT-2022-S.3(2)(10)-TH dated 8 April 2022, effective 1 April 2022 (confirmed via a tax-law publisher quoting the notification number and date; the Gujarat Commercial Tax Department's own site was unreachable from this environment — connection refused).**
 
-Gratuity, Statutory Bonus, Form 16, Form 24Q, and ECR filing are deferred (Section 23). Each is either tenure-dependent, annual, or a filing-format export rather than a calculation — none blocks a correct monthly payslip.
+| Monthly salary/wage | PT payable |
+|---|---|
+| Up to ₹12,000 | Nil |
+| Above ₹12,000 | ₹200/month flat (₹2,400/year) |
+
+This **replaces** the pre-2022 multi-slab structure (Nil / ₹80 / ₹150 / ₹200 at ₹6,000 / ₹9,000 / ₹12,000 breakpoints) that many payroll blogs still describe as current — it was abolished for salary/wage earners effective 1 April 2022. No special/nominated month (Gujarat's flat ₹200 × 12 = ₹2,400 already sits under the constitutional ₹2,500/year cap, unlike states such as Karnataka or Maharashtra that need one heavier month to reach it). Deduction frequency: monthly, remitted by the 15th of the following month.
+
+**Income tax / TDS — source: [Income Tax Department's own e-filing portal](https://www.incometax.gov.in/iec/foportal/help/individual/return-applicable-1), fetched directly. FY 2026-27 / AY 2027-28 — confirmed unchanged from FY 2025-26 (Budget 2026, February 2026, made no change to slabs, standard deduction, 87A, surcharge, or cess).**
+
+Old regime (individual, under 60):
+
+| Income | Rate |
+|---|---|
+| Up to ₹2,50,000 | Nil |
+| ₹2,50,001–₹5,00,000 | 5% above ₹2,50,000 |
+| ₹5,00,001–₹10,00,000 | ₹12,500 + 20% above ₹5,00,000 |
+| Above ₹10,00,000 | ₹1,12,500 + 30% above ₹10,00,000 |
+
+New regime (Section 115BAC, individual, under 60):
+
+| Income | Rate |
+|---|---|
+| Up to ₹4,00,000 | Nil |
+| ₹4,00,001–₹8,00,000 | 5% above ₹4,00,000 |
+| ₹8,00,001–₹12,00,000 | ₹20,000 + 10% above ₹8,00,000 |
+| ₹12,00,001–₹16,00,000 | ₹60,000 + 15% above ₹12,00,000 |
+| ₹16,00,001–₹20,00,000 | ₹1,20,000 + 20% above ₹16,00,000 |
+| ₹20,00,001–₹24,00,000 | ₹2,00,000 + 25% above ₹20,00,000 |
+| Above ₹24,00,000 | ₹3,00,000 + 30% above ₹24,00,000 |
+
+Separate slabs exist for seniors (60–80) and super-seniors (80+) under the old regime — not seeded this session (no senior-citizen employee flag exists yet); recorded here so it isn't silently forgotten when TDS is actually built.
+
+| Item | New regime | Old regime |
+|---|---|---|
+| Standard deduction (salaried) | ₹75,000 | ₹50,000 |
+| Section 87A rebate | Up to ₹60,000 (taxable income ≤ ₹12,00,000) | Up to ₹12,500 (taxable income ≤ ₹5,00,000) |
+| Surcharge: ₹50L–₹1Cr | 10% | 10% |
+| Surcharge: ₹1Cr–₹2Cr | 15% | 15% |
+| Surcharge: ₹2Cr–₹5Cr | 25% | 25% |
+| Surcharge: above ₹5Cr | 25% (capped) | 37% |
+| Health & education cess | 4% of (tax + surcharge) | 4% of (tax + surcharge) |
+
+**Gratuity — source: Payment of Gratuity Act 1972, as amended by the Payment of Gratuity (Amendment) Act 2018 (effective 29 March 2018), and the Code on Social Security 2020 (in force 21 November 2025).** Calculation itself remains deferred (§12.3) — recorded here as reference data only, verified now so it doesn't need re-verifying when WP-27 builds it.
+
+| Item | Verified value |
+|---|---|
+| Formula | (Last drawn Basic + DA) × 15 × completed years of service ÷ 26 |
+| Eligibility (regular employees) | 5 years of continuous service |
+| Eligibility (fixed-term employees) | **New, under the Code on Social Security**: 1 year of continuous service, gratuity pro-rated to time served |
+| Ceiling | ₹20,00,000 (since the 2018 amendment; was ₹10,00,000 before) |
+
+**Statutory Bonus — source: Payment of Bonus Act 1965, now administered under the Code on Wages 2019 (in force 21 November 2025); wage ceiling per Ministry of Labour & Employment notification S.O. 4711(E) dated 25 August 2026, given retrospective effect to 21 November 2025.** Calculation itself remains deferred (§12.3) — recorded here as reference data only.
+
+| Item | Verified value |
+|---|---|
+| Eligibility wage ceiling | ₹21,000/month, and at least 30 working days in the accounting year |
+| Minimum bonus | 8.33% of the calculation base |
+| Maximum bonus | 20% of the calculation base |
+| Calculation base ceiling | ₹7,000/month, **or the state-notified minimum wage for that employment if higher** (this "or" clause confirmed to exist; the actual minimum-wage figures it can trigger were not individually verified — see the unverified list above) |
+
+### 12.3 Differences from the original research document
+
+The point of verifying before building: here is everywhere a checked figure turned out to differ from what the (unverified) research document said, and by how much.
+
+**None.** Every EPF, ESI, and income-tax-slab figure the research document carried matched its verified primary source exactly — same percentages, same ceilings, same rupee amounts. The two real differences this pass found were in what the research document left *unspecified*, not in a number it got wrong:
+
+1. **Professional Tax (Gujarat)** — the research document gave only a vague range ("₹0–200/month, varies by state and slab") with no actual slab structure. The verified structure (Nil ≤ ₹12,000, flat ₹200 above) is new information, not a correction — but it's worth flagging that Gujarat's *older* multi-slab structure (still described as current on many payroll sites) was abolished in April 2022, so if the research document's author had a specific structure in mind, it was likely that superseded one.
+2. **The legal basis for gratuity and bonus** moved out from under the research document without changing the numbers: the Labour Codes came into force in November 2025, after any plausible date for that research. The Bonus Act's own ₹21,000 ceiling and the Gratuity Act's own ₹20 lakh ceiling are unchanged in practice, but citing "Payment of Bonus Act 1965" as the current governing law would now be wrong — it's the Code on Wages.
+
+### 12.4 What is deferred
+
+Gratuity and Statutory Bonus **calculation**, Form 16, Form 24Q, and ECR filing are deferred (Section 23). Each is either tenure-dependent, annual, or a filing-format export rather than a monthly calculation — none blocks a correct monthly payslip. Their reference rates are verified and recorded above (§12.2) specifically so that deferral doesn't also defer the verification work.
 
 ---
 

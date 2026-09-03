@@ -18,6 +18,7 @@ from app.db.base import Base
 # migrations (Spec 20.2 — this was WP-01 finding 7.1).
 from app.modules.hr import models as hr_models  # noqa: E402, F401
 from app.modules.identity import models as identity_models  # noqa: E402, F401
+from app.modules.payroll import models as payroll_models  # noqa: E402, F401
 from app.modules.platform import models as platform_models  # noqa: E402, F401
 from app.modules.time_leave import models as time_leave_models  # noqa: E402, F401
 
