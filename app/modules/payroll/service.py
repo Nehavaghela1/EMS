@@ -16,6 +16,9 @@ from app.modules.payroll.models import (
     PayrollRun,
     PayrollRunStatus,
     PayrollRunType,
+    Reimbursement,
+    ReimbursementStatus,
+    ReimbursementType,
     SalaryComponent,
     SalaryComponentType,
     SalaryStructure,
@@ -26,6 +29,7 @@ from app.modules.payroll.repository import (
     PayrollItemRepository,
     PayrollRunRepository,
     PtSlabRepository,
+    ReimbursementRepository,
     SalaryComponentRepository,
     SalaryStructureRepository,
     StatutoryConfigRepository,
@@ -34,6 +38,8 @@ from app.modules.payroll.repository import (
 from app.modules.payroll.schemas import (
     PayrollRunCreateRequest,
     PtSlabPutRequest,
+    ReimbursementCreateRequest,
+    ReimbursementReviewRequest,
     SalaryAssignRequest,
     SalaryComponentAmount,
     SalaryComponentCreateRequest,
@@ -601,6 +607,7 @@ class PayrollRunService:
         self.db = db
         self.repo = PayrollRunRepository(db)
         self.item_repo = PayrollItemRepository(db)
+        self.reimbursement_repo = ReimbursementRepository(db)
         self.statutory_service = StatutoryConfigService(db)
         self.pt_repo = PtSlabRepository(db)
         self.tax_repo = TaxSlabRepository(db)
@@ -771,6 +778,9 @@ class PayrollRunService:
                 for c in structure.components
             ]
 
+            reimbursements = self.reimbursement_repo.list_unpaid_approved(company_id, emp.id)
+            reimbursement_amount = sum((r.amount for r in reimbursements), Decimal("0.00"))
+
             payslip_in = PayslipInput(
                 ctc_annual=salary_record.ctc,
                 components=component_specs,
@@ -784,6 +794,7 @@ class PayrollRunService:
                 present_days=Decimal("30.0"),
                 paid_leave_days=Decimal("0.0"),
                 lop_days=Decimal("0.0"),
+                reimbursement_amount=reimbursement_amount,
             )
 
             payslip_out = calculate_payslip(payslip_in)
@@ -810,8 +821,13 @@ class PayrollRunService:
                 half_days=Decimal("0.0"),
                 paid_leave_days=Decimal("0.0"),
                 lop_days=Decimal("0.0"),
-                reimbursement_amount=Decimal("0.00"),
+                reimbursement_amount=reimbursement_amount,
             )
+
+            for r in reimbursements:
+                self.reimbursement_repo.update(
+                    r, added_to_payroll_run_id=run.id, status=ReimbursementStatus.paid
+                )
 
             total_gross += payslip_out.gross_salary
             total_deductions += payslip_out.total_deductions
@@ -888,4 +904,109 @@ class PayrollRunService:
         )
         self.db.commit()
         return run
+
+
+class ReimbursementService:
+    """Routes 97-99 (Spec 10.6)."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.repo = ReimbursementRepository(db)
+        self.employee_repo = EmployeeRepository(db)
+        self.audit = AuditService(db)
+
+    def submit_claim(
+        self, company_id: uuid.UUID, data: ReimbursementCreateRequest, actor: User
+    ) -> Reimbursement:
+        emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+        if emp is None:
+            raise NotFoundError("Employee profile not found for current user.")
+
+        claim = self.repo.create(
+            company_id=company_id,
+            employee_id=emp.id,
+            type=data.type,
+            amount=data.amount,
+            expense_date=data.expense_date,
+            description=data.description,
+            file_object_id=data.file_object_id,
+            status=ReimbursementStatus.pending,
+        )
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="REIMBURSEMENT_CLAIM_SUBMITTED",
+            entity_type="reimbursement",
+            entity_id=claim.id,
+            details={"amount": str(claim.amount), "type": claim.type.value},
+        )
+        self.db.commit()
+        return claim
+
+    def list_claims(
+        self,
+        company_id: uuid.UUID,
+        actor: User,
+        page_params: PageParams,
+        status: ReimbursementStatus | None = None,
+    ) -> tuple[list[Reimbursement], int, int]:
+        if actor.role in (UserRole.hr_admin, UserRole.super_admin):
+            return self.repo.list_claims(company_id, page_params, status=status)
+        elif actor.role == UserRole.manager:
+            mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if not mgr_emp:
+                return [], 0, 0
+            team_ids = self.employee_repo.list_direct_report_ids(company_id, mgr_emp.id)
+            team_ids.append(mgr_emp.id)
+            return self.repo.list_claims(company_id, page_params, employee_ids=team_ids, status=status)
+        else:
+            own_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if not own_emp:
+                return [], 0, 0
+            return self.repo.list_claims(company_id, page_params, employee_id=own_emp.id, status=status)
+
+    def review_claim(
+        self,
+        company_id: uuid.UUID,
+        reimbursement_id: uuid.UUID,
+        data: ReimbursementReviewRequest,
+        actor: User,
+    ) -> Reimbursement:
+        from app.core.time import utcnow
+
+        claim = self.repo.get_by_id(reimbursement_id, company_id)
+        if claim is None:
+            raise NotFoundError("Reimbursement claim not found.")
+
+        if actor.role == UserRole.manager:
+            mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if not mgr_emp:
+                raise ForbiddenError("Manager profile not found.")
+            team_ids = self.employee_repo.list_direct_report_ids(company_id, mgr_emp.id)
+            if claim.employee_id not in team_ids:
+                raise ForbiddenError("Managers can only review reimbursement claims for their direct reports.")
+
+        new_status = (
+            ReimbursementStatus.approved if data.action == "approve" else ReimbursementStatus.rejected
+        )
+
+        self.repo.update(
+            claim,
+            status=new_status,
+            approved_by=actor.id,
+            approved_at=utcnow() if new_status == ReimbursementStatus.approved else None,
+            rejection_reason=data.rejection_reason if new_status == ReimbursementStatus.rejected else None,
+        )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action=f"REIMBURSEMENT_CLAIM_{new_status.value.upper()}",
+            entity_type="reimbursement",
+            entity_id=claim.id,
+            details={"status": new_status.value, "amount": str(claim.amount)},
+        )
+        self.db.commit()
+        return claim
+
 

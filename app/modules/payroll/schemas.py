@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 from app.modules.payroll.models import (
     CalculationType,
     PercentageOf,
+    ReimbursementStatus,
+    ReimbursementType,
     SalaryComponentType,
     TaxRegime,
 )
@@ -279,4 +281,36 @@ class PayrollItemResponse(BaseModel):
 class PayrollRunDetailResponse(BaseModel):
     run: PayrollRunResponse
     items: list[PayrollItemResponse]
+
+
+class ReimbursementCreateRequest(BaseModel):
+    type: ReimbursementType
+    amount: Decimal = Field(gt=0)
+    expense_date: date
+    description: str = Field(min_length=1)
+    file_object_id: uuid.UUID | None = None
+
+
+class ReimbursementReviewRequest(BaseModel):
+    action: str = Field(pattern="^(approve|reject)$")
+    rejection_reason: str | None = None
+
+
+class ReimbursementResponse(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    type: ReimbursementType
+    amount: Decimal
+    expense_date: date
+    description: str
+    file_object_id: uuid.UUID | None
+    status: ReimbursementStatus
+    approved_by: uuid.UUID | None
+    approved_at: datetime | None
+    rejection_reason: str | None
+    added_to_payroll_run_id: uuid.UUID | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
 

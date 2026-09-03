@@ -11,6 +11,8 @@ from app.modules.payroll.models import (
     PayrollRun,
     PayrollRunStatus,
     PtSlab,
+    Reimbursement,
+    ReimbursementStatus,
     SalaryComponent,
     SalaryStructure,
     StatutoryConfig,
@@ -333,4 +335,86 @@ class PayrollItemRepository:
                 )
             ).all()
         )
+
+    def list_by_employee_id(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID
+    ) -> list[PayrollItem]:
+        return list(
+            self.db.scalars(
+                select(PayrollItem)
+                .join(PayrollRun, PayrollItem.payroll_run_id == PayrollRun.id)
+                .where(
+                    PayrollItem.company_id == company_id,
+                    PayrollItem.employee_id == employee_id,
+                    PayrollRun.status == PayrollRunStatus.approved,
+                    PayrollItem.deleted_at.is_(None),
+                )
+                .order_by(PayrollRun.year.desc(), PayrollRun.month.desc())
+            ).all()
+        )
+
+
+class ReimbursementRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_id(self, reimbursement_id: uuid.UUID, company_id: uuid.UUID) -> Reimbursement | None:
+        return self.db.scalar(
+            select(Reimbursement).where(
+                Reimbursement.id == reimbursement_id,
+                Reimbursement.company_id == company_id,
+                Reimbursement.deleted_at.is_(None),
+            )
+        )
+
+    def list_unpaid_approved(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID
+    ) -> list[Reimbursement]:
+        return list(
+            self.db.scalars(
+                select(Reimbursement).where(
+                    Reimbursement.company_id == company_id,
+                    Reimbursement.employee_id == employee_id,
+                    Reimbursement.status == ReimbursementStatus.approved,
+                    Reimbursement.added_to_payroll_run_id.is_(None),
+                    Reimbursement.deleted_at.is_(None),
+                )
+            ).all()
+        )
+
+    def list_claims(
+        self,
+        company_id: uuid.UUID,
+        page_params: PageParams,
+        employee_id: uuid.UUID | None = None,
+        employee_ids: list[uuid.UUID] | None = None,
+        status: ReimbursementStatus | None = None,
+    ) -> tuple[list[Reimbursement], int, int]:
+        stmt = select(Reimbursement).where(
+            Reimbursement.company_id == company_id,
+            Reimbursement.deleted_at.is_(None),
+        ).order_by(Reimbursement.created_at.desc())
+
+        if employee_id is not None:
+            stmt = stmt.where(Reimbursement.employee_id == employee_id)
+        elif employee_ids is not None:
+            stmt = stmt.where(Reimbursement.employee_id.in_(employee_ids))
+
+        if status is not None:
+            stmt = stmt.where(Reimbursement.status == status)
+
+        return paginate(self.db, stmt, page_params)
+
+    def create(self, **kwargs) -> Reimbursement:
+        claim = Reimbursement(**kwargs)
+        self.db.add(claim)
+        self.db.flush()
+        return claim
+
+    def update(self, claim: Reimbursement, **kwargs) -> Reimbursement:
+        for key, value in kwargs.items():
+            setattr(claim, key, value)
+        self.db.flush()
+        return claim
+
 

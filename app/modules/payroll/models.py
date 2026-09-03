@@ -372,3 +372,51 @@ class PayrollItem(TenantBase):
     lop_days: Mapped[Decimal] = mapped_column(SANumeric(5, 1), nullable=False, default=Decimal("0.0"))
     reimbursement_amount: Mapped[Decimal] = mapped_column(SANumeric(14, 2), nullable=False, default=Decimal("0.00"))
 
+
+class ReimbursementType(str, enum.Enum):
+    travel = "travel"
+    food = "food"
+    medical = "medical"
+    telephone = "telephone"
+    other = "other"
+
+
+class ReimbursementStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+    paid = "paid"
+
+
+class Reimbursement(TenantBase):
+    """RLS: Yes (Spec 7.6)."""
+
+    __tablename__ = "reimbursements"
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id"), nullable=False
+    )
+    type: Mapped[ReimbursementType] = mapped_column(
+        SAEnum(ReimbursementType, name="reimbursement_type"), nullable=False
+    )
+    amount: Mapped[Decimal] = mapped_column(SANumeric(14, 2), nullable=False)
+    expense_date: Mapped[date] = mapped_column(Date, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    file_object_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True
+    )
+    status: Mapped[ReimbursementStatus] = mapped_column(
+        SAEnum(ReimbursementStatus, name="reimbursement_status"),
+        nullable=False,
+        default=ReimbursementStatus.pending,
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    added_to_payroll_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("payroll_runs.id"), nullable=True
+    )
+
+

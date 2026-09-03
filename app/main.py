@@ -16,7 +16,9 @@ from app.modules.identity.router import router as auth_router
 from app.modules.payroll.router import (
     employee_salary_router,
     payroll_runs_router,
+    payslips_router,
     pt_slabs_router,
+    reimbursements_router,
     statutory_config_router,
     structures_router,
     tax_slabs_router,
@@ -92,6 +94,8 @@ app.include_router(statutory_config_router, prefix=settings.API_V1_PREFIX)
 app.include_router(pt_slabs_router, prefix=settings.API_V1_PREFIX)
 app.include_router(tax_slabs_router, prefix=settings.API_V1_PREFIX)
 app.include_router(payroll_runs_router, prefix=settings.API_V1_PREFIX)
+app.include_router(payslips_router, prefix=settings.API_V1_PREFIX)
+app.include_router(reimbursements_router, prefix=settings.API_V1_PREFIX)
 
 # One client, reused across requests (redis-py pools connections internally).
 # Short timeouts so a dead Redis makes /health fail fast, not hang.

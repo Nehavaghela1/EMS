@@ -9,6 +9,7 @@ from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import (
     PayrollRunStatus,
     PtSlab,
+    ReimbursementStatus,
     SalaryStructure,
     TaxRegime,
     TaxSlab,
@@ -21,6 +22,9 @@ from app.modules.payroll.schemas import (
     PayrollRunResponse,
     PtSlabPutRequest,
     PtSlabResponse,
+    ReimbursementCreateRequest,
+    ReimbursementResponse,
+    ReimbursementReviewRequest,
     SalaryAssignRequest,
     SalaryStructureCreateRequest,
     SalaryStructureListItem,
@@ -31,10 +35,12 @@ from app.modules.payroll.schemas import (
     TaxSlabPostRequest,
     TaxSlabResponse,
 )
+from app.modules.payroll.repository import PayrollItemRepository
 from app.modules.payroll.service import (
     EmployeeSalaryService,
     PayrollRunService,
     PtSlabService,
+    ReimbursementService,
     SalaryStructureService,
     StatutoryConfigService,
     TaxSlabService,
@@ -302,7 +308,14 @@ def list_payroll_runs(
     service = PayrollRunService(db)
     runs, total, pages = service.list_runs(user.company_id, params, status_filter)
     items = [PayrollRunResponse.model_validate(r) for r in runs]
-    return Page.create(items=items, total=total, params=params)
+    return Page(
+        items=items,
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
+    )
 
 
 @payroll_runs_router.get("/{id}", response_model=PayrollRunDetailResponse)
@@ -340,4 +353,80 @@ def approve_payroll_run(
     service = PayrollRunService(db)
     run = service.approve_run(user.company_id, id, user)
     return PayrollRunResponse.model_validate(run)
+
+
+# --- Routes 95-96: payslips -----------------------------------------------
+
+payslips_router = APIRouter(prefix="/payroll/payslips", tags=["Payroll — Payslips"])
+
+
+@payslips_router.get("/me", response_model=list[PayrollItemResponse])
+def list_my_payslips(
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
+    if not emp:
+        return []
+    items = PayrollItemRepository(db).list_by_employee_id(user.company_id, emp.id)
+    return [PayrollItemResponse.model_validate(i) for i in items]
+
+
+@payslips_router.get("/{employee_id}", response_model=list[PayrollItemResponse])
+def list_employee_payslips(
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin)),
+):
+    items = PayrollItemRepository(db).list_by_employee_id(user.company_id, employee_id)
+    return [PayrollItemResponse.model_validate(i) for i in items]
+
+
+# --- Routes 97-99: reimbursements ------------------------------------------
+
+reimbursements_router = APIRouter(prefix="/payroll/reimbursements", tags=["Payroll — Reimbursements"])
+
+
+@reimbursements_router.post("", response_model=ReimbursementResponse, status_code=201)
+def submit_reimbursement_claim(
+    data: ReimbursementCreateRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    service = ReimbursementService(db)
+    claim = service.submit_claim(user.company_id, data, user)
+    return ReimbursementResponse.model_validate(claim)
+
+
+@reimbursements_router.get("", response_model=Page[ReimbursementResponse])
+def list_reimbursement_claims(
+    status_filter: ReimbursementStatus | None = None,
+    params: PageParams = Depends(page_params),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    service = ReimbursementService(db)
+    claims, total, pages = service.list_claims(user.company_id, user, params, status_filter)
+    items = [ReimbursementResponse.model_validate(c) for c in claims]
+    return Page(
+        items=items,
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
+    )
+
+
+@reimbursements_router.put("/{id}", response_model=ReimbursementResponse)
+def review_reimbursement_claim(
+    id: uuid.UUID,
+    data: ReimbursementReviewRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager)),
+):
+    service = ReimbursementService(db)
+    claim = service.review_claim(user.company_id, id, data, user)
+    return ReimbursementResponse.model_validate(claim)
+
 
