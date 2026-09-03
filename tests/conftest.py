@@ -38,6 +38,15 @@ if _database_name(settings.TEST_DATABASE_URL) == _database_name(settings.DATABAS
         "against a separate database (e.g. ems_pro_test), never the development one."
     )
 
+# Never send a real email (Part 1's own rule: "no test may ever make a
+# network call or open a socket"). Found the hard way: a developer's local
+# .env legitimately carries real EMAIL_BACKEND=smtp credentials once they've
+# set up real delivery, and settings.EMAIL_BACKEND is read fresh on every
+# send — nothing about "console is the test default" was actually enforced,
+# it just happened to be true until someone's .env said otherwise. This
+# forces it, unconditionally, before any test can run.
+settings.EMAIL_BACKEND = "console"
+
 
 def _ensure_test_database_exists() -> None:
     migration_url = make_url(settings.TEST_MIGRATION_URL)

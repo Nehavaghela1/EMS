@@ -178,13 +178,27 @@ def test_hours_worked_is_positive_for_a_shift_crossing_midnight(client, company_
     )
     db.commit()
 
+    # Pre-existing flaky bug, found while chasing an unrelated CI failure:
+    # this used to assert hours_worked > 8 on the assumption that "now" is
+    # always well after 06:00 the day after check-in. That's only true
+    # roughly 3/4 of the time — a real test run between 00:00 and 06:00 UTC
+    # (this one included, and CI's own failing run: both ~05:40-06:00 UTC)
+    # has elapsed well under 8 hours since 22:00 "yesterday", so the
+    # assertion itself was wrong, not the code under test. Comparing
+    # against the actual elapsed wall-clock time removes the time-of-day
+    # assumption entirely while still catching the real bug this guards
+    # against: naive clock-time-only arithmetic (e.g. end_time - start_time
+    # as plain `time` values) going negative across the boundary, which
+    # this dynamic comparison would still catch just as reliably.
+    before_checkout = utcnow()
     resp = client.post("/api/v1/attendance/check-out", headers=own_headers)
     assert resp.status_code == 200, resp.text
     hours_worked = float(resp.json()["hours_worked"])
+    expected_hours = (before_checkout - check_in_time).total_seconds() / 3600
     assert hours_worked > 0, "hours_worked went negative across the midnight boundary"
-    # From 22:00 yesterday to "now" (run well after 06:00 the next day in
-    # any real test run) is comfortably more than the 8-hour shift itself.
-    assert hours_worked > 8
+    assert abs(hours_worked - expected_hours) < 0.1, (
+        f"expected ~{expected_hours:.2f}h since check-in, got {hours_worked}h"
+    )
 
 
 def test_manager_sees_only_their_teams_attendance(client, company_a, db):
