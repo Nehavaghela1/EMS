@@ -22,6 +22,8 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/payroll/reimbursements", label: "Reimbursements", roles: ["employee", "manager", "hr_admin", "super_admin"] },
   { to: "/performance", label: "Performance Cycles", roles: ["hr_admin"] },
   { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "super_admin"] },
+  { to: "/projects", label: "Projects", roles: ["employee", "manager", "hr_admin", "super_admin"] },
+  { to: "/timesheets", label: "Timesheets", roles: ["employee", "manager", "hr_admin", "super_admin"] },
   { to: "/settings", label: "Settings", roles: ["employee", "manager", "hr_admin", "super_admin"] },
 ];
 

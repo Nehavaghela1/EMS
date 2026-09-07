@@ -21,6 +21,9 @@ import { ReimbursementsPage } from "../modules/payroll/pages/ReimbursementsPage"
 import { PerformanceCyclesPage } from "../modules/performance/pages/PerformanceCyclesPage";
 import { MyGoalsPage } from "../modules/performance/pages/MyGoalsPage";
 import { PerformanceReviewPage } from "../modules/performance/pages/PerformanceReviewPage";
+import { ProjectsListPage } from "../modules/projects/pages/ProjectsListPage";
+import { ProjectDetailPage } from "../modules/projects/pages/ProjectDetailPage";
+import { TimesheetsPage } from "../modules/projects/pages/TimesheetsPage";
 import { RequireAuth } from "../shared/components/RequireAuth";
 import { RoleGuard } from "../shared/components/RoleGuard";
 import { PublicOnly } from "../shared/components/PublicOnly";
@@ -218,6 +221,31 @@ export function AppRouter() {
         element={
           <Protected roles={["hr_admin", "manager"]}>
             <PerformanceReviewPage />
+          </Protected>
+        }
+      />
+
+      <Route
+        path="/projects"
+        element={
+          <Protected roles={ALL_ROLES}>
+            <ProjectsListPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/projects/:id"
+        element={
+          <Protected roles={ALL_ROLES}>
+            <ProjectDetailPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/timesheets"
+        element={
+          <Protected roles={ALL_ROLES}>
+            <TimesheetsPage />
           </Protected>
         }
       />
