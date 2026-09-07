@@ -18,6 +18,9 @@ import { PayrollSetupPage } from "../modules/payroll/pages/PayrollSetupPage";
 import { PayrollRunPage } from "../modules/payroll/pages/PayrollRunPage";
 import { MyPayslipPage } from "../modules/payroll/pages/MyPayslipPage";
 import { ReimbursementsPage } from "../modules/payroll/pages/ReimbursementsPage";
+import { PerformanceCyclesPage } from "../modules/performance/pages/PerformanceCyclesPage";
+import { MyGoalsPage } from "../modules/performance/pages/MyGoalsPage";
+import { PerformanceReviewPage } from "../modules/performance/pages/PerformanceReviewPage";
 import { RequireAuth } from "../shared/components/RequireAuth";
 import { RoleGuard } from "../shared/components/RoleGuard";
 import { PublicOnly } from "../shared/components/PublicOnly";
@@ -190,6 +193,31 @@ export function AppRouter() {
         element={
           <Protected roles={ALL_ROLES}>
             <ReimbursementsPage />
+          </Protected>
+        }
+      />
+
+      <Route
+        path="/performance"
+        element={
+          <Protected roles={["hr_admin"]}>
+            <PerformanceCyclesPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/performance/goals"
+        element={
+          <Protected roles={ALL_ROLES}>
+            <MyGoalsPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/performance/review/:employeeId"
+        element={
+          <Protected roles={["hr_admin", "manager"]}>
+            <PerformanceReviewPage />
           </Protected>
         }
       />

@@ -20,6 +20,8 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/payroll/run", label: "Payroll Run", roles: ["hr_admin"] },
   { to: "/payroll/payslip", label: "My Payslips", roles: ["employee", "manager", "hr_admin", "super_admin"] },
   { to: "/payroll/reimbursements", label: "Reimbursements", roles: ["employee", "manager", "hr_admin", "super_admin"] },
+  { to: "/performance", label: "Performance Cycles", roles: ["hr_admin"] },
+  { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "super_admin"] },
   { to: "/settings", label: "Settings", roles: ["employee", "manager", "hr_admin", "super_admin"] },
 ];
 
