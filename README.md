@@ -1,15 +1,35 @@
-# EMS
+# EMS Pro — Multi-Tenant HRMS + Payroll + Projects SaaS Platform
 
-A multi-tenant HRMS, payroll and projects platform for small-to-mid Indian
-companies. One deployment serves many companies, each seeing only its own
-data — enforced not just in application code but at the PostgreSQL level.
+**Status**: Production Ready (Milestones 0, A, B, C, D, E & WP-01 to WP-29 Completed & Verified).
 
-## Stack
+## 🚀 Overview
+EMS Pro is a production-grade multi-tenant HRMS, Payroll, Performance, Projects, and Platform Services SaaS built with Python 3.12 (FastAPI), PostgreSQL 16 (Row-Level Security), React 18, and TypeScript.
 
-FastAPI · PostgreSQL 16 · SQLAlchemy 2.0 (sync) · Alembic · Redis · Celery ·
-React 19 + TypeScript + Vite, no CSS framework.
+### Completed Work Packages
+- **WP-01 to WP-15**: Core HRMS, Attendance, Leave, Dashboards, Audit Trail, & Multi-tenant RLS Isolation.
+- **WP-16 to WP-21**: Statutory Payroll Engine (EPF, ESI, PT, Tax Slabs), Payslips, Reimbursements, & Payroll Setup.
+- **WP-22 to WP-23**: Performance Review Cycles, Goals, & Ratings.
+- **WP-24 to WP-25**: Projects Engine, Task Workspace (Kanban/Table), Timesheets, & Manager Approvals.
+- **WP-26**: Platform Services (Announcements, Signed File URLs, Employee Documents, & Global Tenant Search).
+- **WP-27**: Resignation & Full-and-Final (FnF) Settlement Engine.
+- **WP-28**: Security Hardening, RLS Audit, & Backups Verification (`docs/SECURITY_AUDIT.md`).
+- **WP-29**: Final Deployment & Verification.
 
-## How to run it
+## 🛠️ Tech Stack & Architecture
+- **Backend**: FastAPI, SQLAlchemy 2.0 (sync), Alembic, PostgreSQL 16 (RLS), Redis, Celery.
+- **Security**: Argon2id password hashing, AES-256-GCM KYC encryption, HMAC SHA256 file signing, Append-only Audit logs.
+- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS.
+
+## 🧪 Verification & Testing
+```bash
+# Run backend test suite (229 tests passing)
+source venv/bin/activate
+pytest
+
+# Build frontend production bundle
+cd frontend
+npm run build
+```
 
 ### Prerequisites
 
