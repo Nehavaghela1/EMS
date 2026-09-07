@@ -14,6 +14,10 @@ import { DepartmentListPage } from "../modules/hr/pages/DepartmentListPage";
 import { AttendancePage } from "../modules/time_leave/pages/AttendancePage";
 import { LeavePage } from "../modules/time_leave/pages/LeavePage";
 import { ShiftsPage } from "../modules/time_leave/pages/ShiftsPage";
+import { PayrollSetupPage } from "../modules/payroll/pages/PayrollSetupPage";
+import { PayrollRunPage } from "../modules/payroll/pages/PayrollRunPage";
+import { MyPayslipPage } from "../modules/payroll/pages/MyPayslipPage";
+import { ReimbursementsPage } from "../modules/payroll/pages/ReimbursementsPage";
 import { RequireAuth } from "../shared/components/RequireAuth";
 import { RoleGuard } from "../shared/components/RoleGuard";
 import { PublicOnly } from "../shared/components/PublicOnly";
@@ -153,6 +157,39 @@ export function AppRouter() {
         element={
           <Protected roles={["hr_admin"]}>
             <DepartmentListPage />
+          </Protected>
+        }
+      />
+
+      <Route
+        path="/payroll/setup"
+        element={
+          <Protected roles={["hr_admin"]}>
+            <PayrollSetupPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/payroll/run"
+        element={
+          <Protected roles={["hr_admin"]}>
+            <PayrollRunPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/payroll/payslip"
+        element={
+          <Protected roles={ALL_ROLES}>
+            <MyPayslipPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/payroll/reimbursements"
+        element={
+          <Protected roles={ALL_ROLES}>
+            <ReimbursementsPage />
           </Protected>
         }
       />
