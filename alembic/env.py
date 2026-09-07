@@ -21,6 +21,7 @@ from app.modules.identity import models as identity_models  # noqa: E402, F401
 from app.modules.payroll import models as payroll_models  # noqa: E402, F401
 from app.modules.performance import models as performance_models  # noqa: E402, F401
 from app.modules.platform import models as platform_models  # noqa: E402, F401
+from app.modules.projects import models as projects_models  # noqa: E402, F401
 from app.modules.time_leave import models as time_leave_models  # noqa: E402, F401
 
 # this is the Alembic Config object, which provides
