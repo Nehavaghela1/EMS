@@ -27,9 +27,9 @@ def _create_user_and_headers(db: Session, company_id: uuid.UUID) -> dict[str, st
     )
     return {"Authorization": f"Bearer {token}"}
 
-def test_projects_tenant_isolation(client: TestClient, db_session: Session, tenant_a: TenantContext, tenant_b: TenantContext):
-    headers_a = _create_user_and_headers(db_session, tenant_a.company_id)
-    headers_b = _create_user_and_headers(db_session, tenant_b.company_id)
+def test_projects_tenant_isolation(client: TestClient, db: Session, tenant_a: TenantContext, tenant_b: TenantContext):
+    headers_a = _create_user_and_headers(db, tenant_a.company_id)
+    headers_b = _create_user_and_headers(db, tenant_b.company_id)
 
     # 1. Tenant A creates project
     code_a = f"PRJ-A-{uuid.uuid4().hex[:4].upper()}"
