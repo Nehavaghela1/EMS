@@ -23,6 +23,7 @@ htmlcov/
 
 # Celery export output (Spec 13, local STORAGE_BACKEND — settings.EXPORT_DIR)
 var/
+uploads/
 celerybeat-schedule.db
 
 # Frontend

@@ -1,5 +1,6 @@
 import uuid
 from datetime import date
+from decimal import Decimal
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -42,5 +43,5 @@ def test_resignation_and_fnf_workflow(client: TestClient, db: Session, company_a
     assert res_fnf.status_code == 200
     fnf_data = res_fnf.json()
     assert fnf_data["notice_recovery_days"] == 10
-    assert fnf_data["notice_recovery_amount"] > 0
+    assert Decimal(str(fnf_data["notice_recovery_amount"])) > 0
     assert "total_settlement_amount" in fnf_data

@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, EmailStr
 
@@ -136,10 +137,10 @@ class FnFSettlementResponse(BaseModel):
     notice_days_served: int
     notice_waived: bool
     notice_recovery_days: int
-    notice_recovery_amount: float
-    encashable_leave_days: float
-    leave_encashment_amount: float
+    notice_recovery_amount: Decimal
+    encashable_leave_days: Decimal
+    leave_encashment_amount: Decimal
     unpaid_salary_days: int
-    unpaid_salary_amount: float
-    total_settlement_amount: float
+    unpaid_salary_amount: Decimal
+    total_settlement_amount: Decimal
 

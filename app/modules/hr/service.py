@@ -1,5 +1,6 @@
 import uuid
 from datetime import timedelta
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -455,28 +456,44 @@ class EmployeeService:
         notice_served = (last_working - (employee.resignation_date or last_working)).days if employee.resignation_date else notice_required
         notice_recovery_days = employee.notice_recovery_days if not employee.notice_waived else 0
 
-        # Estimate daily rate from active salary structure or default fallback
-        from app.modules.payroll.repository import EmployeeSalaryRepository
+        # Calculate salary and daily rate from in-force salary assignment
+        from app.modules.payroll.repository import EmployeeSalaryRepository, SalaryStructureRepository
+        from app.modules.payroll.service import resolve_earning_breakdown
         salary_repo = EmployeeSalaryRepository(self.db)
         active_sal = salary_repo.get_in_force(employee.id, company_id, last_working)
-        monthly_gross = float(active_sal.gross_salary) if active_sal else 50000.0
-        daily_rate = monthly_gross / 30.0
+        
+        monthly_gross = Decimal("50000.00")
+        per_day_basic = Decimal("1000.00")
+        per_day_gross = Decimal("1666.67")
 
-        notice_recovery_amount = round(notice_recovery_days * daily_rate, 2)
+        if active_sal:
+            struct = SalaryStructureRepository(self.db).get_by_id(active_sal.structure_id, company_id)
+            if struct:
+                earnings, _, resolved_gross = resolve_earning_breakdown(struct.components, active_sal.ctc)
+                monthly_gross = resolved_gross
+                basic_comp = next((e for e in earnings if e.code == "BASIC" and e.amount is not None), None)
+                monthly_basic = basic_comp.amount if basic_comp else monthly_gross * Decimal("0.40")
+                per_day_gross = (monthly_gross / Decimal("30")).quantize(Decimal("0.01"))
+                per_day_basic = (monthly_basic / Decimal("30")).quantize(Decimal("0.01"))
+
+        notice_recovery_amount = (Decimal(str(notice_recovery_days)) * per_day_gross).quantize(Decimal("0.01"))
 
         # Encashable leave balance
-        from app.modules.time_leave.repository import LeaveBalanceRepository
+        from app.modules.time_leave.repository import LeaveBalanceRepository, LeaveTypeRepository
+        leave_type_repo = LeaveTypeRepository(self.db)
         balances = LeaveBalanceRepository(self.db).list_for_employee_year(employee.id, last_working.year)
-        encashable_days = 0.0
+        encashable_days = Decimal("0.0")
         for b in balances:
-            available = float(b.opening_balance + b.allocated - b.used - b.encashed)
-            if available > 0:
-                encashable_days += available
+            lt = leave_type_repo.get_by_id(b.leave_type_id, company_id)
+            if lt and lt.is_encashable:
+                available = b.opening_balance + b.allocated - b.used - b.encashed
+                if available > 0:
+                    encashable_days += available
 
-        leave_encashment_amount = round(encashable_days * daily_rate, 2)
+        leave_encashment_amount = (encashable_days * per_day_basic).quantize(Decimal("0.01"))
         unpaid_salary_days = last_working.day
-        unpaid_salary_amount = round(unpaid_salary_days * daily_rate, 2)
-        total_settlement = round(unpaid_salary_amount + leave_encashment_amount - notice_recovery_amount, 2)
+        unpaid_salary_amount = (Decimal(str(unpaid_salary_days)) * per_day_gross).quantize(Decimal("0.01"))
+        total_settlement = (unpaid_salary_amount + leave_encashment_amount - notice_recovery_amount).quantize(Decimal("0.01"))
 
         return FnFSettlementResponse(
             employee_id=employee.id,
