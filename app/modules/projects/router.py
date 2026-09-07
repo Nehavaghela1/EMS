@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_tenant_db, get_current_user, require_role
-from app.modules.identity.models import User
+from app.modules.identity.models import User, UserRole
 from app.modules.projects.schemas import (
     ProjectCreate, ProjectUpdate, ProjectResponse, ProjectSummaryResponse,
     ProjectMemberCreate, ProjectMemberResponse,
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 def create_project(
     data: ProjectCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(["super_admin", "admin", "hr_manager"]))
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
     return service.create_project(current_user.company_id, data)
@@ -52,7 +52,7 @@ def update_project(
     project_id: UUID,
     data: ProjectUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(["super_admin", "admin", "hr_manager"]))
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
     return service.update_project(current_user.company_id, project_id, data)
@@ -61,7 +61,7 @@ def update_project(
 def delete_project(
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(["super_admin", "admin"]))
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin))
 ):
     service = ProjectService(db)
     service.delete_project(current_user.company_id, project_id)
@@ -82,7 +82,7 @@ def add_project_member(
     project_id: UUID,
     data: ProjectMemberCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(["super_admin", "admin", "hr_manager"]))
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
     return service.add_member(current_user.company_id, project_id, data)
@@ -101,7 +101,7 @@ def remove_project_member(
     project_id: UUID,
     employee_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(["super_admin", "admin", "hr_manager"]))
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
     service.remove_member(current_user.company_id, project_id, employee_id)
@@ -152,7 +152,7 @@ def update_task(
 def delete_task(
     task_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(["super_admin", "admin", "hr_manager"]))
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
     service.delete_task(current_user.company_id, task_id)
@@ -186,11 +186,13 @@ def create_time_entry(
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user)
 ):
-    if not current_user.employee_id:
-        from app.core.exceptions import AppError
+    from app.modules.hr.repository import EmployeeRepository
+    from app.core.exceptions import AppError
+    emp = EmployeeRepository(db).get_by_user_id(current_user.company_id, current_user.id)
+    if not emp:
         raise AppError("User profile is not linked to an employee record.")
     service = ProjectService(db)
-    return service.create_time_entry(current_user.company_id, current_user.employee_id, data)
+    return service.create_time_entry(current_user.company_id, emp.id, data)
 
 @router.get("/time-entries", response_model=List[TimeEntryResponse])
 def list_time_entries(
@@ -203,10 +205,11 @@ def list_time_entries(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    # Employee role can only see their own time entries unless they query specifically as admin/manager
     target_employee_id = employee_id
-    if current_user.role == "employee":
-        target_employee_id = current_user.employee_id
+    if current_user.role == UserRole.employee:
+        from app.modules.hr.repository import EmployeeRepository
+        emp = EmployeeRepository(db).get_by_user_id(current_user.company_id, current_user.id)
+        target_employee_id = emp.id if emp else None
     return service.list_time_entries(current_user.company_id, project_id, target_employee_id, status, start_date, end_date)
 
 @router.put("/time-entries/{entry_id}", response_model=TimeEntryResponse)
@@ -217,7 +220,11 @@ def update_time_entry(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    user_emp_id = current_user.employee_id if current_user.role == "employee" else None
+    user_emp_id = None
+    if current_user.role == UserRole.employee:
+        from app.modules.hr.repository import EmployeeRepository
+        emp = EmployeeRepository(db).get_by_user_id(current_user.company_id, current_user.id)
+        user_emp_id = emp.id if emp else None
     return service.update_time_entry(current_user.company_id, entry_id, user_emp_id, data)
 
 @router.post("/time-entries/{entry_id}/approve", response_model=TimeEntryResponse)
@@ -225,7 +232,7 @@ def approve_time_entry(
     entry_id: UUID,
     status_action: str = Query("approved", pattern="^(approved|rejected)$"),
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(["super_admin", "admin", "hr_manager"]))
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
     return service.approve_reject_time_entry(current_user.company_id, entry_id, status_action, current_user.id)
@@ -246,7 +253,7 @@ def create_milestone(
     project_id: UUID,
     data: MilestoneCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(["super_admin", "admin", "hr_manager"]))
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
     return service.create_milestone(current_user.company_id, project_id, data)
@@ -265,7 +272,7 @@ def update_milestone(
     milestone_id: UUID,
     data: MilestoneUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(["super_admin", "admin", "hr_manager"]))
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
     return service.update_milestone(current_user.company_id, milestone_id, data)
@@ -274,7 +281,7 @@ def update_milestone(
 def delete_milestone(
     milestone_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(["super_admin", "admin", "hr_manager"]))
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
     service.delete_milestone(current_user.company_id, milestone_id)

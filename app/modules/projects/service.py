@@ -32,7 +32,7 @@ class ProjectService:
     def get_project(self, company_id: UUID, project_id: UUID) -> ProjectResponse:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
         return ProjectResponse.from_orm(project)
 
     def list_projects(self, company_id: UUID, status: Optional[str] = None) -> List[ProjectResponse]:
@@ -42,7 +42,7 @@ class ProjectService:
     def update_project(self, company_id: UUID, project_id: UUID, data: ProjectUpdate) -> ProjectResponse:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
         if data.code and data.code != project.code:
             existing = self.repo.get_project_by_code(company_id, data.code)
             if existing:
@@ -53,14 +53,14 @@ class ProjectService:
     def delete_project(self, company_id: UUID, project_id: UUID) -> None:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
         self.repo.delete_project(project)
 
     # --- Project Summary Analytics ---
     def get_project_summary(self, company_id: UUID, project_id: UUID) -> ProjectSummaryResponse:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
 
         tasks = self.repo.list_tasks(company_id, project_id)
         members = self.repo.list_members(company_id, project_id)
@@ -99,7 +99,7 @@ class ProjectService:
     def add_member(self, company_id: UUID, project_id: UUID, data: ProjectMemberCreate) -> ProjectMemberResponse:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
         existing = self.repo.get_member(company_id, project_id, data.employee_id)
         if existing:
             raise ConflictException("Employee is already a member of this project.")
@@ -109,7 +109,7 @@ class ProjectService:
     def list_members(self, company_id: UUID, project_id: UUID) -> List[ProjectMemberResponse]:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
         members = self.repo.list_members(company_id, project_id)
         return [ProjectMemberResponse.from_orm(m) for m in members]
 
@@ -123,48 +123,48 @@ class ProjectService:
     def create_task(self, company_id: UUID, project_id: UUID, created_by: Optional[UUID], data: TaskCreate) -> TaskResponse:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
         task = self.repo.create_task(company_id, project_id, created_by, data)
         return TaskResponse.from_orm(task)
 
     def get_task(self, company_id: UUID, task_id: UUID) -> TaskResponse:
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
-            raise NotFoundException("Task not found.")
+            raise NotFoundError("Task not found.")
         return TaskResponse.from_orm(task)
 
     def list_tasks(self, company_id: UUID, project_id: UUID, status: Optional[str] = None, assigned_to: Optional[UUID] = None) -> List[TaskResponse]:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
         tasks = self.repo.list_tasks(company_id, project_id, status, assigned_to)
         return [TaskResponse.from_orm(t) for t in tasks]
 
     def update_task(self, company_id: UUID, task_id: UUID, data: TaskUpdate) -> TaskResponse:
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
-            raise NotFoundException("Task not found.")
+            raise NotFoundError("Task not found.")
         updated = self.repo.update_task(task, data)
         return TaskResponse.from_orm(updated)
 
     def delete_task(self, company_id: UUID, task_id: UUID) -> None:
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
-            raise NotFoundException("Task not found.")
+            raise NotFoundError("Task not found.")
         self.repo.delete_task(task)
 
     # --- Task Comments ---
     def add_comment(self, company_id: UUID, task_id: UUID, user_id: UUID, data: TaskCommentCreate) -> TaskCommentResponse:
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
-            raise NotFoundException("Task not found.")
+            raise NotFoundError("Task not found.")
         comment = self.repo.add_comment(company_id, task_id, user_id, data.comment)
         return TaskCommentResponse.from_orm(comment)
 
     def list_comments(self, company_id: UUID, task_id: UUID) -> List[TaskCommentResponse]:
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
-            raise NotFoundException("Task not found.")
+            raise NotFoundError("Task not found.")
         comments = self.repo.list_comments(company_id, task_id)
         return [TaskCommentResponse.from_orm(c) for c in comments]
 
@@ -172,11 +172,11 @@ class ProjectService:
     def create_time_entry(self, company_id: UUID, employee_id: UUID, data: TimeEntryCreate) -> TimeEntryResponse:
         project = self.repo.get_project_by_id(company_id, data.project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
         if data.task_id:
             task = self.repo.get_task_by_id(company_id, data.task_id)
             if not task:
-                raise NotFoundException("Task not found.")
+                raise NotFoundError("Task not found.")
 
         # Check total daily logged hours ceiling (max 24 hrs per day)
         existing_entries = self.repo.list_time_entries(company_id, employee_id=employee_id, start_date=data.date, end_date=data.date)
@@ -202,9 +202,9 @@ class ProjectService:
     def update_time_entry(self, company_id: UUID, entry_id: UUID, user_employee_id: Optional[UUID], data: TimeEntryUpdate) -> TimeEntryResponse:
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
-            raise NotFoundException("Time entry not found.")
+            raise NotFoundError("Time entry not found.")
         if user_employee_id and entry.employee_id != user_employee_id and entry.status != "draft":
-            raise ForbiddenException("You can only modify your own time entries.")
+            raise ForbiddenError("You can only modify your own time entries.")
 
         if data.hours is not None:
             existing_entries = self.repo.list_time_entries(company_id, employee_id=entry.employee_id, start_date=entry.date, end_date=entry.date)
@@ -220,40 +220,40 @@ class ProjectService:
             raise AppError("Status must be either 'approved' or 'rejected'.")
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
-            raise NotFoundException("Time entry not found.")
+            raise NotFoundError("Time entry not found.")
         updated = self.repo.approve_reject_time_entry(entry, status, approver_user_id)
         return TimeEntryResponse.from_orm(updated)
 
     def delete_time_entry(self, company_id: UUID, entry_id: UUID) -> None:
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
-            raise NotFoundException("Time entry not found.")
+            raise NotFoundError("Time entry not found.")
         self.repo.delete_time_entry(entry)
 
     # --- Milestones ---
     def create_milestone(self, company_id: UUID, project_id: UUID, data: MilestoneCreate) -> MilestoneResponse:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
         milestone = self.repo.create_milestone(company_id, project_id, data)
         return MilestoneResponse.from_orm(milestone)
 
     def list_milestones(self, company_id: UUID, project_id: UUID) -> List[MilestoneResponse]:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
-            raise NotFoundException("Project not found.")
+            raise NotFoundError("Project not found.")
         milestones = self.repo.list_milestones(company_id, project_id)
         return [MilestoneResponse.from_orm(m) for m in milestones]
 
     def update_milestone(self, company_id: UUID, milestone_id: UUID, data: MilestoneUpdate) -> MilestoneResponse:
         milestone = self.repo.get_milestone_by_id(company_id, milestone_id)
         if not milestone:
-            raise NotFoundException("Milestone not found.")
+            raise NotFoundError("Milestone not found.")
         updated = self.repo.update_milestone(milestone, data)
         return MilestoneResponse.from_orm(updated)
 
     def delete_milestone(self, company_id: UUID, milestone_id: UUID) -> None:
         milestone = self.repo.get_milestone_by_id(company_id, milestone_id)
         if not milestone:
-            raise NotFoundException("Milestone not found.")
+            raise NotFoundError("Milestone not found.")
         self.repo.delete_milestone(milestone)

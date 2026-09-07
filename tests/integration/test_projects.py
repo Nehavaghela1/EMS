@@ -46,8 +46,8 @@ def _create_employee_with_user(
     )
     return employee, {"Authorization": f"Bearer {token}"}
 
-def test_project_lifecycle_and_analytics(client: TestClient, db: Session, tenant_a: TenantContext):
-    employee, headers = _create_employee_with_user(db, tenant_a.company_id, UserRole.super_admin)
+def test_project_lifecycle_and_analytics(client: TestClient, db: Session, company_a: TenantContext):
+    employee, headers = _create_employee_with_user(db, company_a.company_id, UserRole.super_admin)
 
     # 1. Create Project
     code = f"PRJ-{uuid.uuid4().hex[:4].upper()}"
@@ -158,8 +158,8 @@ def test_project_lifecycle_and_analytics(client: TestClient, db: Session, tenant
     assert summary_data["completion_percentage"] == "100.00"
     assert summary_data["total_logged_hours"] == "6.50"
 
-def test_daily_time_entry_hour_limit(client: TestClient, db: Session, tenant_a: TenantContext):
-    employee, headers = _create_employee_with_user(db, tenant_a.company_id, UserRole.super_admin)
+def test_daily_time_entry_hour_limit(client: TestClient, db: Session, company_a: TenantContext):
+    employee, headers = _create_employee_with_user(db, company_a.company_id, UserRole.super_admin)
 
     code = f"PRJ-{uuid.uuid4().hex[:4].upper()}"
     res = client.post(
