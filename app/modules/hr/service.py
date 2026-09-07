@@ -9,13 +9,16 @@ from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoun
 from app.core.pagination import PageParams
 from app.core.security import generate_refresh_token, hash_token
 from app.core.time import utcnow
-from app.modules.hr.models import Department, Employee, EmploymentType, InvitationStatus
+from app.modules.hr.models import Department, Employee, EmploymentType, InvitationStatus, ResignationStatus
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
 from app.modules.hr.schemas import (
     DepartmentCreateRequest,
     DepartmentUpdateRequest,
     EmployeeCreateRequest,
     EmployeeUpdateRequest,
+    ResignationSubmitRequest,
+    ResignationApproveRequest,
+    FnFSettlementResponse,
 )
 from app.modules.identity.models import User, UserRole
 from app.modules.identity.repository import CompanyRepository, UserRepository
@@ -413,3 +416,80 @@ class EmployeeService:
         self.db.commit()
         sent_to = self._send_activation_email(company_id, employee, raw_token)
         return employee, sent_to
+
+    # ── Resignation & Full-and-Final (Routes 27-30) ─────────────────
+    def submit_resignation(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: ResignationSubmitRequest) -> Employee:
+        employee = self._get_or_404(company_id, employee_id)
+        if employee.resignation_status == ResignationStatus.submitted:
+            raise ConflictError("Resignation is already submitted.")
+        self.repo.update(
+            employee,
+            resignation_status=ResignationStatus.submitted,
+            resignation_date=data.resignation_date,
+            last_working_date=data.last_working_date,
+        )
+        self.db.commit()
+        return employee
+
+    def approve_resignation(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: ResignationApproveRequest) -> Employee:
+        employee = self._get_or_404(company_id, employee_id)
+        if not data.approved:
+            self.repo.update(employee, resignation_status=ResignationStatus.rejected)
+        else:
+            self.repo.update(
+                employee,
+                resignation_status=ResignationStatus.approved,
+                last_working_date=data.last_working_date or employee.last_working_date,
+                notice_waived=data.notice_waived,
+                notice_recovery_days=data.notice_recovery_days if not data.notice_waived else 0,
+            )
+        self.db.commit()
+        return employee
+
+    def calculate_fnf(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> FnFSettlementResponse:
+        employee = self._get_or_404(company_id, employee_id)
+        last_working = employee.last_working_date or utcnow().date()
+        
+        # Calculate notice recovery / shortfall
+        notice_required = employee.notice_period_days
+        notice_served = (last_working - (employee.resignation_date or last_working)).days if employee.resignation_date else notice_required
+        notice_recovery_days = employee.notice_recovery_days if not employee.notice_waived else 0
+
+        # Estimate daily rate from active salary structure or default fallback
+        from app.modules.payroll.repository import EmployeeSalaryRepository
+        salary_repo = EmployeeSalaryRepository(self.db)
+        active_sal = salary_repo.get_in_force(employee.id, company_id, last_working)
+        monthly_gross = float(active_sal.gross_salary) if active_sal else 50000.0
+        daily_rate = monthly_gross / 30.0
+
+        notice_recovery_amount = round(notice_recovery_days * daily_rate, 2)
+
+        # Encashable leave balance
+        from app.modules.time_leave.repository import LeaveBalanceRepository
+        balances = LeaveBalanceRepository(self.db).list_for_employee_year(employee.id, last_working.year)
+        encashable_days = 0.0
+        for b in balances:
+            available = float(b.opening_balance + b.allocated - b.used - b.encashed)
+            if available > 0:
+                encashable_days += available
+
+        leave_encashment_amount = round(encashable_days * daily_rate, 2)
+        unpaid_salary_days = last_working.day
+        unpaid_salary_amount = round(unpaid_salary_days * daily_rate, 2)
+        total_settlement = round(unpaid_salary_amount + leave_encashment_amount - notice_recovery_amount, 2)
+
+        return FnFSettlementResponse(
+            employee_id=employee.id,
+            employee_name=f"{employee.first_name} {employee.last_name or ''}".strip(),
+            last_working_date=last_working,
+            notice_days_required=notice_required,
+            notice_days_served=max(0, notice_served),
+            notice_waived=employee.notice_waived,
+            notice_recovery_days=notice_recovery_days,
+            notice_recovery_amount=notice_recovery_amount,
+            encashable_leave_days=encashable_days,
+            leave_encashment_amount=leave_encashment_amount,
+            unpaid_salary_days=unpaid_salary_days,
+            unpaid_salary_amount=unpaid_salary_amount,
+            total_settlement_amount=total_settlement,
+        )

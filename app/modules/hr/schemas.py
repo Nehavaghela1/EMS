@@ -89,6 +89,11 @@ class EmployeeResponse(BaseModel):
     notice_period_days: int
     is_active: bool
     invitation_status: InvitationStatus
+    resignation_status: str
+    resignation_date: date | None = None
+    last_working_date: date | None = None
+    notice_waived: bool = False
+    notice_recovery_days: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -107,3 +112,34 @@ class EmployeeInviteInfo(BaseModel):
 
 class EmployeeCreateResponse(EmployeeResponse):
     invite: EmployeeInviteInfo
+
+
+# Resignation & FnF (Routes 27-30)
+class ResignationSubmitRequest(BaseModel):
+    resignation_date: date
+    last_working_date: date
+    reason: str | None = None
+
+
+class ResignationApproveRequest(BaseModel):
+    approved: bool
+    last_working_date: date | None = None
+    notice_waived: bool = False
+    notice_recovery_days: int = 0
+
+
+class FnFSettlementResponse(BaseModel):
+    employee_id: uuid.UUID
+    employee_name: str
+    last_working_date: date
+    notice_days_required: int
+    notice_days_served: int
+    notice_waived: bool
+    notice_recovery_days: int
+    notice_recovery_amount: float
+    encashable_leave_days: float
+    leave_encashment_amount: float
+    unpaid_salary_days: int
+    unpaid_salary_amount: float
+    total_settlement_amount: float
+

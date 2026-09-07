@@ -165,6 +165,26 @@ def get_my_employee(
     return _to_employee_response(employee)
 
 
+@employees_router.get("/resignations", response_model=list[EmployeeResponse])
+def list_resignations(
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager)),
+):
+    items, total, pages = EmployeeService(db).list_employees(
+        user.company_id,
+        user,
+        q=None,
+        department_id=None,
+        is_active=None,
+        level=None,
+        employment_type=None,
+        reporting_manager_id=None,
+        sort=None,
+        page_params=PageParams(page=1, limit=100),
+    )
+    return [_to_employee_response(e) for e in items if str(e.resignation_status) not in ("none", "ResignationStatus.none")]
+
+
 @employees_router.get("/{employee_id}", response_model=EmployeeResponse)
 def get_employee(
     employee_id: uuid.UUID,
@@ -213,3 +233,35 @@ def resend_invite(
 ):
     employee, sent_to = EmployeeService(db).resend_invite(user.company_id, employee_id)
     return _to_employee_create_response(employee, sent_to)
+
+
+# ── Resignation & Full-and-Final (Routes 27-30) ─────────────────
+from app.modules.hr.schemas import ResignationSubmitRequest, ResignationApproveRequest, FnFSettlementResponse
+
+@employees_router.post("/{employee_id}/resignation", response_model=EmployeeResponse)
+def submit_resignation(
+    employee_id: uuid.UUID,
+    data: ResignationSubmitRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    employee = EmployeeService(db).submit_resignation(user.company_id, employee_id, data)
+    return _to_employee_response(employee)
+
+@employees_router.put("/{employee_id}/resignation/approve", response_model=EmployeeResponse)
+def approve_resignation(
+    employee_id: uuid.UUID,
+    data: ResignationApproveRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin)),
+):
+    employee = EmployeeService(db).approve_resignation(user.company_id, employee_id, data)
+    return _to_employee_response(employee)
+
+@employees_router.get("/{employee_id}/fnf", response_model=FnFSettlementResponse)
+def get_fnf_settlement(
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin)),
+):
+    return EmployeeService(db).calculate_fnf(user.company_id, employee_id)
