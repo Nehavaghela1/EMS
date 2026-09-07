@@ -1,8 +1,8 @@
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile, Query
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
@@ -20,12 +20,23 @@ from app.modules.platform.schemas import (
     MarkAllReadResponse,
     NotificationListResponse,
     NotificationResponse,
+    AnnouncementCreate,
+    AnnouncementResponse,
+    FileUploadResponse,
+    SignedUrlResponse,
+    EmployeeDocumentCreate,
+    EmployeeDocumentResponse,
+    GlobalSearchResponse,
 )
 from app.modules.platform.service import (
     AuditService,
     DashboardService,
     IndustryPresetService,
     NotificationService,
+    AnnouncementService,
+    FileService,
+    EmployeeDocumentService,
+    GlobalSearchService,
 )
 from app.workers.celery_app import celery_app
 
@@ -187,3 +198,124 @@ def mark_notification_read(
 ):
     notification = NotificationService(db).mark_read(user.company_id, user.id, notification_id)
     return _to_notification_response(notification)
+
+
+# ── Announcements (routes 122-124) ──────────────────────────────
+announcements_router = APIRouter(prefix="/announcements", tags=["Announcements"])
+
+@announcements_router.get("", response_model=list[AnnouncementResponse])
+def list_announcements(
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    return AnnouncementService(db).list_active(user.company_id, user.role.value)
+
+@announcements_router.post("", response_model=AnnouncementResponse, status_code=201)
+def create_announcement(
+    data: AnnouncementCreate,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)),
+):
+    return AnnouncementService(db).create(user.company_id, user.id, data)
+
+@announcements_router.delete("/{announcement_id}", status_code=204)
+def delete_announcement(
+    announcement_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin)),
+):
+    AnnouncementService(db).delete(user.company_id, announcement_id)
+
+
+# ── File Uploads & Signed URLs (routes 130-131) ─────────────────
+files_router = APIRouter(prefix="/files", tags=["Files"])
+
+@files_router.post("/upload", response_model=FileUploadResponse, status_code=201)
+async def upload_file(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    file_bytes = await file.read()
+    file_obj = FileService(db).upload_file(user.company_id, user.id, file.filename or "file", file.content_type or "application/octet-stream", file_bytes)
+    return FileUploadResponse(
+        file_object_id=file_obj.id,
+        file_name=file_obj.file_name,
+        file_type=file_obj.file_type,
+        file_size=file_obj.file_size
+    )
+
+@files_router.get("/{file_id}/url", response_model=SignedUrlResponse)
+def get_file_signed_url(
+    file_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    return FileService(db).generate_signed_url(user.company_id, file_id)
+
+@files_router.get("/download/{file_id}")
+def download_file(
+    file_id: uuid.UUID,
+    expires: int,
+    signature: str,
+    db: Session = Depends(get_db),
+):
+    # Verify HMAC Signature
+    import hmac, hashlib, os
+    from app.core.config import settings
+    from app.modules.platform.models import FileObject
+    from fastapi.responses import FileResponse
+
+    # 1. Check expiration
+    if int(datetime.now(UTC).timestamp()) > expires:
+        from app.core.exceptions import ForbiddenError
+        raise ForbiddenError("Signed URL has expired.")
+
+    # 2. Get file object from db directly (public signed route)
+    file_obj = db.query(FileObject).filter(FileObject.id == file_id).first()
+    if not file_obj:
+        raise NotFoundError("File object not found.")
+
+    # 3. Verify signature
+    signature_payload = f"{file_obj.company_id}:{file_id}:{expires}".encode()
+    expected_sig = hmac.new(settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_sig, signature):
+        from app.core.exceptions import ForbiddenError
+        raise ForbiddenError("Invalid file signature.")
+
+    if not os.path.exists(file_obj.storage_path):
+        raise NotFoundError("File not found on disk.")
+
+    return FileResponse(path=file_obj.storage_path, filename=file_obj.file_name, media_type=file_obj.file_type)
+
+
+# ── Employee Documents (routes 132-133) ─────────────────────────
+documents_router = APIRouter(prefix="/documents", tags=["Employee Documents"])
+
+@documents_router.get("/{employee_id}", response_model=list[EmployeeDocumentResponse])
+def list_employee_documents(
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    return EmployeeDocumentService(db).list_documents(user.company_id, employee_id)
+
+@documents_router.post("", response_model=EmployeeDocumentResponse, status_code=201)
+def attach_employee_document(
+    data: EmployeeDocumentCreate,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin)),
+):
+    return EmployeeDocumentService(db).attach_document(user.company_id, data)
+
+
+# ── Global Search (route 134) ───────────────────────────────────
+search_router = APIRouter(prefix="/search", tags=["Global Search"])
+
+@search_router.get("", response_model=GlobalSearchResponse)
+def global_search(
+    q: str = Query(..., min_length=2),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    return GlobalSearchService(db).search(user.company_id, q)

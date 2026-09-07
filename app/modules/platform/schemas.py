@@ -1,31 +1,19 @@
 import uuid
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Any, Literal, List, Optional
+from pydantic import BaseModel, Field
 
-from pydantic import BaseModel
-
-
+# --- Existing Jobs / Audit / Dashboard / Notifications ---
 class JobStatusResponse(BaseModel):
-    """Route 136: polls a Celery task's own result-backend state directly —
-    no dedicated `jobs` table exists in the spec's schema (Section 7), and
-    Celery's result backend (Redis) already persists exactly this."""
-
     job_id: str
     status: Literal["queued", "started", "success", "failure"]
     result: Any = None
     error: str | None = None
 
-
 class JobQueuedResponse(BaseModel):
-    """Route 129's 202 body — same tiny shape as time_leave's, kept local so
-    this module doesn't reach across another module's schema file for one
-    two-field response."""
-
     job_id: str
     status: Literal["queued"] = "queued"
 
-
-# ── Audit logs (routes 128-129) ──────────────────────────────────
 class AuditLogResponse(BaseModel):
     id: uuid.UUID
     company_id: uuid.UUID | None
@@ -39,7 +27,6 @@ class AuditLogResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
-
 class AuditLogExportRequest(BaseModel):
     action: str | None = None
     actor_email: str | None = None
@@ -47,21 +34,11 @@ class AuditLogExportRequest(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
 
-
-# ── Dashboard (route 121) ────────────────────────────────────────
 class DashboardResponse(BaseModel):
-    """One wrapper for all four role shapes (Spec 11.10) rather than four
-    parallel strict response models — `data`'s keys differ by `role`,
-    documented on DashboardService.get_dashboard rather than enforced by
-    distinct Pydantic classes (FastAPI Union responses add complexity this
-    single-endpoint, four-shape payload doesn't need)."""
-
     role: str
     generated_at: datetime
     data: dict[str, Any]
 
-
-# ── Notifications (routes 125-127) ───────────────────────────────
 class NotificationResponse(BaseModel):
     id: uuid.UUID
     type: str
@@ -76,13 +53,7 @@ class NotificationResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
-
 class NotificationListResponse(BaseModel):
-    """Wraps the standard Page envelope with the unread count the spec's
-    deliverable asks for but doesn't assign its own route to — cheaper to
-    compute alongside the list query than to add a fifth notifications
-    route the spec's own route table (10.8) doesn't have room for."""
-
     items: list[NotificationResponse]
     page: int
     limit: int
@@ -91,6 +62,75 @@ class NotificationListResponse(BaseModel):
     has_next: bool
     unread_count: int
 
-
 class MarkAllReadResponse(BaseModel):
     marked_read: int
+
+
+# ── Announcements (routes 122-124) ──────────────────────────────
+class AnnouncementCreate(BaseModel):
+    title: str = Field(..., max_length=255)
+    content: str = Field(..., min_length=1)
+    target_role: str = Field("all", pattern="^(all|employee|manager|hr_admin)$")
+    expires_at: Optional[datetime] = None
+
+class AnnouncementResponse(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    title: str
+    content: str
+    target_role: str
+    created_by: Optional[uuid.UUID] = None
+    expires_at: Optional[datetime] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── File Uploads & Signed URLs (routes 130-131) ─────────────────
+class FileUploadResponse(BaseModel):
+    file_object_id: uuid.UUID
+    file_name: str
+    file_type: str
+    file_size: int
+
+    model_config = {"from_attributes": True}
+
+class SignedUrlResponse(BaseModel):
+    file_object_id: uuid.UUID
+    file_name: str
+    url: str
+    expires_in_seconds: int = 3600
+
+
+# ── Employee Documents (routes 132-133) ─────────────────────────
+class EmployeeDocumentCreate(BaseModel):
+    employee_id: uuid.UUID
+    file_object_id: uuid.UUID
+    document_type: str = Field(..., max_length=100)
+    name: str = Field(..., max_length=255)
+
+class EmployeeDocumentResponse(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    employee_id: uuid.UUID
+    file_object_id: uuid.UUID
+    document_type: str
+    name: str
+    created_at: datetime
+    download_url: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ── Global Tenant Search (route 134) ────────────────────────────
+class SearchResultItem(BaseModel):
+    id: uuid.UUID
+    type: Literal["employee", "project", "task"]
+    title: str
+    subtitle: Optional[str] = None
+    url: str
+
+class GlobalSearchResponse(BaseModel):
+    query: str
+    total_results: int
+    results: List[SearchResultItem]

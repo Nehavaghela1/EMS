@@ -26,10 +26,14 @@ from app.modules.payroll.router import (
 from app.modules.performance.router import performance_router
 from app.modules.projects.router import router as projects_router
 from app.modules.platform.router import (
+    announcements_router,
     audit_logs_router,
     dashboard_router,
+    documents_router,
+    files_router,
     industry_presets_router,
     notifications_router,
+    search_router,
 )
 from app.modules.platform.router import router as jobs_router
 from app.modules.time_leave.router import (
@@ -100,6 +104,10 @@ app.include_router(payslips_router, prefix=settings.API_V1_PREFIX)
 app.include_router(reimbursements_router, prefix=settings.API_V1_PREFIX)
 app.include_router(performance_router, prefix=settings.API_V1_PREFIX)
 app.include_router(projects_router, prefix=settings.API_V1_PREFIX)
+app.include_router(announcements_router, prefix=settings.API_V1_PREFIX)
+app.include_router(files_router, prefix=settings.API_V1_PREFIX)
+app.include_router(documents_router, prefix=settings.API_V1_PREFIX)
+app.include_router(search_router, prefix=settings.API_V1_PREFIX)
 
 # One client, reused across requests (redis-py pools connections internally).
 # Short timeouts so a dead Redis makes /health fail fast, not hang.

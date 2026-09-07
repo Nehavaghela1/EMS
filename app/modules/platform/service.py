@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -12,7 +12,11 @@ from app.core.pagination import PageParams
 from app.core.time import utcnow
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
-from app.modules.platform.models import AuditLog, Notification
+from app.modules.platform.models import AuditLog, Notification, Announcement, FileObject, EmployeeDocument
+from app.modules.platform.schemas import (
+    AnnouncementCreate, SignedUrlResponse, EmployeeDocumentCreate,
+    EmployeeDocumentResponse, GlobalSearchResponse, SearchResultItem
+)
 from app.modules.platform.repository import (
     AuditRepository,
     DashboardRepository,
@@ -376,3 +380,141 @@ class NotificationService:
         count = self.repo.mark_all_read(company_id, user_id)
         self.db.commit()
         return count
+
+
+class AnnouncementService:
+    def __init__(self, db: Session):
+        self.db = db
+        from app.modules.platform.repository import AnnouncementRepository
+        self.repo = AnnouncementRepository(db)
+
+    def create(self, company_id: uuid.UUID, user_id: uuid.UUID, data: AnnouncementCreate) -> Announcement:
+        announcement = self.repo.create(
+            company_id=company_id,
+            created_by=user_id,
+            title=data.title,
+            content=data.content,
+            target_role=data.target_role,
+            expires_at=data.expires_at,
+        )
+        self.db.commit()
+        self.db.refresh(announcement)
+        return announcement
+
+    def list_active(self, company_id: uuid.UUID, user_role: str) -> list[Announcement]:
+        return self.repo.list_active(company_id, user_role)
+
+    def delete(self, company_id: uuid.UUID, announcement_id: uuid.UUID) -> None:
+        announcement = self.repo.get_by_id(company_id, announcement_id)
+        if not announcement:
+            raise NotFoundError("Announcement not found.")
+        self.repo.soft_delete(announcement)
+        self.db.commit()
+
+
+class FileService:
+    def __init__(self, db: Session):
+        self.db = db
+        from app.modules.platform.repository import FileRepository
+        self.repo = FileRepository(db)
+
+    def upload_file(self, company_id: uuid.UUID, user_id: uuid.UUID, file_name: str, file_type: str, file_bytes: bytes) -> FileObject:
+        # 1. Validate Size (< 10MB)
+        if len(file_bytes) > 10 * 1024 * 1024:
+            raise AppError("File size exceeds 10MB limit.")
+
+        # 2. Store in local uploads folder
+        import os
+        upload_dir = os.path.join(os.getcwd(), "uploads", str(company_id))
+        os.makedirs(upload_dir, exist_ok=True)
+
+        file_id = uuid.uuid4()
+        storage_path = os.path.join(upload_dir, f"{file_id}_{file_name}")
+        with open(storage_path, "wb") as f:
+            f.write(file_bytes)
+
+        # 3. Create FileObject
+        file_obj = self.repo.create(
+            company_id=company_id,
+            uploaded_by=user_id,
+            file_name=file_name,
+            file_type=file_type,
+            file_size=len(file_bytes),
+            storage_path=storage_path,
+        )
+        self.db.commit()
+        self.db.refresh(file_obj)
+        return file_obj
+
+    def generate_signed_url(self, company_id: uuid.UUID, file_id: uuid.UUID) -> SignedUrlResponse:
+        file_obj = self.repo.get_by_id(company_id, file_id)
+        if not file_obj:
+            raise NotFoundError("File object not found.")
+
+        # HMAC signed token valid for 3600 seconds
+        import hmac, hashlib
+        expires_at = int(datetime.now(UTC).timestamp()) + 3600
+        signature_payload = f"{company_id}:{file_id}:{expires_at}".encode()
+        signature = hmac.new(settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256).hexdigest()
+
+        url = f"/api/v1/files/download/{file_id}?expires={expires_at}&signature={signature}"
+        return SignedUrlResponse(
+            file_object_id=file_obj.id,
+            file_name=file_obj.file_name,
+            url=url,
+            expires_in_seconds=3600
+        )
+
+
+class EmployeeDocumentService:
+    def __init__(self, db: Session):
+        self.db = db
+        from app.modules.platform.repository import EmployeeDocumentRepository
+        self.repo = EmployeeDocumentRepository(db)
+
+    def attach_document(self, company_id: uuid.UUID, data: EmployeeDocumentCreate) -> EmployeeDocumentResponse:
+        from app.modules.platform.repository import FileRepository
+        file_obj = FileRepository(self.db).get_by_id(company_id, data.file_object_id)
+        if not file_obj:
+            raise NotFoundError("File object not found.")
+
+        doc = self.repo.create(
+            company_id=company_id,
+            employee_id=data.employee_id,
+            file_object_id=data.file_object_id,
+            document_type=data.document_type,
+            name=data.name,
+        )
+        self.db.commit()
+        self.db.refresh(doc)
+        return EmployeeDocumentResponse.model_validate(doc)
+
+    def list_documents(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> list[EmployeeDocumentResponse]:
+        docs = self.repo.list_for_employee(company_id, employee_id)
+        file_service = FileService(self.db)
+        results = []
+        for doc in docs:
+            resp = EmployeeDocumentResponse.model_validate(doc)
+            signed = file_service.generate_signed_url(company_id, doc.file_object_id)
+            resp.download_url = signed.url
+            results.append(resp)
+        return results
+
+
+class GlobalSearchService:
+    def __init__(self, db: Session):
+        self.db = db
+        from app.modules.platform.repository import SearchRepository
+        self.repo = SearchRepository(db)
+
+    def search(self, company_id: uuid.UUID, query: str) -> GlobalSearchResponse:
+        if not query or len(query.strip()) < 2:
+            return GlobalSearchResponse(query=query, total_results=0, results=[])
+
+        raw_results = self.repo.search_all(company_id, query.strip())
+        items = [SearchResultItem(**r) for r in raw_results]
+        return GlobalSearchResponse(
+            query=query,
+            total_results=len(items),
+            results=items
+        )

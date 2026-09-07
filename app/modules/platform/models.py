@@ -82,3 +82,41 @@ class Notification(TenantBase):
     action_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     entity_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     entity_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+
+
+class Announcement(TenantBase):
+    """RLS: Yes (Spec 7.8)."""
+
+    __tablename__ = "announcements"
+    __table_args__ = (Index("ix_announcements_company_id_expires_at", "company_id", "expires_at"),)
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    target_role: Mapped[str] = mapped_column(String(50), nullable=False, default="all")  # all, employee, manager, hr_admin
+    created_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FileObject(TenantBase):
+    """RLS: Yes (Spec 7.8, 9.9)."""
+
+    __tablename__ = "file_objects"
+    __table_args__ = (Index("ix_file_objects_company_id", "company_id"),)
+
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    file_size: Mapped[int] = mapped_column(nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class EmployeeDocument(TenantBase):
+    """RLS: Yes (Spec 7.8)."""
+
+    __tablename__ = "employee_documents"
+    __table_args__ = (Index("ix_employee_documents_employee_id", "employee_id"),)
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False)
+    file_object_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("file_objects.id", ondelete="CASCADE"), nullable=False)
+    document_type: Mapped[str] = mapped_column(String(100), nullable=False)  # kyc, offer_letter, passport, certificate, contract
+    name: Mapped[str] = mapped_column(String(255), nullable=False)

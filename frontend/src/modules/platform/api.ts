@@ -43,3 +43,77 @@ export async function fetchDashboard(): Promise<DashboardResponse> {
   const { data } = await apiClient.get<DashboardResponse>("/dashboard");
   return data;
 }
+
+export interface Announcement {
+  id: string;
+  company_id: string;
+  title: string;
+  content: string;
+  target_role: string;
+  created_by?: string;
+  expires_at?: string;
+  created_at: string;
+}
+
+export async function fetchAnnouncements(): Promise<Announcement[]> {
+  const { data } = await apiClient.get<Announcement[]>("/announcements");
+  return data;
+}
+
+export async function createAnnouncement(payload: { title: string; content: string; target_role?: string; expires_at?: string }): Promise<Announcement> {
+  const { data } = await apiClient.post<Announcement>("/announcements", payload);
+  return data;
+}
+
+export async function deleteAnnouncement(id: string): Promise<void> {
+  await apiClient.delete(`/announcements/${id}`);
+}
+
+export interface SearchResultItem {
+  id: string;
+  type: "employee" | "project" | "task";
+  title: string;
+  subtitle?: string;
+  url: string;
+}
+
+export interface GlobalSearchResponse {
+  query: string;
+  total_results: number;
+  results: SearchResultItem[];
+}
+
+export async function globalSearch(q: string): Promise<GlobalSearchResponse> {
+  const { data } = await apiClient.get<GlobalSearchResponse>("/search", { params: { q } });
+  return data;
+}
+
+export interface EmployeeDocument {
+  id: string;
+  company_id: string;
+  employee_id: string;
+  file_object_id: string;
+  document_type: string;
+  name: string;
+  created_at: string;
+  download_url?: string;
+}
+
+export async function fetchEmployeeDocuments(employeeId: string): Promise<EmployeeDocument[]> {
+  const { data } = await apiClient.get<EmployeeDocument[]>(`/documents/${employeeId}`);
+  return data;
+}
+
+export async function uploadFile(file: File): Promise<{ file_object_id: string; file_name: string; file_type: string; file_size: number }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const { data } = await apiClient.post("/files/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
+export async function attachEmployeeDocument(payload: { employee_id: string; file_object_id: string; document_type: string; name: string }): Promise<EmployeeDocument> {
+  const { data } = await apiClient.post<EmployeeDocument>("/documents", payload);
+  return data;
+}
