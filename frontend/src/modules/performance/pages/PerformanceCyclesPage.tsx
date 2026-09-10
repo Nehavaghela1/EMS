@@ -217,20 +217,20 @@ export function PerformanceCyclesPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleCreate} className="stack gap-4">
-              <div>
-                <label>Cycle Name</label>
+            <form onSubmit={handleCreate} className="stack gap-4 my-2">
+              <div className="field">
+                <label>Cycle Name *</label>
                 <input
                   type="text"
-                  placeholder="e.g. FY 2026-27 Annual Performance Appraisal"
+                  placeholder="e.g. FY 2026-27 Annual Appraisal"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
                 />
               </div>
 
-              <div className="grid grid-2 gap-4">
-                <div>
+              <div className="grid-2">
+                <div className="field">
                   <label>Type</label>
                   <select
                     value={cycleType}
@@ -241,8 +241,8 @@ export function PerformanceCyclesPage() {
                     <option value="quarterly">Quarterly</option>
                   </select>
                 </div>
-                <div>
-                  <label>Start Date</label>
+                <div className="field">
+                  <label>Start Date *</label>
                   <input
                     type="date"
                     value={startDate}
@@ -252,9 +252,9 @@ export function PerformanceCyclesPage() {
                 </div>
               </div>
 
-              <div className="grid grid-2 gap-4">
-                <div>
-                  <label>End Date</label>
+              <div className="grid-2">
+                <div className="field">
+                  <label>End Date *</label>
                   <input
                     type="date"
                     value={endDate}
@@ -262,7 +262,7 @@ export function PerformanceCyclesPage() {
                     required
                   />
                 </div>
-                <div>
+                <div className="field">
                   <label>Self Review Deadline</label>
                   <input
                     type="date"
@@ -272,7 +272,7 @@ export function PerformanceCyclesPage() {
                 </div>
               </div>
 
-              <div>
+              <div className="field">
                 <label>Manager Review Deadline</label>
                 <input
                   type="date"
@@ -286,7 +286,7 @@ export function PerformanceCyclesPage() {
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? "Creating..." : "Save Cycle"}
+                  {submitting ? "Saving..." : "Save"}
                 </button>
               </div>
             </form>

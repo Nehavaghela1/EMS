@@ -197,9 +197,9 @@ export function PayrollRunPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleStartRun} className="stack gap-4">
-              <div className="grid grid-2 gap-4">
-                <div>
+            <form onSubmit={handleStartRun} className="stack gap-4 my-2">
+              <div className="grid-2">
+                <div className="field">
                   <label>Month</label>
                   <select value={runMonth} onChange={(e) => setRunMonth(Number(e.target.value))}>
                     {MONTH_NAMES.map((name, idx) => (
@@ -209,7 +209,7 @@ export function PayrollRunPage() {
                     ))}
                   </select>
                 </div>
-                <div>
+                <div className="field">
                   <label>Year</label>
                   <input
                     type="number"
@@ -220,7 +220,7 @@ export function PayrollRunPage() {
                 </div>
               </div>
 
-              <div>
+              <div className="field">
                 <label>Run Type</label>
                 <select value={runType} onChange={(e) => setRunType(e.target.value)}>
                   <option value="regular">Regular Monthly Run</option>
@@ -233,7 +233,7 @@ export function PayrollRunPage() {
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={startingRun}>
-                  {startingRun ? "Processing..." : "Start Run"}
+                  {startingRun ? "Running..." : "Run"}
                 </button>
               </div>
             </form>

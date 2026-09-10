@@ -252,8 +252,8 @@ export function PerformanceReviewPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSubmitManagerReview} className="stack gap-4 my-4">
-              <div>
+            <form onSubmit={handleSubmitManagerReview} className="stack gap-4 my-2">
+              <div className="field">
                 <label>Manager Rating (1.0 to 5.0)</label>
                 <select value={mgrRating} onChange={(e) => setMgrRating(e.target.value)}>
                   <option value="5.0">5.0 — Outstanding / Exceeds All Expectations</option>
@@ -264,7 +264,7 @@ export function PerformanceReviewPage() {
                 </select>
               </div>
 
-              <div>
+              <div className="field">
                 <label>Manager Feedback & Comments</label>
                 <textarea
                   rows={4}
@@ -280,7 +280,7 @@ export function PerformanceReviewPage() {
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submittingReview}>
-                  {submittingReview ? "Submitting..." : "Save Rating"}
+                  {submittingReview ? "Saving..." : "Save"}
                 </button>
               </div>
             </form>

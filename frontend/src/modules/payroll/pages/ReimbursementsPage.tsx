@@ -200,9 +200,9 @@ export function ReimbursementsPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSubmitClaim} className="stack gap-4">
-              <div className="grid grid-2 gap-4">
-                <div>
+            <form onSubmit={handleSubmitClaim} className="stack gap-4 my-2">
+              <div className="grid-2">
+                <div className="field">
                   <label>Expense Type</label>
                   <select value={type} onChange={(e) => setType(e.target.value as ReimbursementType)}>
                     <option value="travel">Travel</option>
@@ -212,11 +212,13 @@ export function ReimbursementsPage() {
                     <option value="other">Other</option>
                   </select>
                 </div>
-                <div>
-                  <label>Amount (₹)</label>
+                <div className="field">
+                  <label>Amount (₹) *</label>
                   <input
                     type="number"
                     step="0.01"
+                    min="0"
+                    placeholder="0.00"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     required
@@ -224,8 +226,8 @@ export function ReimbursementsPage() {
                 </div>
               </div>
 
-              <div>
-                <label>Expense Date</label>
+              <div className="field">
+                <label>Expense Date *</label>
                 <input
                   type="date"
                   value={expenseDate}
@@ -234,8 +236,8 @@ export function ReimbursementsPage() {
                 />
               </div>
 
-              <div>
-                <label>Description & Purpose</label>
+              <div className="field">
+                <label>Description & Purpose *</label>
                 <textarea
                   rows={3}
                   value={description}
@@ -250,7 +252,7 @@ export function ReimbursementsPage() {
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? "Submitting..." : "Submit Claim"}
+                  {submitting ? "Submitting..." : "Submit"}
                 </button>
               </div>
             </form>
@@ -273,19 +275,21 @@ export function ReimbursementsPage() {
                 ✕
               </button>
             </div>
-            <div className="stack gap-3 my-4">
-              <div>
-                <span className="text-muted text-xs block">Expense Type & Amount</span>
-                <strong>
-                  {selectedClaim.type.toUpperCase()} — ₹{Number(selectedClaim.amount).toLocaleString()}
-                </strong>
-              </div>
-              <div>
-                <span className="text-muted text-xs block">Date & Description</span>
-                <p className="text-sm">{selectedClaim.expense_date}: {selectedClaim.description}</p>
+            <div className="stack gap-3 my-2">
+              <div className="p-3 bg-muted rounded border stack gap-2">
+                <div>
+                  <span className="text-muted text-xs block">Expense Type & Amount</span>
+                  <strong className="text-base">
+                    {selectedClaim.type.toUpperCase()} — ₹{Number(selectedClaim.amount).toLocaleString()}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-muted text-xs block">Date & Description</span>
+                  <p className="text-sm mt-1">{selectedClaim.expense_date}: {selectedClaim.description}</p>
+                </div>
               </div>
 
-              <div>
+              <div className="field">
                 <label>Rejection Reason (required if rejecting)</label>
                 <input
                   type="text"
@@ -296,20 +300,20 @@ export function ReimbursementsPage() {
               </div>
             </div>
 
-            <div className="flex gap-3 justify-end mt-4">
+            <div className="flex gap-2 justify-end mt-4">
               <button
                 className="btn btn-danger"
                 onClick={() => handleReview("reject")}
                 disabled={reviewing}
               >
-                Reject Claim
+                Reject
               </button>
               <button
                 className="btn btn-success"
                 onClick={() => handleReview("approve")}
                 disabled={reviewing}
               >
-                Approve Claim
+                Approve
               </button>
             </div>
           </div>

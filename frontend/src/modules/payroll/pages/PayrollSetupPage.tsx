@@ -522,7 +522,7 @@ export function PayrollSetupPage() {
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary">
-                  Save Structure
+                  Save
                 </button>
               </div>
             </form>
@@ -533,9 +533,9 @@ export function PayrollSetupPage() {
       {/* Modal: Assign Salary */}
       {showAssignModal && (
         <div className="modal-backdrop" onClick={() => setShowAssignModal(false)}>
-          <div className="modal card max-w-lg" onClick={(e) => e.stopPropagation()}>
+          <div className="modal card" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Assign Salary Structure to Employee</h2>
+              <h2>Assign Salary Structure</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -545,9 +545,9 @@ export function PayrollSetupPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleAssignSalary} className="stack gap-4">
-              <div>
-                <label>Select Employee</label>
+            <form onSubmit={handleAssignSalary} className="stack gap-4 my-2">
+              <div className="field">
+                <label>Employee *</label>
                 <select value={selectedEmpId} onChange={(e) => setSelectedEmpId(e.target.value)} required>
                   <option value="">-- Choose Employee --</option>
                   {employees.map((emp) => (
@@ -558,8 +558,8 @@ export function PayrollSetupPage() {
                 </select>
               </div>
 
-              <div>
-                <label>Select Structure</label>
+              <div className="field">
+                <label>Salary Structure *</label>
                 <select value={selectedStructId} onChange={(e) => setSelectedStructId(e.target.value)} required>
                   <option value="">-- Choose Structure --</option>
                   {structures.map((s) => (
@@ -570,19 +570,21 @@ export function PayrollSetupPage() {
                 </select>
               </div>
 
-              <div className="grid grid-2 gap-4">
-                <div>
-                  <label>Annual CTC (₹)</label>
+              <div className="grid-2">
+                <div className="field">
+                  <label>Annual CTC (₹) *</label>
                   <input
                     type="number"
                     step="0.01"
+                    min="0"
+                    placeholder="e.g. 1200000"
                     value={assignCtc}
                     onChange={(e) => setAssignCtc(e.target.value)}
                     required
                   />
                 </div>
-                <div>
-                  <label>Effective From</label>
+                <div className="field">
+                  <label>Effective From *</label>
                   <input
                     type="date"
                     value={assignEffectiveFrom}
@@ -597,7 +599,7 @@ export function PayrollSetupPage() {
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={assigning}>
-                  {assigning ? "Assigning..." : "Confirm Assignment"}
+                  {assigning ? "Saving..." : "Save"}
                 </button>
               </div>
             </form>

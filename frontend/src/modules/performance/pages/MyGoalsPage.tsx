@@ -283,9 +283,9 @@ export function MyGoalsPage() {
       {/* Modal: Set Goals */}
       {showSetModal && (
         <div className="modal-backdrop" onClick={() => setShowSetModal(false)}>
-          <div className="modal card max-w-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="modal card" style={{ maxWidth: "640px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Set Goals for {activeCycle?.name}</h2>
+              <h2>Set Performance Goals</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -295,106 +295,115 @@ export function MyGoalsPage() {
                 ✕
               </button>
             </div>
-            <p className="text-sm text-muted mb-4">
-              Enter individual goals. Total weightages must sum to exactly 100.00%.
+            <p className="text-sm text-muted mb-3">
+              Define goals for <strong>{activeCycle?.name}</strong>. Total weightages must equal 100.00%.
             </p>
 
             <form onSubmit={handleSaveGoals} className="stack gap-4">
-              {goalInputs.map((item, idx) => (
-                <div key={idx} className="p-3 border rounded stack gap-2">
-                  <div className="flex justify-between align-center">
-                    <strong className="text-sm">Goal #{idx + 1}</strong>
-                    {idx > 1 && (
-                      <button
-                        type="button"
-                        className="btn btn-xs btn-ghost text-red"
-                        onClick={() => removeGoalLine(idx)}
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                  <div className="grid grid-3 gap-2">
-                    <div className="col-span-2">
-                      <label className="text-xs">Title</label>
-                      <input
-                        type="text"
-                        placeholder="Goal title..."
-                        value={item.title}
-                        onChange={(e) => {
-                          const updated = [...goalInputs];
-                          updated[idx].title = e.target.value;
-                          setGoalInputs(updated);
-                        }}
-                        required
-                      />
+              <div className="stack gap-3" style={{ maxHeight: "55vh", overflowY: "auto", paddingRight: "4px" }}>
+                {goalInputs.map((item, idx) => (
+                  <div key={idx} className="card" style={{ padding: "var(--space-3)", background: "var(--color-bg)", border: "1px solid var(--color-border)" }}>
+                    <div className="row-between mb-2">
+                      <strong className="text-sm">Goal #{idx + 1}</strong>
+                      {idx > 1 && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost text-red"
+                          onClick={() => removeGoalLine(idx)}
+                          style={{ padding: "2px 6px" }}
+                        >
+                          ✕ Remove
+                        </button>
+                      )}
                     </div>
-                    <div>
-                      <label className="text-xs">Weightage (%)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="50.00"
-                        value={item.weightage}
-                        onChange={(e) => {
-                          const updated = [...goalInputs];
-                          updated[idx].weightage = e.target.value;
-                          setGoalInputs(updated);
-                        }}
-                        required
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-2 gap-2">
-                    <div>
-                      <label className="text-xs">Description</label>
-                      <input
-                        type="text"
-                        placeholder="Goal description..."
-                        value={item.description || ""}
-                        onChange={(e) => {
-                          const updated = [...goalInputs];
-                          updated[idx].description = e.target.value;
-                          setGoalInputs(updated);
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs">Target Metric</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. 100% accuracy"
-                        value={item.target_value || ""}
-                        onChange={(e) => {
-                          const updated = [...goalInputs];
-                          updated[idx].target_value = e.target.value;
-                          setGoalInputs(updated);
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
 
-              <div className="flex justify-between align-center p-3 bg-muted rounded">
+                    <div className="stack gap-2">
+                      <div className="grid-2">
+                        <div className="field">
+                          <label>Title *</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Complete quarterly deliverables"
+                            value={item.title}
+                            onChange={(e) => {
+                              const updated = [...goalInputs];
+                              updated[idx].title = e.target.value;
+                              setGoalInputs(updated);
+                            }}
+                            required
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Weightage (%) *</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="100"
+                            placeholder="50.00"
+                            value={item.weightage}
+                            onChange={(e) => {
+                              const updated = [...goalInputs];
+                              updated[idx].weightage = e.target.value;
+                              setGoalInputs(updated);
+                            }}
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid-2">
+                        <div className="field">
+                          <label>Target Metric</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. 100% completed / 0 critical bugs"
+                            value={item.target_value || ""}
+                            onChange={(e) => {
+                              const updated = [...goalInputs];
+                              updated[idx].target_value = e.target.value;
+                              setGoalInputs(updated);
+                            }}
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Description</label>
+                          <input
+                            type="text"
+                            placeholder="Brief description of deliverables..."
+                            value={item.description || ""}
+                            onChange={(e) => {
+                              const updated = [...goalInputs];
+                              updated[idx].description = e.target.value;
+                              setGoalInputs(updated);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="row-between p-3 bg-muted rounded border">
                 <button type="button" className="btn btn-sm btn-outline" onClick={addGoalLine}>
                   + Add Goal
                 </button>
                 <div className="text-sm">
                   Total Weightage:{" "}
-                  <strong className={newGoalTotalWeightage === 100 ? "text-success" : "text-red"}>
+                  <strong className={newGoalTotalWeightage === 100 ? "text-success font-mono" : "text-red font-mono"}>
                     {newGoalTotalWeightage}%
                   </strong>{" "}
-                  / 100%
+                  <span className="text-muted">/ 100%</span>
                 </div>
               </div>
 
-              <div className="flex gap-2 justify-end mt-4">
+              <div className="flex gap-2 justify-end mt-2">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowSetModal(false)}>
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submittingGoals}>
-                  {submittingGoals ? "Saving..." : "Save Goals"}
+                  {submittingGoals ? "Saving..." : "Save"}
                 </button>
               </div>
             </form>

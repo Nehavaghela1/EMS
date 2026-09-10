@@ -425,12 +425,12 @@ export function ProjectDetailPage() {
         </div>
       )}
 
-      {/* CREATE TASK MODAL */}
+      {/* ADD TASK MODAL */}
       {showTaskModal && (
         <div className="modal-backdrop" onClick={() => setShowTaskModal(false)}>
-          <div className="modal card stack" style={{ maxWidth: "450px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-              <h3>Create Project Task</h3>
+          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Task</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -440,37 +440,39 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleCreateTask} className="stack" style={{ gap: "1rem" }}>
-              <div className="form-group">
+            <form onSubmit={handleCreateTask} className="stack gap-4 my-2">
+              <div className="field">
                 <label>Task Title *</label>
-                <input type="text" className="input" value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} required />
+                <input type="text" value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} required />
               </div>
-              <div className="row" style={{ gap: "1rem" }}>
-                <div className="form-group" style={{ flex: 1 }}>
+              <div className="grid-2">
+                <div className="field">
                   <label>Priority</label>
-                  <select className="input" value={taskPriority} onChange={(e) => setTaskPriority(e.target.value as TaskPriority)}>
+                  <select value={taskPriority} onChange={(e) => setTaskPriority(e.target.value as TaskPriority)}>
                     <option value="low">Low</option>
                     <option value="medium">Medium</option>
                     <option value="high">High</option>
                     <option value="critical">Critical</option>
                   </select>
                 </div>
-                <div className="form-group" style={{ flex: 1 }}>
+                <div className="field">
                   <label>Est. Hours</label>
-                  <input type="number" step="0.5" className="input" value={taskEstHours} onChange={(e) => setTaskEstHours(e.target.value)} />
+                  <input type="number" step="0.5" value={taskEstHours} onChange={(e) => setTaskEstHours(e.target.value)} />
                 </div>
               </div>
-              <div className="form-group">
+              <div className="field">
                 <label>Due Date</label>
-                <input type="date" className="input" value={taskDueDate} onChange={(e) => setTaskDueDate(e.target.value)} />
+                <input type="date" value={taskDueDate} onChange={(e) => setTaskDueDate(e.target.value)} />
               </div>
-              <div className="form-group">
+              <div className="field">
                 <label>Description</label>
-                <textarea className="input" rows={3} value={taskDesc} onChange={(e) => setTaskDesc(e.target.value)} />
+                <textarea rows={3} value={taskDesc} onChange={(e) => setTaskDesc(e.target.value)} />
               </div>
-              <div className="row" style={{ justifyContent: "flex-end", gap: "0.5rem" }}>
+              <div className="flex gap-2 justify-end mt-4">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowTaskModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={submittingTask}>Create Task</button>
+                <button type="submit" className="btn btn-primary" disabled={submittingTask}>
+                  {submittingTask ? "Saving..." : "Save"}
+                </button>
               </div>
             </form>
           </div>
@@ -480,9 +482,9 @@ export function ProjectDetailPage() {
       {/* COMMENTS MODAL */}
       {activeCommentTask && (
         <div className="modal-backdrop" onClick={() => setActiveCommentTask(null)}>
-          <div className="modal card stack" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-              <h3>Comments: {activeCommentTask.title}</h3>
+          <div className="modal card" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Comments: {activeCommentTask.title}</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -492,24 +494,23 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <div className="stack" style={{ gap: "0.75rem", maxHeight: "250px", overflowY: "auto", padding: "0.5rem" }}>
+            <div className="stack gap-2 my-2" style={{ maxHeight: "280px", overflowY: "auto", padding: "0.25rem" }}>
               {loadingComments ? (
                 <p className="text-muted">Loading comments...</p>
               ) : comments.length === 0 ? (
-                <p className="text-muted">No comments yet. Start the conversation!</p>
+                <p className="text-muted text-sm text-center p-4">No comments yet. Start the conversation!</p>
               ) : (
                 comments.map((c) => (
-                  <div key={c.id} className="card" style={{ padding: "0.5rem 0.75rem", background: "var(--bg-subtle, #f8fafc)" }}>
+                  <div key={c.id} className="card p-3" style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)" }}>
                     <p style={{ margin: 0, fontSize: "0.9rem" }}>{c.comment}</p>
-                    <span className="text-muted" style={{ fontSize: "0.75rem" }}>{new Date(c.created_at).toLocaleString()}</span>
+                    <span className="text-muted text-xs">{new Date(c.created_at).toLocaleString()}</span>
                   </div>
                 ))
               )}
             </div>
-            <form onSubmit={handlePostComment} className="row" style={{ gap: "0.5rem" }}>
+            <form onSubmit={handlePostComment} className="flex gap-2 mt-3">
               <input
                 type="text"
-                className="input"
                 style={{ flex: 1 }}
                 placeholder="Write a comment..."
                 value={newComment}
@@ -525,9 +526,9 @@ export function ProjectDetailPage() {
       {/* CREATE MILESTONE MODAL */}
       {showMilestoneModal && (
         <div className="modal-backdrop" onClick={() => setShowMilestoneModal(false)}>
-          <div className="modal card stack" style={{ maxWidth: "450px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-              <h3>Create Milestone</h3>
+          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Milestone</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -537,28 +538,30 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleCreateMilestone} className="stack" style={{ gap: "1rem" }}>
-              <div className="form-group">
+            <form onSubmit={handleCreateMilestone} className="stack gap-4 my-2">
+              <div className="field">
                 <label>Milestone Title *</label>
-                <input type="text" className="input" value={msTitle} onChange={(e) => setMsTitle(e.target.value)} required />
+                <input type="text" value={msTitle} onChange={(e) => setMsTitle(e.target.value)} required />
               </div>
-              <div className="row" style={{ gap: "1rem" }}>
-                <div className="form-group" style={{ flex: 1 }}>
+              <div className="grid-2">
+                <div className="field">
                   <label>Completion %</label>
-                  <input type="number" min="0" max="100" className="input" value={msPct} onChange={(e) => setMsPct(e.target.value)} />
+                  <input type="number" min="0" max="100" value={msPct} onChange={(e) => setMsPct(e.target.value)} />
                 </div>
-                <div className="form-group" style={{ flex: 1 }}>
+                <div className="field">
                   <label>Due Date</label>
-                  <input type="date" className="input" value={msDueDate} onChange={(e) => setMsDueDate(e.target.value)} />
+                  <input type="date" value={msDueDate} onChange={(e) => setMsDueDate(e.target.value)} />
                 </div>
               </div>
-              <div className="form-group">
+              <div className="field">
                 <label>Description</label>
-                <textarea className="input" rows={2} value={msDesc} onChange={(e) => setMsDesc(e.target.value)} />
+                <textarea rows={2} value={msDesc} onChange={(e) => setMsDesc(e.target.value)} />
               </div>
-              <div className="row" style={{ justifyContent: "flex-end", gap: "0.5rem" }}>
+              <div className="flex gap-2 justify-end mt-4">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowMilestoneModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={submittingMs}>Save Milestone</button>
+                <button type="submit" className="btn btn-primary" disabled={submittingMs}>
+                  {submittingMs ? "Saving..." : "Save"}
+                </button>
               </div>
             </form>
           </div>
@@ -568,9 +571,9 @@ export function ProjectDetailPage() {
       {/* ADD MEMBER MODAL */}
       {showMemberModal && (
         <div className="modal-backdrop" onClick={() => setShowMemberModal(false)}>
-          <div className="modal card stack" style={{ maxWidth: "400px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-              <h3>Assign Team Member</h3>
+          <div className="modal card" style={{ maxWidth: "440px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Assign Team Member</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -580,21 +583,23 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleAddMember} className="stack" style={{ gap: "1rem" }}>
-              <div className="form-group">
+            <form onSubmit={handleAddMember} className="stack gap-4 my-2">
+              <div className="field">
                 <label>Employee ID (UUID) *</label>
-                <input type="text" className="input" value={memberEmployeeId} onChange={(e) => setMemberEmployeeId(e.target.value)} required />
+                <input type="text" value={memberEmployeeId} onChange={(e) => setMemberEmployeeId(e.target.value)} required />
               </div>
-              <div className="form-group">
+              <div className="field">
                 <label>Role</label>
-                <select className="input" value={memberRole} onChange={(e) => setMemberRole(e.target.value as any)}>
+                <select value={memberRole} onChange={(e) => setMemberRole(e.target.value as any)}>
                   <option value="member">Member</option>
                   <option value="lead">Project Lead</option>
                 </select>
               </div>
-              <div className="row" style={{ justifyContent: "flex-end", gap: "0.5rem" }}>
+              <div className="flex gap-2 justify-end mt-4">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowMemberModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={submittingMember}>Assign</button>
+                <button type="submit" className="btn btn-primary" disabled={submittingMember}>
+                  {submittingMember ? "Saving..." : "Assign"}
+                </button>
               </div>
             </form>
           </div>

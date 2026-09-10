@@ -184,12 +184,11 @@ export function ProjectsListPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleCreate} className="stack" style={{ gap: "1rem" }}>
-              <div className="form-group">
+            <form onSubmit={handleCreate} className="stack gap-4 my-2">
+              <div className="field">
                 <label>Project Name *</label>
                 <input
                   type="text"
-                  className="input"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Mobile App Redesign"
@@ -197,21 +196,20 @@ export function ProjectsListPage() {
                 />
               </div>
 
-              <div className="row" style={{ gap: "1rem" }}>
-                <div className="form-group" style={{ flex: 1 }}>
+              <div className="grid-2">
+                <div className="field">
                   <label>Project Code *</label>
                   <input
                     type="text"
-                    className="input"
                     value={code}
                     onChange={(e) => setCode(e.target.value.toUpperCase())}
                     placeholder="e.g. MAP-01"
                     required
                   />
                 </div>
-                <div className="form-group" style={{ flex: 1 }}>
+                <div className="field">
                   <label>Status</label>
-                  <select className="input" value={status} onChange={(e) => setStatus(e.target.value as ProjectStatus)}>
+                  <select value={status} onChange={(e) => setStatus(e.target.value as ProjectStatus)}>
                     <option value="planning">Planning</option>
                     <option value="active">Active</option>
                     <option value="on_hold">On Hold</option>
@@ -219,23 +217,21 @@ export function ProjectsListPage() {
                 </div>
               </div>
 
-              <div className="row" style={{ gap: "1rem" }}>
-                <div className="form-group" style={{ flex: 1 }}>
+              <div className="grid-2">
+                <div className="field">
                   <label>Client Name</label>
                   <input
                     type="text"
-                    className="input"
                     value={clientName}
                     onChange={(e) => setClientName(e.target.value)}
                     placeholder="Acme Corp"
                   />
                 </div>
-                <div className="form-group" style={{ flex: 1 }}>
+                <div className="field">
                   <label>Budget ($)</label>
                   <input
                     type="number"
                     step="0.01"
-                    className="input"
                     value={budget}
                     onChange={(e) => setBudget(e.target.value)}
                     placeholder="25000"
@@ -243,21 +239,20 @@ export function ProjectsListPage() {
                 </div>
               </div>
 
-              <div className="row" style={{ gap: "1rem" }}>
-                <div className="form-group" style={{ flex: 1 }}>
+              <div className="grid-2">
+                <div className="field">
                   <label>Start Date</label>
-                  <input type="date" className="input" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                 </div>
-                <div className="form-group" style={{ flex: 1 }}>
+                <div className="field">
                   <label>Deadline</label>
-                  <input type="date" className="input" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+                  <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
                 </div>
               </div>
 
-              <div className="form-group">
+              <div className="field">
                 <label>Description</label>
                 <textarea
-                  className="input"
                   rows={3}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
@@ -265,12 +260,12 @@ export function ProjectsListPage() {
                 />
               </div>
 
-              <div className="row" style={{ justifyContent: "flex-end", gap: "0.5rem", marginTop: "1rem" }}>
+              <div className="flex gap-2 justify-end mt-4">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowModal(false)}>
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? "Saving..." : "Create Project"}
+                  {submitting ? "Saving..." : "Save"}
                 </button>
               </div>
             </form>
