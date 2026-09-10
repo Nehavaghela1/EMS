@@ -183,7 +183,7 @@ export function MyGoalsPage() {
         </div>
         {activeCycle && (
           <button className="btn btn-primary" onClick={() => setShowSetModal(true)}>
-            + Set / Add Goals
+            + Add Goals
           </button>
         )}
       </div>
@@ -417,8 +417,8 @@ export function MyGoalsPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSubmitSelfReview} className="stack gap-4 my-4">
-              <div>
+            <form onSubmit={handleSubmitSelfReview} className="stack gap-4 my-2">
+              <div className="field">
                 <label>Self Rating (1.0 to 5.0)</label>
                 <select value={selfRating} onChange={(e) => setSelfRating(e.target.value)}>
                   <option value="5.0">5.0 — Outstanding / Exceeds All Expectations</option>
@@ -429,7 +429,7 @@ export function MyGoalsPage() {
                 </select>
               </div>
 
-              <div>
+              <div className="field">
                 <label>Self Review Comments & Achievements</label>
                 <textarea
                   rows={4}
@@ -445,7 +445,7 @@ export function MyGoalsPage() {
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submittingReview}>
-                  {submittingReview ? "Submitting..." : "Submit Self Rating"}
+                  {submittingReview ? "Submitting..." : "Submit Review"}
                 </button>
               </div>
             </form>
@@ -456,9 +456,9 @@ export function MyGoalsPage() {
       {/* Modal: Edit Goal */}
       {editingGoal && (
         <div className="modal-backdrop" onClick={() => setEditingGoal(null)}>
-          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+          <div className="modal card" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Edit Performance Goal</h2>
+              <h2>Edit Goal</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -468,31 +468,31 @@ export function MyGoalsPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleUpdateGoal} className="stack gap-4 my-4">
-              <div>
-                <label>Goal Title *</label>
+            <form onSubmit={handleUpdateGoal} className="stack gap-4 my-2">
+              <div className="field">
+                <label>Title *</label>
                 <input
                   type="text"
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
-                  placeholder="e.g. Lead Quarterly Architecture Review"
+                  placeholder="Goal title..."
                   required
                 />
               </div>
 
-              <div>
-                <label>Description & Expectations</label>
+              <div className="field">
+                <label>Description</label>
                 <textarea
                   rows={3}
                   value={editDescription}
                   onChange={(e) => setEditDescription(e.target.value)}
-                  placeholder="Detailed deliverables, milestones, or success factors..."
+                  placeholder="Key deliverables or success factors..."
                 />
               </div>
 
-              <div className="grid grid-2 gap-4">
-                <div>
-                  <label>Target / Metric</label>
+              <div className="grid-2">
+                <div className="field">
+                  <label>Target Metric</label>
                   <input
                     type="text"
                     value={editTargetValue}
@@ -500,7 +500,7 @@ export function MyGoalsPage() {
                     placeholder="e.g. 100% completed"
                   />
                 </div>
-                <div>
+                <div className="field">
                   <label>Status</label>
                   <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as GoalStatus)}>
                     <option value="draft">Draft</option>
@@ -510,7 +510,7 @@ export function MyGoalsPage() {
                 </div>
               </div>
 
-              <div>
+              <div className="field">
                 <label>Weightage (%)</label>
                 <input
                   type="number"
@@ -528,7 +528,7 @@ export function MyGoalsPage() {
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submittingEdit}>
-                  {submittingEdit ? "Updating..." : "Update Goal"}
+                  {submittingEdit ? "Saving..." : "Save"}
                 </button>
               </div>
             </form>
