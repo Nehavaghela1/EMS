@@ -313,24 +313,44 @@ export function ProjectDetailPage() {
               return (
                 <div key={col.key} className="kanban-col">
                   <div className="kanban-col-header">
-                    <span className="fw-bold text-sm" style={{ color: col.color }}>{col.title}</span>
-                    <span className="badge badge-muted font-mono">{colTasks.length}</span>
+                    <span className="kanban-col-title">
+                      <span
+                        style={{
+                          width: 9,
+                          height: 9,
+                          borderRadius: "50%",
+                          background: col.color,
+                          display: "inline-block",
+                        }}
+                      />
+                      <span style={{ color: "var(--color-text)", fontWeight: 600 }}>{col.title}</span>
+                    </span>
+                    <span className="kanban-col-count">{colTasks.length}</span>
                   </div>
 
                   <div className="stack gap-3" style={{ flex: 1, overflowY: "auto" }}>
                     {colTasks.length === 0 ? (
-                      <div className="text-center text-muted text-xs p-4" style={{ border: "1px dashed var(--color-border)", borderRadius: "var(--radius-sm)" }}>
+                      <div
+                        className="text-center text-muted text-xs p-4"
+                        style={{
+                          border: "1px dashed #cbd5e1",
+                          borderRadius: "var(--radius-sm)",
+                          background: "rgba(255, 255, 255, 0.6)",
+                        }}
+                      >
                         No tasks
                       </div>
                     ) : (
                       colTasks.map((task) => (
                         <div key={task.id} className="kanban-task-card">
-                          <div className="row-between">
-                            <span className={`badge ${priorityBadges[task.priority]}`}>{task.priority}</span>
+                          <div className="row-between align-center">
+                            <span className={`badge ${priorityBadges[task.priority]}`} style={{ textTransform: "uppercase", fontSize: "10px", letterSpacing: "0.5px" }}>
+                              {task.priority}
+                            </span>
                             <button
                               type="button"
                               className="btn btn-ghost btn-sm"
-                              style={{ padding: "2px 6px" }}
+                              style={{ padding: "2px 6px", fontSize: "13px" }}
                               onClick={() => openTaskComments(task)}
                               title="Task comments"
                             >
@@ -338,17 +358,15 @@ export function ProjectDetailPage() {
                             </button>
                           </div>
 
-                          <h4 style={{ margin: 0, fontSize: "0.92rem", lineHeight: 1.3 }}>{task.title}</h4>
+                          <h4 className="kanban-task-title">{task.title}</h4>
 
                           {task.description && (
-                            <p className="text-muted text-xs" style={{ margin: 0, lineHeight: 1.4 }}>
-                              {task.description}
-                            </p>
+                            <p className="kanban-task-desc">{task.description}</p>
                           )}
 
-                          <div className="row-between mt-2 pt-2 border-t" style={{ fontSize: "0.75rem" }}>
+                          <div className="kanban-task-footer">
                             <span className="text-muted text-xs">
-                              {task.due_date ? `Due ${task.due_date}` : "No due date"}
+                              {task.due_date ? `📅 Due ${task.due_date}` : "No due date"}
                             </span>
                             <select
                               value={task.status}
