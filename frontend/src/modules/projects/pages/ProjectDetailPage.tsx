@@ -226,67 +226,67 @@ export function ProjectDetailPage() {
         </Link>
       </div>
 
-      {/* Header Info */}
-      <div className="card" style={{ padding: "1.5rem" }}>
-        <div className="row-between align-center" style={{ borderBottom: "1px solid var(--color-border)", paddingBottom: "1.25rem", marginBottom: "1.25rem" }}>
-          <div>
-            <div className="row gap-2 align-center mb-1">
-              <span className="badge badge-muted font-mono" style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.5px" }}>
-                {project.code}
-              </span>
-              <span className={`badge ${project.status === "active" ? "badge-success" : "badge-muted"}`} style={{ textTransform: "uppercase", fontSize: "11px", letterSpacing: "0.5px" }}>
-                {project.status}
-              </span>
-            </div>
-            <h1 style={{ margin: 0, fontSize: "1.5rem", fontWeight: 700, letterSpacing: "-0.02em" }}>{project.name}</h1>
-            {project.client_name && (
-              <p className="text-muted text-sm mt-1" style={{ margin: 0 }}>
-                Client: <strong style={{ color: "var(--color-text)" }}>{project.client_name}</strong>
-              </p>
-            )}
+      {/* Page Header */}
+      <div className="row-between align-center">
+        <div>
+          <div className="row gap-2 align-center mb-1">
+            <span className="badge badge-muted font-mono" style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.5px" }}>
+              {project.code}
+            </span>
+            <span className={`badge ${project.status === "active" ? "badge-success" : "badge-muted"}`} style={{ textTransform: "uppercase", fontSize: "11px", letterSpacing: "0.5px" }}>
+              {project.status}
+            </span>
           </div>
+          <h1 style={{ margin: 0, fontSize: "1.75rem", fontWeight: 700, letterSpacing: "-0.02em" }}>{project.name}</h1>
+          {project.client_name && (
+            <p className="text-muted text-sm mt-1" style={{ margin: 0 }}>
+              Client: <strong style={{ color: "var(--color-text)" }}>{project.client_name}</strong>
+            </p>
+          )}
+        </div>
 
-          <div className="flex gap-2">
-            <button className="btn btn-primary" onClick={() => setShowTaskModal(true)}>
-              + Add Task
-            </button>
+        <div>
+          <button className="btn btn-primary" onClick={() => setShowTaskModal(true)}>
+            + Add Task
+          </button>
+        </div>
+      </div>
+
+      {/* Analytics Stats Grid - Standalone Cards */}
+      <div className="stat-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem" }}>
+        <div className="card">
+          <span className="stat-label" style={{ fontWeight: 600, letterSpacing: "0.04em", fontSize: "11px" }}>TASKS PROGRESS</span>
+          <div className="row-between align-center mt-1">
+            <div className="stat-value text-primary" style={{ margin: 0, fontSize: "1.75rem" }}>{summary.completion_percentage}%</div>
+            <span className="text-muted text-xs font-mono">{summary.completed_tasks}/{summary.total_tasks} done</span>
+          </div>
+          <div style={{ width: "100%", height: "4px", background: "#e2e8f0", borderRadius: "2px", marginTop: "10px", overflow: "hidden" }}>
+            <div style={{ width: `${summary.completion_percentage}%`, height: "100%", background: "var(--color-primary)", borderRadius: "2px" }} />
           </div>
         </div>
 
-        {/* Analytics Stats Grid */}
-        <div className="stat-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "1rem" }}>
-          <div className="card" style={{ padding: "1rem 1.25rem", background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", boxShadow: "none" }}>
-            <span className="stat-label" style={{ fontWeight: 600, letterSpacing: "0.04em", fontSize: "11px" }}>TASKS PROGRESS</span>
-            <div className="row-between align-center mt-1">
-              <div className="stat-value text-primary" style={{ margin: 0, fontSize: "1.6rem" }}>{summary.completion_percentage}%</div>
-              <span className="text-muted text-xs font-mono">{summary.completed_tasks}/{summary.total_tasks} done</span>
-            </div>
-            <div style={{ width: "100%", height: "4px", background: "#cbd5e1", borderRadius: "2px", marginTop: "8px", overflow: "hidden" }}>
-              <div style={{ width: `${summary.completion_percentage}%`, height: "100%", background: "var(--color-primary)", borderRadius: "2px" }} />
-            </div>
+        <div className="card">
+          <span className="stat-label" style={{ fontWeight: 600, letterSpacing: "0.04em", fontSize: "11px" }}>LOGGED HOURS</span>
+          <div className="stat-value" style={{ margin: 0, fontSize: "1.75rem" }}>
+            {summary.total_logged_hours} <span style={{ fontSize: "0.95rem", fontWeight: 500, color: "var(--color-text-muted)" }}>hrs</span>
           </div>
+          <div className="text-muted text-xs mt-2">{summary.total_billable_hours} hrs Billable</div>
+        </div>
 
-          <div className="card" style={{ padding: "1rem 1.25rem", background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", boxShadow: "none" }}>
-            <span className="stat-label" style={{ fontWeight: 600, letterSpacing: "0.04em", fontSize: "11px" }}>LOGGED HOURS</span>
-            <div className="stat-value" style={{ margin: 0, fontSize: "1.6rem" }}>{summary.total_logged_hours} <span style={{ fontSize: "0.9rem", fontWeight: 500, color: "var(--color-text-muted)" }}>hrs</span></div>
-            <div className="text-muted text-xs mt-1">{summary.total_billable_hours} hrs Billable</div>
+        <div className="card">
+          <span className="stat-label" style={{ fontWeight: 600, letterSpacing: "0.04em", fontSize: "11px" }}>OVERDUE TASKS</span>
+          <div className={`stat-value ${summary.overdue_tasks > 0 ? "text-danger" : "text-success"}`} style={{ margin: 0, fontSize: "1.75rem" }}>
+            {summary.overdue_tasks}
           </div>
+          <div className="text-muted text-xs mt-2">
+            {summary.overdue_tasks > 0 ? "⚠️ Needs Attention" : "✓ On Track"}
+          </div>
+        </div>
 
-          <div className="card" style={{ padding: "1rem 1.25rem", background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", boxShadow: "none" }}>
-            <span className="stat-label" style={{ fontWeight: 600, letterSpacing: "0.04em", fontSize: "11px" }}>OVERDUE TASKS</span>
-            <div className={`stat-value ${summary.overdue_tasks > 0 ? "text-danger" : "text-success"}`} style={{ margin: 0, fontSize: "1.6rem" }}>
-              {summary.overdue_tasks}
-            </div>
-            <div className="text-muted text-xs mt-1">
-              {summary.overdue_tasks > 0 ? "⚠️ Needs Attention" : "✓ On Track"}
-            </div>
-          </div>
-
-          <div className="card" style={{ padding: "1rem 1.25rem", background: "var(--color-bg)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", boxShadow: "none" }}>
-            <span className="stat-label" style={{ fontWeight: 600, letterSpacing: "0.04em", fontSize: "11px" }}>TEAM SIZE</span>
-            <div className="stat-value" style={{ margin: 0, fontSize: "1.6rem" }}>{summary.members_count}</div>
-            <div className="text-muted text-xs mt-1">Active Members</div>
-          </div>
+        <div className="card">
+          <span className="stat-label" style={{ fontWeight: 600, letterSpacing: "0.04em", fontSize: "11px" }}>TEAM SIZE</span>
+          <div className="stat-value" style={{ margin: 0, fontSize: "1.75rem" }}>{summary.members_count}</div>
+          <div className="text-muted text-xs mt-2">Active Members</div>
         </div>
       </div>
 
