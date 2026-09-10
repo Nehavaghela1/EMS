@@ -5,6 +5,8 @@ import type { Project, ProjectStatus } from "../types";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 
+import { PageHeader } from "../../../shared/components/PageHeader";
+
 export function ProjectsListPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -81,34 +83,34 @@ export function ProjectsListPage() {
     active: "badge-success",
     planning: "badge-muted",
     on_hold: "badge-warning",
-    completed: "badge-info",
+    completed: "badge-primary",
     cancelled: "badge-danger",
   };
 
   return (
-    <div className="stack" style={{ gap: "1.5rem" }}>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <div>
-          <h2>Projects</h2>
-          <p className="text-muted">Manage company projects, deliverables, milestones & task tracking</p>
-        </div>
-        {canManage && (
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-            + Create Project
-          </button>
-        )}
-      </div>
+    <div>
+      <PageHeader
+        title="Projects"
+        breadcrumb="Projects & Work"
+        action={
+          canManage ? (
+            <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+              + Create Project
+            </button>
+          ) : undefined
+        }
+      />
 
       {/* Filter Toolbar */}
-      <div className="card row" style={{ gap: "1rem", alignItems: "center" }}>
-        <span style={{ fontWeight: 500 }}>Filter Status:</span>
+      <div className="tab-bar mb-6" style={{ marginBottom: "var(--space-5)" }}>
         {(["all", "active", "planning", "on_hold", "completed", "cancelled"] as const).map((st) => (
           <button
             key={st}
-            className={`btn btn-sm ${filterStatus === st ? "btn-primary" : "btn-ghost"}`}
+            type="button"
+            className={`tab-item ${filterStatus === st ? "active" : ""}`}
             onClick={() => setFilterStatus(st)}
           >
-            {st.replace("_", " ").toUpperCase()}
+            {st === "all" ? "All Projects" : st.replace("_", " ").charAt(0).toUpperCase() + st.replace("_", " ").slice(1)}
           </button>
         ))}
       </div>

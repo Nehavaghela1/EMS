@@ -6,6 +6,7 @@ import {
 import type { TimeEntry, Project, Task } from "../types";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
+import { PageHeader } from "../../../shared/components/PageHeader";
 
 export function TimesheetsPage() {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -108,61 +109,88 @@ export function TimesheetsPage() {
 
   const pendingEntries = entries.filter((e) => e.status === "draft" || e.status === "submitted");
 
+  // Summary calculations
+  const totalHours = entries.reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
+  const billableHours = entries.filter(e => e.is_billable).reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
+  const approvedHours = entries.filter(e => e.status === "approved").reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
+
   return (
-    <div className="stack" style={{ gap: "1.5rem" }}>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <div>
-          <h2>Timesheets</h2>
-          <p className="text-muted">Track billable work hours, task activity logs, and manager approvals</p>
+    <div>
+      <PageHeader
+        title="Timesheets"
+        breadcrumb="Projects & Work"
+      />
+
+      {/* KPI Stats Overview */}
+      <div className="stat-grid mb-6">
+        <div className="card">
+          <div className="stat-label">Total Logged</div>
+          <div className="stat-value">{totalHours.toFixed(1)} hrs</div>
+        </div>
+        <div className="card">
+          <div className="stat-label">Billable Hours</div>
+          <div className="stat-value" style={{ color: "var(--color-primary)" }}>{billableHours.toFixed(1)} hrs</div>
+        </div>
+        <div className="card">
+          <div className="stat-label">Approved Hours</div>
+          <div className="stat-value" style={{ color: "var(--color-success)" }}>{approvedHours.toFixed(1)} hrs</div>
+        </div>
+        <div className="card">
+          <div className="stat-label">Pending Approval</div>
+          <div className="stat-value" style={{ color: pendingEntries.length > 0 ? "var(--color-warning-text)" : "inherit" }}>
+            {pendingEntries.length} entries
+          </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="row" style={{ borderBottom: "1px solid var(--border-color, #e2e8f0)", gap: "1.5rem" }}>
+      {/* Navigation Tab Bar */}
+      <div className="tab-bar">
         <button
-          className={`btn btn-ghost ${activeTab === "log" ? "border-active" : ""}`}
-          style={{ borderBottom: activeTab === "log" ? "2px solid var(--primary)" : "none", borderRadius: 0 }}
+          type="button"
+          className={`tab-item ${activeTab === "log" ? "active" : ""}`}
           onClick={() => setActiveTab("log")}
         >
-          ⏱️ My Time Logs
+          <span>⏱️ My Time Logs</span>
         </button>
         {isManagerOrAdmin && (
           <button
-            className={`btn btn-ghost ${activeTab === "approval" ? "border-active" : ""}`}
-            style={{ borderBottom: activeTab === "approval" ? "2px solid var(--primary)" : "none", borderRadius: 0 }}
+            type="button"
+            className={`tab-item ${activeTab === "approval" ? "active" : ""}`}
             onClick={() => setActiveTab("approval")}
           >
-            📋 Approvals Queue ({pendingEntries.length})
+            <span>📋 Approvals Queue</span>
+            {pendingEntries.length > 0 && (
+              <span className="badge badge-warning">{pendingEntries.length}</span>
+            )}
           </button>
         )}
       </div>
 
       {/* TAB 1: TIME LOG FORM + HISTORY */}
       {activeTab === "log" && (
-        <div className="grid" style={{ gridTemplateColumns: "1fr 2fr", gap: "1.5rem" }}>
-          {/* Form */}
-          <div className="card stack" style={{ gap: "1rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: "var(--space-5)", alignItems: "start" }}>
+          {/* Time Entry Form */}
+          <div className="card">
             <h3>Log Time Worked</h3>
-            <form onSubmit={handleLogTime} className="stack" style={{ gap: "1rem" }}>
-              <div className="form-group">
+            <p className="text-muted text-xs mb-4">Record hours spent on assigned projects and tasks</p>
+            <form onSubmit={handleLogTime} className="stack">
+              <div className="field">
                 <label>Select Project *</label>
                 <select
-                  className="input"
                   value={selectedProjectId}
                   onChange={(e) => setSelectedProjectId(e.target.value)}
                   required
                 >
                   <option value="">-- Choose Project --</option>
                   {projects.map((p) => (
-                    <option key={p.id} value={p.id}>{p.code} - {p.name}</option>
+                    <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
                   ))}
                 </select>
               </div>
 
-              <div className="form-group">
+              <div className="field">
                 <label>Select Task (Optional)</label>
                 <select
-                  className="input"
                   value={selectedTaskId}
                   onChange={(e) => setSelectedTaskId(e.target.value)}
                   disabled={!selectedProjectId}
@@ -174,19 +202,23 @@ export function TimesheetsPage() {
                 </select>
               </div>
 
-              <div className="row" style={{ gap: "1rem" }}>
-                <div className="form-group" style={{ flex: 1 }}>
+              <div className="form-grid">
+                <div className="field">
                   <label>Date *</label>
-                  <input type="date" className="input" value={logDate} onChange={(e) => setLogDate(e.target.value)} required />
+                  <input
+                    type="date"
+                    value={logDate}
+                    onChange={(e) => setLogDate(e.target.value)}
+                    required
+                  />
                 </div>
-                <div className="form-group" style={{ flex: 1 }}>
+                <div className="field">
                   <label>Hours *</label>
                   <input
                     type="number"
                     step="0.25"
                     min="0.1"
                     max="24"
-                    className="input"
                     value={hours}
                     onChange={(e) => setHours(e.target.value)}
                     placeholder="e.g. 7.5"
@@ -195,109 +227,145 @@ export function TimesheetsPage() {
                 </div>
               </div>
 
-              <div className="row" style={{ alignItems: "center", gap: "0.5rem" }}>
+              <div className="row" style={{ gap: "var(--space-2)", margin: "var(--space-1) 0" }}>
                 <input
                   type="checkbox"
                   id="billable"
                   checked={isBillable}
                   onChange={(e) => setIsBillable(e.target.checked)}
+                  style={{ width: "16px", height: "16px", cursor: "pointer" }}
                 />
-                <label htmlFor="billable">Billable Hours</label>
+                <label htmlFor="billable" style={{ cursor: "pointer", fontSize: "var(--text-sm)", userSelect: "none" }}>
+                  Billable Hours
+                </label>
               </div>
 
-              <div className="form-group">
+              <div className="field">
                 <label>Work Description</label>
                 <textarea
-                  className="input"
                   rows={3}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Summary of work performed..."
+                  placeholder="Summary of deliverables, tasks, or meetings performed..."
                 />
               </div>
 
-              <button type="submit" className="btn btn-primary" disabled={submitting}>
+              <button type="submit" className="btn btn-primary" style={{ width: "100%", marginTop: "var(--space-2)" }} disabled={submitting}>
                 {submitting ? "Submitting..." : "Submit Time Entry"}
               </button>
             </form>
           </div>
 
           {/* Log History */}
-          <div className="card stack" style={{ gap: "1rem" }}>
-            <h3>Logged History</h3>
-            {loading ? (
-              <p className="text-muted">Loading logs...</p>
-            ) : entries.length === 0 ? (
-              <p className="text-muted">No time entries recorded yet.</p>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+          <div className="stack">
+            <div className="row-between">
+              <div>
+                <h3 className="mb-0">Logged History</h3>
+                <span className="text-xs text-muted">All submitted time logs for your tenant</span>
+              </div>
+              <span className="text-xs text-muted">{entries.length} records</span>
+            </div>
+
+            <div className="table-wrap">
+              {loading ? (
+                <div className="empty-state">Loading logs...</div>
+              ) : entries.length === 0 ? (
+                <div className="empty-state">No time entries recorded yet. Use the form on the left to submit hours.</div>
+              ) : (
+                <table className="data-table">
                   <thead>
-                    <tr style={{ background: "var(--bg-subtle, #f8fafc)", borderBottom: "1px solid var(--border-color, #e2e8f0)" }}>
-                      <th style={{ padding: "0.75rem" }}>Date</th>
-                      <th style={{ padding: "0.75rem" }}>Hours</th>
-                      <th style={{ padding: "0.75rem" }}>Billable</th>
-                      <th style={{ padding: "0.75rem" }}>Description</th>
-                      <th style={{ padding: "0.75rem" }}>Status</th>
+                    <tr>
+                      <th>Date</th>
+                      <th>Hours</th>
+                      <th>Billable</th>
+                      <th>Description</th>
+                      <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {entries.map((entry) => (
-                      <tr key={entry.id} style={{ borderBottom: "1px solid var(--border-color, #e2e8f0)" }}>
-                        <td style={{ padding: "0.75rem", fontSize: "0.9rem" }}>{entry.date}</td>
-                        <td style={{ padding: "0.75rem", fontWeight: 600 }}>{entry.hours} hrs</td>
-                        <td style={{ padding: "0.75rem" }}>
-                          {entry.is_billable ? <span className="badge badge-success">Yes</span> : <span className="badge badge-muted">No</span>}
+                      <tr key={entry.id}>
+                        <td className="font-medium">{entry.date}</td>
+                        <td className="font-semibold">{entry.hours} hrs</td>
+                        <td>
+                          {entry.is_billable ? (
+                            <span className="badge badge-success">Billable</span>
+                          ) : (
+                            <span className="badge badge-muted">Non-billable</span>
+                          )}
                         </td>
-                        <td style={{ padding: "0.75rem", fontSize: "0.85rem" }}>{entry.description || "N/A"}</td>
-                        <td style={{ padding: "0.75rem" }}>
+                        <td style={{ maxWidth: "260px", whiteSpace: "normal", wordBreak: "break-word" }}>
+                          {entry.description || <span className="text-faint">—</span>}
+                        </td>
+                        <td>
                           <span className={`badge ${statusBadges[entry.status] || "badge-muted"}`}>
-                            {entry.status.toUpperCase()}
+                            {entry.status}
                           </span>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       )}
 
       {/* TAB 2: APPROVALS QUEUE */}
       {activeTab === "approval" && isManagerOrAdmin && (
-        <div className="card stack" style={{ gap: "1rem" }}>
-          <h3>Manager Approval Queue</h3>
-          {pendingEntries.length === 0 ? (
-            <p className="text-muted">No pending timesheet entries awaiting approval.</p>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+        <div className="stack">
+          <div className="row-between">
+            <div>
+              <h3 className="mb-0">Manager Approval Queue</h3>
+              <span className="text-xs text-muted">Review, approve, or reject team member timesheet submissions</span>
+            </div>
+            <span className="text-xs text-muted">{pendingEntries.length} pending requests</span>
+          </div>
+
+          <div className="table-wrap">
+            {pendingEntries.length === 0 ? (
+              <div className="empty-state">No pending timesheet entries awaiting approval.</div>
+            ) : (
+              <table className="data-table">
                 <thead>
-                  <tr style={{ background: "var(--bg-subtle, #f8fafc)", borderBottom: "1px solid var(--border-color, #e2e8f0)" }}>
-                    <th style={{ padding: "0.75rem" }}>Employee ID</th>
-                    <th style={{ padding: "0.75rem" }}>Date</th>
-                    <th style={{ padding: "0.75rem" }}>Hours</th>
-                    <th style={{ padding: "0.75rem" }}>Billable</th>
-                    <th style={{ padding: "0.75rem" }}>Description</th>
-                    <th style={{ padding: "0.75rem", textAlign: "right" }}>Actions</th>
+                  <tr>
+                    <th>Date</th>
+                    <th>Hours</th>
+                    <th>Billable</th>
+                    <th>Description</th>
+                    <th style={{ textAlign: "right" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pendingEntries.map((entry) => (
-                    <tr key={entry.id} style={{ borderBottom: "1px solid var(--border-color, #e2e8f0)" }}>
-                      <td style={{ padding: "0.75rem", fontSize: "0.85rem" }}>{entry.employee_id}</td>
-                      <td style={{ padding: "0.75rem" }}>{entry.date}</td>
-                      <td style={{ padding: "0.75rem", fontWeight: 600 }}>{entry.hours} hrs</td>
-                      <td style={{ padding: "0.75rem" }}>{entry.is_billable ? "Yes" : "No"}</td>
-                      <td style={{ padding: "0.75rem", fontSize: "0.85rem" }}>{entry.description || "N/A"}</td>
-                      <td style={{ padding: "0.75rem", textAlign: "right" }}>
-                        <div className="row" style={{ justifyContent: "flex-end", gap: "0.5rem" }}>
-                          <button className="btn btn-success btn-sm" onClick={() => handleApproveReject(entry.id, "approved")}>
+                    <tr key={entry.id}>
+                      <td className="font-medium">{entry.date}</td>
+                      <td className="font-semibold">{entry.hours} hrs</td>
+                      <td>
+                        {entry.is_billable ? (
+                          <span className="badge badge-success">Billable</span>
+                        ) : (
+                          <span className="badge badge-muted">Non-billable</span>
+                        )}
+                      </td>
+                      <td style={{ maxWidth: "300px", whiteSpace: "normal", wordBreak: "break-word" }}>
+                        {entry.description || <span className="text-faint">—</span>}
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        <div className="row-end">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-success"
+                            onClick={() => handleApproveReject(entry.id, "approved")}
+                          >
                             Approve
                           </button>
-                          <button className="btn btn-danger btn-sm" onClick={() => handleApproveReject(entry.id, "rejected")}>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-danger"
+                            onClick={() => handleApproveReject(entry.id, "rejected")}
+                          >
                             Reject
                           </button>
                         </div>
@@ -306,10 +374,11 @@ export function TimesheetsPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
     </div>
   );
 }
+
