@@ -10,10 +10,14 @@ import type {
   ProjectSummary, Task, TaskStatus, TaskPriority,
   ProjectMember, Milestone, TaskComment
 } from "../types";
+import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
+  const canManage = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager";
+
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
@@ -403,11 +407,13 @@ export function ProjectDetailPage() {
       {/* TAB 2: MILESTONES */}
       {activeTab === "milestones" && (
         <div className="stack gap-4">
-          <div className="flex justify-end">
-            <button className="btn btn-primary btn-sm" onClick={() => setShowMilestoneModal(true)}>
-              + Add Milestone
-            </button>
-          </div>
+          {canManage && (
+            <div className="flex justify-end">
+              <button className="btn btn-primary btn-sm" onClick={() => setShowMilestoneModal(true)}>
+                + Add Milestone
+              </button>
+            </div>
+          )}
 
           {milestones.length === 0 ? (
             <div className="card text-center p-8">
@@ -447,11 +453,13 @@ export function ProjectDetailPage() {
       {/* TAB 3: TEAM MEMBERS */}
       {activeTab === "team" && (
         <div className="stack gap-4">
-          <div className="flex justify-end">
-            <button className="btn btn-primary btn-sm" onClick={() => setShowMemberModal(true)}>
-              + Assign Member
-            </button>
-          </div>
+          {canManage && (
+            <div className="flex justify-end">
+              <button className="btn btn-primary btn-sm" onClick={() => setShowMemberModal(true)}>
+                + Assign Member
+              </button>
+            </div>
+          )}
 
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
             <table className="table">
@@ -460,7 +468,7 @@ export function ProjectDetailPage() {
                   <th>Employee ID</th>
                   <th>Role</th>
                   <th>Joined Date</th>
-                  <th style={{ textAlign: "right" }}>Actions</th>
+                  {canManage && <th style={{ textAlign: "right" }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -473,15 +481,17 @@ export function ProjectDetailPage() {
                       </span>
                     </td>
                     <td>{m.joined_at}</td>
-                    <td style={{ textAlign: "right" }}>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm text-danger"
-                        onClick={() => handleRemoveMember(m.employee_id)}
-                      >
-                        Remove
-                      </button>
-                    </td>
+                    {canManage && (
+                      <td style={{ textAlign: "right" }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm text-danger"
+                          onClick={() => handleRemoveMember(m.employee_id)}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
