@@ -38,146 +38,6 @@ def list_projects(
     service = ProjectService(db)
     return service.list_projects(current_user.company_id, status)
 
-@router.get("/{project_id}", response_model=ProjectResponse)
-def get_project(
-    project_id: UUID,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user)
-):
-    service = ProjectService(db)
-    return service.get_project(current_user.company_id, project_id)
-
-@router.put("/{project_id}", response_model=ProjectResponse)
-def update_project(
-    project_id: UUID,
-    data: ProjectUpdate,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
-):
-    service = ProjectService(db)
-    return service.update_project(current_user.company_id, project_id, data)
-
-@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_project(
-    project_id: UUID,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin))
-):
-    service = ProjectService(db)
-    service.delete_project(current_user.company_id, project_id)
-
-@router.get("/{project_id}/summary", response_model=ProjectSummaryResponse)
-def get_project_summary(
-    project_id: UUID,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user)
-):
-    service = ProjectService(db)
-    return service.get_project_summary(current_user.company_id, project_id)
-
-# --- Project Members (Routes 105-107) ---
-
-@router.post("/{project_id}/members", response_model=ProjectMemberResponse, status_code=status.HTTP_201_CREATED)
-def add_project_member(
-    project_id: UUID,
-    data: ProjectMemberCreate,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
-):
-    service = ProjectService(db)
-    return service.add_member(current_user.company_id, project_id, data)
-
-@router.get("/{project_id}/members", response_model=List[ProjectMemberResponse])
-def list_project_members(
-    project_id: UUID,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user)
-):
-    service = ProjectService(db)
-    return service.list_members(current_user.company_id, project_id)
-
-@router.delete("/{project_id}/members/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_project_member(
-    project_id: UUID,
-    employee_id: UUID,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
-):
-    service = ProjectService(db)
-    service.remove_member(current_user.company_id, project_id, employee_id)
-
-# --- Tasks (Routes 108-112) ---
-
-@router.post("/{project_id}/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
-def create_task(
-    project_id: UUID,
-    data: TaskCreate,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user)
-):
-    service = ProjectService(db)
-    return service.create_task(current_user.company_id, project_id, current_user.id, data)
-
-@router.get("/{project_id}/tasks", response_model=List[TaskResponse])
-def list_tasks(
-    project_id: UUID,
-    status: Optional[str] = Query(None, pattern="^(todo|in_progress|review|done)$"),
-    assigned_to: Optional[UUID] = Query(None),
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user)
-):
-    service = ProjectService(db)
-    return service.list_tasks(current_user.company_id, project_id, status, assigned_to)
-
-@router.get("/tasks/{task_id}", response_model=TaskResponse)
-def get_task(
-    task_id: UUID,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user)
-):
-    service = ProjectService(db)
-    return service.get_task(current_user.company_id, task_id)
-
-@router.put("/tasks/{task_id}", response_model=TaskResponse)
-def update_task(
-    task_id: UUID,
-    data: TaskUpdate,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user)
-):
-    service = ProjectService(db)
-    return service.update_task(current_user.company_id, task_id, data)
-
-@router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_task(
-    task_id: UUID,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
-):
-    service = ProjectService(db)
-    service.delete_task(current_user.company_id, task_id)
-
-# --- Task Comments (Routes 113-114) ---
-
-@router.post("/tasks/{task_id}/comments", response_model=TaskCommentResponse, status_code=status.HTTP_201_CREATED)
-def add_task_comment(
-    task_id: UUID,
-    data: TaskCommentCreate,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user)
-):
-    service = ProjectService(db)
-    return service.add_comment(current_user.company_id, task_id, current_user.id, data)
-
-@router.get("/tasks/{task_id}/comments", response_model=List[TaskCommentResponse])
-def list_task_comments(
-    task_id: UUID,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user)
-):
-    service = ProjectService(db)
-    return service.list_comments(current_user.company_id, task_id)
-
 # --- Time Entries / Timesheets (Routes 115-118) ---
 
 @router.post("/time-entries", response_model=TimeEntryResponse, status_code=status.HTTP_201_CREATED)
@@ -246,26 +106,56 @@ def delete_time_entry(
     service = ProjectService(db)
     service.delete_time_entry(current_user.company_id, entry_id)
 
-# --- Milestones (Routes 119-120) ---
+# --- Tasks & Task Comments Specific Endpoints (not starting with {project_id}) ---
 
-@router.post("/{project_id}/milestones", response_model=MilestoneResponse, status_code=status.HTTP_201_CREATED)
-def create_milestone(
-    project_id: UUID,
-    data: MilestoneCreate,
-    db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
-):
-    service = ProjectService(db)
-    return service.create_milestone(current_user.company_id, project_id, data)
-
-@router.get("/{project_id}/milestones", response_model=List[MilestoneResponse])
-def list_milestones(
-    project_id: UUID,
+@router.get("/tasks/{task_id}", response_model=TaskResponse)
+def get_task(
+    task_id: UUID,
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.list_milestones(current_user.company_id, project_id)
+    return service.get_task(current_user.company_id, task_id)
+
+@router.put("/tasks/{task_id}", response_model=TaskResponse)
+def update_task(
+    task_id: UUID,
+    data: TaskUpdate,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    return service.update_task(current_user.company_id, task_id, data)
+
+@router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_task(
+    task_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
+):
+    service = ProjectService(db)
+    service.delete_task(current_user.company_id, task_id)
+
+@router.post("/tasks/{task_id}/comments", response_model=TaskCommentResponse, status_code=status.HTTP_201_CREATED)
+def add_task_comment(
+    task_id: UUID,
+    data: TaskCommentCreate,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    return service.add_comment(current_user.company_id, task_id, current_user.id, data)
+
+@router.get("/tasks/{task_id}/comments", response_model=List[TaskCommentResponse])
+def list_task_comments(
+    task_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    return service.list_comments(current_user.company_id, task_id)
+
+# --- Milestones Global Update/Delete ---
 
 @router.put("/milestones/{milestone_id}", response_model=MilestoneResponse)
 def update_milestone(
@@ -285,3 +175,117 @@ def delete_milestone(
 ):
     service = ProjectService(db)
     service.delete_milestone(current_user.company_id, milestone_id)
+
+# --- Dynamic Project ID Routes ---
+
+@router.get("/{project_id}", response_model=ProjectResponse)
+def get_project(
+    project_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    return service.get_project(current_user.company_id, project_id)
+
+@router.put("/{project_id}", response_model=ProjectResponse)
+def update_project(
+    project_id: UUID,
+    data: ProjectUpdate,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
+):
+    service = ProjectService(db)
+    return service.update_project(current_user.company_id, project_id, data)
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(
+    project_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin))
+):
+    service = ProjectService(db)
+    service.delete_project(current_user.company_id, project_id)
+
+@router.get("/{project_id}/summary", response_model=ProjectSummaryResponse)
+def get_project_summary(
+    project_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    return service.get_project_summary(current_user.company_id, project_id)
+
+# --- Project Members (Routes 105-107) ---
+
+@router.post("/{project_id}/members", response_model=ProjectMemberResponse, status_code=status.HTTP_201_CREATED)
+def add_project_member(
+    project_id: UUID,
+    data: ProjectMemberCreate,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
+):
+    service = ProjectService(db)
+    return service.add_member(current_user.company_id, project_id, data)
+
+@router.get("/{project_id}/members", response_model=List[ProjectMemberResponse])
+def list_project_members(
+    project_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    return service.list_members(current_user.company_id, project_id)
+
+@router.delete("/{project_id}/members/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_project_member(
+    project_id: UUID,
+    employee_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
+):
+    service = ProjectService(db)
+    service.remove_member(current_user.company_id, project_id, employee_id)
+
+# --- Project Tasks (Routes 108-112) ---
+
+@router.post("/{project_id}/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+def create_task(
+    project_id: UUID,
+    data: TaskCreate,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    return service.create_task(current_user.company_id, project_id, current_user.id, data)
+
+@router.get("/{project_id}/tasks", response_model=List[TaskResponse])
+def list_tasks(
+    project_id: UUID,
+    status: Optional[str] = Query(None, pattern="^(todo|in_progress|review|done)$"),
+    assigned_to: Optional[UUID] = Query(None),
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    return service.list_tasks(current_user.company_id, project_id, status, assigned_to)
+
+# --- Project Milestones (Routes 119-120) ---
+
+@router.post("/{project_id}/milestones", response_model=MilestoneResponse, status_code=status.HTTP_201_CREATED)
+def create_milestone(
+    project_id: UUID,
+    data: MilestoneCreate,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
+):
+    service = ProjectService(db)
+    return service.create_milestone(current_user.company_id, project_id, data)
+
+@router.get("/{project_id}/milestones", response_model=List[MilestoneResponse])
+def list_milestones(
+    project_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    return service.list_milestones(current_user.company_id, project_id)
