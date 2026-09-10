@@ -6,7 +6,16 @@ import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import { parseApiError } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
-import { deactivateEmployee, getEmployee, reactivateEmployee, resendInvite } from "../api";
+import {
+  deactivateEmployee,
+  getEmployee,
+  reactivateEmployee,
+  resendInvite,
+  submitResignation,
+  approveResignation,
+  getFnFSettlement,
+  type Employee,
+} from "../api";
 
 interface InviteState {
   invite?: { sent_to: string; expires_at: string };
@@ -125,7 +134,7 @@ export function EmployeeProfilePage() {
         </div>
       )}
 
-      <div className="card">
+      <div className="card mb-4">
         <div className="form-grid">
           <Field label="Employee code" value={e.employee_code} />
           <Field
@@ -144,10 +153,12 @@ export function EmployeeProfilePage() {
           <Field label="Employment type" value={e.employment_type.replace("_", " ")} />
           <Field label="Hire date" value={e.hire_date} />
           <Field label="Probation end date" value={e.probation_end_date ?? "—"} />
-          <Field label="Notice period" value={`${e.notice_period_days} days`} />
+          <Field label="Notice period" value={`${e.notice_period_days ?? 30} days`} />
           <Field label="Invitation status" value={e.invitation_status.replace("_", " ")} />
         </div>
       </div>
+
+      <ResignationAndFnFCard employee={e} isHr={isHr} onRefresh={() => queryClient.invalidateQueries({ queryKey: ["employee", id] })} />
 
       <ConfirmDialog
         open={confirmOpen}
@@ -175,3 +186,271 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
     </div>
   );
 }
+
+function ResignationAndFnFCard({
+  employee,
+  isHr,
+  onRefresh,
+}: {
+  employee: Employee;
+  isHr: boolean;
+  onRefresh: () => void;
+}) {
+  const { notify } = useToast();
+  const [submitting, setSubmitting] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [resignationDate, setResignationDate] = useState("");
+  const [lastWorkingDate, setLastWorkingDate] = useState("");
+  const [reason, setReason] = useState("");
+  const [noticeWaived, setNoticeWaived] = useState(false);
+  const [recoveryDays, setRecoveryDays] = useState(0);
+
+  const status = employee.resignation_status ?? "none";
+
+  const fnfQuery = useQuery({
+    queryKey: ["fnf", employee.id],
+    queryFn: () => getFnFSettlement(employee.id),
+    enabled: isHr && (status === "approved" || !employee.is_active),
+  });
+
+  async function handleSubmitResignation(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await submitResignation(employee.id, {
+        resignation_date: resignationDate || undefined,
+        last_working_date: lastWorkingDate || undefined,
+        reason: reason || undefined,
+      });
+      notify("Resignation submitted successfully.");
+      onRefresh();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleApprove(approved: boolean) {
+    setApproving(true);
+    try {
+      await approveResignation(employee.id, {
+        approved,
+        last_working_date: lastWorkingDate || undefined,
+        notice_waived: noticeWaived,
+        notice_recovery_days: recoveryDays,
+      });
+      notify(approved ? "Resignation approved." : "Resignation rejected.");
+      onRefresh();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setApproving(false);
+    }
+  }
+
+  return (
+    <div className="card mb-4">
+      <div className="row-between mb-3">
+        <h3 className="mb-0">Resignation & Full-and-Final (FnF) Settlement</h3>
+        <span
+          className={
+            "badge " +
+            (status === "approved"
+              ? "badge-danger"
+              : status === "submitted"
+              ? "badge-warning"
+              : "badge-muted")
+          }
+        >
+          {status === "none" ? "Not Resigned" : `Resignation ${status}`}
+        </span>
+      </div>
+
+      {status === "none" && (
+        <form onSubmit={handleSubmitResignation} className="stack">
+          <p className="text-muted text-sm mt-0">
+            Submit formal resignation request with effective dates and reason.
+          </p>
+          <div className="form-grid">
+            <div className="field">
+              <label>Resignation date</label>
+              <input
+                type="date"
+                value={resignationDate}
+                onChange={(e) => setResignationDate(e.target.value)}
+                required
+              />
+            </div>
+            <div className="field">
+              <label>Proposed last working date</label>
+              <input
+                type="date"
+                value={lastWorkingDate}
+                onChange={(e) => setLastWorkingDate(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+          <div className="field">
+            <label>Reason for resignation</label>
+            <textarea
+              rows={2}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="State reason for resignation…"
+            />
+          </div>
+          <div className="row-end">
+            <button type="submit" className="btn btn-danger" disabled={submitting}>
+              {submitting ? "Submitting…" : "Submit Resignation"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {status === "submitted" && (
+        <div className="stack">
+          <div className="form-grid">
+            <Field label="Resignation date" value={employee.resignation_date ?? "—"} />
+            <Field label="Last working date" value={employee.last_working_date ?? "—"} />
+          </div>
+          {isHr ? (
+            <div className="card" style={{ background: "var(--color-bg)" }}>
+              <h4 className="mt-0 mb-2">HR Approval & Notice Terms</h4>
+              <div className="form-grid mb-3">
+                <div className="field">
+                  <label>Confirmed last working date</label>
+                  <input
+                    type="date"
+                    defaultValue={employee.last_working_date ?? ""}
+                    onChange={(e) => setLastWorkingDate(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label>Notice recovery days (if unserved)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={recoveryDays}
+                    onChange={(e) => setRecoveryDays(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+              <div className="row mb-3">
+                <input
+                  type="checkbox"
+                  id="noticeWaived"
+                  checked={noticeWaived}
+                  onChange={(e) => setNoticeWaived(e.target.checked)}
+                />
+                <label htmlFor="noticeWaived" className="text-sm font-medium">
+                  Waive notice period and notice recovery deduction
+                </label>
+              </div>
+              <div className="row">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => handleApprove(true)}
+                  disabled={approving}
+                >
+                  {approving ? "Processing…" : "Approve Resignation"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => handleApprove(false)}
+                  disabled={approving}
+                >
+                  Reject
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="alert alert-warning">
+              Resignation submitted. Awaiting HR review and clearance.
+            </div>
+          )}
+        </div>
+      )}
+
+      {status === "approved" && (
+        <div className="stack">
+          <div className="form-grid mb-3">
+            <Field label="Resignation date" value={employee.resignation_date ?? "—"} />
+            <Field label="Last working date" value={employee.last_working_date ?? "—"} />
+            <Field
+              label="Notice waived"
+              value={employee.notice_waived ? "Yes (Waived)" : "No"}
+            />
+            <Field
+              label="Notice recovery days"
+              value={employee.notice_recovery_days ?? 0}
+            />
+          </div>
+
+          {isHr && (
+            <div>
+              <h4 className="mb-2">Full-and-Final (FnF) Settlement Calculation</h4>
+              {fnfQuery.isLoading && (
+                <div className="row">
+                  <div className="spinner" />
+                  <span className="text-muted">Calculating FnF statement…</span>
+                </div>
+              )}
+              {fnfQuery.isError && (
+                <div className="alert alert-error">
+                  {parseApiError(fnfQuery.error).message}
+                </div>
+              )}
+              {fnfQuery.data && (
+                <div className="card" style={{ background: "var(--color-bg)" }}>
+                  <div className="form-grid">
+                    <Field
+                      label="Unpaid salary days"
+                      value={`${fnfQuery.data.unpaid_salary_days} days`}
+                    />
+                    <Field
+                      label="Unpaid salary amount"
+                      value={`₹${Number(fnfQuery.data.unpaid_salary_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                    />
+                    <Field
+                      label="Encashable leave days"
+                      value={`${fnfQuery.data.encashable_leave_days} days`}
+                    />
+                    <Field
+                      label="Leave encashment"
+                      value={`₹${Number(fnfQuery.data.leave_encashment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                    />
+                    <Field
+                      label="Notice recovery days"
+                      value={`${fnfQuery.data.notice_recovery_days} days`}
+                    />
+                    <Field
+                      label="Notice recovery deduction"
+                      value={`- ₹${Number(fnfQuery.data.notice_recovery_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                    />
+                  </div>
+                  <div
+                    className="row-between mt-3"
+                    style={{
+                      borderTop: "1px solid var(--color-border)",
+                      paddingTop: "var(--space-3)",
+                    }}
+                  >
+                    <span className="font-semibold">Total Net Settlement</span>
+                    <span className="text-lg font-semibold" style={{ color: "var(--color-primary)" }}>
+                      ₹{Number(fnfQuery.data.total_settlement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+

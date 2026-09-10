@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { parseApiError } from "../../../shared/api/errors";
 import { TodayAttendanceCard } from "../../time_leave/components/TodayAttendanceCard";
-import { fetchDashboard } from "../api";
+import { fetchDashboard, fetchAnnouncements } from "../api";
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -28,9 +28,33 @@ export function DashboardPage() {
     queryFn: fetchDashboard,
   });
 
+  const announcementsQuery = useQuery({
+    queryKey: ["announcements"],
+    queryFn: fetchAnnouncements,
+  });
+
   return (
     <div>
       <PageHeader title="Dashboard" breadcrumb="Overview" />
+
+      {/* Announcements Banner / List */}
+      {announcementsQuery.data && announcementsQuery.data.length > 0 && (
+        <div className="card mb-4" style={{ borderLeft: "4px solid var(--color-primary)" }}>
+          <div className="row-between mb-2">
+            <h3 className="mb-0" style={{ fontSize: "var(--text-base)" }}>Company Announcements</h3>
+            <span className="badge badge-muted">{announcementsQuery.data.length} new</span>
+          </div>
+          <div className="stack-sm">
+            {announcementsQuery.data.map((ann) => (
+              <div key={ann.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--color-border)" }}>
+                <div className="font-semibold text-sm">{ann.title}</div>
+                <div className="text-muted text-sm">{ann.content}</div>
+                <div className="text-faint text-xs mt-1">{new Date(ann.created_at).toLocaleDateString()}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Part 2: check in/out from the landing page directly — no need to
           visit the shared attendance screen. Renders nothing for a role

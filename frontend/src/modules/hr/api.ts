@@ -40,9 +40,14 @@ export interface Employee {
   employment_type: EmploymentType;
   hire_date: string;
   probation_end_date: string | null;
-  notice_period_days: number;
+  notice_period_days?: number;
   is_active: boolean;
   invitation_status: InvitationStatus;
+  resignation_status?: string;
+  resignation_date?: string | null;
+  last_working_date?: string | null;
+  notice_waived?: boolean;
+  notice_recovery_days?: number;
   created_at: string;
 }
 
@@ -141,3 +146,53 @@ export async function updateDepartment(id: string, input: DepartmentUpdateInput)
 export async function deleteDepartment(id: string): Promise<void> {
   await apiClient.delete(`/departments/${id}`);
 }
+
+export interface ResignationSubmitInput {
+  resignation_date?: string;
+  last_working_date?: string;
+  reason?: string;
+}
+
+export interface ResignationApproveInput {
+  approved: boolean;
+  last_working_date?: string;
+  notice_waived?: boolean;
+  notice_recovery_days?: number;
+}
+
+export interface FnFSettlement {
+  employee_id: string;
+  employee_name: string;
+  last_working_date: string;
+  notice_days_required: number;
+  notice_days_served: number;
+  notice_waived: boolean;
+  notice_recovery_days: number;
+  notice_recovery_amount: string | number;
+  encashable_leave_days: string | number;
+  leave_encashment_amount: string | number;
+  unpaid_salary_days: number;
+  unpaid_salary_amount: string | number;
+  total_settlement_amount: string | number;
+}
+
+export async function submitResignation(employeeId: string, input: ResignationSubmitInput): Promise<Employee> {
+  const { data } = await apiClient.post<Employee>(`/employees/${employeeId}/resignation`, input);
+  return data;
+}
+
+export async function approveResignation(employeeId: string, input: ResignationApproveInput): Promise<Employee> {
+  const { data } = await apiClient.put<Employee>(`/employees/${employeeId}/resignation/approve`, input);
+  return data;
+}
+
+export async function getFnFSettlement(employeeId: string): Promise<FnFSettlement> {
+  const { data } = await apiClient.get<FnFSettlement>(`/employees/${employeeId}/fnf`);
+  return data;
+}
+
+export async function listResignations(): Promise<Employee[]> {
+  const { data } = await apiClient.get<Employee[]>("/employees/resignations");
+  return data;
+}
+
