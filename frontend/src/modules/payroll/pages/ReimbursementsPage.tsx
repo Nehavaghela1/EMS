@@ -298,14 +298,6 @@ export function ReimbursementsPage() {
 
             <div className="flex gap-3 justify-end mt-4">
               <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => setSelectedClaim(null)}
-                disabled={reviewing}
-              >
-                Cancel
-              </button>
-              <button
                 className="btn btn-danger"
                 onClick={() => handleReview("reject")}
                 disabled={reviewing}
