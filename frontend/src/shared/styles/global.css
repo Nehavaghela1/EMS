@@ -864,7 +864,7 @@ table.data-table {
   grid-template-columns: repeat(4, 1fr);
   gap: var(--space-4);
   padding-bottom: var(--space-4);
-  align-items: start;
+  align-items: stretch;
 }
 
 @media (max-width: 1024px) {
@@ -886,7 +886,8 @@ table.data-table {
   padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  min-height: 180px;
+  min-height: 420px;
+  height: 100%;
 }
 
 .kanban-col-header {
