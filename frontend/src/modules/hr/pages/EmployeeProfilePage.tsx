@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
@@ -101,7 +101,14 @@ export function EmployeeProfilePage() {
   if (!e) return null;
 
   return (
-    <div>
+    <div className="stack gap-4">
+      {/* Back Link */}
+      <div>
+        <Link to="/employees" className="btn btn-ghost btn-sm" style={{ paddingLeft: 0, textDecoration: "none" }}>
+          ← Back to Employees
+        </Link>
+      </div>
+
       <PageHeader
         title={`${e.first_name}${e.last_name ? " " + e.last_name : ""}`}
         breadcrumb="HR / Employees"

@@ -157,7 +157,19 @@ export function EmployeeFormPage() {
   }
 
   return (
-    <div>
+    <div className="stack gap-4">
+      {/* Back Link */}
+      <div>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          style={{ paddingLeft: 0, textDecoration: "none" }}
+          onClick={() => navigate(isEdit ? `/employees/${id}` : "/employees")}
+        >
+          ← Back to {isEdit ? "Profile" : "Employees"}
+        </button>
+      </div>
+
       <PageHeader title={isEdit ? "Edit employee" : "New employee"} breadcrumb="HR / Employees" />
       <form className="card stack" onSubmit={handleSubmit} style={{ maxWidth: 640 }}>
         {formError && <div className="alert alert-error">{formError}</div>}
