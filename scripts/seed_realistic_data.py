@@ -679,7 +679,7 @@ def run_seed():
                     description="Finalize database ERD and OpenAPI specifications",
                     assigned_to=emp_records[0].id if emp_records else None,
                     priority="high",
-                    status="completed",
+                    status="done",
                     estimated_hours=Decimal("24.00"),
                     completed_at=datetime.utcnow(),
                 )

@@ -137,7 +137,9 @@ def update_performance_goal(
         raise HTTPException(status_code=404, detail="Performance goal not found.")
 
     emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
-    if not emp or goal.employee_id != emp.id:
+    is_owner = emp and goal.employee_id == emp.id
+    is_admin = user.role in (UserRole.super_admin, UserRole.hr_admin)
+    if not (is_owner or is_admin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Employees can only update their own performance goals.",

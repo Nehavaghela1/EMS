@@ -3,10 +3,12 @@ import {
   listPerformanceCycles,
   listPerformanceGoals,
   setPerformanceGoals,
+  updatePerformanceGoal,
   submitSelfReview,
   type PerformanceCycle,
   type PerformanceGoal,
   type GoalCreateItem,
+  type GoalStatus,
 } from "../api";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
@@ -36,6 +38,15 @@ export function MyGoalsPage() {
     },
   ]);
   const [submittingGoals, setSubmittingGoals] = useState(false);
+
+  // Edit Goal Modal state
+  const [editingGoal, setEditingGoal] = useState<PerformanceGoal | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editTargetValue, setEditTargetValue] = useState("");
+  const [editStatus, setEditStatus] = useState<GoalStatus>("in_progress");
+  const [editWeightage, setEditWeightage] = useState("");
+  const [submittingEdit, setSubmittingEdit] = useState(false);
 
   // Self Review Modal state
   const [selectedGoal, setSelectedGoal] = useState<PerformanceGoal | null>(null);
@@ -120,6 +131,38 @@ export function MyGoalsPage() {
     }
   }
 
+  function openEditGoal(g: PerformanceGoal) {
+    setEditingGoal(g);
+    setEditTitle(g.title);
+    setEditDescription(g.description || "");
+    setEditTargetValue(g.target_value || "");
+    setEditStatus(g.status);
+    setEditWeightage(String(g.weightage));
+  }
+
+  async function handleUpdateGoal(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingGoal) return;
+    setSubmittingEdit(true);
+    try {
+      await updatePerformanceGoal(editingGoal.id, {
+        title: editTitle,
+        description: editDescription,
+        target_value: editTargetValue,
+        status: editStatus,
+        weightage: editWeightage,
+      });
+      notify("Goal updated successfully", "success");
+      setEditingGoal(null);
+      init();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to update goal";
+      notify(msg, "error");
+    } finally {
+      setSubmittingEdit(false);
+    }
+  }
+
   function addGoalLine() {
     setGoalInputs([
       ...goalInputs,
@@ -138,9 +181,9 @@ export function MyGoalsPage() {
           <h1>My Performance Goals</h1>
           <p className="text-muted">Set goals for the active performance cycle & submit self-evaluations</p>
         </div>
-        {activeCycle && goals.length === 0 && (
+        {activeCycle && (
           <button className="btn btn-primary" onClick={() => setShowSetModal(true)}>
-            + Set Goals for Active Cycle
+            + Set / Add Goals
           </button>
         )}
       </div>
@@ -187,7 +230,7 @@ export function MyGoalsPage() {
                 <th>Weightage</th>
                 <th>Status</th>
                 <th>Self Rating</th>
-                <th>Actions</th>
+                <th style={{ textAlign: "right" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -209,15 +252,26 @@ export function MyGoalsPage() {
                       <span className="text-muted text-xs">Not submitted</span>
                     )}
                   </td>
-                  <td>
-                    {!g.self_rating && (
+                  <td style={{ textAlign: "right" }}>
+                    <div className="flex gap-2 justify-end">
                       <button
+                        type="button"
                         className="btn btn-sm btn-outline"
-                        onClick={() => setSelectedGoal(g)}
+                        onClick={() => openEditGoal(g)}
+                        title="Edit goal title, description, metric, or status"
                       >
-                        Submit Self Review
+                        Edit
                       </button>
-                    )}
+                      {!g.self_rating && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          onClick={() => setSelectedGoal(g)}
+                        >
+                          Self Review
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -392,6 +446,89 @@ export function MyGoalsPage() {
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submittingReview}>
                   {submittingReview ? "Submitting..." : "Submit Self Rating"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Goal */}
+      {editingGoal && (
+        <div className="modal-backdrop" onClick={() => setEditingGoal(null)}>
+          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Edit Performance Goal</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setEditingGoal(null)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleUpdateGoal} className="stack gap-4 my-4">
+              <div>
+                <label>Goal Title *</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  placeholder="e.g. Lead Quarterly Architecture Review"
+                  required
+                />
+              </div>
+
+              <div>
+                <label>Description & Expectations</label>
+                <textarea
+                  rows={3}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="Detailed deliverables, milestones, or success factors..."
+                />
+              </div>
+
+              <div className="grid grid-2 gap-4">
+                <div>
+                  <label>Target / Metric</label>
+                  <input
+                    type="text"
+                    value={editTargetValue}
+                    onChange={(e) => setEditTargetValue(e.target.value)}
+                    placeholder="e.g. 100% completed"
+                  />
+                </div>
+                <div>
+                  <label>Status</label>
+                  <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as GoalStatus)}>
+                    <option value="draft">Draft</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label>Weightage (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={editWeightage}
+                  onChange={(e) => setEditWeightage(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end mt-4">
+                <button type="button" className="btn btn-ghost" onClick={() => setEditingGoal(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submittingEdit}>
+                  {submittingEdit ? "Updating..." : "Update Goal"}
                 </button>
               </div>
             </form>
