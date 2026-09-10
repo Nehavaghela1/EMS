@@ -155,16 +155,16 @@ export function TimesheetsPage() {
         </div>
       </div>
 
-      {/* Navigation Tab Bar */}
-      <div className="tab-bar">
-        <button
-          type="button"
-          className={`tab-item ${activeTab === "log" ? "active" : ""}`}
-          onClick={() => setActiveTab("log")}
-        >
-          <span>⏱️ My Time Logs</span>
-        </button>
-        {isManagerOrAdmin && (
+      {/* Navigation Tab Bar (only if manager/admin has multiple tabs) */}
+      {isManagerOrAdmin && (
+        <div className="tab-bar">
+          <button
+            type="button"
+            className={`tab-item ${activeTab === "log" ? "active" : ""}`}
+            onClick={() => setActiveTab("log")}
+          >
+            <span>⏱️ My Time Logs</span>
+          </button>
           <button
             type="button"
             className={`tab-item ${activeTab === "approval" ? "active" : ""}`}
@@ -175,8 +175,8 @@ export function TimesheetsPage() {
               <span className="badge badge-warning">{pendingEntries.length}</span>
             )}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* TAB 1: TIME LOG FORM + HISTORY */}
       {activeTab === "log" && (
@@ -269,13 +269,13 @@ export function TimesheetsPage() {
           </div>
 
           {/* Log History */}
-          <div className="stack">
-            <div className="row-between">
+          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+            <div className="p-4 border-b row-between align-center" style={{ background: "var(--color-bg)" }}>
               <div>
-                <h3 className="mb-0">Logged History</h3>
-                <span className="text-xs text-muted">All submitted time logs for your tenant</span>
+                <h3 className="mb-0" style={{ fontSize: "1rem" }}>My Submitted Logs</h3>
+                <span className="text-xs text-muted">Your recorded and approved time entries</span>
               </div>
-              <span className="text-xs text-muted">{entries.length} records</span>
+              <span className="badge badge-muted">{entries.length} records</span>
             </div>
 
             <div className="table-wrap">
