@@ -42,31 +42,33 @@ export function AppLayout({ children }: { children: ReactNode }) {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">EMS</div>
-        <div style={{ padding: "0.5rem 1rem" }}>
-          <input
-            type="text"
-            className="input input-sm"
-            placeholder="Search employee, project..."
-            onKeyDown={async (e) => {
-              if (e.key === "Enter") {
-                const q = e.currentTarget.value.trim();
-                if (q.length >= 2) {
-                  try {
-                    const { globalSearch } = await import("../modules/platform/api");
-                    const res = await globalSearch(q);
-                    if (res.results.length > 0) {
-                      navigate(res.results[0].url);
-                    } else {
-                      alert(`No results found for "${q}"`);
+        {user && (user.role === "hr_admin" || user.role === "super_admin" || user.role === "manager") && (
+          <div style={{ padding: "0.25rem 0.5rem 0.75rem" }}>
+            <input
+              type="text"
+              className="input input-sm"
+              placeholder="Search..."
+              onKeyDown={async (e) => {
+                if (e.key === "Enter") {
+                  const q = e.currentTarget.value.trim();
+                  if (q.length >= 2) {
+                    try {
+                      const { globalSearch } = await import("../modules/platform/api");
+                      const res = await globalSearch(q);
+                      if (res.results.length > 0) {
+                        navigate(res.results[0].url);
+                      } else {
+                        alert(`No results found for "${q}"`);
+                      }
+                    } catch (err) {
+                      console.error("Search error:", err);
                     }
-                  } catch (err) {
-                    console.error("Search error:", err);
                   }
                 }
-              }
-            }}
-          />
-        </div>
+              }}
+            />
+          </div>
+        )}
         <nav className="sidebar-nav">
           {items.map((item) => (
             <NavLink
