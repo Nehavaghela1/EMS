@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   listPayrollRuns,
   createPayrollRun,
@@ -7,11 +7,13 @@ import {
   type PayrollRun,
   type PayrollRunDetail,
 } from "../api";
+import { listEmployees, type Employee } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
 
 export function PayrollRunPage() {
   const { notify } = useToast();
   const [runs, setRuns] = useState<PayrollRun[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Trigger Run Modal
@@ -26,9 +28,27 @@ export function PayrollRunPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [approving, setApproving] = useState(false);
 
+  const employeeMap = useMemo(() => {
+    const map = new Map<string, Employee>();
+    for (const emp of employees) {
+      map.set(emp.id, emp);
+    }
+    return map;
+  }, [employees]);
+
   useEffect(() => {
     fetchRuns();
+    fetchEmployees();
   }, []);
+
+  async function fetchEmployees() {
+    try {
+      const res = await listEmployees({ page: 1, limit: 100 });
+      setEmployees(res.items);
+    } catch {
+      // Non-critical, fallback to truncated IDs
+    }
+  }
 
   async function fetchRuns() {
     setLoading(true);
@@ -214,7 +234,7 @@ export function PayrollRunPage() {
       {/* Modal: Run Details */}
       {selectedRunDetail && (
         <div className="modal-backdrop">
-          <div className="modal card max-w-3xl">
+          <div className="modal card" style={{ maxWidth: "960px", width: "95vw" }}>
             <div className="flex justify-between align-center border-b pb-3 mb-4">
               <div>
                 <h2>
@@ -240,32 +260,49 @@ export function PayrollRunPage() {
               <p>Loading employee payslip items...</p>
             ) : (
               <div className="stack gap-4">
-                <table className="table text-sm">
-                  <thead>
-                    <tr>
-                      <th>Employee ID</th>
-                      <th>CTC Snapshot</th>
-                      <th>Gross</th>
-                      <th>Deductions</th>
-                      <th>Reimbursements</th>
-                      <th>Net Salary</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedRunDetail.items.map((item) => (
-                      <tr key={item.id}>
-                        <td>{item.employee_id.substring(0, 8)}...</td>
-                        <td>₹{Number(item.ctc_snapshot).toLocaleString()}</td>
-                        <td>₹{Number(item.gross_salary).toLocaleString()}</td>
-                        <td className="text-red">-₹{Number(item.total_deductions).toLocaleString()}</td>
-                        <td className="text-blue">+₹{Number(item.reimbursement_amount).toLocaleString()}</td>
-                        <td className="fw-bold text-success">
-                          ₹{Number(item.net_salary).toLocaleString()}
-                        </td>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="table text-sm" style={{ width: "100%" }}>
+                    <thead>
+                      <tr>
+                        <th>Employee</th>
+                        <th>CTC Snapshot</th>
+                        <th>Gross</th>
+                        <th>Deductions</th>
+                        <th>Reimbursements</th>
+                        <th>Net Salary</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {selectedRunDetail.items.map((item) => {
+                        const emp = employeeMap.get(item.employee_id);
+                        const empName = emp
+                          ? `${emp.first_name} ${emp.last_name || ""}`.trim()
+                          : `ID: ${item.employee_id.substring(0, 8)}...`;
+                        const empSubtitle = emp
+                          ? `${emp.employee_code} • ${emp.position || "Staff"}`
+                          : null;
+
+                        return (
+                          <tr key={item.id}>
+                            <td>
+                              <div className="fw-semibold text-primary">{empName}</div>
+                              {empSubtitle && (
+                                <div className="text-muted text-xs">{empSubtitle}</div>
+                              )}
+                            </td>
+                            <td>₹{Number(item.ctc_snapshot).toLocaleString()}</td>
+                            <td>₹{Number(item.gross_salary).toLocaleString()}</td>
+                            <td className="text-red">-₹{Number(item.total_deductions).toLocaleString()}</td>
+                            <td className="text-blue">+₹{Number(item.reimbursement_amount).toLocaleString()}</td>
+                            <td className="fw-bold text-success">
+                              ₹{Number(item.net_salary).toLocaleString()}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
                 <div className="flex justify-end mt-4">
                   <button className="btn btn-ghost" onClick={() => setSelectedRunDetail(null)}>

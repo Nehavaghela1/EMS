@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
   fetchTimeEntries, createTimeEntry, approveRejectTimeEntry,
   fetchProjects, fetchTasks
 } from "../api";
 import type { TimeEntry, Project, Task } from "../types";
+import { listEmployees, type Employee } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { PageHeader } from "../../../shared/components/PageHeader";
@@ -12,6 +13,7 @@ export function TimesheetsPage() {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"log" | "approval">("log");
 
@@ -28,15 +30,25 @@ export function TimesheetsPage() {
   const { notify } = useToast();
   const isManagerOrAdmin = user?.role === "super_admin" || user?.role === "hr_admin" || user?.role === "manager";
 
+  const employeeMap = useMemo(() => {
+    const map = new Map<string, Employee>();
+    for (const emp of employees) {
+      map.set(emp.id, emp);
+    }
+    return map;
+  }, [employees]);
+
   async function loadData() {
     try {
       setLoading(true);
-      const [entryData, projectData] = await Promise.all([
+      const [entryData, projectData, empData] = await Promise.all([
         fetchTimeEntries(),
-        fetchProjects("active")
+        fetchProjects("active"),
+        listEmployees({ page: 1, limit: 100 }).catch(() => ({ items: [] }))
       ]);
       setEntries(entryData);
       setProjects(projectData);
+      setEmployees(empData.items || []);
     } catch (err: any) {
       notify(err?.response?.data?.error?.message || err?.message || "Failed to load timesheets", "error");
     } finally {
@@ -330,6 +342,7 @@ export function TimesheetsPage() {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th>Employee</th>
                     <th>Date</th>
                     <th>Hours</th>
                     <th>Billable</th>
@@ -338,40 +351,52 @@ export function TimesheetsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pendingEntries.map((entry) => (
-                    <tr key={entry.id}>
-                      <td className="font-medium">{entry.date}</td>
-                      <td className="font-semibold">{entry.hours} hrs</td>
-                      <td>
-                        {entry.is_billable ? (
-                          <span className="badge badge-success">Billable</span>
-                        ) : (
-                          <span className="badge badge-muted">Non-billable</span>
-                        )}
-                      </td>
-                      <td style={{ maxWidth: "300px", whiteSpace: "normal", wordBreak: "break-word" }}>
-                        {entry.description || <span className="text-faint">—</span>}
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        <div className="row-end">
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-success"
-                            onClick={() => handleApproveReject(entry.id, "approved")}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-danger"
-                            onClick={() => handleApproveReject(entry.id, "rejected")}
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {pendingEntries.map((entry) => {
+                    const emp = employeeMap.get(entry.employee_id);
+                    const empName = emp
+                      ? `${emp.first_name} ${emp.last_name || ""}`.trim()
+                      : `ID: ${entry.employee_id.substring(0, 8)}...`;
+                    const empCode = emp ? emp.employee_code : null;
+
+                    return (
+                      <tr key={entry.id}>
+                        <td>
+                          <div className="font-semibold">{empName}</div>
+                          {empCode && <div className="text-xs text-muted">{empCode}</div>}
+                        </td>
+                        <td className="font-medium">{entry.date}</td>
+                        <td className="font-semibold">{entry.hours} hrs</td>
+                        <td>
+                          {entry.is_billable ? (
+                            <span className="badge badge-success">Billable</span>
+                          ) : (
+                            <span className="badge badge-muted">Non-billable</span>
+                          )}
+                        </td>
+                        <td style={{ maxWidth: "260px", whiteSpace: "normal", wordBreak: "break-word" }}>
+                          {entry.description || <span className="text-faint">—</span>}
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <div className="row-end">
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-success"
+                              onClick={() => handleApproveReject(entry.id, "approved")}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-danger"
+                              onClick={() => handleApproveReject(entry.id, "rejected")}
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
