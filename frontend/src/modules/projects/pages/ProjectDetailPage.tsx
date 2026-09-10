@@ -368,11 +368,12 @@ export function ProjectDetailPage() {
                             </button>
                           </div>
 
-                          <h4 className="kanban-task-title">{task.title}</h4>
-
-                          {task.description && (
-                            <p className="kanban-task-desc">{task.description}</p>
-                          )}
+                          <div className="kanban-task-body">
+                            <h4 className="kanban-task-title">{task.title}</h4>
+                            {task.description && (
+                              <p className="kanban-task-desc">{task.description}</p>
+                            )}
+                          </div>
 
                           <div className="kanban-task-footer">
                             <span className="text-muted text-xs">
