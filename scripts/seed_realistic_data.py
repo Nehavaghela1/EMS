@@ -611,30 +611,32 @@ def run_seed():
             db.add(run)
             db.flush()
 
-            # Create payroll items for first 2 employees
-            for emp in emp_records[:2]:
-                item = PayrollItem(
-                    id=uuid.uuid4(),
-                    company_id=comp.id,
-                    payroll_run_id=run.id,
-                    employee_id=emp.id,
-                    ctc_snapshot=Decimal("1200000.00"),
-                    gross_salary=Decimal("100000.00"),
-                    total_deductions=Decimal("12000.00"),
-                    net_salary=Decimal("88000.00"),
-                    employer_cost=Decimal("105000.00"),
-                    earnings_json=[{"code": "BASIC", "name": "Basic Pay", "amount": 50000.0}],
-                    deductions_json=[{"code": "EPF_EE", "name": "Employee PF", "amount": 1800.0}],
-                    employer_contributions_json=[{"code": "EPF_ER", "name": "Employer PF", "amount": 1800.0}],
-                    working_days=Decimal("22.00"),
-                    present_days=Decimal("22.00"),
-                    absent_days=Decimal("0.00"),
-                    half_days=Decimal("0.00"),
-                    paid_leave_days=Decimal("0.00"),
-                    lop_days=Decimal("0.00"),
-                    reimbursement_amount=Decimal("0.00"),
-                )
-                db.add(item)
+            # Create payroll items for ALL employees in the company
+            for emp in emp_records:
+                existing_item = db.query(PayrollItem).filter_by(company_id=comp.id, payroll_run_id=run.id, employee_id=emp.id).first()
+                if not existing_item:
+                    item = PayrollItem(
+                        id=uuid.uuid4(),
+                        company_id=comp.id,
+                        payroll_run_id=run.id,
+                        employee_id=emp.id,
+                        ctc_snapshot=Decimal("1200000.00"),
+                        gross_salary=Decimal("100000.00"),
+                        total_deductions=Decimal("12000.00"),
+                        net_salary=Decimal("88000.00"),
+                        employer_cost=Decimal("105000.00"),
+                        earnings_json=[{"code": "BASIC", "name": "Basic Pay", "amount": 50000.0}, {"code": "HRA", "name": "House Rent Allowance", "amount": 25000.0}],
+                        deductions_json=[{"code": "EPF_EE", "name": "Employee PF", "amount": 1800.0}, {"code": "PT", "name": "Professional Tax", "amount": 200.0}],
+                        employer_contributions_json=[{"code": "EPF_ER", "name": "Employer PF", "amount": 1800.0}],
+                        working_days=Decimal("22.00"),
+                        present_days=Decimal("22.00"),
+                        absent_days=Decimal("0.00"),
+                        half_days=Decimal("0.00"),
+                        paid_leave_days=Decimal("0.00"),
+                        lop_days=Decimal("0.00"),
+                        reimbursement_amount=Decimal("0.00"),
+                    )
+                    db.add(item)
 
         # Projects & Tasks
         for p_name, p_code, p_desc, p_budget in cdata["projects"]:
