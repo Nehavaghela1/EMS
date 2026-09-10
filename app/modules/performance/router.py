@@ -99,21 +99,29 @@ def set_performance_goals(
 def list_performance_goals(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.employee)),
+    user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager, UserRole.employee)),
 ):
     service = PerformanceService(db)
 
-    # Scoping check
+    # Scoping check: employees can only view their own goals
+    target_emp_id = employee_id
     if user.role == UserRole.employee:
         emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
-        if not emp or emp.id != employee_id:
+        if not emp or (emp.id != employee_id and user.id != employee_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Employees can only view their own performance goals.",
             )
+        target_emp_id = emp.id
+    else:
+        # If employee_id passed was actually user.id, resolve to employee record if matching
+        emp_by_user = EmployeeRepository(db).get_by_user_id(user.company_id, employee_id)
+        if emp_by_user:
+            target_emp_id = emp_by_user.id
 
-    goals = service.list_goals(user.company_id, employee_id, user)
+    goals = service.list_goals(user.company_id, target_emp_id, user)
     return [PerformanceGoalResponse.model_validate(g) for g in goals]
+
 
 
 @performance_router.put("/goals/{id}", response_model=PerformanceGoalResponse)

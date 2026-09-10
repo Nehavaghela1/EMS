@@ -59,7 +59,8 @@ export function MyGoalsPage() {
         setActiveCycle(cycle);
         // If user profile is available, fetch employee's goals
         if (user) {
-          const empGoals = await listPerformanceGoals(user.id);
+          const targetId = user.employee?.id || user.id;
+          const empGoals = await listPerformanceGoals(targetId);
           setGoals(empGoals);
         }
       }
