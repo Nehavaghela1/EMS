@@ -218,71 +218,80 @@ export function ProjectDetailPage() {
   };
 
   return (
-    <div className="stack" style={{ gap: "1.5rem" }}>
+    <div className="stack gap-6">
       {/* Back Link */}
       <div>
-        <Link to="/projects" style={{ textDecoration: "none", fontSize: "0.9rem" }}>
+        <Link to="/projects" className="btn btn-ghost btn-sm" style={{ paddingLeft: 0, textDecoration: "none" }}>
           ← Back to Projects
         </Link>
       </div>
 
       {/* Header Info */}
-      <div className="card stack" style={{ gap: "1rem" }}>
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div className="card stack gap-4">
+        <div className="row-between">
           <div>
-            <span className="badge badge-muted">{project.code}</span>
-            <h2 style={{ margin: "0.25rem 0" }}>{project.name}</h2>
-            {project.client_name && <p className="text-muted" style={{ margin: 0 }}>Client: {project.client_name}</p>}
+            <div className="row gap-2 align-center mb-1">
+              <span className="badge badge-muted font-mono">{project.code}</span>
+              <span className={`badge ${project.status === "active" ? "badge-success" : "badge-muted"}`}>
+                {project.status.toUpperCase()}
+              </span>
+            </div>
+            <h1 className="mb-1" style={{ fontSize: "1.35rem" }}>{project.name}</h1>
+            {project.client_name && (
+              <p className="text-muted text-sm" style={{ margin: 0 }}>Client: <strong>{project.client_name}</strong></p>
+            )}
           </div>
-          <span className="badge badge-primary">{project.status.toUpperCase()}</span>
         </div>
 
-        {/* Analytics Stats */}
-        <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "1rem" }}>
-          <div className="card text-center" style={{ padding: "0.75rem", background: "var(--bg-subtle, #f8fafc)" }}>
-            <span className="text-muted" style={{ fontSize: "0.8rem" }}>Tasks Progress</span>
-            <h3 style={{ margin: 0 }}>{summary.completion_percentage}%</h3>
-            <span style={{ fontSize: "0.75rem" }}>{summary.completed_tasks} / {summary.total_tasks} Done</span>
+        {/* Analytics Stats Grid */}
+        <div className="grid-4 mt-2">
+          <div className="p-3 bg-muted rounded border text-center">
+            <span className="text-muted text-xs block">TASKS PROGRESS</span>
+            <div className="text-xl fw-bold mt-1 text-primary">{summary.completion_percentage}%</div>
+            <span className="text-muted text-xs">{summary.completed_tasks} / {summary.total_tasks} Done</span>
           </div>
-          <div className="card text-center" style={{ padding: "0.75rem", background: "var(--bg-subtle, #f8fafc)" }}>
-            <span className="text-muted" style={{ fontSize: "0.8rem" }}>Logged Hours</span>
-            <h3 style={{ margin: 0 }}>{summary.total_logged_hours} hrs</h3>
-            <span style={{ fontSize: "0.75rem" }}>{summary.total_billable_hours} hrs Billable</span>
+
+          <div className="p-3 bg-muted rounded border text-center">
+            <span className="text-muted text-xs block">LOGGED HOURS</span>
+            <div className="text-xl fw-bold mt-1">{summary.total_logged_hours} hrs</div>
+            <span className="text-muted text-xs">{summary.total_billable_hours} hrs Billable</span>
           </div>
-          <div className="card text-center" style={{ padding: "0.75rem", background: "var(--bg-subtle, #f8fafc)" }}>
-            <span className="text-muted" style={{ fontSize: "0.8rem" }}>Overdue Tasks</span>
-            <h3 style={{ margin: 0, color: summary.overdue_tasks > 0 ? "var(--danger, #ef4444)" : "inherit" }}>
+
+          <div className="p-3 bg-muted rounded border text-center">
+            <span className="text-muted text-xs block">OVERDUE TASKS</span>
+            <div className={`text-xl fw-bold mt-1 ${summary.overdue_tasks > 0 ? "text-danger" : "text-success"}`}>
               {summary.overdue_tasks}
-            </h3>
-            <span style={{ fontSize: "0.75rem" }}>Action Needed</span>
+            </div>
+            <span className="text-muted text-xs">{summary.overdue_tasks > 0 ? "Action Needed" : "On Track"}</span>
           </div>
-          <div className="card text-center" style={{ padding: "0.75rem", background: "var(--bg-subtle, #f8fafc)" }}>
-            <span className="text-muted" style={{ fontSize: "0.8rem" }}>Team Size</span>
-            <h3 style={{ margin: 0 }}>{summary.members_count}</h3>
-            <span style={{ fontSize: "0.75rem" }}>Members</span>
+
+          <div className="p-3 bg-muted rounded border text-center">
+            <span className="text-muted text-xs block">TEAM SIZE</span>
+            <div className="text-xl fw-bold mt-1">{summary.members_count}</div>
+            <span className="text-muted text-xs">Active Members</span>
           </div>
         </div>
       </div>
 
       {/* Tabs Bar */}
-      <div className="row" style={{ borderBottom: "1px solid var(--border-color, #e2e8f0)", gap: "1.5rem" }}>
+      <div className="tab-bar">
         <button
-          className={`btn btn-ghost ${activeTab === "kanban" ? "border-active" : ""}`}
-          style={{ borderBottom: activeTab === "kanban" ? "2px solid var(--primary)" : "none", borderRadius: 0 }}
+          type="button"
+          className={`tab-item ${activeTab === "kanban" ? "active" : ""}`}
           onClick={() => setActiveTab("kanban")}
         >
           📋 Kanban Task Board
         </button>
         <button
-          className={`btn btn-ghost ${activeTab === "milestones" ? "border-active" : ""}`}
-          style={{ borderBottom: activeTab === "milestones" ? "2px solid var(--primary)" : "none", borderRadius: 0 }}
+          type="button"
+          className={`tab-item ${activeTab === "milestones" ? "active" : ""}`}
           onClick={() => setActiveTab("milestones")}
         >
           🎯 Milestones ({milestones.length})
         </button>
         <button
-          className={`btn btn-ghost ${activeTab === "team" ? "border-active" : ""}`}
-          style={{ borderBottom: activeTab === "team" ? "2px solid var(--primary)" : "none", borderRadius: 0 }}
+          type="button"
+          className={`tab-item ${activeTab === "team" ? "active" : ""}`}
           onClick={() => setActiveTab("team")}
         >
           👥 Team Members ({members.length})
@@ -291,51 +300,70 @@ export function ProjectDetailPage() {
 
       {/* TAB 1: KANBAN BOARD */}
       {activeTab === "kanban" && (
-        <div className="stack" style={{ gap: "1rem" }}>
-          <div className="row" style={{ justifyContent: "flex-end" }}>
+        <div className="stack gap-4">
+          <div className="flex justify-end">
             <button className="btn btn-primary btn-sm" onClick={() => setShowTaskModal(true)}>
               + Add Task
             </button>
           </div>
 
-          <div className="grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: "1rem", overflowX: "auto" }}>
+          <div className="kanban-board">
             {kanbanColumns.map((col) => {
               const colTasks = tasks.filter((t) => t.status === col.key);
               return (
-                <div key={col.key} className="card stack" style={{ background: "var(--bg-subtle, #f8fafc)", padding: "0.75rem", minHeight: "450px" }}>
-                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-                    <span style={{ fontWeight: 600, color: col.color }}>{col.title}</span>
-                    <span className="badge badge-muted">{colTasks.length}</span>
+                <div key={col.key} className="kanban-col">
+                  <div className="kanban-col-header">
+                    <span className="fw-bold text-sm" style={{ color: col.color }}>{col.title}</span>
+                    <span className="badge badge-muted font-mono">{colTasks.length}</span>
                   </div>
 
-                  <div className="stack" style={{ gap: "0.75rem", flex: 1 }}>
-                    {colTasks.map((task) => (
-                      <div key={task.id} className="card stack" style={{ padding: "0.75rem", background: "white", gap: "0.5rem" }}>
-                        <div className="row" style={{ justifyContent: "space-between" }}>
-                          <span className={`badge ${priorityBadges[task.priority]}`}>{task.priority}</span>
-                          <button className="btn btn-ghost btn-sm" style={{ padding: "2px 6px" }} onClick={() => openTaskComments(task)}>
-                            💬
-                          </button>
-                        </div>
-                        <h4 style={{ margin: 0, fontSize: "0.95rem" }}>{task.title}</h4>
-                        {task.description && <p className="text-muted" style={{ fontSize: "0.8rem", margin: 0 }}>{task.description}</p>}
-
-                        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: "0.5rem", fontSize: "0.75rem" }}>
-                          <span className="text-muted">{task.due_date ? `Due ${task.due_date}` : ""}</span>
-                          <select
-                            value={task.status}
-                            className="input"
-                            style={{ padding: "2px 4px", fontSize: "0.75rem" }}
-                            onChange={(e) => handleStatusChange(task.id, e.target.value as TaskStatus)}
-                          >
-                            <option value="todo">To Do</option>
-                            <option value="in_progress">In Progress</option>
-                            <option value="review">Review</option>
-                            <option value="done">Done</option>
-                          </select>
-                        </div>
+                  <div className="stack gap-3" style={{ flex: 1, overflowY: "auto" }}>
+                    {colTasks.length === 0 ? (
+                      <div className="text-center text-muted text-xs p-4" style={{ border: "1px dashed var(--color-border)", borderRadius: "var(--radius-sm)" }}>
+                        No tasks
                       </div>
-                    ))}
+                    ) : (
+                      colTasks.map((task) => (
+                        <div key={task.id} className="kanban-task-card">
+                          <div className="row-between">
+                            <span className={`badge ${priorityBadges[task.priority]}`}>{task.priority}</span>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              style={{ padding: "2px 6px" }}
+                              onClick={() => openTaskComments(task)}
+                              title="Task comments"
+                            >
+                              💬
+                            </button>
+                          </div>
+
+                          <h4 style={{ margin: 0, fontSize: "0.92rem", lineHeight: 1.3 }}>{task.title}</h4>
+
+                          {task.description && (
+                            <p className="text-muted text-xs" style={{ margin: 0, lineHeight: 1.4 }}>
+                              {task.description}
+                            </p>
+                          )}
+
+                          <div className="row-between mt-2 pt-2 border-t" style={{ fontSize: "0.75rem" }}>
+                            <span className="text-muted text-xs">
+                              {task.due_date ? `Due ${task.due_date}` : "No due date"}
+                            </span>
+                            <select
+                              value={task.status}
+                              className="status-select-sm"
+                              onChange={(e) => handleStatusChange(task.id, e.target.value as TaskStatus)}
+                            >
+                              <option value="todo">To Do</option>
+                              <option value="in_progress">In Progress</option>
+                              <option value="review">Review</option>
+                              <option value="done">Done</option>
+                            </select>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               );
@@ -346,35 +374,40 @@ export function ProjectDetailPage() {
 
       {/* TAB 2: MILESTONES */}
       {activeTab === "milestones" && (
-        <div className="stack" style={{ gap: "1rem" }}>
-          <div className="row" style={{ justifyContent: "flex-end" }}>
+        <div className="stack gap-4">
+          <div className="flex justify-end">
             <button className="btn btn-primary btn-sm" onClick={() => setShowMilestoneModal(true)}>
               + Add Milestone
             </button>
           </div>
 
           {milestones.length === 0 ? (
-            <p className="text-muted card text-center">No milestones created yet.</p>
+            <div className="card text-center p-8">
+              <p className="text-muted text-sm">No milestones created yet for this project.</p>
+            </div>
           ) : (
-            <div className="stack" style={{ gap: "0.75rem" }}>
+            <div className="stack gap-3">
               {milestones.map((ms) => (
-                <div key={ms.id} className="card row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <div key={ms.id} className="card row-between align-center p-4">
                   <div>
-                    <h4 style={{ margin: 0 }}>{ms.title}</h4>
-                    {ms.description && <p className="text-muted" style={{ margin: 0, fontSize: "0.85rem" }}>{ms.description}</p>}
-                    <span className="text-muted" style={{ fontSize: "0.8rem" }}>Due: {ms.due_date || "N/A"}</span>
-                  </div>
-                  <div className="row" style={{ alignItems: "center", gap: "1rem" }}>
-                    <div style={{ width: "120px" }}>
-                      <div className="row" style={{ justifyContent: "space-between", fontSize: "0.75rem" }}>
-                        <span>Progress</span>
-                        <span>{ms.completion_percentage}%</span>
-                      </div>
-                      <div style={{ width: "100%", height: "6px", background: "#e2e8f0", borderRadius: "3px" }}>
-                        <div style={{ width: `${ms.completion_percentage}%`, height: "100%", background: "#10b981", borderRadius: "3px" }} />
-                      </div>
+                    <div className="row gap-2 align-center mb-1">
+                      <h4 style={{ margin: 0 }}>{ms.title}</h4>
+                      <span className={`badge ${ms.status === "completed" ? "badge-success" : "badge-info"}`}>
+                        {ms.status.toUpperCase()}
+                      </span>
                     </div>
-                    <span className="badge badge-info">{ms.status}</span>
+                    {ms.description && <p className="text-muted text-sm mb-1">{ms.description}</p>}
+                    <span className="text-muted text-xs">Target Date: <strong>{ms.due_date || "Not set"}</strong></span>
+                  </div>
+
+                  <div style={{ width: "160px" }}>
+                    <div className="row-between text-xs mb-1">
+                      <span className="text-muted">Progress</span>
+                      <strong className="font-mono">{ms.completion_percentage}%</strong>
+                    </div>
+                    <div style={{ width: "100%", height: "6px", background: "var(--color-border)", borderRadius: "3px", overflow: "hidden" }}>
+                      <div style={{ width: `${ms.completion_percentage}%`, height: "100%", background: "var(--color-primary)", borderRadius: "3px" }} />
+                    </div>
                   </div>
                 </div>
               ))}
@@ -385,35 +418,39 @@ export function ProjectDetailPage() {
 
       {/* TAB 3: TEAM MEMBERS */}
       {activeTab === "team" && (
-        <div className="stack" style={{ gap: "1rem" }}>
-          <div className="row" style={{ justifyContent: "flex-end" }}>
+        <div className="stack gap-4">
+          <div className="flex justify-end">
             <button className="btn btn-primary btn-sm" onClick={() => setShowMemberModal(true)}>
               + Assign Member
             </button>
           </div>
 
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+            <table className="table">
               <thead>
-                <tr style={{ background: "var(--bg-subtle, #f8fafc)", borderBottom: "1px solid var(--border-color, #e2e8f0)" }}>
-                  <th style={{ padding: "0.75rem 1rem" }}>Employee ID</th>
-                  <th style={{ padding: "0.75rem 1rem" }}>Role</th>
-                  <th style={{ padding: "0.75rem 1rem" }}>Joined Date</th>
-                  <th style={{ padding: "0.75rem 1rem", textAlign: "right" }}>Actions</th>
+                <tr>
+                  <th>Employee ID</th>
+                  <th>Role</th>
+                  <th>Joined Date</th>
+                  <th style={{ textAlign: "right" }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {members.map((m) => (
-                  <tr key={m.id} style={{ borderBottom: "1px solid var(--border-color, #e2e8f0)" }}>
-                    <td style={{ padding: "0.75rem 1rem" }}>{m.employee_id}</td>
-                    <td style={{ padding: "0.75rem 1rem" }}>
+                  <tr key={m.id}>
+                    <td className="font-mono text-xs">{m.employee_id}</td>
+                    <td>
                       <span className={`badge ${m.role === "lead" ? "badge-primary" : "badge-muted"}`}>
                         {m.role.toUpperCase()}
                       </span>
                     </td>
-                    <td style={{ padding: "0.75rem 1rem" }}>{m.joined_at}</td>
-                    <td style={{ padding: "0.75rem 1rem", textAlign: "right" }}>
-                      <button className="btn btn-ghost btn-sm text-danger" onClick={() => handleRemoveMember(m.employee_id)}>
+                    <td>{m.joined_at}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm text-danger"
+                        onClick={() => handleRemoveMember(m.employee_id)}
+                      >
                         Remove
                       </button>
                     </td>
