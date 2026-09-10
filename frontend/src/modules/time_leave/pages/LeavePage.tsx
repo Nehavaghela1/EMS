@@ -249,7 +249,17 @@ export function LeavePage() {
       {decisionTarget && (
         <div className="modal-backdrop" onClick={() => setDecisionTarget(null)}>
           <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-            <h3>{decisionTarget.status === "approved" ? "Approve" : "Reject"} this leave request?</h3>
+            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+              <h3>{decisionTarget.status === "approved" ? "Approve" : "Reject"} this leave request?</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setDecisionTarget(null)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             {decisionError && <div className="alert alert-error">{decisionError}</div>}
             {decisionTarget.status === "rejected" && (
               <div className="field">

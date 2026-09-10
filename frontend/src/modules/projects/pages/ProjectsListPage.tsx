@@ -171,9 +171,19 @@ export function ProjectsListPage() {
 
       {/* Create Modal */}
       {showModal && (
-        <div className="modal-backdrop">
-          <div className="modal-content card stack" style={{ maxWidth: "500px", width: "100%" }}>
-            <h3>Create New Project</h3>
+        <div className="modal-backdrop" onClick={() => setShowModal(false)}>
+          <div className="modal card stack" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+              <h3>Create New Project</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleCreate} className="stack" style={{ gap: "1rem" }}>
               <div className="form-group">
                 <label>Project Name *</label>

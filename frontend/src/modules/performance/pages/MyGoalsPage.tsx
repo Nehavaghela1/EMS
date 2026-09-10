@@ -228,9 +228,19 @@ export function MyGoalsPage() {
 
       {/* Modal: Set Goals */}
       {showSetModal && (
-        <div className="modal-backdrop">
-          <div className="modal card max-w-2xl">
-            <h2>Set Goals for {activeCycle?.name}</h2>
+        <div className="modal-backdrop" onClick={() => setShowSetModal(false)}>
+          <div className="modal card max-w-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Set Goals for {activeCycle?.name}</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowSetModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <p className="text-sm text-muted mb-4">
               Enter individual goals. Total weightages must sum to exactly 100.00%.
             </p>
@@ -340,9 +350,19 @@ export function MyGoalsPage() {
 
       {/* Modal: Self Review */}
       {selectedGoal && (
-        <div className="modal-backdrop">
-          <div className="modal card max-w-md">
-            <h2>Self Evaluation: {selectedGoal.title}</h2>
+        <div className="modal-backdrop" onClick={() => setSelectedGoal(null)}>
+          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Self Evaluation: {selectedGoal.title}</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setSelectedGoal(null)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleSubmitSelfReview} className="stack gap-4 my-4">
               <div>
                 <label>Self Rating (1.0 to 5.0)</label>

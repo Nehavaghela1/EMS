@@ -427,9 +427,19 @@ export function ProjectDetailPage() {
 
       {/* CREATE TASK MODAL */}
       {showTaskModal && (
-        <div className="modal-backdrop">
-          <div className="modal-content card stack" style={{ maxWidth: "450px", width: "100%" }}>
-            <h3>Create Project Task</h3>
+        <div className="modal-backdrop" onClick={() => setShowTaskModal(false)}>
+          <div className="modal card stack" style={{ maxWidth: "450px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+              <h3>Create Project Task</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowTaskModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleCreateTask} className="stack" style={{ gap: "1rem" }}>
               <div className="form-group">
                 <label>Task Title *</label>
@@ -469,11 +479,18 @@ export function ProjectDetailPage() {
 
       {/* COMMENTS MODAL */}
       {activeCommentTask && (
-        <div className="modal-backdrop">
-          <div className="modal-content card stack" style={{ maxWidth: "500px", width: "100%" }}>
-            <div className="row" style={{ justifyContent: "space-between" }}>
+        <div className="modal-backdrop" onClick={() => setActiveCommentTask(null)}>
+          <div className="modal card stack" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
               <h3>Comments: {activeCommentTask.title}</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setActiveCommentTask(null)}>✕</button>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setActiveCommentTask(null)}
+                title="Close"
+              >
+                ✕
+              </button>
             </div>
             <div className="stack" style={{ gap: "0.75rem", maxHeight: "250px", overflowY: "auto", padding: "0.5rem" }}>
               {loadingComments ? (
@@ -507,9 +524,19 @@ export function ProjectDetailPage() {
 
       {/* CREATE MILESTONE MODAL */}
       {showMilestoneModal && (
-        <div className="modal-backdrop">
-          <div className="modal-content card stack" style={{ maxWidth: "450px", width: "100%" }}>
-            <h3>Create Milestone</h3>
+        <div className="modal-backdrop" onClick={() => setShowMilestoneModal(false)}>
+          <div className="modal card stack" style={{ maxWidth: "450px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+              <h3>Create Milestone</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowMilestoneModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleCreateMilestone} className="stack" style={{ gap: "1rem" }}>
               <div className="form-group">
                 <label>Milestone Title *</label>
@@ -540,9 +567,19 @@ export function ProjectDetailPage() {
 
       {/* ADD MEMBER MODAL */}
       {showMemberModal && (
-        <div className="modal-backdrop">
-          <div className="modal-content card stack" style={{ maxWidth: "400px", width: "100%" }}>
-            <h3>Assign Team Member</h3>
+        <div className="modal-backdrop" onClick={() => setShowMemberModal(false)}>
+          <div className="modal card stack" style={{ maxWidth: "400px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+              <h3>Assign Team Member</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowMemberModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleAddMember} className="stack" style={{ gap: "1rem" }}>
               <div className="form-group">
                 <label>Employee ID (UUID) *</label>

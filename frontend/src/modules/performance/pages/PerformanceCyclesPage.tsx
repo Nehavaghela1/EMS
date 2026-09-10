@@ -204,9 +204,19 @@ export function PerformanceCyclesPage() {
 
       {/* Modal: Create Cycle */}
       {showCreateModal && (
-        <div className="modal-backdrop">
-          <div className="modal card max-w-lg">
-            <h2>Create Performance Cycle</h2>
+        <div className="modal-backdrop" onClick={() => setShowCreateModal(false)}>
+          <div className="modal card max-w-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Performance Cycle</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowCreateModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleCreate} className="stack gap-4">
               <div>
                 <label>Cycle Name</label>

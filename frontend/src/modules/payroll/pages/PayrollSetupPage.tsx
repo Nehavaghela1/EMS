@@ -425,9 +425,19 @@ export function PayrollSetupPage() {
 
       {/* Modal: Create Structure */}
       {showStructureModal && (
-        <div className="modal-backdrop">
-          <div className="modal card max-w-xl">
-            <h2>Create Salary Structure</h2>
+        <div className="modal-backdrop" onClick={() => setShowStructureModal(false)}>
+          <div className="modal card max-w-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Create Salary Structure</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowStructureModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleCreateStructure} className="stack gap-4">
               <div>
                 <label>Structure Name</label>
@@ -522,9 +532,19 @@ export function PayrollSetupPage() {
 
       {/* Modal: Assign Salary */}
       {showAssignModal && (
-        <div className="modal-backdrop">
-          <div className="modal card max-w-lg">
-            <h2>Assign Salary Structure to Employee</h2>
+        <div className="modal-backdrop" onClick={() => setShowAssignModal(false)}>
+          <div className="modal card max-w-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Assign Salary Structure to Employee</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowAssignModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleAssignSalary} className="stack gap-4">
               <div>
                 <label>Select Employee</label>

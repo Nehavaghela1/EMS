@@ -187,9 +187,19 @@ export function ReimbursementsPage() {
 
       {/* Modal: Submit Claim */}
       {showSubmitModal && (
-        <div className="modal-backdrop">
-          <div className="modal card max-w-md">
-            <h2>Submit Reimbursement Claim</h2>
+        <div className="modal-backdrop" onClick={() => setShowSubmitModal(false)}>
+          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Submit Reimbursement Claim</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowSubmitModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleSubmitClaim} className="stack gap-4">
               <div className="grid grid-2 gap-4">
                 <div>
@@ -250,9 +260,19 @@ export function ReimbursementsPage() {
 
       {/* Modal: Review Claim */}
       {selectedClaim && (
-        <div className="modal-backdrop">
-          <div className="modal card max-w-md">
-            <h2>Review Reimbursement Claim</h2>
+        <div className="modal-backdrop" onClick={() => setSelectedClaim(null)}>
+          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Review Reimbursement Claim</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setSelectedClaim(null)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <div className="stack gap-3 my-4">
               <div>
                 <span className="text-muted text-xs block">Expense Type & Amount</span>
@@ -278,7 +298,15 @@ export function ReimbursementsPage() {
 
             <div className="flex gap-3 justify-end mt-4">
               <button
-                className="btn btn-ghost text-red"
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setSelectedClaim(null)}
+                disabled={reviewing}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger"
                 onClick={() => handleReview("reject")}
                 disabled={reviewing}
               >

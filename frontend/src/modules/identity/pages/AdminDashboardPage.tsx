@@ -178,7 +178,21 @@ export function AdminDashboardPage() {
       {rejectTarget && (
         <div className="modal-backdrop" onClick={() => setRejectTarget(null)}>
           <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-            <h3>Reject {rejectTarget.name}?</h3>
+            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+              <h3>Reject {rejectTarget.name}?</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => {
+                  setRejectTarget(null);
+                  setActionError(null);
+                }}
+                disabled={busy}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             {actionError && <div className="alert alert-error">{actionError}</div>}
             <div className="field">
               <label htmlFor="reject_reason">Reason</label>

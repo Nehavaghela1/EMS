@@ -239,9 +239,19 @@ export function PerformanceReviewPage() {
 
       {/* Modal: Rate Goal */}
       {selectedGoal && (
-        <div className="modal-backdrop">
-          <div className="modal card max-w-md">
-            <h2>Rate Goal: {selectedGoal.title}</h2>
+        <div className="modal-backdrop" onClick={() => setSelectedGoal(null)}>
+          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Rate Goal: {selectedGoal.title}</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setSelectedGoal(null)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleSubmitManagerReview} className="stack gap-4 my-4">
               <div>
                 <label>Manager Rating (1.0 to 5.0)</label>

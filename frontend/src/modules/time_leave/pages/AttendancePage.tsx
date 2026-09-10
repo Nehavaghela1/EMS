@@ -140,7 +140,18 @@ function RegularizeDialog({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-        <h3>Regularize attendance — {record.date}</h3>
+        <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+          <h3>Regularize attendance — {record.date}</h3>
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={onClose}
+            disabled={busy}
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
         {error && <div className="alert alert-error">{error}</div>}
         <div className="field">
           <label>Status</label>

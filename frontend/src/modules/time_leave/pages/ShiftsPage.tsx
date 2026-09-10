@@ -275,7 +275,18 @@ function AssignDialog({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal stack" onClick={(e) => e.stopPropagation()}>
-        <h3>Assign "{shift.name}"</h3>
+        <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+          <h3>Assign "{shift.name}"</h3>
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={onClose}
+            disabled={submitting}
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
         {error && <div className="alert alert-error">{error}</div>}
         <div className="field">
           <label>Employee</label>

@@ -184,9 +184,19 @@ export function PayrollRunPage() {
 
       {/* Modal: Start Payroll Run */}
       {showRunModal && (
-        <div className="modal-backdrop">
-          <div className="modal card max-w-md">
-            <h2>Initiate Payroll Run</h2>
+        <div className="modal-backdrop" onClick={() => setShowRunModal(false)}>
+          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Initiate Payroll Run</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowRunModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
             <form onSubmit={handleStartRun} className="stack gap-4">
               <div className="grid grid-2 gap-4">
                 <div>
@@ -233,8 +243,8 @@ export function PayrollRunPage() {
 
       {/* Modal: Run Details */}
       {selectedRunDetail && (
-        <div className="modal-backdrop">
-          <div className="modal card" style={{ maxWidth: "960px", width: "95vw" }}>
+        <div className="modal-backdrop" onClick={() => setSelectedRunDetail(null)}>
+          <div className="modal card" style={{ maxWidth: "960px", width: "95vw" }} onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between align-center border-b pb-3 mb-4">
               <div>
                 <h2>
@@ -245,15 +255,25 @@ export function PayrollRunPage() {
                   <strong className="text-primary">{selectedRunDetail.run.status}</strong>
                 </p>
               </div>
-              {selectedRunDetail.run.status !== "approved" && (
+              <div className="flex align-center gap-2">
+                {selectedRunDetail.run.status !== "approved" && (
+                  <button
+                    className="btn btn-success"
+                    onClick={() => handleApproveRun(selectedRunDetail.run.id)}
+                    disabled={approving}
+                  >
+                    {approving ? "Approving..." : "Approve Run & Release Payslips"}
+                  </button>
+                )}
                 <button
-                  className="btn btn-success"
-                  onClick={() => handleApproveRun(selectedRunDetail.run.id)}
-                  disabled={approving}
+                  type="button"
+                  className="modal-close-btn"
+                  onClick={() => setSelectedRunDetail(null)}
+                  title="Close"
                 >
-                  {approving ? "Approving..." : "Approve Run & Release Payslips"}
+                  ✕
                 </button>
-              )}
+              </div>
             </div>
 
             {loadingDetail ? (

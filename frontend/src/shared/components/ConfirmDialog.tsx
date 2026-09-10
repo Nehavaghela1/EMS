@@ -52,7 +52,18 @@ export function ConfirmDialog({
         aria-labelledby="confirm-dialog-title"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 id="confirm-dialog-title">{title}</h3>
+        <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+          <h3 id="confirm-dialog-title">{title}</h3>
+          <button
+            type="button"
+            className="modal-close-btn"
+            onClick={onCancel}
+            disabled={busy}
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
         <p className="text-muted mt-0 mb-0">{message}</p>
         <div className="row-end">
           <button ref={cancelRef} className="btn" onClick={onCancel} disabled={busy}>
