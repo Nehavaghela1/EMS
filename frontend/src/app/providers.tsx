@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider } from "./auth-context";
 import { ToastProvider } from "./toast-context";
 import { ErrorBoundary } from "../shared/components/ErrorBoundary";
+import { GlobalKeyboardHandler } from "../shared/components/GlobalKeyboardHandler";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,6 +20,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
+          <GlobalKeyboardHandler />
           <ToastProvider>
             <AuthProvider>{children}</AuthProvider>
           </ToastProvider>
