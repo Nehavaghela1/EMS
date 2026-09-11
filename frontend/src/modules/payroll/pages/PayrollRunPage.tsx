@@ -9,6 +9,7 @@ import {
 } from "../api";
 import { listEmployees, type Employee } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
+import { parseApiError } from "../../../shared/api/errors";
 
 export function PayrollRunPage() {
   const { notify } = useToast();
@@ -71,8 +72,12 @@ export function PayrollRunPage() {
       setShowRunModal(false);
       fetchRuns();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to start payroll run";
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      if (parsed.status === 409 || parsed.code === "conflict") {
+        notify(parsed.message || "A payroll run for this period already exists.", "warning");
+      } else {
+        notify(parsed.message || "Failed to start payroll run", "error");
+      }
     } finally {
       setStartingRun(false);
     }
@@ -197,6 +202,34 @@ export function PayrollRunPage() {
                 ✕
               </button>
             </div>
+            {(() => {
+              const existingRegularRun = runs.find(
+                (r) => r.month === runMonth && r.year === runYear && r.run_type === "regular"
+              );
+              if (existingRegularRun && runType === "regular") {
+                return (
+                  <div
+                    style={{
+                      background: "rgba(245, 158, 11, 0.12)",
+                      border: "1px solid rgba(245, 158, 11, 0.4)",
+                      borderRadius: "8px",
+                      padding: "10px 14px",
+                      fontSize: "13px",
+                      color: "#b45309",
+                      marginBottom: "12px",
+                      lineHeight: "1.5",
+                    }}
+                  >
+                    <strong>Notice:</strong> A regular payroll run for {MONTH_NAMES[runMonth - 1]} {runYear} already exists (Status: <em>{existingRegularRun.status}</em>).
+                    <div style={{ marginTop: "4px" }}>
+                      If salaries have already been computed or paid, you cannot run another regular payroll for this same period. Please switch <strong>Run Type</strong> to <em>Off-cycle Run</em> for bonuses/adjustments or select another month.
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
             <form onSubmit={handleStartRun} className="stack gap-4 my-2">
               <div className="grid-2">
                 <div className="field">
@@ -232,7 +265,15 @@ export function PayrollRunPage() {
                 <button type="button" className="btn btn-ghost" onClick={() => setShowRunModal(false)}>
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={startingRun}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={
+                    startingRun ||
+                    (runType === "regular" &&
+                      runs.some((r) => r.month === runMonth && r.year === runYear && r.run_type === "regular"))
+                  }
+                >
                   {startingRun ? "Running..." : "Run"}
                 </button>
               </div>

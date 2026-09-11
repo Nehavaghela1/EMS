@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useState, type ReactNode } from
 interface Toast {
   id: number;
   message: string;
-  kind: "success" | "error";
+  kind: "success" | "error" | "warning" | "info";
 }
 
 interface ToastContextValue {
@@ -29,6 +29,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div className="toast-stack">
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast-${t.kind}`}>
+            {t.kind === "warning" && <span style={{ marginRight: "6px" }}>⚠️</span>}
+            {t.kind === "info" && <span style={{ marginRight: "6px" }}>ℹ️</span>}
+            {t.kind === "success" && <span style={{ marginRight: "6px" }}>✓</span>}
             {t.message}
           </div>
         ))}

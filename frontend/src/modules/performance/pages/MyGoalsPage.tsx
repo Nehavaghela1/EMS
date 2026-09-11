@@ -13,6 +13,7 @@ import {
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { formatDate } from "../../../shared/utils/date";
+import { parseApiError } from "../../../shared/api/errors";
 
 export function MyGoalsPage() {
   const { user } = useAuth();
@@ -100,8 +101,8 @@ export function MyGoalsPage() {
       setShowSetModal(false);
       init();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to save goals";
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to save goals", parsed.status === 409 ? "warning" : "error");
     } finally {
       setSubmittingGoals(false);
     }
@@ -125,8 +126,8 @@ export function MyGoalsPage() {
       setSelfComments("");
       init();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to submit self-review";
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to submit self-review", parsed.status === 409 ? "warning" : "error");
     } finally {
       setSubmittingReview(false);
     }
@@ -157,8 +158,8 @@ export function MyGoalsPage() {
       setEditingGoal(null);
       init();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to update goal";
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to update goal", parsed.status === 409 ? "warning" : "error");
     } finally {
       setSubmittingEdit(false);
     }

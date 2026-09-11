@@ -11,6 +11,7 @@ import {
 } from "../api";
 import { useToast } from "../../../app/toast-context";
 import { formatDate } from "../../../shared/utils/date";
+import { parseApiError } from "../../../shared/api/errors";
 
 export function PerformanceCyclesPage() {
   const { notify } = useToast();
@@ -76,8 +77,8 @@ export function PerformanceCyclesPage() {
       fetchCycles();
       fetchReport();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to create cycle";
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to create cycle", parsed.status === 409 ? "warning" : "error");
     } finally {
       setSubmitting(false);
     }

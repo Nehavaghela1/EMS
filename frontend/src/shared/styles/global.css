@@ -734,6 +734,16 @@ table.data-table {
   background: var(--color-danger);
 }
 
+.toast-warning {
+  background: #d97706;
+  color: #fff;
+}
+
+.toast-info {
+  background: var(--color-primary);
+  color: #fff;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

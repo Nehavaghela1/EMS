@@ -10,6 +10,7 @@ import {
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { formatDate } from "../../../shared/utils/date";
+import { parseApiError } from "../../../shared/api/errors";
 
 export function ReimbursementsPage() {
   const { user } = useAuth();
@@ -43,8 +44,9 @@ export function ReimbursementsPage() {
   async function fetchClaims() {
     setLoading(true);
     try {
-      const filterArg = statusFilter === "all" ? undefined : statusFilter;
-      const res = await listReimbursements(filterArg);
+      const res = await listReimbursements(
+        statusFilter === "all" ? undefined : statusFilter
+      );
       setClaims(res.items);
     } catch {
       notify("Failed to load reimbursement claims", "error");
@@ -72,8 +74,8 @@ export function ReimbursementsPage() {
       setDescription("");
       fetchClaims();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to submit claim";
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to submit claim", parsed.status === 409 ? "warning" : "error");
     } finally {
       setSubmitting(false);
     }
@@ -96,8 +98,8 @@ export function ReimbursementsPage() {
       setRejectionReason("");
       fetchClaims();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : `Failed to ${action} claim`;
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || `Failed to ${action} claim`, parsed.status === 409 ? "warning" : "error");
     } finally {
       setReviewing(false);
     }

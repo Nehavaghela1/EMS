@@ -15,6 +15,7 @@ import {
 } from "../api";
 import { listEmployees, type Employee } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
+import { parseApiError } from "../../../shared/api/errors";
 
 export function PayrollSetupPage() {
   const { notify } = useToast();
@@ -149,8 +150,8 @@ export function PayrollSetupPage() {
       setStructName("");
       fetchStructures();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to create structure";
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to create structure", parsed.status === 409 ? "warning" : "error");
     }
   }
 
@@ -170,8 +171,8 @@ export function PayrollSetupPage() {
       notify("Salary assigned successfully", "success");
       setShowAssignModal(false);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to assign salary";
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to assign salary", parsed.status === 409 ? "warning" : "error");
     } finally {
       setAssigning(false);
     }

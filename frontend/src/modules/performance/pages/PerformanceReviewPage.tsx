@@ -12,6 +12,7 @@ import {
 } from "../api";
 import { getEmployee, type Employee } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
+import { parseApiError } from "../../../shared/api/errors";
 
 export function PerformanceReviewPage() {
   const { employeeId } = useParams<{ employeeId: string }>();
@@ -77,8 +78,8 @@ export function PerformanceReviewPage() {
       setMgrComments("");
       if (employeeId) fetchData(employeeId);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to submit manager rating";
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to submit manager rating", parsed.status === 409 ? "warning" : "error");
     } finally {
       setSubmittingReview(false);
     }
@@ -98,8 +99,8 @@ export function PerformanceReviewPage() {
       setSummary(res);
       notify("Performance evaluation finalized successfully", "success");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to finalize summary";
-      notify(msg, "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to finalize summary", parsed.status === 409 ? "warning" : "error");
     } finally {
       setFinalizing(false);
     }
