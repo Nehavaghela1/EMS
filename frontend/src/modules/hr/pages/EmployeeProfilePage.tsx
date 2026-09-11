@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useLocation, useNavigate, useParams, Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { PageHeader } from "../../../shared/components/PageHeader";
 import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import { parseApiError } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
@@ -17,6 +16,14 @@ import {
   getFnFSettlement,
   type Employee,
 } from "../api";
+import {
+  listEmployeePayslips,
+  listStructures,
+  assignEmployeeSalary,
+  type PayrollItem,
+  type SalaryStructureListItem,
+} from "../../payroll/api";
+import { apiClient } from "../../../app/api-client";
 
 interface InviteState {
   invite?: { sent_to: string; expires_at: string };
@@ -41,6 +48,7 @@ export function EmployeeProfilePage() {
   const [busy, setBusy] = useState(false);
   const [resent, setResent] = useState<{ sent_to: string; expires_at: string } | null>(null);
   const [resendBusy, setResendBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState<"overview" | "salary" | "payslips" | "exit">("overview");
 
   const employeeQuery = useQuery({
     queryKey: ["employee", id],
@@ -110,63 +118,157 @@ export function EmployeeProfilePage() {
         </Link>
       </div>
 
-      <PageHeader
-        title={`${e.first_name}${e.last_name ? " " + e.last_name : ""}`}
-        breadcrumb="HR / Employees"
-        action={
-          isHr && (
-            <div className="row">
+      {/* Zoho / Enterprise Style Header Card */}
+      <div className="card" style={{ padding: "1.25rem", borderLeft: "4px solid var(--color-primary, #2563eb)" }}>
+        <div className="flex justify-between items-center" style={{ flexWrap: "wrap", gap: "1rem" }}>
+          <div className="flex items-center gap-3">
+            <div
+              style={{
+                width: "56px",
+                height: "56px",
+                borderRadius: "50%",
+                background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                color: "#ffffff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "1.3rem",
+                fontWeight: 700,
+                boxShadow: "0 2px 8px rgba(37, 99, 235, 0.25)",
+              }}
+            >
+              {e.first_name.charAt(0).toUpperCase()}
+              {(e.last_name || "").charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted" style={{ fontSize: "0.88rem", fontWeight: 600 }}>
+                  {e.employee_code}
+                </span>
+                <h2 style={{ margin: 0, fontSize: "1.35rem" }}>
+                  {e.first_name} {e.last_name || ""}
+                </h2>
+                <span className={"badge " + (e.is_active ? "badge-success" : "badge-muted")}>
+                  {e.is_active ? "Active" : "Inactive"}
+                </span>
+              </div>
+              <div className="text-muted" style={{ fontSize: "0.85rem", marginTop: "2px" }}>
+                {e.position || "Staff"} • {e.level || "L1"} • {e.employment_type.replace("_", " ")}
+              </div>
+            </div>
+          </div>
+
+          {isHr && (
+            <div className="flex items-center gap-2">
               {e.invitation_status !== "activated" && (
-                <button className="btn" onClick={handleResendInvite} disabled={resendBusy}>
-                  {resendBusy ? "Resending…" : "Resend invitation"}
+                <button className="btn btn-sm btn-ghost" onClick={handleResendInvite} disabled={resendBusy}>
+                  {resendBusy ? "Resending…" : "Resend Invite"}
                 </button>
               )}
-              <button className="btn" onClick={() => navigate(`/employees/${e.id}/edit`)}>
-                Edit
+              <button className="btn btn-sm" onClick={() => navigate(`/employees/${e.id}/edit`)}>
+                Edit Profile
               </button>
               <button
-                className={e.is_active ? "btn btn-danger" : "btn btn-primary"}
+                className={e.is_active ? "btn btn-sm btn-danger" : "btn btn-sm btn-primary"}
                 onClick={() => setConfirmOpen(true)}
               >
                 {e.is_active ? "Deactivate" : "Reactivate"}
               </button>
             </div>
-          )
-        }
-      />
-
-      {invite && (
-        <div className="alert alert-success mb-4">
-          Invitation sent to <strong>{invite.sent_to}</strong>, expires{" "}
-          {formatDateTime(invite.expires_at)}.
+          )}
         </div>
-      )}
 
-      <div className="card mb-4">
-        <div className="form-grid">
-          <Field label="Employee code" value={e.employee_code} />
-          <Field
-            label="Status"
-            value={
-              <span className={"badge " + (e.is_active ? "badge-success" : "badge-muted")}>
-                {e.is_active ? "Active" : "Inactive"}
-              </span>
-            }
-          />
-          <Field label="Work email" value={e.email} />
-          <Field label="Personal email" value={e.personal_email ?? "—"} />
-          <Field label="Phone" value={e.phone ?? "—"} />
-          <Field label="Position" value={e.position ?? "—"} />
-          <Field label="Level" value={e.level ?? "—"} />
-          <Field label="Employment type" value={e.employment_type.replace("_", " ")} />
-          <Field label="Hire date" value={formatDate(e.hire_date)} />
-          <Field label="Probation end date" value={e.probation_end_date ? formatDate(e.probation_end_date) : "—"} />
-          <Field label="Notice period" value={`${e.notice_period_days ?? 30} days`} />
-          <Field label="Invitation status" value={e.invitation_status.replace("_", " ")} />
+        {/* Tab Navigation */}
+        <div
+          className="flex gap-4 border-b mt-4"
+          style={{
+            borderColor: "var(--color-border)",
+            overflowX: "auto",
+            paddingBottom: "1px",
+          }}
+        >
+          {[
+            { id: "overview", label: "Overview" },
+            { id: "salary", label: "Salary Details" },
+            { id: "payslips", label: "Payslips" },
+            { id: "exit", label: "Resignation & FnF" },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className="btn-ghost"
+              style={{
+                border: "none",
+                background: "transparent",
+                padding: "0.5rem 0.75rem",
+                fontSize: "0.9rem",
+                fontWeight: activeTab === tab.id ? 600 : 400,
+                color: activeTab === tab.id ? "var(--color-primary, #2563eb)" : "var(--color-text-muted)",
+                borderBottom: activeTab === tab.id ? "2px solid var(--color-primary, #2563eb)" : "2px solid transparent",
+                borderRadius: 0,
+                cursor: "pointer",
+              }}
+              onClick={() => setActiveTab(tab.id as typeof activeTab)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      <ResignationAndFnFCard employee={e} isHr={isHr} onRefresh={() => queryClient.invalidateQueries({ queryKey: ["employee", id] })} />
+      {invite && (
+        <div className="alert alert-success mb-4">
+          Invitation sent to <strong>{invite.sent_to}</strong>, expires {formatDateTime(invite.expires_at)}.
+        </div>
+      )}
+
+      {/* TAB 1: OVERVIEW */}
+      {activeTab === "overview" && (
+        <div className="stack gap-4">
+          <div className="card">
+            <h3 style={{ fontSize: "1rem", marginBottom: "1rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}>
+              Basic Information
+            </h3>
+            <div className="form-grid">
+              <Field label="Full Name" value={`${e.first_name} ${e.last_name || ""}`} />
+              <Field label="Employee Code" value={e.employee_code} />
+              <Field label="Work Email" value={e.email} />
+              <Field label="Personal Email" value={e.personal_email ?? "—"} />
+              <Field label="Phone" value={e.phone ?? "—"} />
+              <Field label="Invitation Status" value={e.invitation_status.replace("_", " ")} />
+            </div>
+          </div>
+
+          <div className="card">
+            <h3 style={{ fontSize: "1rem", marginBottom: "1rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}>
+              Employment & Designation
+            </h3>
+            <div className="form-grid">
+              <Field label="Position / Role" value={e.position ?? "—"} />
+              <Field label="Level" value={e.level ?? "—"} />
+              <Field label="Employment Type" value={e.employment_type.replace("_", " ")} />
+              <Field label="Hire Date" value={formatDate(e.hire_date)} />
+              <Field label="Probation End Date" value={e.probation_end_date ? formatDate(e.probation_end_date) : "—"} />
+              <Field label="Notice Period" value={`${e.notice_period_days ?? 30} days`} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: SALARY DETAILS */}
+      {activeTab === "salary" && (
+        <EmployeeSalaryTab employeeId={e.id} isHr={isHr} />
+      )}
+
+      {/* TAB 3: PAYSLIPS */}
+      {activeTab === "payslips" && (
+        <EmployeePayslipsTab employeeId={e.id} />
+      )}
+
+      {/* TAB 4: RESIGNATION & FNF */}
+      {activeTab === "exit" && (
+        <ResignationAndFnFCard employee={e} isHr={isHr} onRefresh={() => queryClient.invalidateQueries({ queryKey: ["employee", id] })} />
+      )}
 
       <ConfirmDialog
         open={confirmOpen}
@@ -456,6 +558,351 @@ function ResignationAndFnFCard({
               )}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface EmployeeSalaryData {
+  employee_id: string;
+  structure_id: string;
+  structure_name: string;
+  ctc: string;
+  effective_from: string;
+  effective_to: string | null;
+  revision_reason: string | null;
+  earnings: Array<{ code: string; name: string; amount: string }>;
+  deductions: Array<{ code: string; name: string; amount: string }>;
+  gross_earnings: string;
+}
+
+function EmployeeSalaryTab({ employeeId, isHr }: { employeeId: string; isHr: boolean }) {
+  const { notify } = useToast();
+  const queryClient = useQueryClient();
+
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [selectedStructId, setSelectedStructId] = useState("");
+  const [assignCtc, setAssignCtc] = useState("600000.00");
+  const [assignEffectiveFrom, setAssignEffectiveFrom] = useState(
+    new Date().toISOString().split("T")[0]
+  );
+  const [saving, setSaving] = useState(false);
+
+  const salaryQuery = useQuery<EmployeeSalaryData | null>({
+    queryKey: ["employee_salary", employeeId],
+    queryFn: async () => {
+      try {
+        const res = await apiClient.get<EmployeeSalaryData>(`/payroll/employees/${employeeId}/salary`);
+        return res.data;
+      } catch (err: unknown) {
+        const parsed = parseApiError(err);
+        if (parsed.status === 404) return null;
+        throw err;
+      }
+    },
+  });
+
+  const structuresQuery = useQuery({
+    queryKey: ["salary_structures_list"],
+    queryFn: () => listStructures(1, 100),
+    enabled: isHr && showAssignModal,
+  });
+
+  async function handleAssignSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedStructId) {
+      notify("Please select a salary structure", "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      await assignEmployeeSalary(employeeId, {
+        structure_id: selectedStructId,
+        ctc: assignCtc,
+        effective_from: assignEffectiveFrom,
+      });
+      notify("Salary assigned successfully", "success");
+      setShowAssignModal(false);
+      await queryClient.invalidateQueries({ queryKey: ["employee_salary", employeeId] });
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (salaryQuery.isLoading) {
+    return (
+      <div className="card row" style={{ padding: "2rem" }}>
+        <div className="spinner" />
+        <span className="text-muted">Loading salary & compensation details...</span>
+      </div>
+    );
+  }
+
+  const sal = salaryQuery.data;
+
+  return (
+    <div className="stack gap-4">
+      <div className="card">
+        <div className="flex justify-between items-center border-b pb-3 mb-4">
+          <div>
+            <h3 style={{ margin: 0, fontSize: "1.1rem" }}>Current Compensation & Structure</h3>
+            <p className="text-muted text-sm" style={{ margin: "2px 0 0" }}>
+              CTC breakdown, allowances, statutory deductions & take-home pay
+            </p>
+          </div>
+          {isHr && (
+            <button className="btn btn-primary btn-sm" onClick={() => setShowAssignModal(true)}>
+              {sal ? "Revise / Change Salary" : "+ Assign Salary Structure"}
+            </button>
+          )}
+        </div>
+
+        {!sal ? (
+          <div style={{ textAlign: "center", padding: "2.5rem 1rem" }}>
+            <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>💰</div>
+            <h4 style={{ margin: "0 0 0.5rem" }}>No Salary Structure Assigned</h4>
+            <p className="text-muted text-sm" style={{ maxWidth: "420px", margin: "0 auto 1.25rem" }}>
+              This employee doesn't have an active salary structure linked yet.
+            </p>
+            {isHr && (
+              <button className="btn btn-primary btn-sm" onClick={() => setShowAssignModal(true)}>
+                Assign Salary Structure
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="stack gap-4">
+            <div className="grid-3" style={{ gap: "1rem" }}>
+              <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
+                <div className="text-muted text-xs font-semibold uppercase">Annual CTC</div>
+                <div className="text-xl font-bold" style={{ color: "var(--color-primary, #2563eb)", marginTop: "4px" }}>
+                  ₹{Number(sal.ctc).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-muted text-xs" style={{ marginTop: "2px" }}>
+                  Structure: <strong>{sal.structure_name}</strong>
+                </div>
+              </div>
+
+              <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
+                <div className="text-muted text-xs font-semibold uppercase">Monthly Gross Pay</div>
+                <div className="text-xl font-bold text-success" style={{ marginTop: "4px" }}>
+                  ₹{Number(sal.gross_earnings).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-muted text-xs" style={{ marginTop: "2px" }}>
+                  Before statutory deductions
+                </div>
+              </div>
+
+              <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
+                <div className="text-muted text-xs font-semibold uppercase">Effective From</div>
+                <div className="text-md font-semibold" style={{ marginTop: "4px" }}>
+                  {formatDate(sal.effective_from)}
+                </div>
+                <div className="text-muted text-xs" style={{ marginTop: "2px" }}>
+                  {sal.revision_reason || "Initial assignment"}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid-2" style={{ gap: "1.5rem" }}>
+              {/* Earnings Breakdown */}
+              <div className="card" style={{ border: "1px solid var(--color-border)" }}>
+                <h4 style={{ margin: "0 0 0.75rem", fontSize: "0.95rem", color: "#16a34a" }}>
+                  Earnings (Monthly)
+                </h4>
+                <table className="table text-sm" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Component</th>
+                      <th style={{ textAlign: "right" }}>Amount (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sal.earnings.map((e) => (
+                      <tr key={e.code}>
+                        <td>{e.name}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>
+                          ₹{Number(e.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr style={{ borderTop: "2px solid var(--color-border)", fontWeight: 700 }}>
+                      <td>Total Gross</td>
+                      <td style={{ textAlign: "right", color: "#16a34a" }}>
+                        ₹{Number(sal.gross_earnings).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Deductions Breakdown */}
+              <div className="card" style={{ border: "1px solid var(--color-border)" }}>
+                <h4 style={{ margin: "0 0 0.75rem", fontSize: "0.95rem", color: "#dc2626" }}>
+                  Deductions (Monthly)
+                </h4>
+                {sal.deductions.length === 0 ? (
+                  <p className="text-muted text-sm">No monthly deductions configured.</p>
+                ) : (
+                  <table className="table text-sm" style={{ width: "100%" }}>
+                    <thead>
+                      <tr>
+                        <th>Component</th>
+                        <th style={{ textAlign: "right" }}>Amount (₹)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sal.deductions.map((d) => (
+                        <tr key={d.code}>
+                          <td>{d.name}</td>
+                          <td style={{ textAlign: "right", fontWeight: 600, color: "#dc2626" }}>
+                            - ₹{Number(d.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Assign Salary Modal */}
+      {showAssignModal && (
+        <div className="modal-backdrop" onClick={() => setShowAssignModal(false)}>
+          <div className="modal card" style={{ maxWidth: "520px" }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center border-b pb-3 mb-4">
+              <h3 style={{ margin: 0 }}>Assign / Revise Salary Structure</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowAssignModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleAssignSubmit} className="stack gap-4">
+              <div className="field">
+                <label>Salary Structure *</label>
+                <select
+                  value={selectedStructId}
+                  onChange={(e) => setSelectedStructId(e.target.value)}
+                  required
+                >
+                  <option value="">Select structure template...</option>
+                  {structuresQuery.data?.items.map((s: SalaryStructureListItem) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.country} • {s.level || "All Levels"})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="field">
+                <label>Annual CTC (₹) *</label>
+                <input
+                  type="number"
+                  value={assignCtc}
+                  onChange={(e) => setAssignCtc(e.target.value)}
+                  required
+                  min="50000"
+                  step="1000"
+                />
+              </div>
+
+              <div className="field">
+                <label>Effective From *</label>
+                <input
+                  type="date"
+                  value={assignEffectiveFrom}
+                  onChange={(e) => setAssignEffectiveFrom(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setShowAssignModal(false)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? "Saving..." : "Save Salary"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmployeePayslipsTab({ employeeId }: { employeeId: string }) {
+  const payslipsQuery = useQuery<PayrollItem[]>({
+    queryKey: ["employee_payslips", employeeId],
+    queryFn: () => listEmployeePayslips(employeeId),
+  });
+
+  if (payslipsQuery.isLoading) {
+    return (
+      <div className="card row" style={{ padding: "2rem" }}>
+        <div className="spinner" />
+        <span className="text-muted">Loading employee payslips...</span>
+      </div>
+    );
+  }
+
+  const payslips = payslipsQuery.data ?? [];
+
+  return (
+    <div className="card">
+      <h3 style={{ margin: "0 0 1rem", fontSize: "1.1rem" }}>Generated Payslips & Statements</h3>
+      {payslips.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "2.5rem 1rem" }}>
+          <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>📄</div>
+          <h4 style={{ margin: "0 0 0.5rem" }}>No Payslips Available</h4>
+          <p className="text-muted text-sm">
+            Payslips will appear here once monthly payroll runs are processed and approved.
+          </p>
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="table text-sm" style={{ width: "100%" }}>
+            <thead>
+              <tr>
+                <th>Gross Salary</th>
+                <th>Deductions</th>
+                <th>Reimbursements</th>
+                <th>Net Pay</th>
+                <th>Working Days</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payslips.map((item) => (
+                <tr key={item.id}>
+                  <td style={{ fontWeight: 600 }}>₹{Number(item.gross_salary).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                  <td style={{ color: "#dc2626" }}>- ₹{Number(item.total_deductions).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                  <td style={{ color: "#2563eb" }}>+ ₹{Number(item.reimbursement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                  <td style={{ fontWeight: 700, color: "#16a34a", fontSize: "1rem" }}>
+                    ₹{Number(item.net_salary).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </td>
+                  <td>{item.present_days} / {item.working_days} days</td>
+                  <td>
+                    <span className="badge badge-success">Released</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
