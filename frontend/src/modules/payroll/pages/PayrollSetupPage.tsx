@@ -17,6 +17,19 @@ import { listEmployees, type Employee } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
 import { parseApiError } from "../../../shared/api/errors";
 
+const SUPPORTED_COUNTRIES = [
+  { code: "IN", name: "India" },
+  { code: "US", name: "United States" },
+  { code: "AU", name: "Australia" },
+  { code: "GB", name: "United Kingdom" },
+];
+
+const SUPPORTED_LEVELS = [
+  { code: "L1", label: "L1 — Junior / Entry Level" },
+  { code: "L2", label: "L2 — Mid Level / Senior" },
+  { code: "L3", label: "L3 — Lead / Executive" },
+];
+
 export function PayrollSetupPage() {
   const { notify } = useToast();
   const [activeTab, setActiveTab] = useState<"structures" | "statutory" | "pt_slabs" | "tax_slabs">("structures");
@@ -138,6 +151,19 @@ export function PayrollSetupPage() {
       notify("Please enter structure name", "error");
       return;
     }
+
+    // Validate percentage-based CTC components
+    let totalDirectCtc = 0;
+    for (const c of components) {
+      if (c.calculation_type === "percentage" && c.percentage_of === "ctc") {
+        totalDirectCtc += Number(c.value) || 0;
+      }
+    }
+    if (totalDirectCtc > 100) {
+      notify(`Percentage of CTC components sum to ${totalDirectCtc}%, which exceeds 100%. Please adjust.`, "error");
+      return;
+    }
+
     try {
       await createStructure({
         name: structName,
@@ -452,70 +478,269 @@ export function PayrollSetupPage() {
               </div>
               <div className="grid grid-2 gap-4">
                 <div>
-                  <label>Country</label>
-                  <input type="text" value={structCountry} onChange={(e) => setStructCountry(e.target.value)} />
+                  <label>Country *</label>
+                  <select
+                    value={structCountry}
+                    onChange={(e) => setStructCountry(e.target.value)}
+                    required
+                  >
+                    {SUPPORTED_COUNTRIES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.name} ({c.code})
+                      </option>
+                    ))}
+                  </select>
+                  <span className="field-hint">Select the designated jurisdiction.</span>
                 </div>
                 <div>
-                  <label>Level</label>
-                  <input type="text" value={structLevel} onChange={(e) => setStructLevel(e.target.value)} />
+                  <label>Level (Band) *</label>
+                  <select
+                    value={structLevel}
+                    onChange={(e) => setStructLevel(e.target.value)}
+                    required
+                  >
+                    {SUPPORTED_LEVELS.map((lvl) => (
+                      <option key={lvl.code} value={lvl.code}>
+                        {lvl.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="field-hint">Fixed employee band.</span>
                 </div>
               </div>
 
-              <h3>Components</h3>
+              {/* CTC Percentage Allocation Visualizer */}
+              {(() => {
+                const basicComp = components.find((c) => c.code === "BASIC");
+                const basicVal = basicComp && basicComp.calculation_type === "percentage" && basicComp.percentage_of === "ctc"
+                  ? Number(basicComp.value) || 0
+                  : 0;
+
+                let directCtcPercent = 0;
+                let basicDerivedCtcPercent = 0;
+                let hasBalance = false;
+
+                for (const c of components) {
+                  if (c.calculation_type === "percentage") {
+                    if (c.percentage_of === "ctc") {
+                      directCtcPercent += Number(c.value) || 0;
+                    } else if (c.percentage_of === "basic") {
+                      const derived = ((Number(c.value) || 0) * basicVal) / 100;
+                      basicDerivedCtcPercent += derived;
+                    }
+                  } else if (c.calculation_type === "balance") {
+                    hasBalance = true;
+                  }
+                }
+
+                const totalAllocated = directCtcPercent + basicDerivedCtcPercent;
+                const balanceRemaining = Math.max(0, 100 - totalAllocated);
+
+                return (
+                  <div
+                    style={{
+                      background: "var(--color-bg, #f8fafc)",
+                      border: "1px solid var(--color-border, #e2e8f0)",
+                      borderRadius: "8px",
+                      padding: "0.85rem 1rem",
+                      marginTop: "0.5rem",
+                    }}
+                  >
+                    <div className="flex justify-between items-center text-xs font-semibold uppercase text-muted mb-2">
+                      <span>Salary Allocation (Out of 100% CTC)</span>
+                      <span
+                        style={{
+                          color: totalAllocated > 100 ? "#dc2626" : totalAllocated === 100 ? "#16a34a" : "#2563eb",
+                        }}
+                      >
+                        {totalAllocated.toFixed(1)}% Allocated
+                        {hasBalance && balanceRemaining > 0 && ` + ${balanceRemaining.toFixed(1)}% (Special Allowance Balance)`}
+                      </span>
+                    </div>
+
+                    {/* Visual Progress Bar */}
+                    <div
+                      style={{
+                        height: "10px",
+                        borderRadius: "5px",
+                        background: "#e2e8f0",
+                        display: "flex",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {basicVal > 0 && (
+                        <div
+                          title={`Basic Pay: ${basicVal}% of CTC`}
+                          style={{ width: `${Math.min(100, basicVal)}%`, background: "#2563eb" }}
+                        />
+                      )}
+                      {basicDerivedCtcPercent > 0 && (
+                        <div
+                          title={`HRA/Basic-derived: ${basicDerivedCtcPercent.toFixed(1)}% of CTC`}
+                          style={{ width: `${Math.min(100 - basicVal, basicDerivedCtcPercent)}%`, background: "#38bdf8" }}
+                        />
+                      )}
+                      {hasBalance && balanceRemaining > 0 && (
+                        <div
+                          title={`Special Allowance Balance: ${balanceRemaining.toFixed(1)}% of CTC`}
+                          style={{ width: `${balanceRemaining}%`, background: "#10b981" }}
+                        />
+                      )}
+                    </div>
+
+                    <div className="flex gap-3 text-xs mt-2" style={{ flexWrap: "wrap" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#2563eb" }} />
+                        Basic ({basicVal}%)
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#38bdf8" }} />
+                        HRA ({basicDerivedCtcPercent.toFixed(1)}% of CTC)
+                      </span>
+                      {hasBalance && (
+                        <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981" }} />
+                          Special Allowance (Auto-computed {balanceRemaining.toFixed(1)}% Balance)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <h3 style={{ margin: "0.5rem 0 0.25rem", fontSize: "1rem" }}>Components Breakdown</h3>
               {components.map((comp, idx) => (
-                <div key={idx} className="p-3 border rounded grid grid-3 gap-2 align-center">
-                  <div>
-                    <label className="text-xs">Code</label>
-                    <input
-                      type="text"
-                      value={comp.code}
-                      onChange={(e) => {
-                        const updated = [...components];
-                        updated[idx].code = e.target.value;
-                        setComponents(updated);
-                      }}
-                    />
+                <div key={idx} className="p-3 border rounded stack gap-2" style={{ background: "var(--color-surface, #fff)" }}>
+                  <div className="grid grid-3 gap-2 align-center">
+                    <div>
+                      <label className="text-xs">Code</label>
+                      <input
+                        type="text"
+                        value={comp.code}
+                        disabled={idx < 3} // Keep BASIC, HRA, SPECIAL fixed
+                        onChange={(e) => {
+                          const updated = [...components];
+                          updated[idx].code = e.target.value.toUpperCase();
+                          setComponents(updated);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs">Component Name</label>
+                      <input
+                        type="text"
+                        value={comp.name}
+                        onChange={(e) => {
+                          const updated = [...components];
+                          updated[idx].name = e.target.value;
+                          setComponents(updated);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs">Calculation Method</label>
+                      <select
+                        value={comp.calculation_type}
+                        onChange={(e) => {
+                          const updated = [...components];
+                          const newType = e.target.value as any;
+                          updated[idx].calculation_type = newType;
+                          if (newType === "balance") {
+                            updated[idx].value = null;
+                            updated[idx].percentage_of = null;
+                          } else if (newType === "percentage") {
+                            updated[idx].value = updated[idx].value || "50.00";
+                            updated[idx].percentage_of = updated[idx].percentage_of || "ctc";
+                          } else {
+                            updated[idx].value = updated[idx].value || "1000.00";
+                            updated[idx].percentage_of = null;
+                          }
+                          setComponents(updated);
+                        }}
+                      >
+                        <option value="percentage">% Percentage</option>
+                        <option value="fixed">Fixed Rupee (₹)</option>
+                        <option value="balance">Balance of CTC</option>
+                      </select>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-xs">Name</label>
-                    <input
-                      type="text"
-                      value={comp.name}
-                      onChange={(e) => {
-                        const updated = [...components];
-                        updated[idx].name = e.target.value;
-                        setComponents(updated);
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs">Calc Type</label>
-                    <select
-                      value={comp.calculation_type}
-                      onChange={(e) => {
-                        const updated = [...components];
-                        updated[idx].calculation_type = e.target.value as any;
-                        setComponents(updated);
-                      }}
-                    >
-                      <option value="percentage">percentage</option>
-                      <option value="fixed">fixed</option>
-                      <option value="balance">balance</option>
-                    </select>
-                  </div>
+
+                  {comp.calculation_type === "percentage" && (
+                    <div className="grid grid-2 gap-2" style={{ background: "rgba(37, 99, 235, 0.04)", padding: "0.5rem", borderRadius: "6px" }}>
+                      <div>
+                        <label className="text-xs">Percentage Value (%) *</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="100"
+                          value={comp.value || ""}
+                          onChange={(e) => {
+                            const updated = [...components];
+                            updated[idx].value = e.target.value;
+                            setComponents(updated);
+                          }}
+                          placeholder="e.g. 50.00"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs">Percentage Calculated Of *</label>
+                        <select
+                          value={comp.percentage_of || "ctc"}
+                          onChange={(e) => {
+                            const updated = [...components];
+                            updated[idx].percentage_of = e.target.value as any;
+                            setComponents(updated);
+                          }}
+                        >
+                          <option value="ctc">% of Annual CTC</option>
+                          <option value="basic">% of Basic Pay</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {comp.calculation_type === "fixed" && (
+                    <div style={{ maxWidth: "240px" }}>
+                      <label className="text-xs">Fixed Monthly Amount (₹) *</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={comp.value || ""}
+                        onChange={(e) => {
+                          const updated = [...components];
+                          updated[idx].value = e.target.value;
+                          setComponents(updated);
+                        }}
+                        placeholder="e.g. 2000.00"
+                        required
+                      />
+                    </div>
+                  )}
+
+                  {comp.calculation_type === "balance" && (
+                    <div className="text-xs text-muted">
+                      ℹ️ Auto-computed: absorbs whatever remains of the CTC so the total sums to exactly 100%.
+                    </div>
+                  )}
+
                   {idx > 2 && (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost text-red"
-                      onClick={() => removeComponentLine(idx)}
-                    >
-                      Remove
-                    </button>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost text-red"
+                        onClick={() => removeComponentLine(idx)}
+                      >
+                        Remove Component
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}
               <button type="button" className="btn btn-sm btn-outline" onClick={addComponentLine}>
-                + Add Component
+                + Add Custom Allowance / Component
               </button>
 
               <div className="flex gap-2 justify-end mt-4">

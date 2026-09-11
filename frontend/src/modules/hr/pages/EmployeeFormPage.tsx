@@ -39,7 +39,7 @@ const EMPTY: FormState = {
   phone: "",
   department_id: "",
   position: "",
-  level: "",
+  level: "L1",
   employment_type: "full_time",
   hire_date: "",
   probation_end_date: "",
@@ -79,7 +79,7 @@ export function EmployeeFormPage() {
         phone: e.phone ?? "",
         department_id: e.department_id ?? "",
         position: e.position ?? "",
-        level: e.level ?? "",
+        level: e.level || "L1",
         employment_type: e.employment_type,
         hire_date: e.hire_date,
         probation_end_date: e.probation_end_date ?? "",
@@ -232,8 +232,16 @@ export function EmployeeFormPage() {
             <input value={form.position} onChange={(e) => setField("position", e.target.value)} />
           </div>
           <div className="field">
-            <label>Level</label>
-            <input value={form.level} onChange={(e) => setField("level", e.target.value)} />
+            <label>Level (Band)</label>
+            <select
+              value={form.level}
+              onChange={(e) => setField("level", e.target.value)}
+            >
+              <option value="L1">L1 — Junior / Entry Level</option>
+              <option value="L2">L2 — Mid Level / Senior</option>
+              <option value="L3">L3 — Lead / Executive</option>
+            </select>
+            <span className="field-hint">Select the designated employee band (L1, L2, or L3).</span>
           </div>
 
           <div className="field">
