@@ -9,7 +9,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: "/admin", label: "Companies", roles: ["super_admin"] },
+  { to: "/admin", label: "Admin", roles: ["super_admin"] },
   { to: "/dashboard", label: "Dashboard", roles: ["employee", "manager", "hr_admin", "super_admin"] },
   { to: "/attendance", label: "Attendance", roles: ["employee", "manager", "hr_admin", "super_admin"] },
   { to: "/leaves", label: "Leave", roles: ["employee", "manager", "hr_admin", "super_admin"] },
