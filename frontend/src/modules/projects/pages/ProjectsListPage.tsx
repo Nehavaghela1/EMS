@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchProjects, createProject } from "../api";
+import { fetchProjects, createProject, updateProject } from "../api";
 import type { Project, ProjectStatus } from "../types";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
@@ -18,6 +18,8 @@ export function ProjectsListPage() {
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [showModal, setShowModal] = useState(false);
+
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
 
   // Form State
   const [name, setName] = useState("");
@@ -67,7 +69,35 @@ export function ProjectsListPage() {
     loadProjects();
   }, [filterStatus, selectedCompanyId]);
 
-  async function handleCreate(e: React.FormEvent) {
+  function openCreateModal() {
+    setEditingProjectId(null);
+    setName("");
+    setCode("");
+    setFormCompanyId("");
+    setClientName("");
+    setBudget("");
+    setStartDate("");
+    setDeadline("");
+    setDescription("");
+    setStatus("active");
+    setShowModal(true);
+  }
+
+  function openEditModal(proj: Project) {
+    setEditingProjectId(proj.id);
+    setName(proj.name);
+    setCode(proj.code);
+    setFormCompanyId(proj.company_id || "");
+    setClientName(proj.client_name || "");
+    setBudget(proj.budget ? String(proj.budget) : "");
+    setStartDate(proj.start_date ? proj.start_date.slice(0, 10) : "");
+    setDeadline(proj.deadline ? proj.deadline.slice(0, 10) : "");
+    setDescription(proj.description || "");
+    setStatus(proj.status);
+    setShowModal(true);
+  }
+
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!name || !code) {
       notify("Name and Code are required", "error");
@@ -75,30 +105,36 @@ export function ProjectsListPage() {
     }
     try {
       setSubmitting(true);
-      await createProject({
-        name,
-        code,
-        company_id: isSuperAdmin && formCompanyId ? formCompanyId : undefined,
-        client_name: clientName || undefined,
-        budget: budget ? parseFloat(budget) : undefined,
-        start_date: startDate || undefined,
-        deadline: deadline || undefined,
-        description: description || undefined,
-        status,
-      });
-      notify("Project created successfully!", "success");
+      if (editingProjectId) {
+        await updateProject(editingProjectId, {
+          name,
+          code,
+          client_name: clientName || undefined,
+          budget: budget ? parseFloat(budget) : undefined,
+          start_date: startDate || undefined,
+          deadline: deadline || undefined,
+          description: description || undefined,
+          status,
+        });
+        notify("Project updated successfully!", "success");
+      } else {
+        await createProject({
+          name,
+          code,
+          company_id: isSuperAdmin && formCompanyId ? formCompanyId : undefined,
+          client_name: clientName || undefined,
+          budget: budget ? parseFloat(budget) : undefined,
+          start_date: startDate || undefined,
+          deadline: deadline || undefined,
+          description: description || undefined,
+          status,
+        });
+        notify("Project created successfully!", "success");
+      }
       setShowModal(false);
-      setName("");
-      setCode("");
-      setFormCompanyId("");
-      setClientName("");
-      setBudget("");
-      setStartDate("");
-      setDeadline("");
-      setDescription("");
       loadProjects();
     } catch (err: any) {
-      notify(err?.response?.data?.error?.message || err?.message || "Failed to create project", "error");
+      notify(err?.response?.data?.error?.message || err?.message || "Failed to save project", "error");
     } finally {
       setSubmitting(false);
     }
@@ -119,7 +155,7 @@ export function ProjectsListPage() {
         breadcrumb="Projects & Work"
         action={
           canManage ? (
-            <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+            <button className="btn btn-primary" onClick={openCreateModal}>
               + Create Project
             </button>
           ) : undefined
@@ -139,38 +175,32 @@ export function ProjectsListPage() {
               alignItems: "center",
               justifyContent: "space-between",
               flexWrap: "wrap",
-              gap: "0.75rem",
+              gap: "1rem",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-              <span style={{ fontSize: "1.1rem" }}>🏢</span>
-              <div>
-                <strong style={{ fontSize: "0.9rem" }}>Filter by Company:</strong>
-                <span className="text-muted" style={{ fontSize: "0.8rem", marginLeft: "0.5rem" }}>
-                  (Platform Super Admin View)
-                </span>
-              </div>
+            <div>
+              <strong style={{ fontSize: "0.95rem" }}>🏢 Enterprise Company Filter</strong>
+              <p className="text-muted" style={{ margin: 0, fontSize: "0.8rem" }}>
+                Filter projects across all registered corporate organizations
+              </p>
             </div>
-            <div style={{ minWidth: "260px" }}>
-              <select
-                className="input input-sm"
-                value={selectedCompanyId}
-                onChange={(e) => setSelectedCompanyId(e.target.value)}
-                style={{ width: "100%", fontWeight: 500 }}
-              >
-                <option value="all">🌐 All Companies ({companies.length})</option>
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.code})
-                  </option>
-                ))}
-              </select>
-            </div>
+            <select
+              value={selectedCompanyId}
+              onChange={(e) => setSelectedCompanyId(e.target.value)}
+              style={{ width: "260px" }}
+            >
+              <option value="all">All Companies</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.code})
+                </option>
+              ))}
+            </select>
           </div>
         )}
 
         <div className="tab-bar">
-          {(["all", "active", "planning", "on_hold", "completed", "cancelled"] as const).map((st) => (
+          {(["all", "planning", "active", "on_hold", "completed", "cancelled"] as const).map((st) => (
             <button
               key={st}
               type="button"
@@ -193,7 +223,13 @@ export function ProjectsListPage() {
       ) : (
         <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.25rem" }}>
           {projects.map((proj) => (
-            <div key={proj.id} className="card stack" style={{ justifyContent: "space-between" }}>
+            <div
+              key={proj.id}
+              className="card stack"
+              style={{ justifyContent: "space-between", cursor: "pointer" }}
+              onDoubleClick={() => openEditModal(proj)}
+              title="Double-click to edit project ✏️"
+            >
               <div className="stack" style={{ gap: "0.75rem" }}>
                 <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div>
@@ -215,11 +251,27 @@ export function ProjectsListPage() {
                         </span>
                       )}
                     </div>
-                    <h3 style={{ margin: 0 }}>
-                      <Link to={`/projects/${proj.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-                        {proj.name}
-                      </Link>
-                    </h3>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                      <h3 style={{ margin: 0 }}>
+                        <Link to={`/projects/${proj.id}`} style={{ textDecoration: "none", color: "inherit" }}>
+                          {proj.name}
+                        </Link>
+                      </h3>
+                      {canManage && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{ padding: "2px 6px", fontSize: "12px", color: "#64748b" }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEditModal(proj);
+                          }}
+                          title="Edit Project (✏️)"
+                        >
+                          ✏️
+                        </button>
+                      )}
+                    </div>
                     {proj.client_name && <span className="text-muted" style={{ fontSize: "0.85rem" }}>Client: {proj.client_name}</span>}
                   </div>
                   <span className={`badge ${statusColors[proj.status] || "badge-muted"}`}>
@@ -257,7 +309,7 @@ export function ProjectsListPage() {
         <div className="modal-backdrop" onClick={() => setShowModal(false)}>
           <div className="modal card stack" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-              <h3>Create New Project</h3>
+              <h3>{editingProjectId ? "✏️ Edit Project" : "+ Create New Project"}</h3>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -267,8 +319,8 @@ export function ProjectsListPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleCreate} className="stack gap-4 my-2">
-              {isSuperAdmin && (
+            <form onSubmit={handleSave} className="stack gap-4 my-2">
+              {isSuperAdmin && !editingProjectId && (
                 <div className="field">
                   <label>Assign to Company *</label>
                   <select
@@ -314,6 +366,8 @@ export function ProjectsListPage() {
                     <option value="planning">Planning</option>
                     <option value="active">Active</option>
                     <option value="on_hold">On Hold</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
                   </select>
                 </div>
               </div>

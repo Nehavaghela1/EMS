@@ -3,13 +3,13 @@ import { useParams, Link } from "react-router-dom";
 import {
   fetchProjectSummary, fetchTasks, createTask, updateTask,
   fetchProjectMembers, addProjectMember, removeProjectMember,
-  fetchMilestones, createMilestone,
+  fetchMilestones, createMilestone, updateMilestone, updateProject,
   fetchTaskComments, addTaskComment,
   fetchTimeEntries, createTimeEntry
 } from "../api";
 import type {
-  ProjectSummary, Task, TaskStatus, TaskPriority,
-  ProjectMember, Milestone, TaskComment, TimeEntry
+  ProjectSummary, ProjectStatus, Task, TaskStatus, TaskPriority,
+  ProjectMember, Milestone, MilestoneStatus, TaskComment, TimeEntry
 } from "../types";
 import { listEmployees, type Employee } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
@@ -43,22 +43,38 @@ export function ProjectDetailPage() {
   const [logBillable, setLogBillable] = useState(true);
   const [submittingTime, setSubmittingTime] = useState(false);
 
-  // Task Modal
+  // Task Modal (Create & Edit)
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDesc, setTaskDesc] = useState("");
   const [taskPriority, setTaskPriority] = useState<TaskPriority>("medium");
+  const [taskStatus, setTaskStatus] = useState<TaskStatus>("todo");
   const [taskDueDate, setTaskDueDate] = useState("");
   const [taskEstHours, setTaskEstHours] = useState("");
   const [submittingTask, setSubmittingTask] = useState(false);
 
-  // Milestone Modal
+  // Milestone Modal (Create & Edit)
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
+  const [editingMsId, setEditingMsId] = useState<string | null>(null);
   const [msTitle, setMsTitle] = useState("");
   const [msDesc, setMsDesc] = useState("");
   const [msDueDate, setMsDueDate] = useState("");
   const [msPct, setMsPct] = useState("0");
+  const [msStatus, setMsStatus] = useState<MilestoneStatus>("pending");
   const [submittingMs, setSubmittingMs] = useState(false);
+
+  // Project Edit Modal
+  const [showProjectEditModal, setShowProjectEditModal] = useState(false);
+  const [editProjName, setEditProjName] = useState("");
+  const [editProjCode, setEditProjCode] = useState("");
+  const [editProjClient, setEditProjClient] = useState("");
+  const [editProjBudget, setEditProjBudget] = useState("");
+  const [editProjStatus, setEditProjStatus] = useState<ProjectStatus>("active");
+  const [editProjStartDate, setEditProjStartDate] = useState("");
+  const [editProjDeadline, setEditProjDeadline] = useState("");
+  const [editProjDesc, setEditProjDesc] = useState("");
+  const [submittingProjectEdit, setSubmittingProjectEdit] = useState(false);
 
   // Add Member Modal
   const [showMemberModal, setShowMemberModal] = useState(false);
@@ -103,29 +119,59 @@ export function ProjectDetailPage() {
     loadData();
   }, [id]);
 
-  // Task Kanban Actions
-  async function handleCreateTask(e: React.FormEvent) {
+  // Task Actions (Create / Edit)
+  function openNewTaskModal() {
+    setEditingTaskId(null);
+    setTaskTitle("");
+    setTaskDesc("");
+    setTaskPriority("medium");
+    setTaskStatus("todo");
+    setTaskDueDate("");
+    setTaskEstHours("");
+    setShowTaskModal(true);
+  }
+
+  function openEditTaskModal(task: Task) {
+    setEditingTaskId(task.id);
+    setTaskTitle(task.title);
+    setTaskDesc(task.description || "");
+    setTaskPriority(task.priority);
+    setTaskStatus(task.status);
+    setTaskDueDate(task.due_date ? task.due_date.slice(0, 10) : "");
+    setTaskEstHours(task.estimated_hours ? String(task.estimated_hours) : "");
+    setShowTaskModal(true);
+  }
+
+  async function handleSaveTask(e: React.FormEvent) {
     e.preventDefault();
     if (!id || !taskTitle) return;
     try {
       setSubmittingTask(true);
-      await createTask(id, {
-        title: taskTitle,
-        description: taskDesc || undefined,
-        priority: taskPriority,
-        due_date: taskDueDate || undefined,
-        estimated_hours: taskEstHours ? parseFloat(taskEstHours) : undefined,
-      });
-      notify("Task created!", "success");
+      if (editingTaskId) {
+        await updateTask(editingTaskId, {
+          title: taskTitle,
+          description: taskDesc || undefined,
+          priority: taskPriority,
+          status: taskStatus,
+          due_date: taskDueDate || undefined,
+          estimated_hours: taskEstHours ? parseFloat(taskEstHours) : undefined,
+        });
+        notify("Task updated successfully!", "success");
+      } else {
+        await createTask(id, {
+          title: taskTitle,
+          description: taskDesc || undefined,
+          priority: taskPriority,
+          status: taskStatus,
+          due_date: taskDueDate || undefined,
+          estimated_hours: taskEstHours ? parseFloat(taskEstHours) : undefined,
+        });
+        notify("Task created!", "success");
+      }
       setShowTaskModal(false);
-      setTaskTitle("");
-      setTaskDesc("");
-      setTaskPriority("medium");
-      setTaskDueDate("");
-      setTaskEstHours("");
       loadData();
     } catch (err: any) {
-      notify(err?.response?.data?.error?.message || err?.message || "Failed to create task", "error");
+      notify(err?.response?.data?.error?.message || err?.message || "Failed to save task", "error");
     } finally {
       setSubmittingTask(false);
     }
@@ -141,29 +187,97 @@ export function ProjectDetailPage() {
     }
   }
 
-  // Milestone Actions
-  async function handleCreateMilestone(e: React.FormEvent) {
+  // Milestone Actions (Create / Edit)
+  function openNewMilestoneModal() {
+    setEditingMsId(null);
+    setMsTitle("");
+    setMsDesc("");
+    setMsDueDate("");
+    setMsPct("0");
+    setMsStatus("pending");
+    setShowMilestoneModal(true);
+  }
+
+  function openEditMilestoneModal(ms: Milestone) {
+    setEditingMsId(ms.id);
+    setMsTitle(ms.title);
+    setMsDesc(ms.description || "");
+    setMsDueDate(ms.due_date ? ms.due_date.slice(0, 10) : "");
+    setMsPct(String(ms.completion_percentage));
+    setMsStatus(ms.status);
+    setShowMilestoneModal(true);
+  }
+
+  async function handleSaveMilestone(e: React.FormEvent) {
     e.preventDefault();
     if (!id || !msTitle) return;
     try {
       setSubmittingMs(true);
-      await createMilestone(id, {
-        title: msTitle,
-        description: msDesc || undefined,
-        due_date: msDueDate || undefined,
-        completion_percentage: parseFloat(msPct),
-      });
-      notify("Milestone created!", "success");
+      if (editingMsId) {
+        await updateMilestone(editingMsId, {
+          title: msTitle,
+          description: msDesc || undefined,
+          due_date: msDueDate || undefined,
+          completion_percentage: parseFloat(msPct),
+          status: msStatus,
+        });
+        notify("Milestone updated!", "success");
+      } else {
+        await createMilestone(id, {
+          title: msTitle,
+          description: msDesc || undefined,
+          due_date: msDueDate || undefined,
+          completion_percentage: parseFloat(msPct),
+          status: msStatus,
+        });
+        notify("Milestone created!", "success");
+      }
       setShowMilestoneModal(false);
-      setMsTitle("");
-      setMsDesc("");
-      setMsDueDate("");
-      setMsPct("0");
       loadData();
     } catch (err: any) {
-      notify(err?.response?.data?.error?.message || err?.message || "Failed to create milestone", "error");
+      notify(err?.response?.data?.error?.message || err?.message || "Failed to save milestone", "error");
     } finally {
       setSubmittingMs(false);
+    }
+  }
+
+  // Project Edit Actions
+  function openEditProjectModal() {
+    if (!summary?.project) return;
+    const p = summary.project;
+    setEditProjName(p.name);
+    setEditProjCode(p.code);
+    setEditProjClient(p.client_name || "");
+    setEditProjBudget(p.budget ? String(p.budget) : "");
+    setEditProjStatus(p.status);
+    setEditProjStartDate(p.start_date ? p.start_date.slice(0, 10) : "");
+    setEditProjDeadline(p.deadline ? p.deadline.slice(0, 10) : "");
+    setEditProjDesc(p.description || "");
+    setShowProjectEditModal(true);
+  }
+
+  async function handleSaveProject(e: React.FormEvent) {
+    e.preventDefault();
+    if (!id || !editProjName || !editProjCode) return;
+    try {
+      setSubmittingProjectEdit(true);
+      await updateProject(id, {
+        name: editProjName,
+        code: editProjCode,
+        client_name: editProjClient || undefined,
+        budget: editProjBudget ? parseFloat(editProjBudget) : undefined,
+        status: editProjStatus,
+        start_date: editProjStartDate || undefined,
+        deadline: editProjDeadline || undefined,
+        description: editProjDesc || undefined,
+      });
+      notify("Project updated successfully!", "success");
+      setShowProjectEditModal(false);
+      loadData();
+    } catch (err: any) {
+      notify(err?.response?.data?.error?.message || err?.message || "Failed to update project", "error");
+    } finally {
+      setSubmittingProjectEdit(false);
     }
   }
 
@@ -311,7 +425,20 @@ export function ProjectDetailPage() {
               </span>
             )}
           </div>
-          <h1 style={{ margin: 0, fontSize: "1.75rem", fontWeight: 700, letterSpacing: "-0.02em" }}>{project.name}</h1>
+          <div className="flex items-center gap-2">
+            <h1 style={{ margin: 0, fontSize: "1.75rem", fontWeight: 700, letterSpacing: "-0.02em" }}>{project.name}</h1>
+            {canManage && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ padding: "4px 8px", fontSize: "14px", color: "#64748b" }}
+                onClick={openEditProjectModal}
+                title="Edit Project Details (✏️)"
+              >
+                ✏️
+              </button>
+            )}
+          </div>
           {project.client_name && (
             <p className="text-muted text-sm mt-1" style={{ margin: 0 }}>
               Client: <strong style={{ color: "var(--color-text)" }}>{project.client_name}</strong>
@@ -319,8 +446,18 @@ export function ProjectDetailPage() {
           )}
         </div>
 
-        <div>
-          <button className="btn btn-primary" onClick={() => setShowTaskModal(true)}>
+        <div className="flex items-center gap-2">
+          {canManage && (
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={openEditProjectModal}
+              title="Edit Project"
+            >
+              ✏️ Edit Project
+            </button>
+          )}
+          <button className="btn btn-primary" onClick={openNewTaskModal}>
             + Add Task
           </button>
         </div>
@@ -415,7 +552,7 @@ export function ProjectDetailPage() {
           <button
             type="button"
             className="btn btn-sm btn-primary"
-            onClick={() => setShowTaskModal(true)}
+            onClick={openNewTaskModal}
           >
             + Add Task
           </button>
@@ -497,6 +634,7 @@ export function ProjectDetailPage() {
                             setDraggedTaskId(null);
                             setDragOverCol(null);
                           }}
+                          onDoubleClick={() => openEditTaskModal(task)}
                           onContextMenu={(e) => {
                             e.preventDefault();
                             if (task.status !== "done") {
@@ -507,7 +645,7 @@ export function ProjectDetailPage() {
                               notify("Task reopened to In Progress", "info");
                             }
                           }}
-                          title="Drag to move • Right-click to toggle Done"
+                          title="Drag to move • Double-click to edit ✏️ • Right-click to toggle Done"
                         >
                           <div className="row-between align-center">
                             <span className={`badge ${priorityBadges[task.priority]}`} style={{ textTransform: "uppercase", fontSize: "10px", letterSpacing: "0.5px" }}>
@@ -526,6 +664,15 @@ export function ProjectDetailPage() {
                               >
                                 ⠿
                               </span>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                style={{ padding: "2px 6px", fontSize: "12px", color: "#64748b" }}
+                                onClick={() => openEditTaskModal(task)}
+                                title="Edit Task (✏️)"
+                              >
+                                ✏️
+                              </button>
                               <button
                                 type="button"
                                 className="btn btn-ghost btn-sm"
@@ -605,7 +752,7 @@ export function ProjectDetailPage() {
         <div className="stack gap-4">
           {canManage && (
             <div className="flex justify-end">
-              <button className="btn btn-primary btn-sm" onClick={() => setShowMilestoneModal(true)}>
+              <button className="btn btn-primary btn-sm" onClick={openNewMilestoneModal}>
                 + Add Milestone
               </button>
             </div>
@@ -618,13 +765,33 @@ export function ProjectDetailPage() {
           ) : (
             <div className="stack gap-3">
               {milestones.map((ms) => (
-                <div key={ms.id} className="card row-between align-center p-4">
-                  <div>
+                <div
+                  key={ms.id}
+                  className="card row-between align-center p-4"
+                  onDoubleClick={() => openEditMilestoneModal(ms)}
+                  style={{ cursor: "pointer" }}
+                  title="Double-click to edit milestone ✏️"
+                >
+                  <div style={{ flex: 1, paddingRight: "1rem" }}>
                     <div className="row gap-2 align-center mb-1">
                       <h4 style={{ margin: 0 }}>{ms.title}</h4>
                       <span className={`badge ${ms.status === "completed" ? "badge-success" : "badge-info"}`}>
                         {ms.status.toUpperCase()}
                       </span>
+                      {canManage && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{ padding: "2px 6px", fontSize: "12px", color: "#64748b" }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEditMilestoneModal(ms);
+                          }}
+                          title="Edit Milestone (✏️)"
+                        >
+                          ✏️
+                        </button>
+                      )}
                     </div>
                     {ms.description && <p className="text-muted text-sm mb-1">{ms.description}</p>}
                     <span className="text-muted text-xs">Target Date: <strong>{ms.due_date ? formatDate(ms.due_date) : "Not set"}</strong></span>
@@ -875,12 +1042,12 @@ export function ProjectDetailPage() {
         </div>
       )}
 
-      {/* ADD TASK MODAL */}
+      {/* TASK MODAL (CREATE / EDIT) */}
       {showTaskModal && (
         <div className="modal-backdrop" onClick={() => setShowTaskModal(false)}>
           <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Create Task</h2>
+              <h2>{editingTaskId ? "✏️ Edit Task" : "+ Create Task"}</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -890,7 +1057,7 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleCreateTask} className="stack gap-4 my-2">
+            <form onSubmit={handleSaveTask} className="stack gap-4 my-2">
               <div className="field">
                 <label>Task Title *</label>
                 <input type="text" value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} required />
@@ -906,13 +1073,24 @@ export function ProjectDetailPage() {
                   </select>
                 </div>
                 <div className="field">
+                  <label>Status</label>
+                  <select value={taskStatus} onChange={(e) => setTaskStatus(e.target.value as TaskStatus)}>
+                    <option value="todo">To Do</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="review">In Review</option>
+                    <option value="done">Completed</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid-2">
+                <div className="field">
                   <label>Est. Hours</label>
                   <input type="number" step="0.5" value={taskEstHours} onChange={(e) => setTaskEstHours(e.target.value)} />
                 </div>
-              </div>
-              <div className="field">
-                <label>Due Date</label>
-                <input type="date" value={taskDueDate} onChange={(e) => setTaskDueDate(e.target.value)} />
+                <div className="field">
+                  <label>Due Date</label>
+                  <input type="date" value={taskDueDate} onChange={(e) => setTaskDueDate(e.target.value)} />
+                </div>
               </div>
               <div className="field">
                 <label>Description</label>
@@ -921,7 +1099,7 @@ export function ProjectDetailPage() {
               <div className="flex gap-2 justify-end mt-4">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowTaskModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={submittingTask}>
-                  {submittingTask ? "Saving..." : "Save"}
+                  {submittingTask ? "Saving..." : editingTaskId ? "Update Task" : "Create Task"}
                 </button>
               </div>
             </form>
@@ -973,12 +1151,12 @@ export function ProjectDetailPage() {
         </div>
       )}
 
-      {/* CREATE MILESTONE MODAL */}
+      {/* MILESTONE MODAL (CREATE / EDIT) */}
       {showMilestoneModal && (
         <div className="modal-backdrop" onClick={() => setShowMilestoneModal(false)}>
           <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Create Milestone</h2>
+              <h2>{editingMsId ? "✏️ Edit Milestone" : "+ Create Milestone"}</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -988,7 +1166,7 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleCreateMilestone} className="stack gap-4 my-2">
+            <form onSubmit={handleSaveMilestone} className="stack gap-4 my-2">
               <div className="field">
                 <label>Milestone Title *</label>
                 <input type="text" value={msTitle} onChange={(e) => setMsTitle(e.target.value)} required />
@@ -999,9 +1177,18 @@ export function ProjectDetailPage() {
                   <input type="number" min="0" max="100" value={msPct} onChange={(e) => setMsPct(e.target.value)} />
                 </div>
                 <div className="field">
-                  <label>Due Date</label>
-                  <input type="date" value={msDueDate} onChange={(e) => setMsDueDate(e.target.value)} />
+                  <label>Status</label>
+                  <select value={msStatus} onChange={(e) => setMsStatus(e.target.value as MilestoneStatus)}>
+                    <option value="pending">Pending</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="completed">Completed</option>
+                    <option value="missed">Missed</option>
+                  </select>
                 </div>
+              </div>
+              <div className="field">
+                <label>Due Date</label>
+                <input type="date" value={msDueDate} onChange={(e) => setMsDueDate(e.target.value)} />
               </div>
               <div className="field">
                 <label>Description</label>
@@ -1010,7 +1197,130 @@ export function ProjectDetailPage() {
               <div className="flex gap-2 justify-end mt-4">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowMilestoneModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={submittingMs}>
-                  {submittingMs ? "Saving..." : "Save"}
+                  {submittingMs ? "Saving..." : editingMsId ? "Update Milestone" : "Create Milestone"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT PROJECT MODAL */}
+      {showProjectEditModal && (
+        <div className="modal-backdrop" onClick={() => setShowProjectEditModal(false)}>
+          <div className="modal card" style={{ maxWidth: "540px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>✏️ Edit Project Workspace</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowProjectEditModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleSaveProject} className="stack gap-4 my-2">
+              <div className="grid-2">
+                <div className="field">
+                  <label>Project Name *</label>
+                  <input
+                    type="text"
+                    value={editProjName}
+                    onChange={(e) => setEditProjName(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label>Project Code *</label>
+                  <input
+                    type="text"
+                    value={editProjCode}
+                    onChange={(e) => setEditProjCode(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid-2">
+                <div className="field">
+                  <label>Client Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Internal Risk / FinCorp"
+                    value={editProjClient}
+                    onChange={(e) => setEditProjClient(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label>Budget ($ / Currency)</label>
+                  <input
+                    type="number"
+                    step="100"
+                    placeholder="e.g. 50000"
+                    value={editProjBudget}
+                    onChange={(e) => setEditProjBudget(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid-2">
+                <div className="field">
+                  <label>Status</label>
+                  <select
+                    value={editProjStatus}
+                    onChange={(e) => setEditProjStatus(e.target.value as ProjectStatus)}
+                  >
+                    <option value="planning">Planning</option>
+                    <option value="active">Active</option>
+                    <option value="on_hold">On Hold</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Target Deadline</label>
+                  <input
+                    type="date"
+                    value={editProjDeadline}
+                    onChange={(e) => setEditProjDeadline(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Start Date</label>
+                <input
+                  type="date"
+                  value={editProjStartDate}
+                  onChange={(e) => setEditProjStartDate(e.target.value)}
+                />
+              </div>
+
+              <div className="field">
+                <label>Description / Scope</label>
+                <textarea
+                  rows={3}
+                  value={editProjDesc}
+                  onChange={(e) => setEditProjDesc(e.target.value)}
+                  placeholder="Outline scope, goals and deliverables..."
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end mt-4">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setShowProjectEditModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={submittingProjectEdit}
+                >
+                  {submittingProjectEdit ? "Saving Changes..." : "Save Changes"}
                 </button>
               </div>
             </form>
