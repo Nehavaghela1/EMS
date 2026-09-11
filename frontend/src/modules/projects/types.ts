@@ -8,6 +8,7 @@ export type MemberRole = "lead" | "member";
 export interface Project {
   id: string;
   company_id: string;
+  company_name?: string;
   name: string;
   code: string;
   description?: string;
@@ -24,6 +25,7 @@ export interface Project {
 export interface ProjectCreatePayload {
   name: string;
   code: string;
+  company_id?: string;
   description?: string;
   status?: ProjectStatus;
   start_date?: string;

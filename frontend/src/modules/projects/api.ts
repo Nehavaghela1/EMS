@@ -5,8 +5,11 @@ import type {
   TimeEntry, TimeEntryCreatePayload, Milestone, MilestoneCreatePayload
 } from "./types";
 
-export async function fetchProjects(status?: string): Promise<Project[]> {
-  const query = status ? `?status=${status}` : "";
+export async function fetchProjects(status?: string, companyId?: string): Promise<Project[]> {
+  const params = new URLSearchParams();
+  if (status && status !== "all") params.append("status", status);
+  if (companyId && companyId !== "all") params.append("company_id", companyId);
+  const query = params.toString() ? `?${params.toString()}` : "";
   const res = await apiClient.get<Project[]>(`/projects${query}`);
   return res.data;
 }

@@ -241,6 +241,19 @@ export function ProjectDetailPage() {
             <span className={`badge ${project.status === "active" ? "badge-success" : "badge-muted"}`} style={{ textTransform: "uppercase", fontSize: "11px", letterSpacing: "0.5px" }}>
               {project.status}
             </span>
+            {project.company_name && (
+              <span
+                className="badge"
+                style={{
+                  fontSize: "11px",
+                  background: "rgba(37, 99, 235, 0.1)",
+                  color: "var(--color-primary, #2563eb)",
+                  border: "1px solid rgba(37, 99, 235, 0.2)",
+                }}
+              >
+                🏢 {project.company_name}
+              </span>
+            )}
           </div>
           <h1 style={{ margin: 0, fontSize: "1.75rem", fontWeight: 700, letterSpacing: "-0.02em" }}>{project.name}</h1>
           {project.client_name && (

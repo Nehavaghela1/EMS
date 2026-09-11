@@ -32,11 +32,18 @@ def create_project(
 @router.get("", response_model=List[ProjectResponse])
 def list_projects(
     status: Optional[str] = Query(None, pattern="^(planning|active|on_hold|completed|cancelled)$"),
+    company_id: Optional[UUID] = Query(None),
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.list_projects(current_user.company_id, status)
+    if current_user.role == UserRole.super_admin:
+        # Super admin can view by selected company or all companies
+        target_company_id = company_id
+    else:
+        # Other roles are strictly restricted to their own company
+        target_company_id = current_user.company_id
+    return service.list_projects(target_company_id, status)
 
 # --- Time Entries / Timesheets (Routes 115-118) ---
 
@@ -115,7 +122,8 @@ def get_task(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.get_task(current_user.company_id, task_id)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.get_task(cid, task_id)
 
 @router.put("/tasks/{task_id}", response_model=TaskResponse)
 def update_task(
@@ -125,7 +133,8 @@ def update_task(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.update_task(current_user.company_id, task_id, data)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.update_task(cid, task_id, data)
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(
@@ -134,7 +143,8 @@ def delete_task(
     current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
-    service.delete_task(current_user.company_id, task_id)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    service.delete_task(cid, task_id)
 
 @router.post("/tasks/{task_id}/comments", response_model=TaskCommentResponse, status_code=status.HTTP_201_CREATED)
 def add_task_comment(
@@ -144,7 +154,8 @@ def add_task_comment(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.add_comment(current_user.company_id, task_id, current_user.id, data)
+    cid = current_user.company_id
+    return service.add_comment(cid, task_id, current_user.id, data)
 
 @router.get("/tasks/{task_id}/comments", response_model=List[TaskCommentResponse])
 def list_task_comments(
@@ -153,7 +164,8 @@ def list_task_comments(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.list_comments(current_user.company_id, task_id)
+    cid = current_user.company_id
+    return service.list_comments(cid, task_id)
 
 # --- Milestones Global Update/Delete ---
 
@@ -165,7 +177,8 @@ def update_milestone(
     current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
-    return service.update_milestone(current_user.company_id, milestone_id, data)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.update_milestone(cid, milestone_id, data)
 
 @router.delete("/milestones/{milestone_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_milestone(
@@ -174,7 +187,8 @@ def delete_milestone(
     current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
-    service.delete_milestone(current_user.company_id, milestone_id)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    service.delete_milestone(cid, milestone_id)
 
 # --- Dynamic Project ID Routes ---
 
@@ -185,7 +199,8 @@ def get_project(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.get_project(current_user.company_id, project_id)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.get_project(cid, project_id)
 
 @router.put("/{project_id}", response_model=ProjectResponse)
 def update_project(
@@ -195,7 +210,8 @@ def update_project(
     current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
-    return service.update_project(current_user.company_id, project_id, data)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.update_project(cid, project_id, data)
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(
@@ -204,7 +220,8 @@ def delete_project(
     current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin))
 ):
     service = ProjectService(db)
-    service.delete_project(current_user.company_id, project_id)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    service.delete_project(cid, project_id)
 
 @router.get("/{project_id}/summary", response_model=ProjectSummaryResponse)
 def get_project_summary(
@@ -213,7 +230,8 @@ def get_project_summary(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.get_project_summary(current_user.company_id, project_id)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.get_project_summary(cid, project_id)
 
 # --- Project Members (Routes 105-107) ---
 
@@ -225,7 +243,8 @@ def add_project_member(
     current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
-    return service.add_member(current_user.company_id, project_id, data)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.add_member(cid, project_id, data)
 
 @router.get("/{project_id}/members", response_model=List[ProjectMemberResponse])
 def list_project_members(
@@ -234,7 +253,8 @@ def list_project_members(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.list_members(current_user.company_id, project_id)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.list_members(cid, project_id)
 
 @router.delete("/{project_id}/members/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_project_member(
@@ -244,7 +264,8 @@ def remove_project_member(
     current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
-    service.remove_member(current_user.company_id, project_id, employee_id)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    service.remove_member(cid, project_id, employee_id)
 
 # --- Project Tasks (Routes 108-112) ---
 
@@ -256,7 +277,8 @@ def create_task(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.create_task(current_user.company_id, project_id, current_user.id, data)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.create_task(cid, project_id, current_user.id, data)
 
 @router.get("/{project_id}/tasks", response_model=List[TaskResponse])
 def list_tasks(
@@ -267,7 +289,8 @@ def list_tasks(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.list_tasks(current_user.company_id, project_id, status, assigned_to)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.list_tasks(cid, project_id, status, assigned_to)
 
 # --- Project Milestones (Routes 119-120) ---
 
@@ -279,7 +302,8 @@ def create_milestone(
     current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
-    return service.create_milestone(current_user.company_id, project_id, data)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.create_milestone(cid, project_id, data)
 
 @router.get("/{project_id}/milestones", response_model=List[MilestoneResponse])
 def list_milestones(
@@ -288,4 +312,5 @@ def list_milestones(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    return service.list_milestones(current_user.company_id, project_id)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.list_milestones(cid, project_id)

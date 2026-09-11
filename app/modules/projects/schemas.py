@@ -18,7 +18,7 @@ class ProjectBase(BaseModel):
     client_name: Optional[str] = None
 
 class ProjectCreate(ProjectBase):
-    pass
+    company_id: Optional[UUID] = None
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
@@ -34,6 +34,7 @@ class ProjectUpdate(BaseModel):
 class ProjectResponse(ProjectBase):
     id: UUID
     company_id: UUID
+    company_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

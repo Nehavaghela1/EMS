@@ -29,11 +29,11 @@ class ProjectRepository:
         self.db.refresh(project)
         return project
 
-    def get_project_by_id(self, company_id: UUID, project_id: UUID) -> Optional[Project]:
-        return self.db.query(Project).filter(
-            Project.company_id == company_id,
-            Project.id == project_id
-        ).first()
+    def get_project_by_id(self, company_id: Optional[UUID], project_id: UUID) -> Optional[Project]:
+        query = self.db.query(Project).filter(Project.id == project_id)
+        if company_id is not None:
+            query = query.filter(Project.company_id == company_id)
+        return query.first()
 
     def get_project_by_code(self, company_id: UUID, code: str) -> Optional[Project]:
         return self.db.query(Project).filter(
@@ -41,8 +41,10 @@ class ProjectRepository:
             Project.code == code
         ).first()
 
-    def list_projects(self, company_id: UUID, status: Optional[str] = None) -> List[Project]:
-        query = self.db.query(Project).filter(Project.company_id == company_id)
+    def list_projects(self, company_id: Optional[UUID] = None, status: Optional[str] = None) -> List[Project]:
+        query = self.db.query(Project)
+        if company_id is not None:
+            query = query.filter(Project.company_id == company_id)
         if status:
             query = query.filter(Project.status == status)
         return query.order_by(Project.created_at.desc()).all()
@@ -106,11 +108,11 @@ class ProjectRepository:
         self.db.refresh(task)
         return task
 
-    def get_task_by_id(self, company_id: UUID, task_id: UUID) -> Optional[Task]:
-        return self.db.query(Task).filter(
-            Task.company_id == company_id,
-            Task.id == task_id
-        ).first()
+    def get_task_by_id(self, company_id: Optional[UUID], task_id: UUID) -> Optional[Task]:
+        query = self.db.query(Task).filter(Task.id == task_id)
+        if company_id is not None:
+            query = query.filter(Task.company_id == company_id)
+        return query.first()
 
     def list_tasks(self, company_id: UUID, project_id: UUID, status: Optional[str] = None, assigned_to: Optional[UUID] = None) -> List[Task]:
         query = self.db.query(Task).filter(
@@ -236,11 +238,11 @@ class ProjectRepository:
         self.db.refresh(milestone)
         return milestone
 
-    def get_milestone_by_id(self, company_id: UUID, milestone_id: UUID) -> Optional[Milestone]:
-        return self.db.query(Milestone).filter(
-            Milestone.company_id == company_id,
-            Milestone.id == milestone_id
-        ).first()
+    def get_milestone_by_id(self, company_id: Optional[UUID], milestone_id: UUID) -> Optional[Milestone]:
+        query = self.db.query(Milestone).filter(Milestone.id == milestone_id)
+        if company_id is not None:
+            query = query.filter(Milestone.company_id == company_id)
+        return query.first()
 
     def list_milestones(self, company_id: UUID, project_id: UUID) -> List[Milestone]:
         return self.db.query(Milestone).filter(

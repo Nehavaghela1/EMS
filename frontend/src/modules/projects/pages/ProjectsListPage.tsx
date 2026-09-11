@@ -4,12 +4,17 @@ import { fetchProjects, createProject } from "../api";
 import type { Project, ProjectStatus } from "../types";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
+import { apiClient } from "../../../app/api-client";
+import type { Page } from "../../../shared/api/pagination";
+import type { CompanyResponse } from "../../identity/api";
 
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { formatDate } from "../../../shared/utils/date";
 
 export function ProjectsListPage() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [companies, setCompanies] = useState<CompanyResponse[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [showModal, setShowModal] = useState(false);
@@ -17,6 +22,7 @@ export function ProjectsListPage() {
   // Form State
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
+  const [formCompanyId, setFormCompanyId] = useState("");
   const [clientName, setClientName] = useState("");
   const [budget, setBudget] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -27,12 +33,28 @@ export function ProjectsListPage() {
 
   const { user } = useAuth();
   const { notify } = useToast();
-  const canManage = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager";
+  const isSuperAdmin = user?.role === "super_admin";
+  const canManage = user?.role === "hr_admin" || isSuperAdmin || user?.role === "manager";
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      apiClient.get<Page<CompanyResponse>>("/companies", { params: { limit: 100 } })
+        .then((res) => {
+          setCompanies(res.data.items || []);
+        })
+        .catch((err) => {
+          console.error("Failed to load companies:", err);
+        });
+    }
+  }, [isSuperAdmin]);
 
   async function loadProjects() {
     try {
       setLoading(true);
-      const data = await fetchProjects(filterStatus === "all" ? undefined : filterStatus);
+      const data = await fetchProjects(
+        filterStatus === "all" ? undefined : filterStatus,
+        isSuperAdmin ? (selectedCompanyId === "all" ? undefined : selectedCompanyId) : undefined
+      );
       setProjects(data);
     } catch (err: any) {
       notify(err?.response?.data?.error?.message || err?.message || "Failed to load projects", "error");
@@ -43,7 +65,7 @@ export function ProjectsListPage() {
 
   useEffect(() => {
     loadProjects();
-  }, [filterStatus]);
+  }, [filterStatus, selectedCompanyId]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -56,6 +78,7 @@ export function ProjectsListPage() {
       await createProject({
         name,
         code,
+        company_id: isSuperAdmin && formCompanyId ? formCompanyId : undefined,
         client_name: clientName || undefined,
         budget: budget ? parseFloat(budget) : undefined,
         start_date: startDate || undefined,
@@ -67,6 +90,7 @@ export function ProjectsListPage() {
       setShowModal(false);
       setName("");
       setCode("");
+      setFormCompanyId("");
       setClientName("");
       setBudget("");
       setStartDate("");
@@ -102,18 +126,61 @@ export function ProjectsListPage() {
         }
       />
 
-      {/* Filter Toolbar */}
-      <div className="tab-bar mb-6" style={{ marginBottom: "var(--space-5)" }}>
-        {(["all", "active", "planning", "on_hold", "completed", "cancelled"] as const).map((st) => (
-          <button
-            key={st}
-            type="button"
-            className={`tab-item ${filterStatus === st ? "active" : ""}`}
-            onClick={() => setFilterStatus(st)}
+      {/* Super Admin Company Selector & Filter Toolbar */}
+      <div className="stack" style={{ gap: "1rem", marginBottom: "var(--space-5)" }}>
+        {isSuperAdmin && (
+          <div
+            className="card"
+            style={{
+              padding: "0.85rem 1.25rem",
+              background: "var(--surface-sunken, #f8fafc)",
+              border: "1px solid var(--border-color, #e2e8f0)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "0.75rem",
+            }}
           >
-            {st === "all" ? "All Projects" : st.replace("_", " ").charAt(0).toUpperCase() + st.replace("_", " ").slice(1)}
-          </button>
-        ))}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+              <span style={{ fontSize: "1.1rem" }}>🏢</span>
+              <div>
+                <strong style={{ fontSize: "0.9rem" }}>Filter by Company:</strong>
+                <span className="text-muted" style={{ fontSize: "0.8rem", marginLeft: "0.5rem" }}>
+                  (Platform Super Admin View)
+                </span>
+              </div>
+            </div>
+            <div style={{ minWidth: "260px" }}>
+              <select
+                className="input input-sm"
+                value={selectedCompanyId}
+                onChange={(e) => setSelectedCompanyId(e.target.value)}
+                style={{ width: "100%", fontWeight: 500 }}
+              >
+                <option value="all">🌐 All Companies ({companies.length})</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
+        <div className="tab-bar">
+          {(["all", "active", "planning", "on_hold", "completed", "cancelled"] as const).map((st) => (
+            <button
+              key={st}
+              type="button"
+              className={`tab-item ${filterStatus === st ? "active" : ""}`}
+              onClick={() => setFilterStatus(st)}
+            >
+              {st === "all" ? "All Projects" : st.replace("_", " ").charAt(0).toUpperCase() + st.replace("_", " ").slice(1)}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Projects Grid */}
@@ -121,7 +188,7 @@ export function ProjectsListPage() {
         <p className="text-muted">Loading projects...</p>
       ) : projects.length === 0 ? (
         <div className="card text-center" style={{ padding: "3rem" }}>
-          <p className="text-muted">No projects found for the selected filter.</p>
+          <p className="text-muted">No projects found for the selected company and filter.</p>
         </div>
       ) : (
         <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.25rem" }}>
@@ -130,9 +197,24 @@ export function ProjectsListPage() {
               <div className="stack" style={{ gap: "0.75rem" }}>
                 <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                   <div>
-                    <span className="badge badge-muted" style={{ fontSize: "0.75rem", marginBottom: "0.25rem" }}>
-                      {proj.code}
-                    </span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap", marginBottom: "0.25rem" }}>
+                      <span className="badge badge-muted" style={{ fontSize: "0.75rem" }}>
+                        {proj.code}
+                      </span>
+                      {proj.company_name && (
+                        <span
+                          className="badge"
+                          style={{
+                            fontSize: "0.7rem",
+                            background: "rgba(37, 99, 235, 0.1)",
+                            color: "var(--color-primary, #2563eb)",
+                            border: "1px solid rgba(37, 99, 235, 0.2)",
+                          }}
+                        >
+                          🏢 {proj.company_name}
+                        </span>
+                      )}
+                    </div>
                     <h3 style={{ margin: 0 }}>
                       <Link to={`/projects/${proj.id}`} style={{ textDecoration: "none", color: "inherit" }}>
                         {proj.name}
@@ -173,7 +255,7 @@ export function ProjectsListPage() {
       {/* Create Modal */}
       {showModal && (
         <div className="modal-backdrop" onClick={() => setShowModal(false)}>
-          <div className="modal card stack" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal card stack" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
               <h3>Create New Project</h3>
               <button
@@ -186,6 +268,24 @@ export function ProjectsListPage() {
               </button>
             </div>
             <form onSubmit={handleCreate} className="stack gap-4 my-2">
+              {isSuperAdmin && (
+                <div className="field">
+                  <label>Assign to Company *</label>
+                  <select
+                    value={formCompanyId}
+                    onChange={(e) => setFormCompanyId(e.target.value)}
+                    required
+                  >
+                    <option value="">-- Select Target Company --</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="field">
                 <label>Project Name *</label>
                 <input
