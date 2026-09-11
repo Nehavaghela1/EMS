@@ -660,7 +660,7 @@ export function ProjectDetailPage() {
                               notify("Task reopened to In Progress", "info");
                             }
                           }}
-                          title="Drag to move • Double-click to edit ✏️ • Right-click to toggle Done"
+                          title="Drag to move • Double-click to edit • Right-click to toggle Done"
                         >
                           <div className="row-between align-center">
                             <span className={`badge ${priorityBadges[task.priority]}`} style={{ textTransform: "uppercase", fontSize: "10px", letterSpacing: "0.5px" }}>
@@ -795,7 +795,7 @@ export function ProjectDetailPage() {
                   className="card row-between align-center p-4"
                   onDoubleClick={() => openEditMilestoneModal(ms)}
                   style={{ cursor: "pointer" }}
-                  title="Double-click to edit milestone ✏️"
+                  title="Double-click to edit milestone"
                 >
                   <div style={{ flex: 1, paddingRight: "1rem" }}>
                     <div className="row gap-2 align-center mb-1">
@@ -1082,7 +1082,7 @@ export function ProjectDetailPage() {
         <div className="modal-backdrop" onClick={() => setShowTaskModal(false)}>
           <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{editingTaskId ? "✏️ Edit Task" : "+ Create Task"}</h2>
+              <h2>{editingTaskId ? "Edit Task" : "+ Create Task"}</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -1191,7 +1191,7 @@ export function ProjectDetailPage() {
         <div className="modal-backdrop" onClick={() => setShowMilestoneModal(false)}>
           <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{editingMsId ? "✏️ Edit Milestone" : "+ Create Milestone"}</h2>
+              <h2>{editingMsId ? "Edit Milestone" : "+ Create Milestone"}</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -1245,7 +1245,7 @@ export function ProjectDetailPage() {
         <div className="modal-backdrop" onClick={() => setShowProjectEditModal(false)}>
           <div className="modal card" style={{ maxWidth: "540px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>✏️ Edit Project Workspace</h2>
+              <h2>Edit Project Workspace</h2>
               <button
                 type="button"
                 className="modal-close-btn"

@@ -320,7 +320,7 @@ function SuperAdminCompaniesSection() {
           onClick={() => openEdit(c)}
           title="View metrics or edit company profile"
         >
-          ✏️ View / Edit
+          View / Edit
         </button>
       ),
     },

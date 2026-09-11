@@ -180,7 +180,7 @@ export function AdminDashboardPage() {
             onClick={() => openEditModal(c)}
             title="View details or edit company"
           >
-            ✏️ View / Edit
+            View / Edit
           </button>
           {c.status === "pending" && (
             <>

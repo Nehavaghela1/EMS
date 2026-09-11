@@ -228,7 +228,7 @@ export function ProjectsListPage() {
               className="card stack"
               style={{ justifyContent: "space-between", cursor: "pointer" }}
               onDoubleClick={() => openEditModal(proj)}
-              title="Double-click to edit project ✏️"
+              title="Double-click to edit project"
             >
               <div className="stack" style={{ gap: "0.75rem" }}>
                 <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -339,7 +339,7 @@ export function ProjectsListPage() {
         <div className="modal-backdrop" onClick={() => setShowModal(false)}>
           <div className="modal card stack" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-              <h3>{editingProjectId ? "✏️ Edit Project" : "+ Create New Project"}</h3>
+              <h3>{editingProjectId ? "Edit Project" : "+ Create New Project"}</h3>
               <button
                 type="button"
                 className="modal-close-btn"
