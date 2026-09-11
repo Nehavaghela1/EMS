@@ -1,9 +1,20 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../../../shared/components/PageHeader";
+import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
+import { usePagination } from "../../../shared/hooks/usePagination";
 import { parseApiError } from "../../../shared/api/errors";
 import { TodayAttendanceCard } from "../../time_leave/components/TodayAttendanceCard";
 import { fetchDashboard, fetchAnnouncements } from "../api";
+import {
+  listCompanies,
+  getCompanyDetail,
+  updateCompanyByAdmin,
+  type CompanyResponse,
+  type CompanyDetailResponse,
+  type AdminCompanyUpdateInput,
+} from "../../identity/api";
 import { formatDate } from "../../../shared/utils/date";
 
 function Stat({ label, value, to, subtitle }: { label: string; value: React.ReactNode; to?: string; subtitle?: string }) {
@@ -88,11 +99,11 @@ export function DashboardPage() {
             <div className="stack">
               <div className="row-between mb-2">
                 <h3 className="mb-0">Platform Overview</h3>
-                <Link to="/admin" className="btn btn-sm btn-primary">
-                  🏢 Manage All Companies & Approvals →
+                <Link to="/admin" className="btn btn-sm btn-ghost">
+                  Go to Approvals & Pending Queue →
                 </Link>
               </div>
-              <div className="stat-grid">
+              <div className="stat-grid mb-4">
                 <Stat
                   label="Pending approvals"
                   value={data.data.pending_approvals}
@@ -102,7 +113,6 @@ export function DashboardPage() {
                 <Stat
                   label="Platform users"
                   value={data.data.platform_user_count}
-                  to="/admin"
                   subtitle="Across all companies"
                 />
                 {Object.entries(data.data.company_counts_by_status).map(([status, count]) => (
@@ -110,11 +120,13 @@ export function DashboardPage() {
                     key={status}
                     label={`Companies — ${status}`}
                     value={count}
-                    to="/admin"
-                    subtitle="Click to view directory"
+                    subtitle={`Total ${status} tenants`}
                   />
                 ))}
               </div>
+
+              {/* Directly visible Companies Directory on Dashboard */}
+              <SuperAdminCompaniesSection />
             </div>
           )}
 
@@ -198,6 +210,363 @@ export function DashboardPage() {
               </div>
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SuperAdminCompaniesSection() {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const { page, limit, setPage } = usePagination(10);
+  const queryClient = useQueryClient();
+
+  const companiesQuery = useQuery({
+    queryKey: ["companies", "dashboard", { page, limit, status: statusFilter, q: searchQuery }],
+    queryFn: () => listCompanies({ page, limit, status: statusFilter, q: searchQuery }),
+    placeholderData: (prev) => prev,
+  });
+
+  // Modal edit state
+  const [editTargetId, setEditTargetId] = useState<string | null>(null);
+  const [editFormData, setEditFormData] = useState<AdminCompanyUpdateInput>({});
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSuccess, setEditSuccess] = useState<string | null>(null);
+  const [companyDetail, setCompanyDetail] = useState<CompanyDetailResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function refresh() {
+    await queryClient.invalidateQueries({ queryKey: ["companies"] });
+    await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  }
+
+  async function openEdit(company: CompanyResponse) {
+    setEditTargetId(company.id);
+    setEditLoading(true);
+    setEditError(null);
+    setEditSuccess(null);
+    try {
+      const detail = await getCompanyDetail(company.id);
+      setCompanyDetail(detail);
+      setEditFormData({
+        name: detail.name || "",
+        phone: detail.phone || "",
+        industry: detail.industry || "",
+        status: detail.status || "active",
+        address: (detail as any).address || "",
+        city: (detail as any).city || "",
+        state: (detail as any).state || "",
+        pincode: (detail as any).pincode || "",
+        website: (detail as any).website || "",
+      });
+    } catch (err) {
+      setEditError(parseApiError(err).message);
+    } finally {
+      setEditLoading(false);
+    }
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editTargetId) return;
+    setBusy(true);
+    setEditError(null);
+    setEditSuccess(null);
+    try {
+      await updateCompanyByAdmin(editTargetId, editFormData);
+      setEditSuccess("Company updated successfully!");
+      await refresh();
+      setTimeout(() => {
+        setEditTargetId(null);
+        setEditSuccess(null);
+      }, 900);
+    } catch (err) {
+      setEditError(parseApiError(err).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const columns: DataTableColumn<CompanyResponse>[] = [
+    { key: "name", label: "Company Name", render: (c) => <strong>{c.name}</strong> },
+    {
+      key: "code",
+      label: "Code",
+      render: (c) => <code style={{ fontSize: "11px", padding: "2px 6px" }}>{c.code}</code>,
+    },
+    { key: "email", label: "Company Email", render: (c) => c.email },
+    { key: "industry", label: "Industry", render: (c) => c.industry ?? "—" },
+    {
+      key: "status",
+      label: "Status",
+      render: (c) => {
+        let badgeClass = "badge badge-muted";
+        if (c.status === "active") badgeClass = "badge badge-success";
+        else if (c.status === "pending") badgeClass = "badge badge-warning";
+        else if (c.status === "rejected") badgeClass = "badge badge-danger";
+        else if (c.status === "suspended") badgeClass = "badge badge-danger";
+        return <span className={badgeClass}>{c.status.toUpperCase()}</span>;
+      },
+    },
+    { key: "created_at", label: "Registered", render: (c) => formatDate(c.created_at) },
+    {
+      key: "actions",
+      label: "Action",
+      render: (c) => (
+        <button
+          className="btn btn-sm btn-ghost"
+          onClick={() => openEdit(c)}
+          title="View metrics or edit company profile"
+        >
+          ✏️ View / Edit
+        </button>
+      ),
+    },
+  ];
+
+  return (
+    <div className="card mt-4" style={{ padding: "var(--space-4)" }}>
+      <div className="row-between mb-4">
+        <div>
+          <h3 className="mb-0">🏢 Registered Companies Directory</h3>
+          <span className="text-xs text-muted">
+            All onboarded client companies across the EMS platform
+          </span>
+        </div>
+        <Link to="/admin" className="btn btn-sm btn-primary">
+          Open Full Management Portal →
+        </Link>
+      </div>
+
+      <div className="row mb-4" style={{ gap: "var(--space-3)", flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ flex: 1, minWidth: "220px" }}>
+          <input
+            type="text"
+            placeholder="🔍 Search company by name or code..."
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPage(1);
+            }}
+            className="input"
+            style={{ width: "100%" }}
+          />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+          <span className="text-sm font-semibold">Filter:</span>
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(1);
+            }}
+            className="input"
+            style={{ width: "auto" }}
+          >
+            <option value="all">All Statuses</option>
+            <option value="active">Active</option>
+            <option value="pending">Pending</option>
+            <option value="rejected">Rejected</option>
+            <option value="suspended">Suspended</option>
+          </select>
+        </div>
+        {(searchQuery || statusFilter !== "all") && (
+          <button
+            className="btn btn-sm btn-ghost"
+            onClick={() => {
+              setSearchQuery("");
+              setStatusFilter("all");
+              setPage(1);
+            }}
+          >
+            Reset
+          </button>
+        )}
+      </div>
+
+      <DataTable
+        columns={columns}
+        page={companiesQuery.data}
+        isLoading={companiesQuery.isLoading}
+        isError={companiesQuery.isError}
+        error={companiesQuery.error}
+        currentPage={page}
+        onPageChange={setPage}
+        sort={null}
+        onSortChange={() => {}}
+        emptyMessage="No companies found."
+        rowKey={(c) => c.id}
+      />
+
+      {/* Edit Modal */}
+      {editTargetId && (
+        <div className="modal-backdrop" onClick={() => setEditTargetId(null)}>
+          <div
+            className="modal stack"
+            style={{ maxWidth: "600px", width: "95%" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+              <h3>🏢 Company Details & Edit Profile</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setEditTargetId(null)}
+                disabled={busy}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {editLoading ? (
+              <div className="row justify-center py-6">
+                <div className="spinner" />
+                <span className="ml-2 text-muted">Loading profile...</span>
+              </div>
+            ) : (
+              <form onSubmit={handleSave} className="stack">
+                {editError && <div className="alert alert-error">{editError}</div>}
+                {editSuccess && <div className="alert alert-success">{editSuccess}</div>}
+
+                {companyDetail && (
+                  <div className="card mb-3" style={{ background: "var(--color-bg-subtle)", padding: "var(--space-3)" }}>
+                    <div className="stat-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: "var(--space-2)" }}>
+                      <div>
+                        <span className="text-xs text-muted block">Company Code</span>
+                        <code>{companyDetail.code}</code>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted block">Total Users</span>
+                        <strong>{companyDetail.counts?.users ?? 0}</strong>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted block">Departments</span>
+                        <strong>{companyDetail.counts?.departments ?? 0}</strong>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted block">Registered</span>
+                        <span>{formatDate(companyDetail.created_at)}</span>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted block">Approved Date</span>
+                        <span>{companyDetail.approved_at ? formatDate(companyDetail.approved_at) : "—"}</span>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted block">Registered Email</span>
+                        <span style={{ fontSize: "12px", wordBreak: "break-all" }}>{companyDetail.email}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="row" style={{ gap: "var(--space-3)" }}>
+                  <div className="field" style={{ flex: 2 }}>
+                    <label>Company Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={editFormData.name ?? ""}
+                      onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                    />
+                  </div>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label>Status</label>
+                    <select
+                      value={editFormData.status ?? "active"}
+                      onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value })}
+                    >
+                      <option value="active">Active</option>
+                      <option value="pending">Pending</option>
+                      <option value="suspended">Suspended</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="row" style={{ gap: "var(--space-3)" }}>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label>Industry</label>
+                    <input
+                      type="text"
+                      value={editFormData.industry ?? ""}
+                      onChange={(e) => setEditFormData({ ...editFormData, industry: e.target.value })}
+                    />
+                  </div>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label>Phone</label>
+                    <input
+                      type="text"
+                      value={editFormData.phone ?? ""}
+                      onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label>Website</label>
+                  <input
+                    type="text"
+                    placeholder="https://..."
+                    value={editFormData.website ?? ""}
+                    onChange={(e) => setEditFormData({ ...editFormData, website: e.target.value })}
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Address</label>
+                  <input
+                    type="text"
+                    value={editFormData.address ?? ""}
+                    onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })}
+                  />
+                </div>
+
+                <div className="row" style={{ gap: "var(--space-3)" }}>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label>City</label>
+                    <input
+                      type="text"
+                      value={editFormData.city ?? ""}
+                      onChange={(e) => setEditFormData({ ...editFormData, city: e.target.value })}
+                    />
+                  </div>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label>State</label>
+                    <input
+                      type="text"
+                      value={editFormData.state ?? ""}
+                      onChange={(e) => setEditFormData({ ...editFormData, state: e.target.value })}
+                    />
+                  </div>
+                  <div className="field" style={{ flex: 1 }}>
+                    <label>Pincode</label>
+                    <input
+                      type="text"
+                      value={editFormData.pincode ?? ""}
+                      onChange={(e) => setEditFormData({ ...editFormData, pincode: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="row-end" style={{ gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setEditTargetId(null)}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary" disabled={busy}>
+                    {busy ? "Saving..." : "Save Changes"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         </div>
       )}
     </div>

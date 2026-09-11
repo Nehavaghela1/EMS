@@ -2,10 +2,12 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
 from app.core.time import utcnow
+from app.modules.hr.models import Department, Employee
 from app.modules.identity.models import User, UserRole
 from app.modules.time_leave.models import (
     Attendance,
@@ -52,8 +54,21 @@ leave_types_router = APIRouter(prefix="/leave-types", tags=["Leave Types"])
 leaves_router = APIRouter(prefix="/leaves", tags=["Leaves"])
 
 
-def _to_attendance_response(record: Attendance) -> AttendanceResponse:
-    return AttendanceResponse.model_validate(record)
+def _to_attendance_response(record: Attendance, db: Session | None = None) -> AttendanceResponse:
+    res = AttendanceResponse.model_validate(record)
+    if db is not None and record.employee_id:
+        emp = db.query(Employee).filter(Employee.id == record.employee_id).first()
+        if emp:
+            name_parts = [emp.first_name]
+            if emp.last_name:
+                name_parts.append(emp.last_name)
+            res.employee_name = " ".join(name_parts)
+            res.employee_code = emp.employee_code
+            if emp.department_id:
+                dept = db.query(Department).filter(Department.id == emp.department_id).first()
+                if dept:
+                    res.department_name = dept.name
+    return res
 
 
 def _to_shift_response(shift: Shift) -> ShiftResponse:
@@ -70,7 +85,7 @@ def check_in(
     user: User = Depends(get_current_user),
 ):
     record = AttendanceService(db).check_in(user.company_id, user)
-    return _to_attendance_response(record)
+    return _to_attendance_response(record, db)
 
 
 @attendance_router.post("/check-out", response_model=AttendanceResponse)
@@ -79,7 +94,7 @@ def check_out(
     user: User = Depends(get_current_user),
 ):
     record = AttendanceService(db).check_out(user.company_id, user)
-    return _to_attendance_response(record)
+    return _to_attendance_response(record, db)
 
 
 @attendance_router.post("/export", response_model=JobQueuedResponse, status_code=202)
@@ -114,7 +129,7 @@ def list_attendance(
         page_params=params,
     )
     return Page(
-        items=[_to_attendance_response(r) for r in items],
+        items=[_to_attendance_response(r, db) for r in items],
         page=params.page,
         limit=params.limit,
         total=total,
@@ -130,7 +145,7 @@ def get_attendance(
     user: User = Depends(get_current_user),
 ):
     record = AttendanceService(db).get_attendance(user.company_id, attendance_id, user)
-    return _to_attendance_response(record)
+    return _to_attendance_response(record, db)
 
 
 @attendance_router.put("/{attendance_id}", response_model=AttendanceResponse)
@@ -141,7 +156,7 @@ def regularize_attendance(
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
     record = AttendanceService(db).regularize(user.company_id, attendance_id, data, user)
-    return _to_attendance_response(record)
+    return _to_attendance_response(record, db)
 
 
 @attendance_router.delete("/{attendance_id}", status_code=204)

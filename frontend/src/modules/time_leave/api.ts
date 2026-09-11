@@ -8,6 +8,9 @@ export type AttendanceStatus = "present" | "absent" | "half_day" | "wfh" | "on_l
 export interface Attendance {
   id: string;
   employee_id: string;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  department_name?: string | null;
   date: string;
   check_in: string | null;
   check_out: string | null;

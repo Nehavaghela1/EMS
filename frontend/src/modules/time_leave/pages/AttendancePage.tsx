@@ -41,7 +41,32 @@ export function AttendancePage() {
 
   const [regularizing, setRegularizing] = useState<Attendance | null>(null);
 
+  const showEmployeeCol = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager";
+
   const columns: DataTableColumn<Attendance>[] = [
+    ...(showEmployeeCol
+      ? [
+          {
+            key: "employee",
+            label: "Employee",
+            render: (a: Attendance) => (
+              <div>
+                <strong>{a.employee_name ?? "—"}</strong>
+                {a.employee_code && (
+                  <span className="text-xs text-muted block" style={{ fontFamily: "monospace" }}>
+                    {a.employee_code}
+                  </span>
+                )}
+              </div>
+            ),
+          } satisfies DataTableColumn<Attendance>,
+          {
+            key: "department",
+            label: "Department",
+            render: (a: Attendance) => a.department_name ?? "—",
+          } satisfies DataTableColumn<Attendance>,
+        ]
+      : []),
     { key: "date", label: "Date", render: (a) => formatDate(a.date) },
     { key: "check_in", label: "Check in", render: (a) => (a.check_in ? new Date(a.check_in).toLocaleTimeString() : "—") },
     { key: "check_out", label: "Check out", render: (a) => (a.check_out ? new Date(a.check_out).toLocaleTimeString() : "—") },
@@ -74,7 +99,7 @@ export function AttendancePage() {
       <TodayAttendanceCard />
 
       <PageHeader
-        title={isHr ? "All attendance" : user?.role === "manager" ? "Team attendance" : "My attendance"}
+        title={isHr || user?.role === "super_admin" ? "All Company Attendance" : user?.role === "manager" ? "Team Attendance" : "My Attendance"}
       />
       <DataTable
         columns={columns}

@@ -12,6 +12,9 @@ from app.modules.time_leave.models import AttendanceStatus, LeaveStatus
 class AttendanceResponse(BaseModel):
     id: uuid.UUID
     employee_id: uuid.UUID
+    employee_name: str | None = None
+    employee_code: str | None = None
+    department_name: str | None = None
     date: date
     check_in: datetime | None
     check_out: datetime | None
