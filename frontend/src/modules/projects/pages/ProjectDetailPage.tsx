@@ -30,6 +30,16 @@ export function ProjectDetailPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"kanban" | "milestones" | "team" | "timelogs" | "settings">("kanban");
 
+  // Drag-and-drop & Context Menu State
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [dragOverCol, setDragOverCol] = useState<TaskStatus | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    task: Task | null;
+  }>({ visible: false, x: 0, y: 0, task: null });
+
   // Log Time Modal in Project
   const [showTimeModal, setShowTimeModal] = useState(false);
   const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10));
@@ -423,52 +433,114 @@ export function ProjectDetailPage() {
         <div className="kanban-board">
             {kanbanColumns.map((col) => {
               const colTasks = tasks.filter((t) => t.status === col.key);
+              const isOver = dragOverCol === col.key;
               return (
-                <div key={col.key} className="kanban-col">
+                <div
+                  key={col.key}
+                  className={`kanban-col ${isOver ? "drag-over" : ""}`}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (dragOverCol !== col.key) setDragOverCol(col.key);
+                  }}
+                  onDragLeave={(e) => {
+                    // Only clear if leaving the column element itself
+                    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                    if (dragOverCol === col.key) setDragOverCol(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOverCol(null);
+                    const taskId = e.dataTransfer.getData("text/plain") || draggedTaskId;
+                    if (taskId) {
+                      handleStatusChange(taskId, col.key);
+                      setDraggedTaskId(null);
+                    }
+                  }}
+                >
                   <div className="kanban-col-header">
                     <span className="kanban-col-title">
                       <span
                         style={{
-                          width: 9,
-                          height: 9,
-                          borderRadius: "50%",
-                          background: col.color,
-                          display: "inline-block",
-                        }}
-                      />
-                      <span style={{ color: "var(--color-text)", fontWeight: 600 }}>{col.title}</span>
-                    </span>
-                    <span className="kanban-col-count">{colTasks.length}</span>
-                  </div>
+                        width: 9,
+                        height: 9,
+                        borderRadius: "50%",
+                        background: col.color,
+                        display: "inline-block",
+                      }}
+                    />
+                    <span style={{ color: "var(--color-text)", fontWeight: 600 }}>{col.title}</span>
+                  </span>
+                  <span className="kanban-col-count">{colTasks.length}</span>
+                </div>
 
-                  <div className="stack gap-3" style={{ flex: 1, overflowY: "auto" }}>
-                    {colTasks.length === 0 ? (
-                      <div
-                        className="text-center text-muted text-xs p-4"
-                        style={{
-                          border: "1px dashed #cbd5e1",
-                          borderRadius: "var(--radius-sm)",
-                          background: "rgba(255, 255, 255, 0.6)",
-                        }}
-                      >
-                        No tasks
-                      </div>
-                    ) : (
-                      colTasks.map((task) => (
-                        <div key={task.id} className="kanban-task-card">
+                <div className="stack gap-3" style={{ flex: 1, overflowY: "auto", minHeight: "120px" }}>
+                  {colTasks.length === 0 ? (
+                    <div
+                      className="text-center text-muted text-xs p-4"
+                      style={{
+                        border: isOver ? "2px dashed #6366f1" : "1px dashed #cbd5e1",
+                        borderRadius: "var(--radius-sm)",
+                        background: isOver ? "rgba(238, 242, 255, 0.8)" : "rgba(255, 255, 255, 0.6)",
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      {isOver ? "Drop card here" : "No tasks"}
+                    </div>
+                  ) : (
+                    colTasks.map((task) => {
+                      const isDraggingThis = draggedTaskId === task.id;
+                      return (
+                        <div
+                          key={task.id}
+                          className={`kanban-task-card ${isDraggingThis ? "is-dragging" : ""}`}
+                          draggable
+                          onDragStart={(e) => {
+                            setDraggedTaskId(task.id);
+                            e.dataTransfer.setData("text/plain", task.id);
+                            e.dataTransfer.effectAllowed = "move";
+                          }}
+                          onDragEnd={() => {
+                            setDraggedTaskId(null);
+                            setDragOverCol(null);
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setContextMenu({
+                              visible: true,
+                              x: e.clientX,
+                              y: e.clientY,
+                              task,
+                            });
+                          }}
+                          title="Drag to move column • Right-click for options"
+                        >
                           <div className="row-between align-center">
                             <span className={`badge ${priorityBadges[task.priority]}`} style={{ textTransform: "uppercase", fontSize: "10px", letterSpacing: "0.5px" }}>
                               {task.priority}
                             </span>
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              style={{ padding: "2px 6px", fontSize: "13px" }}
-                              onClick={() => openTaskComments(task)}
-                              title="Task comments"
-                            >
-                              💬
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <span
+                                style={{
+                                  fontSize: "12px",
+                                  color: "#94a3b8",
+                                  cursor: "grab",
+                                  padding: "0 2px",
+                                  userSelect: "none"
+                                }}
+                                title="Drag card"
+                              >
+                                ⠿
+                              </span>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                style={{ padding: "2px 6px", fontSize: "13px" }}
+                                onClick={() => openTaskComments(task)}
+                                title="Task comments"
+                              >
+                                💬
+                              </button>
+                            </div>
                           </div>
 
                           <div className="kanban-task-body">
@@ -480,27 +552,177 @@ export function ProjectDetailPage() {
 
                           <div className="kanban-task-footer">
                             <span className="text-muted text-xs">
-                              {task.due_date ? `📅 Due ${formatDate(task.due_date)}` : "No due date"}
+                              {task.due_date ? `📅 ${formatDate(task.due_date)}` : "No due date"}
                             </span>
-                            <select
-                              value={task.status}
-                              className="status-select-sm"
-                              onChange={(e) => handleStatusChange(task.id, e.target.value as TaskStatus)}
-                            >
-                              <option value="todo">To Do</option>
-                              <option value="in_progress">In Progress</option>
-                              <option value="review">Review</option>
-                              <option value="done">Done</option>
-                            </select>
+                            
+                            {task.status !== "done" ? (
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                style={{
+                                  padding: "2px 8px",
+                                  fontSize: "11px",
+                                  fontWeight: 600,
+                                  background: "#ecfdf5",
+                                  color: "#059669",
+                                  border: "1px solid #a7f3d0",
+                                  borderRadius: "4px",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "3px",
+                                  cursor: "pointer"
+                                }}
+                                onClick={() => {
+                                  handleStatusChange(task.id, "done");
+                                }}
+                                title="Mark as Done"
+                              >
+                                ✓ Done
+                              </button>
+                            ) : (
+                              <span
+                                style={{
+                                  fontSize: "11px",
+                                  fontWeight: 600,
+                                  color: "#10b981",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "3px"
+                                }}
+                              >
+                                ✓ Completed
+                              </span>
+                            )}
                           </div>
                         </div>
-                      ))
-                    )}
-                  </div>
+                      );
+                    })
+                  )}
                 </div>
-              );
-            })}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Mini Right-Click Context Menu */}
+      {contextMenu.visible && contextMenu.task && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            zIndex: 9999,
+          }}
+          onClick={() => setContextMenu({ visible: false, x: 0, y: 0, task: null })}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu({ visible: false, x: 0, y: 0, task: null });
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: contextMenu.y,
+              left: Math.min(contextMenu.x, window.innerWidth - 180),
+              background: "#ffffff",
+              borderRadius: "8px",
+              boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
+              border: "1px solid #e2e8f0",
+              minWidth: "165px",
+              padding: "6px 0",
+              fontSize: "13px",
+              color: "#1e293b",
+              zIndex: 10000,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: "4px 12px", fontWeight: 700, fontSize: "11px", color: "#64748b", textTransform: "uppercase", borderBottom: "1px solid #f1f5f9", marginBottom: "4px" }}>
+              Quick Action
+            </div>
+            
+            {contextMenu.task.status !== "done" ? (
+              <button
+                type="button"
+                className="w-full text-left"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "8px 14px",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "#059669",
+                  fontWeight: 600,
+                  width: "100%",
+                  textAlign: "left",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#ecfdf5")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                onClick={() => {
+                  if (contextMenu.task) handleStatusChange(contextMenu.task.id, "done");
+                  setContextMenu({ visible: false, x: 0, y: 0, task: null });
+                }}
+              >
+                <span>✓</span> Mark as Done
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="w-full text-left"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "8px 14px",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "#3b82f6",
+                  fontWeight: 600,
+                  width: "100%",
+                  textAlign: "left",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                onClick={() => {
+                  if (contextMenu.task) handleStatusChange(contextMenu.task.id, "in_progress");
+                  setContextMenu({ visible: false, x: 0, y: 0, task: null });
+                }}
+              >
+                <span>🔄</span> Reopen (In Progress)
+              </button>
+            )}
+
+            <button
+              type="button"
+              className="w-full text-left"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "8px 14px",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "#475569",
+                width: "100%",
+                textAlign: "left",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              onClick={() => {
+                if (contextMenu.task) openTaskComments(contextMenu.task);
+                setContextMenu({ visible: false, x: 0, y: 0, task: null });
+              }}
+            >
+              <span>💬</span> View Comments
+            </button>
           </div>
+        </div>
       )}
 
       {/* TAB 2: MILESTONES */}
