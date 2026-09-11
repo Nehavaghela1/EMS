@@ -652,23 +652,54 @@ export function ProjectDetailPage() {
                               {task.priority}
                             </span>
                             <div className="flex items-center gap-1">
-                              <span
-                                style={{
-                                  fontSize: "12px",
-                                  color: "#94a3b8",
-                                  cursor: "grab",
-                                  padding: "0 2px",
-                                  userSelect: "none"
-                                }}
-                                title="Drag card"
-                              >
-                                ⠿
-                              </span>
+                              {task.status !== "done" ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  style={{
+                                    padding: "2px 6px",
+                                    fontSize: "12px",
+                                    fontWeight: 700,
+                                    background: "#ecfdf5",
+                                    color: "#059669",
+                                    border: "1px solid #a7f3d0",
+                                    borderRadius: "4px",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStatusChange(task.id, "done");
+                                    notify("Task marked as Done!", "success");
+                                  }}
+                                  title="Mark as Done (✓)"
+                                >
+                                  ✓
+                                </button>
+                              ) : (
+                                <span
+                                  style={{
+                                    fontSize: "12px",
+                                    fontWeight: 700,
+                                    color: "#10b981",
+                                    background: "#d1fae5",
+                                    padding: "2px 6px",
+                                    borderRadius: "4px",
+                                  }}
+                                  title="Completed"
+                                >
+                                  ✓
+                                </span>
+                              )}
                               <button
                                 type="button"
                                 className="btn btn-ghost btn-sm"
                                 style={{ padding: "2px 6px", fontSize: "12px", color: "#64748b" }}
-                                onClick={() => openEditTaskModal(task)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEditTaskModal(task);
+                                }}
                                 title="Edit Task (✏️)"
                               >
                                 ✏️
@@ -677,7 +708,10 @@ export function ProjectDetailPage() {
                                 type="button"
                                 className="btn btn-ghost btn-sm"
                                 style={{ padding: "2px 6px", fontSize: "13px" }}
-                                onClick={() => openTaskComments(task)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openTaskComments(task);
+                                }}
                                 title="Task comments"
                               >
                                 💬
@@ -696,45 +730,11 @@ export function ProjectDetailPage() {
                             <span className="text-muted text-xs">
                               {task.due_date ? `📅 ${formatDate(task.due_date)}` : "No due date"}
                             </span>
-                            
-                            {task.status !== "done" ? (
-                              <button
-                                type="button"
-                                className="btn btn-sm"
-                                style={{
-                                  padding: "2px 8px",
-                                  fontSize: "11px",
-                                  fontWeight: 600,
-                                  background: "#ecfdf5",
-                                  color: "#059669",
-                                  border: "1px solid #a7f3d0",
-                                  borderRadius: "4px",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "3px",
-                                  cursor: "pointer"
-                                }}
-                                onClick={() => {
-                                  handleStatusChange(task.id, "done");
-                                }}
-                                title="Mark as Done"
-                              >
-                                ✓ Done
-                              </button>
-                            ) : (
-                              <span
-                                style={{
-                                  fontSize: "11px",
-                                  fontWeight: 600,
-                                  color: "#10b981",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "3px"
-                                }}
-                              >
-                                ✓ Completed
+                            {task.estimated_hours ? (
+                              <span className="text-muted text-xs font-mono">
+                                ⏱️ {task.estimated_hours}h
                               </span>
-                            )}
+                            ) : null}
                           </div>
                         </div>
                       );
