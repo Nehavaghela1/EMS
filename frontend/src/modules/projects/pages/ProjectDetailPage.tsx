@@ -30,15 +30,9 @@ export function ProjectDetailPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"kanban" | "milestones" | "team" | "timelogs" | "settings">("kanban");
 
-  // Drag-and-drop & Context Menu State
+  // Drag-and-drop State
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dragOverCol, setDragOverCol] = useState<TaskStatus | null>(null);
-  const [contextMenu, setContextMenu] = useState<{
-    visible: boolean;
-    x: number;
-    y: number;
-    task: Task | null;
-  }>({ visible: false, x: 0, y: 0, task: null });
 
   // Log Time Modal in Project
   const [showTimeModal, setShowTimeModal] = useState(false);
@@ -505,14 +499,15 @@ export function ProjectDetailPage() {
                           }}
                           onContextMenu={(e) => {
                             e.preventDefault();
-                            setContextMenu({
-                              visible: true,
-                              x: e.clientX,
-                              y: e.clientY,
-                              task,
-                            });
+                            if (task.status !== "done") {
+                              handleStatusChange(task.id, "done");
+                              notify("Task marked as Done!", "success");
+                            } else {
+                              handleStatusChange(task.id, "in_progress");
+                              notify("Task reopened to In Progress", "info");
+                            }
                           }}
-                          title="Drag to move column • Right-click for options"
+                          title="Drag to move • Right-click to toggle Done"
                         >
                           <div className="row-between align-center">
                             <span className={`badge ${priorityBadges[task.priority]}`} style={{ textTransform: "uppercase", fontSize: "10px", letterSpacing: "0.5px" }}>
@@ -602,126 +597,6 @@ export function ProjectDetailPage() {
               </div>
             );
           })}
-        </div>
-      )}
-
-      {/* Mini Right-Click Context Menu */}
-      {contextMenu.visible && contextMenu.task && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            width: "100vw",
-            height: "100vh",
-            zIndex: 9999,
-          }}
-          onClick={() => setContextMenu({ visible: false, x: 0, y: 0, task: null })}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setContextMenu({ visible: false, x: 0, y: 0, task: null });
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              top: contextMenu.y,
-              left: Math.min(contextMenu.x, window.innerWidth - 180),
-              background: "#ffffff",
-              borderRadius: "8px",
-              boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
-              border: "1px solid #e2e8f0",
-              minWidth: "165px",
-              padding: "6px 0",
-              fontSize: "13px",
-              color: "#1e293b",
-              zIndex: 10000,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ padding: "4px 12px", fontWeight: 700, fontSize: "11px", color: "#64748b", textTransform: "uppercase", borderBottom: "1px solid #f1f5f9", marginBottom: "4px" }}>
-              Quick Action
-            </div>
-            
-            {contextMenu.task.status !== "done" ? (
-              <button
-                type="button"
-                className="w-full text-left"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  padding: "8px 14px",
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                  color: "#059669",
-                  fontWeight: 600,
-                  width: "100%",
-                  textAlign: "left",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#ecfdf5")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                onClick={() => {
-                  if (contextMenu.task) handleStatusChange(contextMenu.task.id, "done");
-                  setContextMenu({ visible: false, x: 0, y: 0, task: null });
-                }}
-              >
-                <span>✓</span> Mark as Done
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="w-full text-left"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  padding: "8px 14px",
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                  color: "#3b82f6",
-                  fontWeight: 600,
-                  width: "100%",
-                  textAlign: "left",
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                onClick={() => {
-                  if (contextMenu.task) handleStatusChange(contextMenu.task.id, "in_progress");
-                  setContextMenu({ visible: false, x: 0, y: 0, task: null });
-                }}
-              >
-                <span>🔄</span> Reopen (In Progress)
-              </button>
-            )}
-
-            <button
-              type="button"
-              className="w-full text-left"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                padding: "8px 14px",
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                color: "#475569",
-                width: "100%",
-                textAlign: "left",
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              onClick={() => {
-                if (contextMenu.task) openTaskComments(contextMenu.task);
-                setContextMenu({ visible: false, x: 0, y: 0, task: null });
-              }}
-            >
-              <span>💬</span> View Comments
-            </button>
-          </div>
         </div>
       )}
 
