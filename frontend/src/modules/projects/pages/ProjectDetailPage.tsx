@@ -4,12 +4,14 @@ import {
   fetchProjectSummary, fetchTasks, createTask, updateTask,
   fetchProjectMembers, addProjectMember, removeProjectMember,
   fetchMilestones, createMilestone,
-  fetchTaskComments, addTaskComment
+  fetchTaskComments, addTaskComment,
+  fetchTimeEntries, createTimeEntry
 } from "../api";
 import type {
   ProjectSummary, Task, TaskStatus, TaskPriority,
-  ProjectMember, Milestone, TaskComment
+  ProjectMember, Milestone, TaskComment, TimeEntry
 } from "../types";
+import { listEmployees, type Employee } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { formatDate, formatDateTime } from "../../../shared/utils/date";
@@ -23,8 +25,19 @@ export function ProjectDetailPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [timeLogs, setTimeLogs] = useState<TimeEntry[]>([]);
+  const [employeeList, setEmployeeList] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"kanban" | "milestones" | "team">("kanban");
+  const [activeTab, setActiveTab] = useState<"kanban" | "milestones" | "team" | "timelogs" | "settings">("kanban");
+
+  // Log Time Modal in Project
+  const [showTimeModal, setShowTimeModal] = useState(false);
+  const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10));
+  const [logHours, setLogHours] = useState("");
+  const [logDesc, setLogDesc] = useState("");
+  const [logTaskId, setLogTaskId] = useState("");
+  const [logBillable, setLogBillable] = useState(true);
+  const [submittingTime, setSubmittingTime] = useState(false);
 
   // Task Modal
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -61,16 +74,20 @@ export function ProjectDetailPage() {
     if (!id) return;
     try {
       setLoading(true);
-      const [sumRes, taskRes, memRes, msRes] = await Promise.all([
+      const [sumRes, taskRes, memRes, msRes, timeRes, empRes] = await Promise.all([
         fetchProjectSummary(id),
         fetchTasks(id),
         fetchProjectMembers(id),
-        fetchMilestones(id)
+        fetchMilestones(id),
+        fetchTimeEntries({ projectId: id }).catch(() => []),
+        listEmployees({ page: 1, limit: 100 }).catch(() => ({ items: [] }))
       ]);
       setSummary(sumRes);
       setTasks(taskRes);
       setMembers(memRes);
       setMilestones(msRes);
+      setTimeLogs(timeRes);
+      setEmployeeList(empRes.items || []);
     } catch (err: any) {
       notify(err?.response?.data?.error?.message || err?.message || "Failed to load project details", "error");
     } finally {
@@ -172,6 +189,41 @@ export function ProjectDetailPage() {
       loadData();
     } catch (err: any) {
       notify(err?.response?.data?.error?.message || err?.message || "Failed to remove member", "error");
+    }
+  }
+
+  // Time Log Action
+  async function handleLogTime(e: React.FormEvent) {
+    e.preventDefault();
+    if (!id || !logHours || !logDate) {
+      notify("Please provide date and hours", "error");
+      return;
+    }
+    const hrs = parseFloat(logHours);
+    if (hrs <= 0 || hrs > 24) {
+      notify("Hours must be between 0.1 and 24", "error");
+      return;
+    }
+    try {
+      setSubmittingTime(true);
+      await createTimeEntry({
+        project_id: id,
+        task_id: logTaskId || undefined,
+        date: logDate,
+        hours: hrs,
+        description: logDesc || undefined,
+        is_billable: logBillable,
+      });
+      notify("Time entry logged successfully!", "success");
+      setShowTimeModal(false);
+      setLogHours("");
+      setLogDesc("");
+      setLogTaskId("");
+      loadData();
+    } catch (err: any) {
+      notify(err?.response?.data?.error?.message || err?.message || "Failed to log time", "error");
+    } finally {
+      setSubmittingTime(false);
     }
   }
 
@@ -308,29 +360,62 @@ export function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Tabs Bar */}
-      <div className="tab-bar">
-        <button
-          type="button"
-          className={`tab-item ${activeTab === "kanban" ? "active" : ""}`}
-          onClick={() => setActiveTab("kanban")}
-        >
-          📋 Kanban Task Board
-        </button>
-        <button
-          type="button"
-          className={`tab-item ${activeTab === "milestones" ? "active" : ""}`}
-          onClick={() => setActiveTab("milestones")}
-        >
-          🎯 Milestones ({milestones.length})
-        </button>
-        <button
-          type="button"
-          className={`tab-item ${activeTab === "team" ? "active" : ""}`}
-          onClick={() => setActiveTab("team")}
-        >
-          👥 Team Members ({members.length})
-        </button>
+      {/* Zoho Style Tabs Bar */}
+      <div className="tab-bar flex justify-between items-center" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className={`tab-item ${activeTab === "kanban" ? "active" : ""}`}
+            onClick={() => setActiveTab("kanban")}
+          >
+            Tasks Kanban ({tasks.length})
+          </button>
+          <button
+            type="button"
+            className={`tab-item ${activeTab === "milestones" ? "active" : ""}`}
+            onClick={() => setActiveTab("milestones")}
+          >
+            Milestones ({milestones.length})
+          </button>
+          <button
+            type="button"
+            className={`tab-item ${activeTab === "team" ? "active" : ""}`}
+            onClick={() => setActiveTab("team")}
+          >
+            Users & Team ({members.length})
+          </button>
+          <button
+            type="button"
+            className={`tab-item ${activeTab === "timelogs" ? "active" : ""}`}
+            onClick={() => setActiveTab("timelogs")}
+          >
+            Time Logs ({timeLogs.length})
+          </button>
+          <button
+            type="button"
+            className={`tab-item ${activeTab === "settings" ? "active" : ""}`}
+            onClick={() => setActiveTab("settings")}
+          >
+            Overview & Budget
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className="btn btn-sm btn-outline"
+            onClick={() => setShowTimeModal(true)}
+          >
+            ⏱️ Log Time
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            onClick={() => setShowTaskModal(true)}
+          >
+            + Add Task
+          </button>
+        </div>
       </div>
 
       {/* TAB 1: KANBAN BOARD */}
@@ -467,49 +552,228 @@ export function ProjectDetailPage() {
       {/* TAB 3: TEAM MEMBERS */}
       {activeTab === "team" && (
         <div className="stack gap-4">
-          {canManage && (
-            <div className="flex justify-end">
-              <button className="btn btn-primary btn-sm" onClick={() => setShowMemberModal(true)}>
-                + Assign Member
-              </button>
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 style={{ margin: 0, fontSize: "1.1rem" }}>Project Users & Resources</h3>
+              <p className="text-muted text-sm" style={{ margin: "2px 0 0" }}>
+                Active team members, project leads and contributors
+              </p>
             </div>
-          )}
+            {canManage && (
+              <button className="btn btn-primary btn-sm" onClick={() => setShowMemberModal(true)}>
+                + Assign Team Member
+              </button>
+            )}
+          </div>
 
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
             <table className="table">
               <thead>
                 <tr>
-                  <th>Employee ID</th>
+                  <th>Team Member</th>
                   <th>Role</th>
-                  <th>Joined Date</th>
+                  <th>Department</th>
+                  <th>Assigned On</th>
                   {canManage && <th style={{ textAlign: "right" }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
-                {members.map((m) => (
-                  <tr key={m.id}>
-                    <td className="font-mono text-xs">{m.employee_id}</td>
-                    <td>
-                      <span className={`badge ${m.role === "lead" ? "badge-primary" : "badge-muted"}`}>
-                        {m.role.toUpperCase()}
-                      </span>
+                {members.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="text-center text-muted p-4">
+                      No members assigned to this project yet.
                     </td>
-                    <td>{formatDate(m.joined_at)}</td>
-                    {canManage && (
-                      <td style={{ textAlign: "right" }}>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm text-danger"
-                          onClick={() => handleRemoveMember(m.employee_id)}
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    )}
                   </tr>
-                ))}
+                ) : (
+                  members.map((m) => {
+                    const emp = employeeList.find((e) => e.id === m.employee_id);
+                    const empName = emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : m.employee_id.substring(0, 8);
+                    const empEmail = emp?.email;
+                    return (
+                      <tr key={m.id}>
+                        <td>
+                          <div className="flex items-center gap-2">
+                            <div
+                              style={{
+                                width: "32px",
+                                height: "32px",
+                                borderRadius: "50%",
+                                background: "#eff6ff",
+                                color: "#2563eb",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontWeight: 700,
+                                fontSize: "0.8rem",
+                              }}
+                            >
+                              {empName.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 600 }}>{empName}</div>
+                              {empEmail && <div className="text-muted text-xs">{empEmail}</div>}
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`badge ${m.role === "lead" ? "badge-primary" : "badge-muted"}`}>
+                            {m.role === "lead" ? "👑 Project Lead" : "Contributor"}
+                          </span>
+                        </td>
+                        <td>{emp?.position || "Engineering / Staff"}</td>
+                        <td>{formatDate(m.joined_at)}</td>
+                        {canManage && (
+                          <td style={{ textAlign: "right" }}>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm text-danger"
+                              onClick={() => handleRemoveMember(m.employee_id)}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: TIME LOGS */}
+      {activeTab === "timelogs" && (
+        <div className="stack gap-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 style={{ margin: 0, fontSize: "1.1rem" }}>Project Timesheets & Logs</h3>
+              <p className="text-muted text-sm" style={{ margin: "2px 0 0" }}>
+                Total recorded billable and non-billable hours
+              </p>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowTimeModal(true)}>
+              ⏱️ Log Time Entry
+            </button>
+          </div>
+
+          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+            <table className="table text-sm">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Hours</th>
+                  <th>Billable</th>
+                  <th>Description</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {timeLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="text-center text-muted p-4">
+                      No time entries recorded for this project yet.
+                    </td>
+                  </tr>
+                ) : (
+                  timeLogs.map((entry) => (
+                    <tr key={entry.id}>
+                      <td>{formatDate(entry.date)}</td>
+                      <td style={{ fontWeight: 700, color: "var(--color-primary)" }}>
+                        {entry.hours} hrs
+                      </td>
+                      <td>
+                        <span className={`badge ${entry.is_billable ? "badge-success" : "badge-muted"}`}>
+                          {entry.is_billable ? "Billable" : "Non-billable"}
+                        </span>
+                      </td>
+                      <td className="text-muted">{entry.description || "—"}</td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            entry.status === "approved"
+                              ? "badge-success"
+                              : entry.status === "rejected"
+                              ? "badge-danger"
+                              : "badge-muted"
+                          }`}
+                        >
+                          {entry.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: OVERVIEW & BUDGET */}
+      {activeTab === "settings" && (
+        <div className="stack gap-4">
+          <div className="grid-2" style={{ gap: "1rem" }}>
+            <div className="card">
+              <h3 style={{ fontSize: "1rem", marginBottom: "0.75rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.4rem" }}>
+                Project Metadata
+              </h3>
+              <div className="form-grid">
+                <div className="field">
+                  <label>Project Code</label>
+                  <div style={{ fontWeight: 600 }}>{project.code}</div>
+                </div>
+                <div className="field">
+                  <label>Client</label>
+                  <div>{project.client_name || "Internal Project"}</div>
+                </div>
+                <div className="field">
+                  <label>Start Date</label>
+                  <div>{project.start_date ? formatDate(project.start_date) : "Not set"}</div>
+                </div>
+                <div className="field">
+                  <label>Target Deadline</label>
+                  <div>{project.deadline ? formatDate(project.deadline) : "Flexible"}</div>
+                </div>
+                <div className="field">
+                  <label>Status</label>
+                  <div>
+                    <span className={`badge ${project.status === "active" ? "badge-success" : "badge-muted"}`}>
+                      {project.status.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 style={{ fontSize: "1rem", marginBottom: "0.75rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.4rem" }}>
+                Financial & Budget Summary
+              </h3>
+              <div className="form-grid">
+                <div className="field">
+                  <label>Total Budget</label>
+                  <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--color-primary)" }}>
+                    ₹{project.budget ? Number(project.budget).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "Not defined"}
+                  </div>
+                </div>
+                <div className="field">
+                  <label>Billable Hours</label>
+                  <div style={{ fontWeight: 600 }}>{summary.total_billable_hours} hrs</div>
+                </div>
+                <div className="field">
+                  <label>Total Logged Hours</label>
+                  <div style={{ fontWeight: 600 }}>{summary.total_logged_hours} hrs</div>
+                </div>
+                <div className="field">
+                  <label>Delivery Health</label>
+                  <div style={{ fontWeight: 600, color: summary.overdue_tasks > 0 ? "#dc2626" : "#16a34a" }}>
+                    {summary.overdue_tasks > 0 ? `⚠️ ${summary.overdue_tasks} Overdue Task(s)` : "✓ On Schedule"}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -660,7 +924,7 @@ export function ProjectDetailPage() {
       {/* ADD MEMBER MODAL */}
       {showMemberModal && (
         <div className="modal-backdrop" onClick={() => setShowMemberModal(false)}>
-          <div className="modal card" style={{ maxWidth: "440px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Assign Team Member</h2>
               <button
@@ -674,20 +938,124 @@ export function ProjectDetailPage() {
             </div>
             <form onSubmit={handleAddMember} className="stack gap-4 my-2">
               <div className="field">
-                <label>Employee ID (UUID) *</label>
-                <input type="text" value={memberEmployeeId} onChange={(e) => setMemberEmployeeId(e.target.value)} required />
+                <label>Select Employee *</label>
+                <select
+                  value={memberEmployeeId}
+                  onChange={(e) => setMemberEmployeeId(e.target.value)}
+                  required
+                >
+                  <option value="">-- Choose Team Member --</option>
+                  {employeeList.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.first_name} {emp.last_name || ""} ({emp.employee_code} • {emp.position || "Staff"})
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="field">
-                <label>Role</label>
+                <label>Project Role</label>
                 <select value={memberRole} onChange={(e) => setMemberRole(e.target.value as any)}>
-                  <option value="member">Member</option>
-                  <option value="lead">Project Lead</option>
+                  <option value="member">Contributor / Developer</option>
+                  <option value="lead">👑 Project Lead / Manager</option>
                 </select>
               </div>
               <div className="flex gap-2 justify-end mt-4">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowMemberModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={submittingMember}>
-                  {submittingMember ? "Saving..." : "Assign"}
+                  {submittingMember ? "Saving..." : "Assign Member"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* LOG TIME MODAL */}
+      {showTimeModal && (
+        <div className="modal-backdrop" onClick={() => setShowTimeModal(false)}>
+          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Log Hours: {project.name}</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowTimeModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleLogTime} className="stack gap-4 my-2">
+              <div className="grid-2">
+                <div className="field">
+                  <label>Log Date *</label>
+                  <input
+                    type="date"
+                    value={logDate}
+                    onChange={(e) => setLogDate(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label>Hours Spent *</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.1"
+                    max="24"
+                    placeholder="e.g. 7.5"
+                    value={logHours}
+                    onChange={(e) => setLogHours(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              {tasks.length > 0 && (
+                <div className="field">
+                  <label>Link to Task (Optional)</label>
+                  <select
+                    value={logTaskId}
+                    onChange={(e) => setLogTaskId(e.target.value)}
+                  >
+                    <option value="">-- General Project Work --</option>
+                    {tasks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.title} ({t.status.toUpperCase()})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="field">
+                <label>Work Description *</label>
+                <textarea
+                  rows={3}
+                  placeholder="Summarize what was worked on today..."
+                  value={logDesc}
+                  onChange={(e) => setLogDesc(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="field">
+                <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={logBillable}
+                    onChange={(e) => setLogBillable(e.target.checked)}
+                  />
+                  <span>Billable Hours (Count towards client invoice)</span>
+                </label>
+              </div>
+
+              <div className="flex gap-2 justify-end mt-4">
+                <button type="button" className="btn btn-ghost" onClick={() => setShowTimeModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submittingTime}>
+                  {submittingTime ? "Logging..." : "Log Time"}
                 </button>
               </div>
             </form>
