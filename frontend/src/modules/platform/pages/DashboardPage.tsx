@@ -1,17 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { parseApiError } from "../../../shared/api/errors";
 import { TodayAttendanceCard } from "../../time_leave/components/TodayAttendanceCard";
 import { fetchDashboard, fetchAnnouncements } from "../api";
 import { formatDate } from "../../../shared/utils/date";
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="card">
+function Stat({ label, value, to, subtitle }: { label: string; value: React.ReactNode; to?: string; subtitle?: string }) {
+  const content = (
+    <div className="card" style={to ? { cursor: "pointer" } : undefined}>
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
+      {subtitle && <div className="text-xs text-muted mt-1">{subtitle}</div>}
     </div>
   );
+
+  if (to) {
+    return <Link to={to} style={{ textDecoration: "none", color: "inherit" }}>{content}</Link>;
+  }
+  return content;
 }
 
 /**
@@ -78,12 +85,36 @@ export function DashboardPage() {
           </span>
 
           {data.role === "super_admin" && (
-            <div className="stat-grid">
-              <Stat label="Pending approvals" value={data.data.pending_approvals} />
-              <Stat label="Platform users" value={data.data.platform_user_count} />
-              {Object.entries(data.data.company_counts_by_status).map(([status, count]) => (
-                <Stat key={status} label={`Companies — ${status}`} value={count} />
-              ))}
+            <div className="stack">
+              <div className="row-between mb-2">
+                <h3 className="mb-0">Platform Overview</h3>
+                <Link to="/admin" className="btn btn-sm btn-primary">
+                  🏢 Manage All Companies & Approvals →
+                </Link>
+              </div>
+              <div className="stat-grid">
+                <Stat
+                  label="Pending approvals"
+                  value={data.data.pending_approvals}
+                  to="/admin"
+                  subtitle="Click to view & approve"
+                />
+                <Stat
+                  label="Platform users"
+                  value={data.data.platform_user_count}
+                  to="/admin"
+                  subtitle="Across all companies"
+                />
+                {Object.entries(data.data.company_counts_by_status).map(([status, count]) => (
+                  <Stat
+                    key={status}
+                    label={`Companies — ${status}`}
+                    value={count}
+                    to="/admin"
+                    subtitle="Click to view directory"
+                  />
+                ))}
+              </div>
             </div>
           )}
 

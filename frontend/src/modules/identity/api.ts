@@ -80,6 +80,57 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
 
 // --- Companies (page 5, super_admin) --------------------------------------
 
+export interface CompanyDetailResponse extends CompanyResponse {
+  phone: string | null;
+  rejection_reason: string | null;
+  approved_at: string | null;
+  counts: Record<string, number>;
+}
+
+export interface AdminCompanyUpdateInput {
+  name?: string;
+  phone?: string;
+  industry?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  website?: string;
+  status?: string;
+}
+
+export async function listCompanies(params?: {
+  status?: string;
+  q?: string;
+  page?: number;
+  limit?: number;
+  sort?: string;
+}): Promise<Page<CompanyResponse>> {
+  const { data } = await apiClient.get<Page<CompanyResponse>>("/companies", {
+    params: {
+      status: params?.status && params.status !== "all" ? params.status : undefined,
+      q: params?.q || undefined,
+      page: params?.page ?? 1,
+      limit: params?.limit ?? 15,
+      sort: params?.sort || undefined,
+    },
+  });
+  return data;
+}
+
+export async function getCompanyDetail(id: string): Promise<CompanyDetailResponse> {
+  const { data } = await apiClient.get<CompanyDetailResponse>(`/companies/${id}`);
+  return data;
+}
+
+export async function updateCompanyByAdmin(
+  id: string,
+  input: AdminCompanyUpdateInput
+): Promise<CompanyResponse> {
+  const { data } = await apiClient.put<CompanyResponse>(`/companies/${id}`, input);
+  return data;
+}
+
 export async function listPendingCompanies(page: number, limit: number): Promise<Page<CompanyResponse>> {
   const { data } = await apiClient.get<Page<CompanyResponse>>("/companies", {
     params: { status: "pending", page, limit },

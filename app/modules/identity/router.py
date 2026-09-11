@@ -12,6 +12,7 @@ from app.modules.identity.models import CompanyStatus, User, UserRole
 from app.modules.identity.schemas import (
     ActivateAccountRequest,
     ActivationPreviewResponse,
+    AdminCompanyUpdateRequest,
     ChangePasswordRequest,
     CompanyApproveResponse,
     CompanyDetailResponse,
@@ -224,6 +225,17 @@ def get_company_detail(
         approved_at=company.approved_at,
         counts=counts,
     )
+
+
+@companies_router.put("/{company_id}", response_model=CompanyResponse)
+def update_company(
+    company_id: uuid.UUID,
+    data: AdminCompanyUpdateRequest,
+    db: Session = Depends(get_tenant_db),
+    _admin: User = Depends(require_role(UserRole.super_admin)),
+):
+    return CompanyService(db).update_company_by_admin(company_id, data)
+
 
 
 @companies_router.post("/{company_id}/approve", response_model=CompanyApproveResponse)

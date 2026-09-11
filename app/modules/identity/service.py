@@ -36,6 +36,7 @@ from app.modules.identity.repository import (
 )
 from app.modules.identity.schemas import (
     ActivateAccountRequest,
+    AdminCompanyUpdateRequest,
     ChangePasswordRequest,
     CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
@@ -611,3 +612,16 @@ class CompanyService:
         self.company_repo.update(company, **updates)
         self.db.commit()
         return company
+
+    def update_company_by_admin(
+        self, company_id: uuid.UUID, data: AdminCompanyUpdateRequest
+    ) -> Company:
+        """Super Admin update for any company — can update profile details and status."""
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+        updates = data.model_dump(exclude_unset=True)
+        self.company_repo.update(company, **updates)
+        self.db.commit()
+        return company
+

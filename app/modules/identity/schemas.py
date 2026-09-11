@@ -83,6 +83,14 @@ class CompanyProfileUpdateRequest(BaseModel):
     website: str | None = None
 
 
+class AdminCompanyUpdateRequest(CompanyProfileUpdateRequest):
+    status: CompanyStatus | None = None
+    country: str | None = None
+    currency: str | None = None
+    gst_number: str | None = None
+    pan_number: str | None = None
+
+
 # Auth
 class LoginRequest(BaseModel):
     email: EmailStr
