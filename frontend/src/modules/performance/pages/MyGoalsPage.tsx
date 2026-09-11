@@ -12,6 +12,7 @@ import {
 } from "../api";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
+import { formatDate } from "../../../shared/utils/date";
 
 export function MyGoalsPage() {
   const { user } = useAuth();
@@ -193,11 +194,11 @@ export function MyGoalsPage() {
         <div className="p-4 bg-muted border rounded my-4 flex justify-between align-center">
           <div>
             <span className="text-xs text-muted block">Active Appraisal Period</span>
-            <strong>{activeCycle.name}</strong> ({activeCycle.start_date} to {activeCycle.end_date})
+            <strong>{activeCycle.name}</strong> ({formatDate(activeCycle.start_date)} to {formatDate(activeCycle.end_date)})
           </div>
           <div>
             <span className="text-xs text-muted block">Self Review Deadline</span>
-            <strong className="text-warning">{activeCycle.self_review_deadline || "Not set"}</strong>
+            <strong className="text-warning">{activeCycle.self_review_deadline ? formatDate(activeCycle.self_review_deadline) : "Not set"}</strong>
           </div>
         </div>
       ) : (

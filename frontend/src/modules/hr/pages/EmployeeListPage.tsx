@@ -7,6 +7,7 @@ import { usePagination } from "../../../shared/hooks/usePagination";
 import { useDebounce } from "../../../shared/hooks/useDebounce";
 import { useHasRole } from "../../../shared/hooks/useRole";
 import { listDepartments, listEmployees, type Employee } from "../api";
+import { formatDate } from "../../../shared/utils/date";
 
 const columns: DataTableColumn<Employee>[] = [
   { key: "employee_code", label: "Code", render: (e) => e.employee_code },
@@ -22,7 +23,7 @@ const columns: DataTableColumn<Employee>[] = [
     key: "hire_date",
     label: "Hire date",
     sortable: true,
-    render: (e) => e.hire_date,
+    render: (e) => formatDate(e.hire_date),
   },
   {
     key: "is_active",

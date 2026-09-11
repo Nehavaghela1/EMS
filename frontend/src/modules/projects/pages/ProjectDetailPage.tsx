@@ -12,6 +12,7 @@ import type {
 } from "../types";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
+import { formatDate, formatDateTime } from "../../../shared/utils/date";
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -381,7 +382,7 @@ export function ProjectDetailPage() {
 
                           <div className="kanban-task-footer">
                             <span className="text-muted text-xs">
-                              {task.due_date ? `📅 Due ${task.due_date}` : "No due date"}
+                              {task.due_date ? `📅 Due ${formatDate(task.due_date)}` : "No due date"}
                             </span>
                             <select
                               value={task.status}
@@ -431,7 +432,7 @@ export function ProjectDetailPage() {
                       </span>
                     </div>
                     {ms.description && <p className="text-muted text-sm mb-1">{ms.description}</p>}
-                    <span className="text-muted text-xs">Target Date: <strong>{ms.due_date || "Not set"}</strong></span>
+                    <span className="text-muted text-xs">Target Date: <strong>{ms.due_date ? formatDate(ms.due_date) : "Not set"}</strong></span>
                   </div>
 
                   <div style={{ width: "160px" }}>
@@ -480,7 +481,7 @@ export function ProjectDetailPage() {
                         {m.role.toUpperCase()}
                       </span>
                     </td>
-                    <td>{m.joined_at}</td>
+                    <td>{formatDate(m.joined_at)}</td>
                     {canManage && (
                       <td style={{ textAlign: "right" }}>
                         <button
@@ -578,7 +579,7 @@ export function ProjectDetailPage() {
                 comments.map((c) => (
                   <div key={c.id} className="card p-3" style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)" }}>
                     <p style={{ margin: 0, fontSize: "0.9rem" }}>{c.comment}</p>
-                    <span className="text-muted text-xs">{new Date(c.created_at).toLocaleString()}</span>
+                    <span className="text-muted text-xs">{formatDateTime(c.created_at)}</span>
                   </div>
                 ))
               )}

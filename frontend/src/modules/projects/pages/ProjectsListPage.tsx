@@ -6,6 +6,7 @@ import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 
 import { PageHeader } from "../../../shared/components/PageHeader";
+import { formatDate } from "../../../shared/utils/date";
 
 export function ProjectsListPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -157,9 +158,9 @@ export function ProjectsListPage() {
                   <strong>{proj.budget ? `$${Number(proj.budget).toLocaleString()}` : "N/A"}</strong>
                 </div>
                 <div className="row" style={{ justifyContent: "space-between", fontSize: "0.85rem" }}>
-                  <span>Deadline:</span>
-                  <span className="text-muted">{proj.deadline || "Unscheduled"}</span>
-                </div>
+                   <span>Deadline:</span>
+                   <span className="text-muted">{proj.deadline ? formatDate(proj.deadline) : "Unscheduled"}</span>
+                 </div>
                 <Link to={`/projects/${proj.id}`} className="btn btn-secondary btn-sm" style={{ width: "100%", textAlign: "center" }}>
                   View Project Workspace →
                 </Link>

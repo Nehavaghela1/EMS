@@ -17,6 +17,7 @@ import {
   type Leave,
   type LeaveStatus,
 } from "../api";
+import { formatDate } from "../../../shared/utils/date";
 
 const STATUS_FILTERS: { label: string; value: LeaveStatus | "" }[] = [
   { label: "All", value: "" },
@@ -138,7 +139,7 @@ export function LeavePage() {
         ]
       : []),
     { key: "leave_type", label: "Type", render: (l) => leaveTypeNameById.get(l.leave_type_id) ?? "—" },
-    { key: "dates", label: "Dates", render: (l) => `${l.start_date} → ${l.end_date}` },
+    { key: "dates", label: "Dates", render: (l) => `${formatDate(l.start_date)} → ${formatDate(l.end_date)}` },
     { key: "total_days", label: "Days", render: (l) => l.total_days },
     {
       key: "status",

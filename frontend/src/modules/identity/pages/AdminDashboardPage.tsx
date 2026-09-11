@@ -13,6 +13,7 @@ import {
   type CompanyApproveResult,
   type CompanyResponse,
 } from "../api";
+import { formatDate } from "../../../shared/utils/date";
 
 /**
  * Page 5 (Spec 14.3, super_admin only): platform stats plus the pending
@@ -86,7 +87,7 @@ export function AdminDashboardPage() {
     { key: "code", label: "Code", render: (c) => c.code },
     { key: "email", label: "Email", render: (c) => c.email },
     { key: "industry", label: "Industry", render: (c) => c.industry ?? "—" },
-    { key: "created_at", label: "Registered", render: (c) => new Date(c.created_at).toLocaleDateString() },
+    { key: "created_at", label: "Registered", render: (c) => formatDate(c.created_at) },
     {
       key: "actions",
       label: "",

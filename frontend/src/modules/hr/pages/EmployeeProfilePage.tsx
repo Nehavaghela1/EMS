@@ -6,6 +6,7 @@ import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import { parseApiError } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
+import { formatDate, formatDateTime } from "../../../shared/utils/date";
 import {
   deactivateEmployee,
   getEmployee,
@@ -137,7 +138,7 @@ export function EmployeeProfilePage() {
       {invite && (
         <div className="alert alert-success mb-4">
           Invitation sent to <strong>{invite.sent_to}</strong>, expires{" "}
-          {new Date(invite.expires_at).toLocaleString()}.
+          {formatDateTime(invite.expires_at)}.
         </div>
       )}
 
@@ -158,8 +159,8 @@ export function EmployeeProfilePage() {
           <Field label="Position" value={e.position ?? "—"} />
           <Field label="Level" value={e.level ?? "—"} />
           <Field label="Employment type" value={e.employment_type.replace("_", " ")} />
-          <Field label="Hire date" value={e.hire_date} />
-          <Field label="Probation end date" value={e.probation_end_date ?? "—"} />
+          <Field label="Hire date" value={formatDate(e.hire_date)} />
+          <Field label="Probation end date" value={e.probation_end_date ? formatDate(e.probation_end_date) : "—"} />
           <Field label="Notice period" value={`${e.notice_period_days ?? 30} days`} />
           <Field label="Invitation status" value={e.invitation_status.replace("_", " ")} />
         </div>
@@ -385,8 +386,8 @@ function ResignationAndFnFCard({
       {status === "approved" && (
         <div className="stack">
           <div className="form-grid mb-3">
-            <Field label="Resignation date" value={employee.resignation_date ?? "—"} />
-            <Field label="Last working date" value={employee.last_working_date ?? "—"} />
+            <Field label="Resignation date" value={formatDate(employee.resignation_date)} />
+            <Field label="Last working date" value={formatDate(employee.last_working_date)} />
             <Field
               label="Notice waived"
               value={employee.notice_waived ? "Yes (Waived)" : "No"}

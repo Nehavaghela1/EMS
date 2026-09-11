@@ -9,6 +9,7 @@ import {
 } from "../api";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
+import { formatDate } from "../../../shared/utils/date";
 
 export function ReimbursementsPage() {
   const { user } = useAuth();
@@ -147,7 +148,7 @@ export function ReimbursementsPage() {
             <tbody>
               {claims.map((c) => (
                 <tr key={c.id}>
-                  <td>{c.expense_date}</td>
+                  <td>{formatDate(c.expense_date)}</td>
                   <td>
                     <span className="badge badge-outline">{c.type}</span>
                   </td>
@@ -285,7 +286,7 @@ export function ReimbursementsPage() {
                 </div>
                 <div>
                   <span className="text-muted text-xs block">Date & Description</span>
-                  <p className="text-sm mt-1">{selectedClaim.expense_date}: {selectedClaim.description}</p>
+                  <p className="text-sm mt-1">{formatDate(selectedClaim.expense_date)}: {selectedClaim.description}</p>
                 </div>
               </div>
 

@@ -8,6 +8,7 @@ import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { TodayAttendanceCard } from "../components/TodayAttendanceCard";
 import { listAttendance, regularizeAttendance, type Attendance, type AttendanceStatus } from "../api";
+import { formatDate } from "../../../shared/utils/date";
 
 const STATUS_OPTIONS: AttendanceStatus[] = ["present", "absent", "half_day", "wfh", "on_leave"];
 
@@ -41,7 +42,7 @@ export function AttendancePage() {
   const [regularizing, setRegularizing] = useState<Attendance | null>(null);
 
   const columns: DataTableColumn<Attendance>[] = [
-    { key: "date", label: "Date", render: (a) => a.date },
+    { key: "date", label: "Date", render: (a) => formatDate(a.date) },
     { key: "check_in", label: "Check in", render: (a) => (a.check_in ? new Date(a.check_in).toLocaleTimeString() : "—") },
     { key: "check_out", label: "Check out", render: (a) => (a.check_out ? new Date(a.check_out).toLocaleTimeString() : "—") },
     { key: "hours_worked", label: "Hours", render: (a) => a.hours_worked ?? "—" },
@@ -141,7 +142,7 @@ function RegularizeDialog({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal stack" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-          <h3>Regularize attendance — {record.date}</h3>
+          <h3>Regularize attendance — {formatDate(record.date)}</h3>
           <button
             type="button"
             className="modal-close-btn"

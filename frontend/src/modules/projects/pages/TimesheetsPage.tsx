@@ -8,6 +8,7 @@ import { listEmployees, type Employee } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { PageHeader } from "../../../shared/components/PageHeader";
+import { formatDate } from "../../../shared/utils/date";
 
 export function TimesheetsPage() {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -297,7 +298,7 @@ export function TimesheetsPage() {
                   <tbody>
                     {entries.map((entry) => (
                       <tr key={entry.id}>
-                        <td className="font-medium">{entry.date}</td>
+                        <td className="font-medium">{formatDate(entry.date)}</td>
                         <td className="font-semibold">{entry.hours} hrs</td>
                         <td>
                           {entry.is_billable ? (
@@ -364,7 +365,7 @@ export function TimesheetsPage() {
                           <div className="font-semibold">{empName}</div>
                           {empCode && <div className="text-xs text-muted">{empCode}</div>}
                         </td>
-                        <td className="font-medium">{entry.date}</td>
+                        <td className="font-medium">{formatDate(entry.date)}</td>
                         <td className="font-semibold">{entry.hours} hrs</td>
                         <td>
                           {entry.is_billable ? (

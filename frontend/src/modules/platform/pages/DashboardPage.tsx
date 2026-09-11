@@ -3,6 +3,7 @@ import { PageHeader } from "../../../shared/components/PageHeader";
 import { parseApiError } from "../../../shared/api/errors";
 import { TodayAttendanceCard } from "../../time_leave/components/TodayAttendanceCard";
 import { fetchDashboard, fetchAnnouncements } from "../api";
+import { formatDate } from "../../../shared/utils/date";
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -49,7 +50,7 @@ export function DashboardPage() {
               <div key={ann.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--color-border)" }}>
                 <div className="font-semibold text-sm">{ann.title}</div>
                 <div className="text-muted text-sm">{ann.content}</div>
-                <div className="text-faint text-xs mt-1">{new Date(ann.created_at).toLocaleDateString()}</div>
+                <div className="text-faint text-xs mt-1">{formatDate(ann.created_at)}</div>
               </div>
             ))}
           </div>

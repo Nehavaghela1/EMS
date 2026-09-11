@@ -10,6 +10,7 @@ import {
   type CycleStatus,
 } from "../api";
 import { useToast } from "../../../app/toast-context";
+import { formatDate } from "../../../shared/utils/date";
 
 export function PerformanceCyclesPage() {
   const { notify } = useToast();
@@ -112,7 +113,7 @@ export function PerformanceCyclesPage() {
             <div>
               <h3 className="text-lg fw-bold">Active Cycle: {report.active_cycle.name}</h3>
               <p className="text-xs text-muted">
-                Period: {report.active_cycle.start_date} to {report.active_cycle.end_date}
+                Period: {formatDate(report.active_cycle.start_date)} to {formatDate(report.active_cycle.end_date)}
               </p>
             </div>
             <span className="badge badge-success">ACTIVE</span>
@@ -161,9 +162,9 @@ export function PerformanceCyclesPage() {
                   <td>
                     <span className="badge badge-outline">{c.cycle_type}</span>
                   </td>
-                  <td>{c.start_date} to {c.end_date}</td>
-                  <td>{c.self_review_deadline || "—"}</td>
-                  <td>{c.manager_review_deadline || "—"}</td>
+                  <td>{formatDate(c.start_date)} to {formatDate(c.end_date)}</td>
+                  <td>{formatDate(c.self_review_deadline)}</td>
+                  <td>{formatDate(c.manager_review_deadline)}</td>
                   <td>
                     <span
                       className={`badge ${
