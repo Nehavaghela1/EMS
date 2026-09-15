@@ -119,6 +119,7 @@ export function EmployeeListPage() {
         emptyMessage="No employees match your search."
         rowKey={(e) => e.id}
         onRowClick={(e) => navigate(`/employees/${e.id}`)}
+        onRowDoubleClick={(e) => navigate(`/employees/${e.id}`)}
       />
     </div>
   );

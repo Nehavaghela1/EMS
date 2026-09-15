@@ -219,6 +219,10 @@ export function MyGoalsPage() {
 
       {/* Goals List */}
       <div className="card mt-4">
+        <div className="row-between align-center mb-3">
+          <h3 style={{ margin: 0, fontSize: "1rem" }}>Submitted Goals</h3>
+          <span className="text-xs text-muted">💡 Tip: Double-click on any goal to edit its details</span>
+        </div>
         {loading ? (
           <p>Loading performance goals...</p>
         ) : goals.length === 0 ? (
@@ -237,7 +241,12 @@ export function MyGoalsPage() {
             </thead>
             <tbody>
               {goals.map((g) => (
-                <tr key={g.id}>
+                <tr
+                  key={g.id}
+                  onDoubleClick={() => openEditGoal(g)}
+                  style={{ cursor: "pointer" }}
+                  title="Double-click to edit goal"
+                >
                   <td>
                     <div className="fw-bold">{g.title}</div>
                     <div className="text-xs text-muted">{g.description || "No description"}</div>
@@ -256,22 +265,21 @@ export function MyGoalsPage() {
                   </td>
                   <td style={{ textAlign: "right" }}>
                     <div className="flex gap-2 justify-end">
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline"
-                        onClick={() => openEditGoal(g)}
-                        title="Edit goal title, description, metric, or status"
-                      >
-                        Edit
-                      </button>
-                      {!g.self_rating && (
+                      {!g.self_rating ? (
                         <button
                           type="button"
                           className="btn btn-sm btn-primary"
-                          onClick={() => setSelectedGoal(g)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedGoal(g);
+                          }}
                         >
                           Self Review
                         </button>
+                      ) : (
+                        <span className="text-xs text-muted" style={{ fontStyle: "italic" }}>
+                          Reviewed (Double-click to edit)
+                        </span>
                       )}
                     </div>
                   </td>

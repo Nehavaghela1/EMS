@@ -23,6 +23,7 @@ interface Props<T> {
   emptyMessage?: string;
   rowKey: (row: T) => string;
   onRowClick?: (row: T) => void;
+  onRowDoubleClick?: (row: T) => void;
 }
 
 /**
@@ -45,6 +46,7 @@ export function DataTable<T>({
   emptyMessage = "Nothing here yet.",
   rowKey,
   onRowClick,
+  onRowDoubleClick,
 }: Props<T>) {
   function headerClick(col: DataTableColumn<T>) {
     if (!col.sortable) return;
@@ -110,7 +112,9 @@ export function DataTable<T>({
                 <tr
                   key={rowKey(row)}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
-                  style={onRowClick ? { cursor: "pointer" } : undefined}
+                  onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
+                  style={onRowClick || onRowDoubleClick ? { cursor: "pointer" } : undefined}
+                  title={onRowDoubleClick ? "Double-click to open details" : undefined}
                 >
                   {columns.map((col) => (
                     <td key={col.key}>{col.render(row)}</td>
