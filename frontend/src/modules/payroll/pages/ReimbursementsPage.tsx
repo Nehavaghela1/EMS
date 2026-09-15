@@ -149,7 +149,12 @@ export function ReimbursementsPage() {
             </thead>
             <tbody>
               {claims.map((c) => (
-                <tr key={c.id}>
+                <tr
+                  key={c.id}
+                  onDoubleClick={() => setSelectedClaim(c)}
+                  style={{ cursor: "pointer" }}
+                  title="Double-click to view or review claim details"
+                >
                   <td>{formatDate(c.expense_date)}</td>
                   <td>
                     <span className="badge badge-outline">{c.type}</span>
@@ -174,7 +179,10 @@ export function ReimbursementsPage() {
                       {c.status === "pending" && (
                         <button
                           className="btn btn-sm btn-outline"
-                          onClick={() => setSelectedClaim(c)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedClaim(c);
+                          }}
                         >
                           Review
                         </button>

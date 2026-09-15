@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   fetchTimeEntries, createTimeEntry, approveRejectTimeEntry,
   fetchProjects, fetchTasks
@@ -32,6 +33,7 @@ export function TimesheetsPage() {
   const [isBillable, setIsBillable] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { notify } = useToast();
   const { activeTimer, startTimer, stopTimer, formatTime, elapsedSeconds } = useTimer();
@@ -490,7 +492,16 @@ export function TimesheetsPage() {
                   </thead>
                   <tbody>
                     {entries.map((entry) => (
-                      <tr key={entry.id}>
+                      <tr
+                        key={entry.id}
+                        onDoubleClick={() => {
+                          if (entry.project_id) {
+                            navigate(`/projects/${entry.project_id}`);
+                          }
+                        }}
+                        style={{ cursor: "pointer" }}
+                        title="Double-click to open project details"
+                      >
                         <td className="font-medium">{formatDate(entry.date)}</td>
                         <td className="font-semibold">{entry.hours} hrs</td>
                         <td>
@@ -553,7 +564,16 @@ export function TimesheetsPage() {
                     const empCode = entry.employee_code || emp?.employee_code || null;
 
                     return (
-                      <tr key={entry.id}>
+                      <tr
+                        key={entry.id}
+                        onDoubleClick={() => {
+                          if (entry.employee_id) {
+                            navigate(`/employees/${entry.employee_id}`);
+                          }
+                        }}
+                        style={{ cursor: "pointer" }}
+                        title="Double-click to open employee profile"
+                      >
                         <td>
                           <div className="font-semibold">{empName}</div>
                           {empCode && <div className="text-xs text-muted">{empCode}</div>}
@@ -575,14 +595,20 @@ export function TimesheetsPage() {
                             <button
                               type="button"
                               className="btn btn-sm btn-success"
-                              onClick={() => handleApproveReject(entry.id, "approved")}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleApproveReject(entry.id, "approved");
+                              }}
                             >
                               Approve
                             </button>
                             <button
                               type="button"
                               className="btn btn-sm btn-danger"
-                              onClick={() => handleApproveReject(entry.id, "rejected")}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleApproveReject(entry.id, "rejected");
+                              }}
                             >
                               Reject
                             </button>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
@@ -22,8 +23,9 @@ const STATUS_OPTIONS: AttendanceStatus[] = ["present", "absent", "half_day", "wf
  */
 export function AttendancePage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const isHr = user?.role === "hr_admin";
+  const isHr = user?.role === "hr_admin" || user?.role === "super_admin";
 
   async function refreshAll() {
     await Promise.all([
@@ -113,6 +115,13 @@ export function AttendancePage() {
         onSortChange={() => {}}
         emptyMessage="No attendance records."
         rowKey={(a) => a.id}
+        onRowDoubleClick={(a) => {
+          if (a.employee_id && (isHr || user?.role === "manager")) {
+            navigate(`/employees/${a.employee_id}`);
+          } else if (isHr) {
+            setRegularizing(a);
+          }
+        }}
       />
 
       {regularizing && (

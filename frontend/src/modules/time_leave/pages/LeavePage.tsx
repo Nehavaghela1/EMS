@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
@@ -37,10 +38,11 @@ const STATUS_FILTERS: { label: string; value: LeaveStatus | "" }[] = [
  */
 export function LeavePage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const { notify } = useToast();
   const queryClient = useQueryClient();
-  const canDecide = user?.role === "hr_admin" || user?.role === "manager";
-  const canPickEmployee = user?.role === "hr_admin" || user?.role === "manager";
+  const canDecide = user?.role === "hr_admin" || user?.role === "manager" || user?.role === "super_admin";
+  const canPickEmployee = user?.role === "hr_admin" || user?.role === "manager" || user?.role === "super_admin";
 
   const leaveTypesQuery = useQuery({ queryKey: ["leave-types"], queryFn: listLeaveTypes });
   const employeesQuery = useQuery({
@@ -245,6 +247,13 @@ export function LeavePage() {
         onSortChange={() => {}}
         emptyMessage="No leave requests."
         rowKey={(l) => l.id}
+        onRowDoubleClick={(l) => {
+          if (l.employee_id && canPickEmployee) {
+            navigate(`/employees/${l.employee_id}`);
+          } else if (canDecide && l.status === "pending") {
+            setDecisionTarget({ leave: l, status: "approved" });
+          }
+        }}
       />
 
       {decisionTarget && (
