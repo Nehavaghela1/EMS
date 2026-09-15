@@ -2,7 +2,8 @@ import { apiClient } from "../../app/api-client";
 import type {
   Project, ProjectCreatePayload, ProjectUpdatePayload, ProjectSummary,
   ProjectMember, Task, TaskCreatePayload, TaskComment,
-  TimeEntry, TimeEntryCreatePayload, Milestone, MilestoneCreatePayload
+  TimeEntry, TimeEntryCreatePayload, Milestone, MilestoneCreatePayload,
+  ProjectDocument
 } from "./types";
 
 export async function fetchProjects(status?: string, companyId?: string): Promise<Project[]> {
@@ -130,3 +131,32 @@ export async function updateMilestone(milestoneId: string, payload: Partial<Mile
 export async function deleteMilestone(milestoneId: string): Promise<void> {
   await apiClient.delete<void>(`/projects/milestones/${milestoneId}`);
 }
+
+// Documents
+export async function fetchProjectDocuments(projectId: string): Promise<ProjectDocument[]> {
+  const res = await apiClient.get<ProjectDocument[]>(`/projects/${projectId}/documents`);
+  return res.data;
+}
+
+export async function uploadProjectDocument(projectId: string, file: File, description?: string): Promise<ProjectDocument> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const uploadRes = await apiClient.post<{ file_id: string; file_name: string; file_size: number; file_type: string }>("/files/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  const fileData = uploadRes.data;
+
+  const docRes = await apiClient.post<ProjectDocument>(`/projects/${projectId}/documents`, {
+    file_id: fileData.file_id,
+    name: fileData.file_name,
+    file_size: fileData.file_size,
+    file_type: fileData.file_type,
+    description: description || undefined,
+  });
+  return docRes.data;
+}
+
+export async function deleteProjectDocument(projectId: string, documentId: string): Promise<void> {
+  await apiClient.delete<void>(`/projects/${projectId}/documents/${documentId}`);
+}
+

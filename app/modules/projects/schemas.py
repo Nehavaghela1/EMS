@@ -57,6 +57,11 @@ class ProjectMemberResponse(BaseModel):
     joined_at: date
     left_at: Optional[date] = None
     created_at: datetime
+    employee_name: Optional[str] = None
+    employee_email: Optional[str] = None
+    employee_code: Optional[str] = None
+    designation: Optional[str] = None
+    department_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -92,6 +97,10 @@ class TaskResponse(TaskBase):
     created_by: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
+    assigned_to_name: Optional[str] = None
+    assigned_to_email: Optional[str] = None
+    assigned_to_code: Optional[str] = None
+    assigned_to_designation: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -145,6 +154,36 @@ class TimeEntryResponse(BaseModel):
     approved_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    employee_name: Optional[str] = None
+    employee_email: Optional[str] = None
+    employee_code: Optional[str] = None
+    task_title: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+# --- Project Documents ---
+
+class ProjectDocumentCreate(BaseModel):
+    file_id: UUID
+    name: str = Field(..., min_length=1, max_length=255)
+    file_size: int = 0
+    file_type: str = "application/octet-stream"
+    description: Optional[str] = None
+
+class ProjectDocumentResponse(BaseModel):
+    id: UUID
+    company_id: UUID
+    project_id: UUID
+    file_id: UUID
+    name: str
+    file_size: int
+    file_type: str
+    description: Optional[str] = None
+    uploaded_by: Optional[UUID] = None
+    uploaded_by_name: Optional[str] = None
+    created_at: datetime
+    download_url: Optional[str] = None
 
     class Config:
         from_attributes = True

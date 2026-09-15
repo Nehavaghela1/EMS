@@ -6,12 +6,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 
 from app.modules.projects.models import (
-    Project, ProjectMember, Task, TaskComment, TimeEntry, Milestone
+    Project, ProjectMember, Task, TaskComment, TimeEntry, Milestone, ProjectDocument
 )
 from app.modules.projects.schemas import (
     ProjectCreate, ProjectUpdate, ProjectMemberCreate,
     TaskCreate, TaskUpdate, TaskCommentCreate,
-    TimeEntryCreate, TimeEntryUpdate, MilestoneCreate, MilestoneUpdate
+    TimeEntryCreate, TimeEntryUpdate, MilestoneCreate, MilestoneUpdate,
+    ProjectDocumentCreate
 )
 
 class ProjectRepository:
@@ -20,9 +21,10 @@ class ProjectRepository:
 
     # --- Projects ---
     def create_project(self, company_id: UUID, data: ProjectCreate) -> Project:
+        project_dict = data.dict(exclude={"company_id"})
         project = Project(
             company_id=company_id,
-            **data.dict()
+            **project_dict
         )
         self.db.add(project)
         self.db.commit()
@@ -89,6 +91,19 @@ class ProjectRepository:
             ProjectMember.project_id == project_id
         ).all()
 
+    def list_members_with_details(self, company_id: UUID, project_id: UUID):
+        from app.modules.hr.models import Employee, Department
+        return (
+            self.db.query(ProjectMember, Employee, Department.name.label("department_name"))
+            .outerjoin(Employee, ProjectMember.employee_id == Employee.id)
+            .outerjoin(Department, Employee.department_id == Department.id)
+            .filter(
+                ProjectMember.company_id == company_id,
+                ProjectMember.project_id == project_id
+            )
+            .all()
+        )
+
     def remove_member(self, member: ProjectMember) -> None:
         self.db.delete(member)
         self.db.commit()
@@ -118,6 +133,22 @@ class ProjectRepository:
         query = self.db.query(Task).filter(
             Task.company_id == company_id,
             Task.project_id == project_id
+        )
+        if status:
+            query = query.filter(Task.status == status)
+        if assigned_to:
+            query = query.filter(Task.assigned_to == assigned_to)
+        return query.order_by(Task.created_at.desc()).all()
+
+    def list_tasks_with_details(self, company_id: UUID, project_id: UUID, status: Optional[str] = None, assigned_to: Optional[UUID] = None):
+        from app.modules.hr.models import Employee
+        query = (
+            self.db.query(Task, Employee)
+            .outerjoin(Employee, Task.assigned_to == Employee.id)
+            .filter(
+                Task.company_id == company_id,
+                Task.project_id == project_id
+            )
         )
         if status:
             query = query.filter(Task.status == status)
@@ -202,6 +233,34 @@ class ProjectRepository:
             query = query.filter(TimeEntry.date <= end_date)
         return query.order_by(TimeEntry.date.desc()).all()
 
+    def list_time_entries_with_details(
+        self,
+        company_id: UUID,
+        project_id: Optional[UUID] = None,
+        employee_id: Optional[UUID] = None,
+        status: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ):
+        from app.modules.hr.models import Employee
+        query = (
+            self.db.query(TimeEntry, Employee, Task.title.label("task_title"))
+            .outerjoin(Employee, TimeEntry.employee_id == Employee.id)
+            .outerjoin(Task, TimeEntry.task_id == Task.id)
+            .filter(TimeEntry.company_id == company_id)
+        )
+        if project_id:
+            query = query.filter(TimeEntry.project_id == project_id)
+        if employee_id:
+            query = query.filter(TimeEntry.employee_id == employee_id)
+        if status:
+            query = query.filter(TimeEntry.status == status)
+        if start_date:
+            query = query.filter(TimeEntry.date >= start_date)
+        if end_date:
+            query = query.filter(TimeEntry.date <= end_date)
+        return query.order_by(TimeEntry.date.desc()).all()
+
     def update_time_entry(self, entry: TimeEntry, data: TimeEntryUpdate) -> TimeEntry:
         update_data = data.dict(exclude_unset=True)
         for key, value in update_data.items():
@@ -273,3 +332,44 @@ class ProjectRepository:
     def delete_milestone(self, milestone: Milestone) -> None:
         self.db.delete(milestone)
         self.db.commit()
+
+    # --- Project Documents ---
+    def create_project_document(self, company_id: UUID, project_id: UUID, data: ProjectDocumentCreate, uploaded_by: Optional[UUID] = None) -> ProjectDocument:
+        doc = ProjectDocument(
+            company_id=company_id,
+            project_id=project_id,
+            file_id=data.file_id,
+            name=data.name,
+            file_size=data.file_size,
+            file_type=data.file_type,
+            description=data.description,
+            uploaded_by=uploaded_by,
+        )
+        self.db.add(doc)
+        self.db.commit()
+        self.db.refresh(doc)
+        return doc
+
+    def list_project_documents(self, company_id: UUID, project_id: UUID):
+        from app.modules.identity.models import User
+        return (
+            self.db.query(ProjectDocument, User.email.label("uploaded_by_name"))
+            .outerjoin(User, ProjectDocument.uploaded_by == User.id)
+            .filter(
+                ProjectDocument.company_id == company_id,
+                ProjectDocument.project_id == project_id
+            )
+            .order_by(ProjectDocument.created_at.desc())
+            .all()
+        )
+
+    def get_project_document(self, company_id: UUID, document_id: UUID) -> Optional[ProjectDocument]:
+        return self.db.query(ProjectDocument).filter(
+            ProjectDocument.company_id == company_id,
+            ProjectDocument.id == document_id
+        ).first()
+
+    def delete_project_document(self, doc: ProjectDocument) -> None:
+        self.db.delete(doc)
+        self.db.commit()
+

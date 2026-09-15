@@ -56,6 +56,11 @@ export interface ProjectMember {
   joined_at: string;
   left_at?: string;
   created_at: string;
+  employee_name?: string;
+  employee_email?: string;
+  employee_code?: string;
+  designation?: string;
+  department_name?: string;
 }
 
 export interface Task {
@@ -73,6 +78,10 @@ export interface Task {
   created_by?: string;
   created_at: string;
   updated_at: string;
+  assigned_to_name?: string;
+  assigned_to_email?: string;
+  assigned_to_code?: string;
+  assigned_to_designation?: string;
 }
 
 export interface TaskCreatePayload {
@@ -109,6 +118,25 @@ export interface TimeEntry {
   approved_at?: string;
   created_at: string;
   updated_at: string;
+  employee_name?: string;
+  employee_email?: string;
+  employee_code?: string;
+  task_title?: string;
+}
+
+export interface ProjectDocument {
+  id: string;
+  company_id: string;
+  project_id: string;
+  file_id: string;
+  name: string;
+  file_size: number;
+  file_type: string;
+  description?: string;
+  uploaded_by?: string;
+  uploaded_by_name?: string;
+  created_at: string;
+  download_url?: string;
 }
 
 export interface TimeEntryCreatePayload {

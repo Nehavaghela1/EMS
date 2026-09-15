@@ -12,7 +12,8 @@ from app.modules.projects.schemas import (
     TaskCreate, TaskUpdate, TaskResponse,
     TaskCommentCreate, TaskCommentResponse,
     TimeEntryCreate, TimeEntryUpdate, TimeEntryResponse,
-    MilestoneCreate, MilestoneUpdate, MilestoneResponse
+    MilestoneCreate, MilestoneUpdate, MilestoneResponse,
+    ProjectDocumentCreate, ProjectDocumentResponse
 )
 from app.modules.projects.service import ProjectService
 
@@ -314,3 +315,38 @@ def list_milestones(
     service = ProjectService(db)
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
     return service.list_milestones(cid, project_id)
+
+# --- Project Documents ---
+
+@router.post("/{project_id}/documents", response_model=ProjectDocumentResponse, status_code=status.HTTP_201_CREATED)
+def add_project_document(
+    project_id: UUID,
+    data: ProjectDocumentCreate,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.add_document(cid, project_id, data, current_user.id)
+
+@router.get("/{project_id}/documents", response_model=List[ProjectDocumentResponse])
+def list_project_documents(
+    project_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = ProjectService(db)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    return service.list_documents(cid, project_id)
+
+@router.delete("/{project_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project_document(
+    project_id: UUID,
+    document_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
+):
+    service = ProjectService(db)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    service.delete_document(cid, project_id, document_id)
+

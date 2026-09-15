@@ -121,3 +121,23 @@ class Milestone(Base):
     __table_args__ = (
         CheckConstraint("completion_percentage >= 0 AND completion_percentage <= 100", name="chk_milestone_completion"),
     )
+
+
+class ProjectDocument(Base):
+    __tablename__ = "project_documents"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_id = Column(UUID(as_uuid=True), ForeignKey("file_objects.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    file_size = Column(Numeric(12, 0), nullable=False, default=0)
+    file_type = Column(String(100), nullable=False, default="application/octet-stream")
+    description = Column(Text, nullable=True)
+    uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_project_documents_project", "project_id"),
+        Index("idx_project_documents_company", "company_id"),
+    )

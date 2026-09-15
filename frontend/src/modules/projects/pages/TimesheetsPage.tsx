@@ -354,10 +354,10 @@ export function TimesheetsPage() {
                 <tbody>
                   {pendingEntries.map((entry) => {
                     const emp = employeeMap.get(entry.employee_id);
-                    const empName = emp
-                      ? `${emp.first_name} ${emp.last_name || ""}`.trim()
-                      : `ID: ${entry.employee_id.substring(0, 8)}...`;
-                    const empCode = emp ? emp.employee_code : null;
+                    const empName =
+                      entry.employee_name ||
+                      (emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : "Team Member");
+                    const empCode = entry.employee_code || emp?.employee_code || null;
 
                     return (
                       <tr key={entry.id}>

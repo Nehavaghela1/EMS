@@ -16,14 +16,14 @@ def _create_user_and_headers(db: Session, company_id: uuid.UUID) -> dict[str, st
         company_id=company_id,
         email=f"iso-proj-{uuid.uuid4().hex[:6]}@example.test",
         hashed_password=hash_password("Test1234pass!"),
-        role=UserRole.super_admin,
+        role=UserRole.hr_admin,
         is_active=True,
     )
     db.add(user)
     db.commit()
 
     token = create_access_token(
-        sub=str(user.id), company_id=str(company_id), role=UserRole.super_admin.value
+        sub=str(user.id), company_id=str(company_id), role=UserRole.hr_admin.value
     )
     return {"Authorization": f"Bearer {token}"}
 

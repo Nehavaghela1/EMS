@@ -5,11 +5,13 @@ import {
   fetchProjectMembers, addProjectMember, removeProjectMember,
   fetchMilestones, createMilestone, updateMilestone, updateProject,
   fetchTaskComments, addTaskComment,
-  fetchTimeEntries, createTimeEntry
+  fetchTimeEntries, createTimeEntry,
+  fetchProjectDocuments, uploadProjectDocument, deleteProjectDocument
 } from "../api";
 import type {
   ProjectSummary, ProjectStatus, Task, TaskStatus, TaskPriority,
-  ProjectMember, Milestone, MilestoneStatus, TaskComment, TimeEntry
+  ProjectMember, Milestone, MilestoneStatus, TaskComment, TimeEntry,
+  ProjectDocument
 } from "../types";
 import { listEmployees, type Employee } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
@@ -28,7 +30,14 @@ export function ProjectDetailPage() {
   const [timeLogs, setTimeLogs] = useState<TimeEntry[]>([]);
   const [employeeList, setEmployeeList] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"kanban" | "milestones" | "team" | "timelogs" | "settings">("kanban");
+  const [activeTab, setActiveTab] = useState<"kanban" | "milestones" | "team" | "timelogs" | "documents" | "settings">("kanban");
+
+  // Documents State
+  const [documents, setDocuments] = useState<ProjectDocument[]>([]);
+  const [showDocModal, setShowDocModal] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [docDesc, setDocDesc] = useState("");
+  const [uploadingDoc, setUploadingDoc] = useState(false);
 
   // Drag-and-drop State
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -52,6 +61,7 @@ export function ProjectDetailPage() {
   const [taskStatus, setTaskStatus] = useState<TaskStatus>("todo");
   const [taskDueDate, setTaskDueDate] = useState("");
   const [taskEstHours, setTaskEstHours] = useState("");
+  const [taskAssignedTo, setTaskAssignedTo] = useState("");
   const [submittingTask, setSubmittingTask] = useState(false);
 
   // Milestone Modal (Create & Edit)
@@ -94,13 +104,14 @@ export function ProjectDetailPage() {
     if (!id) return;
     try {
       setLoading(true);
-      const [sumRes, taskRes, memRes, msRes, timeRes, empRes] = await Promise.all([
+      const [sumRes, taskRes, memRes, msRes, timeRes, empRes, docRes] = await Promise.all([
         fetchProjectSummary(id),
         fetchTasks(id),
         fetchProjectMembers(id),
         fetchMilestones(id),
         fetchTimeEntries({ projectId: id }).catch(() => []),
-        listEmployees({ page: 1, limit: 100 }).catch(() => ({ items: [] }))
+        listEmployees({ page: 1, limit: 100 }).catch(() => ({ items: [] })),
+        fetchProjectDocuments(id).catch(() => []),
       ]);
       setSummary(sumRes);
       setTasks(taskRes);
@@ -108,6 +119,7 @@ export function ProjectDetailPage() {
       setMilestones(msRes);
       setTimeLogs(timeRes);
       setEmployeeList(empRes.items || []);
+      setDocuments(docRes);
     } catch (err: any) {
       notify(err?.response?.data?.error?.message || err?.message || "Failed to load project details", "error");
     } finally {
@@ -128,6 +140,7 @@ export function ProjectDetailPage() {
     setTaskStatus("todo");
     setTaskDueDate("");
     setTaskEstHours("");
+    setTaskAssignedTo("");
     setShowTaskModal(true);
   }
 
@@ -139,6 +152,7 @@ export function ProjectDetailPage() {
     setTaskStatus(task.status);
     setTaskDueDate(task.due_date ? task.due_date.slice(0, 10) : "");
     setTaskEstHours(task.estimated_hours ? String(task.estimated_hours) : "");
+    setTaskAssignedTo(task.assigned_to || "");
     setShowTaskModal(true);
   }
 
@@ -155,6 +169,7 @@ export function ProjectDetailPage() {
           status: taskStatus,
           due_date: taskDueDate || undefined,
           estimated_hours: taskEstHours ? parseFloat(taskEstHours) : undefined,
+          assigned_to: taskAssignedTo || undefined,
         });
         notify("Task updated successfully!", "success");
       } else {
@@ -165,6 +180,7 @@ export function ProjectDetailPage() {
           status: taskStatus,
           due_date: taskDueDate || undefined,
           estimated_hours: taskEstHours ? parseFloat(taskEstHours) : undefined,
+          assigned_to: taskAssignedTo || undefined,
         });
         notify("Task created!", "success");
       }
@@ -174,6 +190,35 @@ export function ProjectDetailPage() {
       notify(err?.response?.data?.error?.message || err?.message || "Failed to save task", "error");
     } finally {
       setSubmittingTask(false);
+    }
+  }
+
+  async function handleUploadDocument(e: React.FormEvent) {
+    e.preventDefault();
+    if (!id || !uploadFile) return;
+    try {
+      setUploadingDoc(true);
+      const newDoc = await uploadProjectDocument(id, uploadFile, docDesc);
+      setDocuments([newDoc, ...documents]);
+      setShowDocModal(false);
+      setUploadFile(null);
+      setDocDesc("");
+      notify("Document uploaded successfully!", "success");
+    } catch (err: any) {
+      notify(err?.response?.data?.error?.message || err?.message || "Failed to upload document", "error");
+    } finally {
+      setUploadingDoc(false);
+    }
+  }
+
+  async function handleDeleteDocument(docId: string) {
+    if (!id || !confirm("Are you sure you want to delete this document?")) return;
+    try {
+      await deleteProjectDocument(id, docId);
+      setDocuments(documents.filter((d) => d.id !== docId));
+      notify("Document deleted", "info");
+    } catch (err: any) {
+      notify(err?.response?.data?.error?.message || "Failed to delete document", "error");
     }
   }
 
@@ -549,6 +594,13 @@ export function ProjectDetailPage() {
           </button>
           <button
             type="button"
+            className={`tab-item ${activeTab === "documents" ? "active" : ""}`}
+            onClick={() => setActiveTab("documents")}
+          >
+            📁 Documents & Files ({documents.length})
+          </button>
+          <button
+            type="button"
             className={`tab-item ${activeTab === "settings" ? "active" : ""}`}
             onClick={() => setActiveTab("settings")}
           >
@@ -761,6 +813,26 @@ export function ProjectDetailPage() {
                               </span>
                             ) : null}
                           </div>
+
+                          <div className="flex items-center justify-between mt-2 pt-2" style={{ borderTop: "1px solid var(--color-border, #f1f5f9)", fontSize: "0.78rem" }}>
+                            {task.assigned_to_name ? (
+                              <span className="badge" style={{ background: "#eff6ff", color: "#1d4ed8", display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 6px" }}>
+                                <span style={{ width: "16px", height: "16px", borderRadius: "50%", background: "#2563eb", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700 }}>
+                                  {task.assigned_to_name.charAt(0).toUpperCase()}
+                                </span>
+                                {task.assigned_to_name}
+                              </span>
+                            ) : (
+                              <span className="text-muted text-xs" style={{ fontStyle: "italic" }}>
+                                Unassigned
+                              </span>
+                            )}
+                            {task.assigned_to_designation && (
+                              <span className="text-muted text-xs">
+                                {task.assigned_to_designation}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       );
                     })
@@ -886,40 +958,63 @@ export function ProjectDetailPage() {
                 ) : (
                   members.map((m) => {
                     const emp = employeeList.find((e) => e.id === m.employee_id);
-                    const empName = emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : m.employee_id.substring(0, 8);
-                    const empEmail = emp?.email;
+                    const empName =
+                      m.employee_name ||
+                      (emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : "Team Member");
+                    const empCode = m.employee_code || emp?.employee_code;
+                    const empEmail = m.employee_email || emp?.email;
+                    const empPosition = m.designation || emp?.position || "Staff";
+                    const empDept = m.department_name || "General";
+                    const initials = empName
+                      .split(" ")
+                      .map((n) => n[0])
+                      .slice(0, 2)
+                      .join("")
+                      .toUpperCase();
+
                     return (
                       <tr key={m.id}>
                         <td>
                           <div className="flex items-center gap-2">
                             <div
                               style={{
-                                width: "32px",
-                                height: "32px",
+                                width: "36px",
+                                height: "36px",
                                 borderRadius: "50%",
-                                background: "#eff6ff",
-                                color: "#2563eb",
+                                background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                                color: "#ffffff",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
                                 fontWeight: 700,
-                                fontSize: "0.8rem",
+                                fontSize: "0.85rem",
+                                flexShrink: 0,
                               }}
                             >
-                              {empName.charAt(0).toUpperCase()}
+                              {initials}
                             </div>
                             <div>
-                              <div style={{ fontWeight: 600 }}>{empName}</div>
+                              <div className="flex items-center gap-2">
+                                <span style={{ fontWeight: 600 }}>{empName}</span>
+                                {empCode && (
+                                  <span className="badge badge-muted text-xs" style={{ padding: "1px 5px" }}>
+                                    {empCode}
+                                  </span>
+                                )}
+                              </div>
                               {empEmail && <div className="text-muted text-xs">{empEmail}</div>}
                             </div>
                           </div>
                         </td>
                         <td>
-                          <span className={`badge ${m.role === "lead" ? "badge-primary" : "badge-muted"}`}>
-                            {m.role === "lead" ? "👑 Project Lead" : "Contributor"}
-                          </span>
+                          <div className="stack" style={{ gap: "2px" }}>
+                            <span className={`badge ${m.role === "lead" ? "badge-primary" : "badge-muted"}`} style={{ alignSelf: "flex-start" }}>
+                              {m.role === "lead" ? "👑 Project Lead" : "Contributor"}
+                            </span>
+                            <span className="text-muted text-xs">{empPosition}</span>
+                          </div>
                         </td>
-                        <td>{emp?.position || "Engineering / Staff"}</td>
+                        <td>{empDept}</td>
                         <td>{formatDate(m.joined_at)}</td>
                         {canManage && (
                           <td style={{ textAlign: "right" }}>
@@ -962,6 +1057,8 @@ export function ProjectDetailPage() {
               <thead>
                 <tr>
                   <th>Date</th>
+                  <th>Logged By</th>
+                  <th>Task</th>
                   <th>Hours</th>
                   <th>Billable</th>
                   <th>Description</th>
@@ -971,7 +1068,7 @@ export function ProjectDetailPage() {
               <tbody>
                 {timeLogs.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="text-center text-muted p-4">
+                    <td colSpan={7} className="text-center text-muted p-4">
                       No time entries recorded for this project yet.
                     </td>
                   </tr>
@@ -979,6 +1076,30 @@ export function ProjectDetailPage() {
                   timeLogs.map((entry) => (
                     <tr key={entry.id}>
                       <td>{formatDate(entry.date)}</td>
+                      <td>
+                        <div className="flex items-center gap-2">
+                          <div
+                            style={{
+                              width: "24px",
+                              height: "24px",
+                              borderRadius: "50%",
+                              background: "#eff6ff",
+                              color: "#2563eb",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: "11px",
+                              fontWeight: 700,
+                            }}
+                          >
+                            {(entry.employee_name || "M").charAt(0).toUpperCase()}
+                          </div>
+                          <span style={{ fontWeight: 600 }}>{entry.employee_name || "Team Member"}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="text-muted text-xs">{entry.task_title || "General Project Work"}</span>
+                      </td>
                       <td style={{ fontWeight: 700, color: "var(--color-primary)" }}>
                         {entry.hours} hrs
                       </td>
@@ -1000,6 +1121,93 @@ export function ProjectDetailPage() {
                         >
                           {entry.status}
                         </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: DOCUMENTS & FILES */}
+      {activeTab === "documents" && (
+        <div className="stack gap-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 style={{ margin: 0, fontSize: "1.1rem" }}>Project Documents & Files</h3>
+              <p className="text-muted text-sm" style={{ margin: "2px 0 0" }}>
+                Project specifications, requirements, architecture blueprints, contracts, and deliverables
+              </p>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowDocModal(true)}>
+              📁 Upload Document
+            </button>
+          </div>
+
+          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+            <table className="table text-sm">
+              <thead>
+                <tr>
+                  <th>Document Name</th>
+                  <th>Type</th>
+                  <th>Size</th>
+                  <th>Uploaded By</th>
+                  <th>Upload Date</th>
+                  <th style={{ textAlign: "right" }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {documents.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="text-center text-muted p-4">
+                      No documents uploaded for this project yet. Click "Upload Document" to attach project files.
+                    </td>
+                  </tr>
+                ) : (
+                  documents.map((doc) => (
+                    <tr key={doc.id}>
+                      <td>
+                        <div className="flex items-center gap-2">
+                          <span style={{ fontSize: "1.2rem" }}>📄</span>
+                          <div>
+                            <div style={{ fontWeight: 600 }}>{doc.name}</div>
+                            {doc.description && <div className="text-muted text-xs">{doc.description}</div>}
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="badge badge-muted text-xs">
+                          {doc.file_type.split("/")[1]?.toUpperCase() || doc.file_type}
+                        </span>
+                      </td>
+                      <td>{doc.file_size ? `${(Number(doc.file_size) / 1024).toFixed(1)} KB` : "—"}</td>
+                      <td>{doc.uploaded_by_name || "Team Member"}</td>
+                      <td>{formatDate(doc.created_at)}</td>
+                      <td style={{ textAlign: "right" }}>
+                        <div className="flex gap-2 justify-end">
+                          {doc.download_url && (
+                            <a
+                              href={doc.download_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn btn-outline btn-sm"
+                              style={{ textDecoration: "none" }}
+                            >
+                              Download ↓
+                            </a>
+                          )}
+                          {canManage && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm text-danger"
+                              onClick={() => handleDeleteDocument(doc.id)}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -1117,10 +1325,24 @@ export function ProjectDetailPage() {
                   </select>
                 </div>
               </div>
+              <div className="field">
+                <label>Assign to Team Member</label>
+                <select
+                  value={taskAssignedTo}
+                  onChange={(e) => setTaskAssignedTo(e.target.value)}
+                >
+                  <option value="">-- Unassigned --</option>
+                  {members.map((m) => (
+                    <option key={m.employee_id} value={m.employee_id}>
+                      {m.employee_name || "Team Member"} ({m.designation || "Staff"} • {m.role === "lead" ? "👑 Lead" : "Member"})
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="grid-2">
                 <div className="field">
                   <label>Est. Hours</label>
-                  <input type="number" step="0.5" value={taskEstHours} onChange={(e) => setTaskEstHours(e.target.value)} />
+                  <input type="number" step="any" min="0" placeholder="e.g. 15" value={taskEstHours} onChange={(e) => setTaskEstHours(e.target.value)} />
                 </div>
                 <div className="field">
                   <label>Due Date</label>
@@ -1498,6 +1720,52 @@ export function ProjectDetailPage() {
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submittingTime}>
                   {submittingTime ? "Logging..." : "Log Time"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* DOCUMENT UPLOAD MODAL */}
+      {showDocModal && (
+        <div className="modal-backdrop" onClick={() => setShowDocModal(false)}>
+          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Upload Project Document</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowDocModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleUploadDocument} className="stack gap-4 my-2">
+              <div className="field">
+                <label>Select File *</label>
+                <input
+                  type="file"
+                  onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                  required
+                />
+              </div>
+              <div className="field">
+                <label>Document Description / Notes (Optional)</label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. System architecture diagram, Client contract, PRD..."
+                  value={docDesc}
+                  onChange={(e) => setDocDesc(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-2 justify-end mt-4">
+                <button type="button" className="btn btn-ghost" onClick={() => setShowDocModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={uploadingDoc || !uploadFile}>
+                  {uploadingDoc ? "Uploading..." : "Upload Document"}
                 </button>
               </div>
             </form>
