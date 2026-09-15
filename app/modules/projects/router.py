@@ -54,13 +54,27 @@ def create_time_entry(
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user)
 ):
-    from app.modules.hr.repository import EmployeeRepository
-    from app.core.exceptions import AppError
-    emp = EmployeeRepository(db).get_by_user_id(current_user.company_id, current_user.id)
+    from app.modules.hr.models import Employee
+    from app.core.exceptions import AppError, NotFoundError
+
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    service = ProjectService(db)
+    project = service.repo.get_project_by_id(cid, data.project_id)
+    if not project:
+        raise NotFoundError("Project not found.")
+
+    query = db.query(Employee).filter(Employee.user_id == current_user.id)
+    if current_user.role != UserRole.super_admin and current_user.company_id:
+        query = query.filter(Employee.company_id == project.company_id)
+    emp = query.first()
+
+    if not emp and current_user.role == UserRole.super_admin:
+        emp = db.query(Employee).filter(Employee.company_id == project.company_id).first()
+
     if not emp:
         raise AppError("User profile is not linked to an employee record.")
-    service = ProjectService(db)
-    return service.create_time_entry(current_user.company_id, emp.id, data)
+
+    return service.create_time_entry(project.company_id, emp.id, data)
 
 @router.get("/time-entries", response_model=List[TimeEntryResponse])
 def list_time_entries(

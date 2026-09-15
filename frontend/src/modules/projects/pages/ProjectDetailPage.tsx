@@ -110,7 +110,7 @@ export function ProjectDetailPage() {
         fetchProjectMembers(id),
         fetchMilestones(id),
         fetchTimeEntries({ projectId: id }).catch(() => []),
-        listEmployees({ page: 1, limit: 100 }).catch(() => ({ items: [] })),
+        canManage ? listEmployees({ page: 1, limit: 100 }).catch(() => ({ items: [] })) : Promise.resolve({ items: [] } as any),
         fetchProjectDocuments(id).catch(() => []),
       ]);
       setSummary(sumRes);

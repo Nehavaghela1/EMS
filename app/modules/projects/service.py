@@ -251,7 +251,16 @@ class ProjectService:
             raise AppError(f"Total logged hours for {data.date} cannot exceed 24 hours. (Current total: {daily_total})")
 
         entry = self.repo.create_time_entry(company_id, employee_id, data)
-        return TimeEntryResponse.from_orm(entry)
+        resp = TimeEntryResponse.from_orm(entry)
+        from app.modules.hr.models import Employee
+        emp = self.repo.db.query(Employee).filter(Employee.id == employee_id).first()
+        if emp:
+            resp.employee_name = f"{emp.first_name} {emp.last_name or ''}".strip()
+            resp.employee_email = emp.email
+            resp.employee_code = emp.employee_code
+        if data.task_id and task:
+            resp.task_title = task.title
+        return resp
 
     def list_time_entries(
         self,
