@@ -7,6 +7,7 @@ import type { TimeEntry, Project, Task } from "../types";
 import { listEmployees, type Employee } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
+import { useTimer } from "../../../app/timer-context";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { formatDate } from "../../../shared/utils/date";
 
@@ -18,17 +19,22 @@ export function TimesheetsPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"log" | "approval">("log");
 
-  // Form State
+  // Form State with 3 Modes: duration, range, stopwatch
+  const [timeInputMode, setTimeInputMode] = useState<"duration" | "range" | "stopwatch">("duration");
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10));
   const [hours, setHours] = useState("");
+  const [startTime, setStartTime] = useState("09:00");
+  const [endTime, setEndTime] = useState("17:00");
+  const [breakMinutes, setBreakMinutes] = useState("60");
   const [description, setDescription] = useState("");
   const [isBillable, setIsBillable] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   const { user } = useAuth();
   const { notify } = useToast();
+  const { activeTimer, startTimer, stopTimer, formatTime, elapsedSeconds } = useTimer();
   const isManagerOrAdmin = user?.role === "super_admin" || user?.role === "hr_admin" || user?.role === "manager";
 
   const employeeMap = useMemo(() => {
@@ -186,6 +192,68 @@ export function TimesheetsPage() {
           <div className="card">
             <h3>Log Time Worked</h3>
             <p className="text-muted text-xs mb-4">Record hours spent on assigned projects and tasks</p>
+
+            {/* 3 Modes Switcher (Zoho Projects / ClickUp style) */}
+            <div style={{ display: "flex", gap: "6px", background: "#f1f5f9", padding: "4px", borderRadius: "6px", marginBottom: "1rem" }}>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  padding: "6px 4px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  background: timeInputMode === "duration" ? "#fff" : "transparent",
+                  color: timeInputMode === "duration" ? "#2563eb" : "#64748b",
+                  boxShadow: timeInputMode === "duration" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                }}
+                onClick={() => setTimeInputMode("duration")}
+              >
+                🔢 Duration
+              </button>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  padding: "6px 4px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  background: timeInputMode === "range" ? "#fff" : "transparent",
+                  color: timeInputMode === "range" ? "#2563eb" : "#64748b",
+                  boxShadow: timeInputMode === "range" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                }}
+                onClick={() => {
+                  setTimeInputMode("range");
+                  setHours("7.00");
+                }}
+              >
+                🕒 Start / End
+              </button>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  padding: "6px 4px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  background: timeInputMode === "stopwatch" ? "#fff" : "transparent",
+                  color: timeInputMode === "stopwatch" ? "#2563eb" : "#64748b",
+                  boxShadow: timeInputMode === "stopwatch" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                }}
+                onClick={() => setTimeInputMode("stopwatch")}
+              >
+                ⏱️ Stopwatch
+              </button>
+            </div>
+
             <form onSubmit={handleLogTime} className="stack">
               <div className="field">
                 <label>Select Project *</label>
@@ -215,18 +283,20 @@ export function TimesheetsPage() {
                 </select>
               </div>
 
-              <div className="form-grid">
+              <div className="field">
+                <label>Date *</label>
+                <input
+                  type="date"
+                  value={logDate}
+                  onChange={(e) => setLogDate(e.target.value)}
+                  required
+                />
+              </div>
+
+              {/* Mode 1: Duration */}
+              {timeInputMode === "duration" && (
                 <div className="field">
-                  <label>Date *</label>
-                  <input
-                    type="date"
-                    value={logDate}
-                    onChange={(e) => setLogDate(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="field">
-                  <label>Hours *</label>
+                  <label>Hours * (e.g. 7 or 7.5)</label>
                   <input
                     type="number"
                     step="any"
@@ -238,7 +308,130 @@ export function TimesheetsPage() {
                     required
                   />
                 </div>
-              </div>
+              )}
+
+              {/* Mode 2: Range */}
+              {timeInputMode === "range" && (
+                <div className="stack gap-2" style={{ background: "#f8fafc", padding: "10px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                  <div className="form-grid">
+                    <div className="field">
+                      <label style={{ fontSize: "11px" }}>Start Time</label>
+                      <input
+                        type="time"
+                        value={startTime}
+                        onChange={(e) => {
+                          setStartTime(e.target.value);
+                          const [sh, sm] = e.target.value.split(":").map(Number);
+                          const [eh, em] = endTime.split(":").map(Number);
+                          const startM = sh * 60 + sm;
+                          const endM = eh * 60 + em;
+                          const breakM = parseInt(breakMinutes) || 0;
+                          const diff = Math.max(0, (endM - startM - breakM) / 60);
+                          setHours(diff.toFixed(2));
+                        }}
+                      />
+                    </div>
+                    <div className="field">
+                      <label style={{ fontSize: "11px" }}>End Time</label>
+                      <input
+                        type="time"
+                        value={endTime}
+                        onChange={(e) => {
+                          setEndTime(e.target.value);
+                          const [sh, sm] = startTime.split(":").map(Number);
+                          const [eh, em] = e.target.value.split(":").map(Number);
+                          const startM = sh * 60 + sm;
+                          const endM = eh * 60 + em;
+                          const breakM = parseInt(breakMinutes) || 0;
+                          const diff = Math.max(0, (endM - startM - breakM) / 60);
+                          setHours(diff.toFixed(2));
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="form-grid">
+                    <div className="field">
+                      <label style={{ fontSize: "11px" }}>Break (mins)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="240"
+                        value={breakMinutes}
+                        onChange={(e) => {
+                          setBreakMinutes(e.target.value);
+                          const [sh, sm] = startTime.split(":").map(Number);
+                          const [eh, em] = endTime.split(":").map(Number);
+                          const startM = sh * 60 + sm;
+                          const endM = eh * 60 + em;
+                          const breakM = parseInt(e.target.value) || 0;
+                          const diff = Math.max(0, (endM - startM - breakM) / 60);
+                          setHours(diff.toFixed(2));
+                        }}
+                      />
+                    </div>
+                    <div className="field">
+                      <label style={{ fontSize: "11px", fontWeight: 700 }}>Total</label>
+                      <input
+                        type="text"
+                        readOnly
+                        value={`${hours || "0.00"} hrs`}
+                        style={{ background: "#e2e8f0", fontWeight: 700 }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Mode 3: Stopwatch */}
+              {timeInputMode === "stopwatch" && (
+                <div className="stack gap-2 text-center" style={{ background: "#0f172a", color: "#fff", padding: "12px", borderRadius: "6px" }}>
+                  <div style={{ fontSize: "1.5rem", fontFamily: "monospace", fontWeight: 800, color: "#34d399" }}>
+                    ⏱️ {formatTime(elapsedSeconds)}
+                  </div>
+                  <div>
+                    {activeTimer ? (
+                      <button
+                        type="button"
+                        style={{ background: "#ef4444", color: "#fff", border: "none", padding: "6px 12px", borderRadius: "4px", fontWeight: 700, cursor: "pointer", fontSize: "12px" }}
+                        onClick={() => {
+                          const stopped = stopTimer();
+                          if (stopped) {
+                            const hrs = Math.max(0.1, +(elapsedSeconds / 3600).toFixed(2));
+                            setHours(hrs.toString());
+                            setTimeInputMode("duration");
+                          }
+                        }}
+                      >
+                        ⏹ Stop & Use {Math.max(0.1, +(elapsedSeconds / 3600).toFixed(2))}h
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        style={{ background: "#10b981", color: "#fff", border: "none", padding: "6px 12px", borderRadius: "4px", fontWeight: 700, cursor: "pointer", fontSize: "12px" }}
+                        onClick={() => {
+                          if (!selectedProjectId) {
+                            notify("Please choose a project first", "error");
+                            return;
+                          }
+                          const proj = projects.find(p => p.id === selectedProjectId);
+                          const task = tasks.find(t => t.id === selectedTaskId);
+                          startTimer({
+                            id: selectedTaskId || "general",
+                            title: task ? task.title : (proj ? `${proj.name} Work` : "Work"),
+                            projectId: selectedProjectId,
+                            projectName: proj?.name,
+                          });
+                        }}
+                      >
+                        ▶ Start Timer Now
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+                    Hours: <b>{hours || "0.00"} hrs</b>
+                  </div>
+                </div>
+              )}
 
               <div className="row" style={{ gap: "var(--space-2)", margin: "var(--space-1) 0" }}>
                 <input

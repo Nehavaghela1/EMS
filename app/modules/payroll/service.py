@@ -614,6 +614,8 @@ class PayrollRunService:
         self.salary_repo = EmployeeSalaryRepository(db)
         self.structure_repo = SalaryStructureRepository(db)
         self.employee_repo = EmployeeRepository(db)
+        from app.modules.projects.repository import ProjectRepository
+        self.project_repo = ProjectRepository(db)
         self.audit = AuditService(db)
 
     def create_run(
@@ -781,6 +783,26 @@ class PayrollRunService:
             reimbursements = self.reimbursement_repo.list_unpaid_approved(company_id, emp.id)
             reimbursement_amount = sum((r.amount for r in reimbursements), Decimal("0.00"))
 
+            # Query approved project timesheet hours for this employee in the payroll month (Zoho Projects / ClickUp Integration)
+            from calendar import monthrange
+            _, last_day = monthrange(data.year, data.month)
+            month_start = date(data.year, data.month, 1)
+            month_end = date(data.year, data.month, last_day)
+
+            approved_time_entries = self.project_repo.list_time_entries(
+                company_id=company_id,
+                employee_id=emp.id,
+                status="approved",
+                start_date=month_start,
+                end_date=month_end,
+            )
+            total_approved_project_hours = sum((Decimal(str(te.hours)) for te in approved_time_entries), Decimal("0.00"))
+
+            # Calculate hourly pay rate based on monthly CTC (assuming standard 160 hrs/month)
+            monthly_ctc = (salary_record.ctc / Decimal("12")).quantize(Decimal("0.01"))
+            hourly_rate = (monthly_ctc / Decimal("160.00")).quantize(Decimal("0.01"))
+            project_hours_pay = (total_approved_project_hours * hourly_rate).quantize(Decimal("0.01"))
+
             payslip_in = PayslipInput(
                 ctc_annual=salary_record.ctc,
                 components=component_specs,
@@ -799,19 +821,31 @@ class PayrollRunService:
 
             payslip_out = calculate_payslip(payslip_in)
 
+            # Build JSON line items
             earnings_json = [{"code": e.code, "name": e.name, "amount": str(e.amount)} for e in payslip_out.earnings]
+            if project_hours_pay > Decimal("0.00"):
+                earnings_json.append({
+                    "code": "PROJECT_HOURS",
+                    "name": f"Approved Project Hours ({total_approved_project_hours} hrs @ ₹{hourly_rate}/hr)",
+                    "amount": str(project_hours_pay),
+                })
+
             deductions_json = [{"code": d.code, "name": d.name, "amount": str(d.amount)} for d in payslip_out.deductions]
             employer_json = [{"code": er.code, "name": er.name, "amount": str(er.amount)} for er in payslip_out.employer_contributions]
+
+            final_gross = payslip_out.gross_salary + project_hours_pay
+            final_net = payslip_out.net_salary + project_hours_pay
+            final_employer_cost = payslip_out.employer_cost + project_hours_pay
 
             self.item_repo.create(
                 company_id=company_id,
                 payroll_run_id=run.id,
                 employee_id=emp.id,
                 ctc_snapshot=salary_record.ctc,
-                gross_salary=payslip_out.gross_salary,
+                gross_salary=final_gross,
                 total_deductions=payslip_out.total_deductions,
-                net_salary=payslip_out.net_salary,
-                employer_cost=payslip_out.employer_cost,
+                net_salary=final_net,
+                employer_cost=final_employer_cost,
                 earnings_json=earnings_json,
                 deductions_json=deductions_json,
                 employer_contributions_json=employer_json,
@@ -829,10 +863,10 @@ class PayrollRunService:
                     r, added_to_payroll_run_id=run.id, status=ReimbursementStatus.paid
                 )
 
-            total_gross += payslip_out.gross_salary
+            total_gross += final_gross
             total_deductions += payslip_out.total_deductions
-            total_net += payslip_out.net_salary
-            total_employer_cost += payslip_out.employer_cost
+            total_net += final_net
+            total_employer_cost += final_employer_cost
             processed_count += 1
 
         self.repo.update(
