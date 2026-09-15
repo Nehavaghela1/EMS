@@ -712,9 +712,9 @@ export function ProjectDetailPage() {
                               notify("Task reopened to In Progress", "info");
                             }
                           }}
-                          title="Drag to move • Double-click to edit • Right-click to toggle Done"
                         >
-                          <div className="row-between align-center">
+                          {/* Card Header: Priority & Actions */}
+                          <div className="flex items-center justify-between" style={{ gap: "8px" }}>
                             <span className={`badge ${priorityBadges[task.priority]}`} style={{ textTransform: "uppercase", fontSize: "10px", letterSpacing: "0.5px", fontWeight: 700 }}>
                               {task.priority}
                             </span>
@@ -724,23 +724,21 @@ export function ProjectDetailPage() {
                                   type="button"
                                   className="btn btn-sm"
                                   style={{
-                                    padding: "2px 6px",
-                                    fontSize: "12px",
+                                    padding: "2px 7px",
+                                    fontSize: "11px",
                                     fontWeight: 700,
                                     background: "#ecfdf5",
                                     color: "#059669",
                                     border: "1px solid #a7f3d0",
                                     borderRadius: "4px",
                                     cursor: "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
                                   }}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleStatusChange(task.id, "done");
                                     notify("Task marked as Done!", "success");
                                   }}
-                                  title="Mark as Done (✓)"
+                                  title="Mark as Done"
                                 >
                                   ✓
                                 </button>
@@ -749,17 +747,14 @@ export function ProjectDetailPage() {
                                   style={{
                                     fontSize: "11px",
                                     fontWeight: 700,
-                                    color: "#059669",
+                                    color: "#10b981",
                                     background: "#d1fae5",
-                                    padding: "2px 6px",
+                                    padding: "2px 7px",
                                     borderRadius: "4px",
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: "3px",
                                   }}
                                   title="Completed"
                                 >
-                                  ✓ Done
+                                  ✓
                                 </span>
                               )}
                               <button
@@ -771,7 +766,6 @@ export function ProjectDetailPage() {
                                   color: "#64748b",
                                   display: "flex",
                                   alignItems: "center",
-                                  justifyContent: "center",
                                 }}
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -779,7 +773,7 @@ export function ProjectDetailPage() {
                                 }}
                                 title="Edit Task"
                               >
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                   <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                                 </svg>
@@ -787,62 +781,54 @@ export function ProjectDetailPage() {
                               <button
                                 type="button"
                                 className="btn btn-ghost btn-sm"
-                                style={{
-                                  padding: "3px 6px",
-                                  borderRadius: "4px",
-                                  color: "#64748b",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                }}
+                                style={{ padding: "2px 5px", fontSize: "12px", color: "#64748b" }}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   openTaskComments(task);
                                 }}
                                 title="Task comments"
                               >
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                                </svg>
+                                💬
                               </button>
                             </div>
                           </div>
 
-                          <div className="kanban-task-body">
-                            <h4 className="kanban-task-title">{task.title}</h4>
+                          {/* Card Body */}
+                          <div className="kanban-task-body" style={{ marginTop: "2px" }}>
+                            <h4 className="kanban-task-title" style={{ fontSize: "0.92rem", lineHeight: "1.35", fontWeight: 600 }}>
+                              {task.title}
+                            </h4>
                             {task.description && (
-                              <p className="kanban-task-desc">{task.description}</p>
+                              <p className="kanban-task-desc" style={{ fontSize: "0.8rem", color: "#64748b", marginTop: "2px" }}>
+                                {task.description}
+                              </p>
                             )}
                           </div>
 
-                          <div className="kanban-task-meta flex items-center justify-between text-muted text-xs">
-                            <span>
-                              {task.due_date ? `📅 ${formatDate(task.due_date)}` : "No due date"}
-                            </span>
+                          {/* Card Dates & Estimates */}
+                          <div className="flex items-center justify-between" style={{ fontSize: "0.78rem", color: "#64748b", marginTop: "4px" }}>
+                            <span>{task.due_date ? `📅 ${formatDate(task.due_date)}` : "No due date"}</span>
                             {task.estimated_hours ? (
-                              <span className="font-mono" style={{ background: "#f8fafc", padding: "1px 5px", borderRadius: "3px", border: "1px solid #e2e8f0" }}>
-                                ⏱️ {task.estimated_hours}h
-                              </span>
+                              <span style={{ fontWeight: 600, fontFamily: "monospace" }}>⏱️ {task.estimated_hours}h</span>
                             ) : null}
                           </div>
 
-                          <div className="kanban-task-footer">
+                          {/* Card Assignee Footer */}
+                          <div className="flex items-center justify-between pt-2 mt-1" style={{ borderTop: "1px solid #f1f5f9", fontSize: "0.78rem" }}>
                             {task.assigned_to_name ? (
-                              <div className="flex items-center gap-2" style={{ overflow: "hidden" }}>
-                                <span style={{ width: "20px", height: "20px", flexShrink: 0, borderRadius: "50%", background: "#2563eb", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700 }}>
+                              <span className="badge" style={{ background: "#eff6ff", color: "#1d4ed8", display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 6px", fontWeight: 600 }}>
+                                <span style={{ width: "16px", height: "16px", borderRadius: "50%", background: "#2563eb", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700 }}>
                                   {task.assigned_to_name.charAt(0).toUpperCase()}
                                 </span>
-                                <span style={{ fontWeight: 600, color: "#1e293b", fontSize: "12px", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
-                                  {task.assigned_to_name}
-                                </span>
-                              </div>
+                                {task.assigned_to_name}
+                              </span>
                             ) : (
                               <span className="text-muted text-xs" style={{ fontStyle: "italic" }}>
                                 Unassigned
                               </span>
                             )}
                             {task.assigned_to_designation && (
-                              <span className="text-muted text-xs" style={{ whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden", maxWidth: "120px" }}>
+                              <span className="text-muted text-xs" style={{ maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {task.assigned_to_designation}
                               </span>
                             )}
@@ -1023,7 +1009,7 @@ export function ProjectDetailPage() {
                         <td>
                           <div className="stack" style={{ gap: "2px" }}>
                             <span className={`badge ${m.role === "lead" ? "badge-primary" : "badge-muted"}`} style={{ alignSelf: "flex-start" }}>
-                              {m.role === "lead" ? "Project Lead" : "Contributor"}
+                              {m.role === "lead" ? "👑 Project Lead" : "Contributor"}
                             </span>
                             <span className="text-muted text-xs">{empPosition}</span>
                           </div>
@@ -1348,7 +1334,7 @@ export function ProjectDetailPage() {
                   <option value="">-- Unassigned --</option>
                   {members.map((m) => (
                     <option key={m.employee_id} value={m.employee_id}>
-                      {m.employee_name || "Team Member"} ({m.designation || "Staff"} • {m.role === "lead" ? "Lead" : "Member"})
+                      {m.employee_name || "Team Member"} ({m.designation || "Staff"} • {m.role === "lead" ? "👑 Lead" : "Member"})
                     </option>
                   ))}
                 </select>
@@ -1634,7 +1620,7 @@ export function ProjectDetailPage() {
                 <label>Project Role</label>
                 <select value={memberRole} onChange={(e) => setMemberRole(e.target.value as any)}>
                   <option value="member">Contributor / Developer</option>
-                  <option value="lead">Project Lead / Manager</option>
+                  <option value="lead">👑 Project Lead / Manager</option>
                 </select>
               </div>
               <div className="flex gap-2 justify-end mt-4">
