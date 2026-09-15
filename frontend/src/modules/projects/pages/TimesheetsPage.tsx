@@ -229,12 +229,12 @@ export function TimesheetsPage() {
                   <label>Hours *</label>
                   <input
                     type="number"
-                    step="0.25"
+                    step="any"
                     min="0.1"
                     max="24"
                     value={hours}
                     onChange={(e) => setHours(e.target.value)}
-                    placeholder="e.g. 7.5"
+                    placeholder="e.g. 7 or 7.5"
                     required
                   />
                 </div>

@@ -1442,10 +1442,10 @@ export function ProjectDetailPage() {
                   <label>Hours Spent *</label>
                   <input
                     type="number"
-                    step="0.5"
+                    step="any"
                     min="0.1"
                     max="24"
-                    placeholder="e.g. 7.5"
+                    placeholder="e.g. 7 or 7.5"
                     value={logHours}
                     onChange={(e) => setLogHours(e.target.value)}
                     required
