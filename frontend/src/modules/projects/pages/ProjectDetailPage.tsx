@@ -715,7 +715,7 @@ export function ProjectDetailPage() {
                           title="Drag to move • Double-click to edit • Right-click to toggle Done"
                         >
                           <div className="row-between align-center">
-                            <span className={`badge ${priorityBadges[task.priority]}`} style={{ textTransform: "uppercase", fontSize: "10px", letterSpacing: "0.5px" }}>
+                            <span className={`badge ${priorityBadges[task.priority]}`} style={{ textTransform: "uppercase", fontSize: "10px", letterSpacing: "0.5px", fontWeight: 700 }}>
                               {task.priority}
                             </span>
                             <div className="flex items-center gap-1">
@@ -747,23 +747,26 @@ export function ProjectDetailPage() {
                               ) : (
                                 <span
                                   style={{
-                                    fontSize: "12px",
+                                    fontSize: "11px",
                                     fontWeight: 700,
-                                    color: "#10b981",
+                                    color: "#059669",
                                     background: "#d1fae5",
                                     padding: "2px 6px",
                                     borderRadius: "4px",
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "3px",
                                   }}
                                   title="Completed"
                                 >
-                                  ✓
+                                  ✓ Done
                                 </span>
                               )}
                               <button
                                 type="button"
                                 className="btn btn-ghost btn-sm"
                                 style={{
-                                  padding: "3px 5px",
+                                  padding: "3px 6px",
                                   borderRadius: "4px",
                                   color: "#64748b",
                                   display: "flex",
@@ -784,14 +787,23 @@ export function ProjectDetailPage() {
                               <button
                                 type="button"
                                 className="btn btn-ghost btn-sm"
-                                style={{ padding: "2px 6px", fontSize: "13px" }}
+                                style={{
+                                  padding: "3px 6px",
+                                  borderRadius: "4px",
+                                  color: "#64748b",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                }}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   openTaskComments(task);
                                 }}
                                 title="Task comments"
                               >
-                                💬
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                </svg>
                               </button>
                             </div>
                           </div>
@@ -803,32 +815,34 @@ export function ProjectDetailPage() {
                             )}
                           </div>
 
-                          <div className="kanban-task-footer">
-                            <span className="text-muted text-xs">
+                          <div className="kanban-task-meta flex items-center justify-between text-muted text-xs">
+                            <span>
                               {task.due_date ? `📅 ${formatDate(task.due_date)}` : "No due date"}
                             </span>
                             {task.estimated_hours ? (
-                              <span className="text-muted text-xs font-mono">
+                              <span className="font-mono" style={{ background: "#f8fafc", padding: "1px 5px", borderRadius: "3px", border: "1px solid #e2e8f0" }}>
                                 ⏱️ {task.estimated_hours}h
                               </span>
                             ) : null}
                           </div>
 
-                          <div className="flex items-center justify-between mt-2 pt-2" style={{ borderTop: "1px solid var(--color-border, #f1f5f9)", fontSize: "0.78rem" }}>
+                          <div className="kanban-task-footer">
                             {task.assigned_to_name ? (
-                              <span className="badge" style={{ background: "#eff6ff", color: "#1d4ed8", display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 6px" }}>
-                                <span style={{ width: "16px", height: "16px", borderRadius: "50%", background: "#2563eb", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700 }}>
+                              <div className="flex items-center gap-2" style={{ overflow: "hidden" }}>
+                                <span style={{ width: "20px", height: "20px", flexShrink: 0, borderRadius: "50%", background: "#2563eb", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700 }}>
                                   {task.assigned_to_name.charAt(0).toUpperCase()}
                                 </span>
-                                {task.assigned_to_name}
-                              </span>
+                                <span style={{ fontWeight: 600, color: "#1e293b", fontSize: "12px", whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
+                                  {task.assigned_to_name}
+                                </span>
+                              </div>
                             ) : (
                               <span className="text-muted text-xs" style={{ fontStyle: "italic" }}>
                                 Unassigned
                               </span>
                             )}
                             {task.assigned_to_designation && (
-                              <span className="text-muted text-xs">
+                              <span className="text-muted text-xs" style={{ whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden", maxWidth: "120px" }}>
                                 {task.assigned_to_designation}
                               </span>
                             )}
@@ -1009,7 +1023,7 @@ export function ProjectDetailPage() {
                         <td>
                           <div className="stack" style={{ gap: "2px" }}>
                             <span className={`badge ${m.role === "lead" ? "badge-primary" : "badge-muted"}`} style={{ alignSelf: "flex-start" }}>
-                              {m.role === "lead" ? "👑 Project Lead" : "Contributor"}
+                              {m.role === "lead" ? "Project Lead" : "Contributor"}
                             </span>
                             <span className="text-muted text-xs">{empPosition}</span>
                           </div>
@@ -1334,7 +1348,7 @@ export function ProjectDetailPage() {
                   <option value="">-- Unassigned --</option>
                   {members.map((m) => (
                     <option key={m.employee_id} value={m.employee_id}>
-                      {m.employee_name || "Team Member"} ({m.designation || "Staff"} • {m.role === "lead" ? "👑 Lead" : "Member"})
+                      {m.employee_name || "Team Member"} ({m.designation || "Staff"} • {m.role === "lead" ? "Lead" : "Member"})
                     </option>
                   ))}
                 </select>
@@ -1620,7 +1634,7 @@ export function ProjectDetailPage() {
                 <label>Project Role</label>
                 <select value={memberRole} onChange={(e) => setMemberRole(e.target.value as any)}>
                   <option value="member">Contributor / Developer</option>
-                  <option value="lead">👑 Project Lead / Manager</option>
+                  <option value="lead">Project Lead / Manager</option>
                 </select>
               </div>
               <div className="flex gap-2 justify-end mt-4">
