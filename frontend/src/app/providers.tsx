@@ -3,6 +3,7 @@ import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider } from "./auth-context";
 import { ToastProvider } from "./toast-context";
+import { TimerProvider } from "./timer-context";
 import { ErrorBoundary } from "../shared/components/ErrorBoundary";
 import { GlobalKeyboardHandler } from "../shared/components/GlobalKeyboardHandler";
 
@@ -22,7 +23,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
         <BrowserRouter>
           <GlobalKeyboardHandler />
           <ToastProvider>
-            <AuthProvider>{children}</AuthProvider>
+            <TimerProvider>
+              <AuthProvider>{children}</AuthProvider>
+            </TimerProvider>
           </ToastProvider>
         </BrowserRouter>
       </QueryClientProvider>

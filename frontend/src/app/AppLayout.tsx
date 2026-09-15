@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, type UserRole } from "./auth-context";
+import { useTimer } from "./timer-context";
 
 interface SubItem {
   to: string;
@@ -129,6 +130,7 @@ const NAV_SECTIONS: NavSection[] = [
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
+  const { activeTimer, elapsedSeconds, formatTime, stopTimer } = useTimer();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -443,10 +445,118 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Main Page Content */}
-      <main className="main" style={{ flex: 1, minWidth: 0, padding: "1.5rem 2rem", background: "var(--color-bg)" }}>
-        {children}
-      </main>
+      {/* Main Page Content Area */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+        {/* Global Live Stopwatch Top Bar (Zoho / Jira style) */}
+        {activeTimer && (
+          <div
+            style={{
+              background: "linear-gradient(90deg, #0f172a, #1e1b4b)",
+              color: "#fff",
+              padding: "0.55rem 1.5rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              borderBottom: "1px solid rgba(99, 102, 241, 0.4)",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+              zIndex: 50,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
+              <span
+                style={{
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "50%",
+                  background: "#10b981",
+                  display: "inline-block",
+                  boxShadow: "0 0 8px #10b981",
+                  animation: "pulse 1.5s infinite",
+                }}
+              />
+              <span style={{ fontSize: "0.82rem", color: "#a5b4fc", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                Active Task Timer:
+              </span>
+              <span
+                style={{
+                  fontSize: "0.9rem",
+                  fontWeight: 600,
+                  color: "#f8fafc",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  maxWidth: "400px",
+                }}
+                title={activeTimer.taskTitle}
+              >
+                {activeTimer.taskTitle}
+              </span>
+              {activeTimer.projectName && (
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    padding: "2px 8px",
+                    background: "rgba(99, 102, 241, 0.25)",
+                    border: "1px solid rgba(129, 140, 248, 0.3)",
+                    borderRadius: "4px",
+                    color: "#c7d2fe",
+                  }}
+                >
+                  📁 {activeTimer.projectName}
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+              <div
+                style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  fontSize: "1.05rem",
+                  fontWeight: 700,
+                  color: "#34d399",
+                  background: "rgba(0,0,0,0.35)",
+                  padding: "4px 10px",
+                  borderRadius: "6px",
+                  border: "1px solid rgba(52, 211, 153, 0.3)",
+                  letterSpacing: "1px",
+                }}
+              >
+                ⏱️ {formatTime(elapsedSeconds)}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const stopped = stopTimer();
+                  if (stopped) {
+                    navigate(`/timesheets?autoOpen=true&projectId=${stopped.projectId}&taskId=${stopped.taskId}&seconds=${elapsedSeconds}`);
+                  }
+                }}
+                style={{
+                  background: "#ef4444",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "5px",
+                  padding: "4px 12px",
+                  fontSize: "0.82rem",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  boxShadow: "0 1px 4px rgba(239, 68, 68, 0.4)",
+                }}
+                title="Stop Timer & Log Hours"
+              >
+                ⏹ Stop & Log
+              </button>
+            </div>
+          </div>
+        )}
+
+        <main className="main" style={{ flex: 1, minWidth: 0, padding: "1.5rem 2rem", background: "var(--color-bg)", overflowY: "auto" }}>
+          {children}
+        </main>
+      </div>
     </div>
   );
 }

@@ -16,11 +16,13 @@ import type {
 import { listEmployees, type Employee } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
+import { useTimer } from "../../../app/timer-context";
 import { formatDate, formatDateTime } from "../../../shared/utils/date";
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const { activeTimer, startTimer, stopTimer, formatTime, elapsedSeconds } = useTimer();
   const canManage = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager";
 
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
@@ -43,10 +45,14 @@ export function ProjectDetailPage() {
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dragOverCol, setDragOverCol] = useState<TaskStatus | null>(null);
 
-  // Log Time Modal in Project
+  // Log Time Modal in Project with 3 Modes: duration, range, stopwatch
   const [showTimeModal, setShowTimeModal] = useState(false);
+  const [timeInputMode, setTimeInputMode] = useState<"duration" | "range" | "stopwatch">("duration");
   const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10));
   const [logHours, setLogHours] = useState("");
+  const [logStartTime, setLogStartTime] = useState("09:00");
+  const [logEndTime, setLogEndTime] = useState("17:00");
+  const [logBreakMinutes, setLogBreakMinutes] = useState("60");
   const [logDesc, setLogDesc] = useState("");
   const [logTaskId, setLogTaskId] = useState("");
   const [logBillable, setLogBillable] = useState(true);
@@ -719,6 +725,75 @@ export function ProjectDetailPage() {
                               {task.priority}
                             </span>
                             <div className="flex items-center gap-1">
+                              {/* Live Stopwatch Button (Zoho / Jira style) */}
+                              {activeTimer?.taskId === task.id ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  style={{
+                                    padding: "2px 7px",
+                                    fontSize: "11px",
+                                    fontWeight: 700,
+                                    background: "#fef2f2",
+                                    color: "#dc2626",
+                                    border: "1px solid #fca5a5",
+                                    borderRadius: "4px",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "3px",
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const stopped = stopTimer();
+                                    if (stopped) {
+                                      const hrs = Math.max(0.1, +(elapsedSeconds / 3600).toFixed(2));
+                                      setLogTaskId(task.id);
+                                      setLogHours(hrs.toString());
+                                      setLogDesc(`Worked on: ${task.title}`);
+                                      setTimeInputMode("duration");
+                                      setShowTimeModal(true);
+                                    }
+                                  }}
+                                  title="Stop Timer & Log Time"
+                                >
+                                  <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#dc2626", display: "inline-block", animation: "pulse 1.5s infinite" }} />
+                                  ⏱️ {formatTime(elapsedSeconds)}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-sm"
+                                  style={{
+                                    padding: "2px 6px",
+                                    fontSize: "11px",
+                                    borderRadius: "4px",
+                                    color: "#2563eb",
+                                    background: "#eff6ff",
+                                    border: "1px solid #bfdbfe",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "3px",
+                                    fontWeight: 600,
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!id) return;
+                                    startTimer({
+                                      id: task.id,
+                                      title: task.title,
+                                      projectId: id,
+                                      projectName: summary?.project.name || "Project",
+                                    });
+                                    notify(`Timer started for "${task.title}"`, "info");
+                                  }}
+                                  title="Start Live Stopwatch Timer"
+                                >
+                                  ▶ Start
+                                </button>
+                              )}
+
                               {task.status !== "done" ? (
                                 <button
                                   type="button"
@@ -1649,19 +1724,84 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
+
+            {/* 3 Modes Switcher (Zoho Projects / ClickUp style) */}
+            <div style={{ display: "flex", gap: "6px", background: "#f1f5f9", padding: "4px", borderRadius: "6px", marginBottom: "1rem" }}>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  padding: "6px 8px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  background: timeInputMode === "duration" ? "#fff" : "transparent",
+                  color: timeInputMode === "duration" ? "#2563eb" : "#64748b",
+                  boxShadow: timeInputMode === "duration" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                }}
+                onClick={() => setTimeInputMode("duration")}
+              >
+                🔢 Duration (Hours)
+              </button>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  padding: "6px 8px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  background: timeInputMode === "range" ? "#fff" : "transparent",
+                  color: timeInputMode === "range" ? "#2563eb" : "#64748b",
+                  boxShadow: timeInputMode === "range" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                }}
+                onClick={() => {
+                  setTimeInputMode("range");
+                  // Auto calculate hours from 09:00 to 17:00 minus 60min = 7.00
+                  setLogHours("7.00");
+                }}
+              >
+                🕒 Start / End Time
+              </button>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  padding: "6px 8px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  background: timeInputMode === "stopwatch" ? "#fff" : "transparent",
+                  color: timeInputMode === "stopwatch" ? "#2563eb" : "#64748b",
+                  boxShadow: timeInputMode === "stopwatch" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                }}
+                onClick={() => setTimeInputMode("stopwatch")}
+              >
+                ⏱️ Stopwatch
+              </button>
+            </div>
+
             <form onSubmit={handleLogTime} className="stack gap-4 my-2">
-              <div className="grid-2">
+              <div className="field">
+                <label>Log Date *</label>
+                <input
+                  type="date"
+                  value={logDate}
+                  onChange={(e) => setLogDate(e.target.value)}
+                  required
+                />
+              </div>
+
+              {/* Mode 1: Duration */}
+              {timeInputMode === "duration" && (
                 <div className="field">
-                  <label>Log Date *</label>
-                  <input
-                    type="date"
-                    value={logDate}
-                    onChange={(e) => setLogDate(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="field">
-                  <label>Hours Spent *</label>
+                  <label>Hours Spent * (e.g. 7, 7.5)</label>
                   <input
                     type="number"
                     step="any"
@@ -1673,7 +1813,129 @@ export function ProjectDetailPage() {
                     required
                   />
                 </div>
-              </div>
+              )}
+
+              {/* Mode 2: Start / End Range */}
+              {timeInputMode === "range" && (
+                <div className="stack gap-3" style={{ background: "#f8fafc", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                  <div className="grid-2">
+                    <div className="field">
+                      <label style={{ fontSize: "12px" }}>Start Time</label>
+                      <input
+                        type="time"
+                        value={logStartTime}
+                        onChange={(e) => {
+                          setLogStartTime(e.target.value);
+                          // Calculate diff
+                          const [sh, sm] = e.target.value.split(":").map(Number);
+                          const [eh, em] = logEndTime.split(":").map(Number);
+                          const startM = sh * 60 + sm;
+                          const endM = eh * 60 + em;
+                          const breakM = parseInt(logBreakMinutes) || 0;
+                          const diff = Math.max(0, (endM - startM - breakM) / 60);
+                          setLogHours(diff.toFixed(2));
+                        }}
+                      />
+                    </div>
+                    <div className="field">
+                      <label style={{ fontSize: "12px" }}>End Time</label>
+                      <input
+                        type="time"
+                        value={logEndTime}
+                        onChange={(e) => {
+                          setLogEndTime(e.target.value);
+                          const [sh, sm] = logStartTime.split(":").map(Number);
+                          const [eh, em] = e.target.value.split(":").map(Number);
+                          const startM = sh * 60 + sm;
+                          const endM = eh * 60 + em;
+                          const breakM = parseInt(logBreakMinutes) || 0;
+                          const diff = Math.max(0, (endM - startM - breakM) / 60);
+                          setLogHours(diff.toFixed(2));
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid-2">
+                    <div className="field">
+                      <label style={{ fontSize: "12px" }}>Break Deduction (minutes)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="240"
+                        value={logBreakMinutes}
+                        onChange={(e) => {
+                          setLogBreakMinutes(e.target.value);
+                          const [sh, sm] = logStartTime.split(":").map(Number);
+                          const [eh, em] = logEndTime.split(":").map(Number);
+                          const startM = sh * 60 + sm;
+                          const endM = eh * 60 + em;
+                          const breakM = parseInt(e.target.value) || 0;
+                          const diff = Math.max(0, (endM - startM - breakM) / 60);
+                          setLogHours(diff.toFixed(2));
+                        }}
+                      />
+                    </div>
+                    <div className="field">
+                      <label style={{ fontSize: "12px", fontWeight: 700 }}>Calculated Hours</label>
+                      <input
+                        type="text"
+                        readOnly
+                        value={`${logHours || "0.00"} hrs`}
+                        style={{ background: "#e2e8f0", fontWeight: 700, color: "#1e293b" }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Mode 3: Live Stopwatch */}
+              {timeInputMode === "stopwatch" && (
+                <div className="stack gap-3 text-center" style={{ background: "#0f172a", color: "#fff", padding: "16px", borderRadius: "8px" }}>
+                  <div style={{ fontSize: "12px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "1px" }}>
+                    Live Task Stopwatch
+                  </div>
+                  <div style={{ fontSize: "2rem", fontFamily: "monospace", fontWeight: 800, color: "#34d399", letterSpacing: "2px" }}>
+                    ⏱️ {formatTime(elapsedSeconds)}
+                  </div>
+                  <div className="flex gap-2 justify-center">
+                    {activeTimer ? (
+                      <button
+                        type="button"
+                        style={{ background: "#ef4444", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px", fontWeight: 700, cursor: "pointer" }}
+                        onClick={() => {
+                          const stopped = stopTimer();
+                          if (stopped) {
+                            const hrs = Math.max(0.1, +(elapsedSeconds / 3600).toFixed(2));
+                            setLogHours(hrs.toString());
+                            setTimeInputMode("duration");
+                          }
+                        }}
+                      >
+                        ⏹ Stop & Use {Math.max(0.1, +(elapsedSeconds / 3600).toFixed(2))}h
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        style={{ background: "#10b981", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px", fontWeight: 700, cursor: "pointer" }}
+                        onClick={() => {
+                          if (!id) return;
+                          startTimer({
+                            id: logTaskId || "general",
+                            title: logTaskId ? (tasks.find(t => t.id === logTaskId)?.title || "Task") : `${project.name} General Work`,
+                            projectId: id,
+                            projectName: project.name,
+                          });
+                        }}
+                      >
+                        ▶ Start Timer Now
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+                    Hours Spent: <b>{logHours || "0.00"} hrs</b>
+                  </div>
+                </div>
+              )}
 
               {tasks.length > 0 && (
                 <div className="field">
