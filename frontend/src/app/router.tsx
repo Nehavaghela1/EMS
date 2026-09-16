@@ -115,7 +115,7 @@ export function AppRouter() {
       <Route
         path="/shifts"
         element={
-          <Protected roles={["hr_admin", "super_admin"]}>
+          <Protected roles={["employee", "manager", "hr_admin", "super_admin"]}>
             <ShiftsPage />
           </Protected>
         }

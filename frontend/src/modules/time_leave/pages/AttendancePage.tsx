@@ -13,6 +13,28 @@ import { formatDate } from "../../../shared/utils/date";
 
 const STATUS_OPTIONS: AttendanceStatus[] = ["present", "absent", "half_day", "wfh", "on_leave"];
 
+function formatHoursWorked(a: Attendance): string {
+  if (a.check_in && a.check_out) {
+    const diffMs = new Date(a.check_out).getTime() - new Date(a.check_in).getTime();
+    if (diffMs > 0) {
+      const totalMinutes = Math.floor(diffMs / (1000 * 60));
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    }
+  }
+  if (a.hours_worked) {
+    const val = parseFloat(a.hours_worked);
+    if (!isNaN(val) && val > 0) {
+      const hours = Math.floor(val);
+      const minutes = Math.round((val - hours) * 60);
+      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    }
+  }
+  return "—";
+}
+
+
 /**
  * Page 11 (Spec 14.3): check-in/check-out with today's state visible (via
  * TodayAttendanceCard — the same widget the dashboard uses, Part 2), plus
@@ -157,7 +179,7 @@ export function AttendancePage() {
     { key: "date", label: "Date", render: (a) => formatDate(a.date) },
     { key: "check_in", label: "Check in", render: (a) => (a.check_in ? new Date(a.check_in).toLocaleTimeString() : "—") },
     { key: "check_out", label: "Check out", render: (a) => (a.check_out ? new Date(a.check_out).toLocaleTimeString() : "—") },
-    { key: "hours_worked", label: "Hours", render: (a) => a.hours_worked ?? "—" },
+    { key: "hours_worked", label: "Hours", render: (a) => formatHoursWorked(a) },
     {
       key: "status",
       label: "Status",

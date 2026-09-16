@@ -424,6 +424,16 @@ class ShiftService:
         self.db.commit()
         return assignment
 
+    def get_assigned_shift(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, as_of_date: date | None = None
+    ) -> tuple[EmployeeShift, Shift] | None:
+        target_date = as_of_date or utcnow().date()
+        return self.employee_shift_repo.get_assigned_shift(
+            company_id=company_id,
+            employee_id=employee_id,
+            as_of_date=target_date,
+        )
+
 
 class HolidayService:
     """Routes 55-57 (10.4)."""

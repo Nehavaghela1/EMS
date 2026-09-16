@@ -114,6 +114,18 @@ export async function assignShift(shiftId: string, input: AssignShiftInput): Pro
   return data;
 }
 
+export interface AssignedShiftDetail {
+  shift: Shift;
+  effective_from: string;
+  effective_to: string | null;
+}
+
+export async function getAssignedShift(employeeId: string): Promise<AssignedShiftDetail | null> {
+  const { data } = await apiClient.get<AssignedShiftDetail | null>(`/shifts/assigned/${employeeId}`);
+  return data;
+}
+
+
 // --- Leave types (read-only here — routes 58-60 are page 26's job) --------
 
 export interface LeaveType {

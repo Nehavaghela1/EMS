@@ -23,7 +23,9 @@ import {
   type PayrollItem,
   type SalaryStructureListItem,
 } from "../../payroll/api";
+import { getAssignedShift } from "../../time_leave/api";
 import { apiClient } from "../../../app/api-client";
+
 
 interface InviteState {
   invite?: { sent_to: string; expires_at: string };
@@ -55,6 +57,13 @@ export function EmployeeProfilePage() {
     queryFn: () => getEmployee(id as string),
     enabled: Boolean(id),
   });
+
+  const assignedShiftQuery = useQuery({
+    queryKey: ["shift", "assigned", id],
+    queryFn: () => getAssignedShift(id as string),
+    enabled: Boolean(id),
+  });
+
 
   const invite = resent ?? (location.state as InviteState | null)?.invite;
   const isHr = user?.role === "hr_admin";
@@ -252,10 +261,20 @@ export function EmployeeProfilePage() {
               <Field label="Position / Role" value={e.position ?? "—"} isLocked={true} />
               <Field label="Level" value={e.level ?? "—"} isLocked={true} />
               <Field label="Employment Type" value={e.employment_type.replace("_", " ")} isLocked={true} />
+              <Field
+                label="Assigned Shift"
+                value={
+                  assignedShiftQuery.data?.shift
+                    ? `${assignedShiftQuery.data.shift.name} (${assignedShiftQuery.data.shift.start_time.slice(0, 5)} - ${assignedShiftQuery.data.shift.end_time.slice(0, 5)})`
+                    : "General Shift (09:00 - 18:00)"
+                }
+                isLocked={true}
+              />
               <Field label="Hire Date" value={formatDate(e.hire_date)} isLocked={true} />
               <Field label="Probation End Date" value={e.probation_end_date ? formatDate(e.probation_end_date) : "—"} isLocked={true} />
               <Field label="Notice Period" value={`${e.notice_period_days ?? 30} days`} isLocked={true} />
             </div>
+
           </div>
         </div>
       )}

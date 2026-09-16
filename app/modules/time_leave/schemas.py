@@ -99,6 +99,13 @@ class EmployeeShiftResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AssignedShiftDetailResponse(BaseModel):
+    shift: ShiftResponse
+    effective_from: date
+    effective_to: date | None = None
+
+
+
 # Holidays (routes 55-57)
 class HolidayCreateRequest(BaseModel):
     name: str

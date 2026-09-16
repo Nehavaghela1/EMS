@@ -20,6 +20,7 @@ from app.modules.time_leave.models import (
     Shift,
 )
 from app.modules.time_leave.schemas import (
+    AssignedShiftDetailResponse,
     AttendanceExportRequest,
     AttendanceRegularizeRequest,
     AttendanceResponse,
@@ -230,6 +231,24 @@ def assign_shift(
 ):
     assignment = ShiftService(db).assign_shift(user.company_id, shift_id, data)
     return _to_employee_shift_response(assignment)
+
+
+@shifts_router.get("/assigned/{employee_id}", response_model=AssignedShiftDetailResponse | None)
+def get_assigned_shift(
+    employee_id: uuid.UUID,
+    db=Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    result = ShiftService(db).get_assigned_shift(user.company_id, employee_id)
+    if not result:
+        return None
+    emp_shift, shift = result
+    return AssignedShiftDetailResponse(
+        shift=_to_shift_response(shift),
+        effective_from=emp_shift.effective_from,
+        effective_to=emp_shift.effective_to,
+    )
+
 
 
 # --- Holidays (routes 55-57) ------------------------------------------------

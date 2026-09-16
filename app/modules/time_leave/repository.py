@@ -271,11 +271,42 @@ class EmployeeShiftRepository:
         )
         return list(self.db.scalars(stmt).all())
 
+    def get_assigned_shift(
+        self,
+        *,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        as_of_date: date,
+    ) -> tuple[EmployeeShift, Shift] | None:
+        """Find the active shift assignment for an employee as of a date."""
+        stmt = (
+            select(EmployeeShift, Shift)
+            .join(Shift, EmployeeShift.shift_id == Shift.id)
+            .where(
+                EmployeeShift.company_id == company_id,
+                EmployeeShift.employee_id == employee_id,
+                EmployeeShift.deleted_at.is_(None),
+                Shift.deleted_at.is_(None),
+                EmployeeShift.effective_from <= as_of_date,
+                or_(
+                    EmployeeShift.effective_to.is_(None),
+                    EmployeeShift.effective_to >= as_of_date,
+                ),
+            )
+            .order_by(EmployeeShift.effective_from.desc())
+            .limit(1)
+        )
+        result = self.db.execute(stmt).first()
+        if result:
+            return result[0], result[1]
+        return None
+
     def create(self, **kwargs) -> EmployeeShift:
         employee_shift = EmployeeShift(**kwargs)
         self.db.add(employee_shift)
         self.db.flush()
         return employee_shift
+
 
 
 class HolidayRepository:
