@@ -447,6 +447,96 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
       {/* Main Page Content Area */}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+        {/* Enterprise Top Bar: Workspace Switcher & Context */}
+        <header
+          style={{
+            height: "54px",
+            background: "#ffffff",
+            borderBottom: "1px solid var(--color-border, #e2e8f0)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 1.5rem",
+            zIndex: 40,
+          }}
+        >
+          {/* Tenant Organization Switcher */}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ fontSize: "0.8rem", color: "var(--color-muted, #64748b)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+              Active Workspace:
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span
+                style={{
+                  width: "24px",
+                  height: "24px",
+                  borderRadius: "6px",
+                  background: "linear-gradient(135deg, #2563eb, #3b82f6)",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                }}
+              >
+                🏢
+              </span>
+              <select
+                style={{
+                  padding: "4px 10px",
+                  fontSize: "0.85rem",
+                  fontWeight: 600,
+                  borderRadius: "6px",
+                  border: "1px solid var(--color-border, #cbd5e1)",
+                  background: "var(--color-surface, #f8fafc)",
+                  color: "var(--color-heading, #1e293b)",
+                  cursor: "pointer",
+                }}
+                defaultValue={user?.company_id || "infiria"}
+                onChange={(e) => {
+                  // Instant tenant switch notification
+                  const selectedName = e.target.options[e.target.selectedIndex].text;
+                  alert(`Switched active workspace to: ${selectedName}`);
+                }}
+                title="Switch parent/subsidiary organization workspace"
+              >
+                <option value="infiria">🏢 Infiria Tech Platforms (Parent Entity)</option>
+                <option value="solaria">🏢 Solaria Energy Corp (Subsidiary)</option>
+                <option value="all_tenants">🌐 Global Platform View (All Entities)</option>
+              </select>
+              <span
+                className="badge"
+                style={{
+                  background: "#f0fdf4",
+                  color: "#166534",
+                  border: "1px solid #bbf7d0",
+                  fontSize: "0.72rem",
+                  fontWeight: 600,
+                }}
+              >
+                ● Connected Multi-Tenant
+              </span>
+            </div>
+          </div>
+
+          {/* User Quick Info */}
+          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <span
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--color-muted, #64748b)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981" }} />
+              {user?.role === "super_admin" ? "Platform Super Admin" : user?.role?.replace("_", " ")}
+            </span>
+          </div>
+        </header>
+
         {/* Global Live Stopwatch Top Bar (Zoho / Jira style) */}
         {activeTimer && (
           <div

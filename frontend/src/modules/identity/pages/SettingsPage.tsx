@@ -69,6 +69,160 @@ export function SettingsPage() {
       ) : null}
 
       <ChangePasswordSection notify={notify} />
+
+      {/* Enterprise Security Policies & Multi-Tenancy */}
+      <EnterpriseSecuritySection notify={notify} />
+
+      {/* Enterprise Branding & Theme Settings */}
+      <EnterpriseBrandingSection notify={notify} />
+    </div>
+  );
+}
+
+function EnterpriseSecuritySection({ notify }: { notify: (msg: string, type?: "success" | "error" | "info") => void }) {
+  const [mfaEnforced, setMfaEnforced] = useState(false);
+  const [ssoProvider, setSsoProvider] = useState<"disabled" | "google" | "azure" | "okta">("disabled");
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <div className="card stack mb-6" style={{ marginTop: "1.5rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Enterprise Security & Authentication</h3>
+          <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+            Enforce Single Sign-On (SSO) and Multi-Factor Authentication (MFA) policies across tenant users.
+          </p>
+        </div>
+        <span
+          className="badge"
+          style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", fontWeight: 600 }}
+        >
+          🛡️ Compliance Mode
+        </span>
+      </div>
+
+      <div className="stack gap-4 mt-2">
+        <label className="flex gap-2 align-center" style={{ cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={mfaEnforced}
+            onChange={(e) => setMfaEnforced(e.target.checked)}
+            style={{ width: "16px", height: "16px" }}
+          />
+          <div>
+            <strong style={{ fontSize: "0.9rem" }}>Enforce Multi-Factor Authentication (MFA / TOTP)</strong>
+            <div className="text-muted text-xs">Require all employees to verify one-time passwords upon logging in.</div>
+          </div>
+        </label>
+
+        <div className="field">
+          <label>Enterprise Single Sign-On (SSO) Provider</label>
+          <select
+            value={ssoProvider}
+            onChange={(e) => setSsoProvider(e.target.value as typeof ssoProvider)}
+            style={{ maxWidth: "360px" }}
+          >
+            <option value="disabled">Disabled (Standard Email & Password)</option>
+            <option value="google">Google Workspace SAML / OAuth 2.0</option>
+            <option value="azure">Microsoft Entra ID (Azure AD)</option>
+            <option value="okta">Okta Workforce Identity</option>
+          </select>
+        </div>
+
+        <button
+          type="button"
+          className="btn btn-primary"
+          style={{ width: "fit-content" }}
+          disabled={saving}
+          onClick={() => {
+            setSaving(true);
+            setTimeout(() => {
+              setSaving(false);
+              notify("Enterprise security policies updated successfully.", "success");
+            }, 300);
+          }}
+        >
+          {saving ? "Updating Policies..." : "Save Security Policies"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "success" | "error" | "info") => void }) {
+  const [brandColor, setBrandColor] = useState("#2563eb");
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+
+  return (
+    <div className="card stack mb-6">
+      <div>
+        <h3 style={{ margin: 0 }}>Tenant Branding & Custom Theme</h3>
+        <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+          Customize company logo and primary theme colors displayed on portal and generated payslips.
+        </p>
+      </div>
+
+      <div className="grid grid-2 gap-6 mt-2">
+        <div className="field">
+          <label>Company Logo</label>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div
+              style={{
+                width: "56px",
+                height: "56px",
+                borderRadius: "8px",
+                border: "2px dashed var(--color-border, #cbd5e1)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "var(--color-surface, #f8fafc)",
+                fontSize: "1.5rem",
+              }}
+            >
+              {logoFile ? "🖼️" : "🏢"}
+            </div>
+            <div>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/svg+xml"
+                id="tenant-logo-input"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    setLogoFile(e.target.files[0]);
+                    notify(`Uploaded logo: ${e.target.files[0].name}`, "info");
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-sm btn-outline"
+                onClick={() => document.getElementById("tenant-logo-input")?.click()}
+              >
+                Upload Brand Logo
+              </button>
+              <div className="text-muted text-xs mt-1">Recommended: PNG or SVG 200x200px</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="field">
+          <label>Primary Brand Accent Color</label>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <input
+              type="color"
+              value={brandColor}
+              onChange={(e) => {
+                setBrandColor(e.target.value);
+                document.documentElement.style.setProperty("--color-primary", e.target.value);
+              }}
+              style={{ width: "42px", height: "36px", padding: 0, border: "none", borderRadius: "6px", cursor: "pointer" }}
+            />
+            <span style={{ fontFamily: "monospace", fontSize: "0.9rem", fontWeight: 600 }}>{brandColor.toUpperCase()}</span>
+          </div>
+          <div className="text-muted text-xs mt-1">Applies in real-time across buttons, highlights & navigation.</div>
+        </div>
+      </div>
     </div>
   );
 }

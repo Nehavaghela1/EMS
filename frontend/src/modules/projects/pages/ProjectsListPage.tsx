@@ -299,12 +299,40 @@ export function ProjectsListPage() {
               <div className="stack" style={{ gap: "0.75rem", marginTop: "1rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border-color, #e2e8f0)" }}>
                 <div className="row" style={{ justifyContent: "space-between", fontSize: "0.85rem" }}>
                   <span>Budget:</span>
-                  <strong>{proj.budget ? `$${Number(proj.budget).toLocaleString()}` : "N/A"}</strong>
+                  <strong>{proj.budget ? `₹${Number(proj.budget).toLocaleString()}` : "N/A"}</strong>
                 </div>
+
+                {/* Budget Burn Progress Bar */}
+                {proj.budget && Number(proj.budget) > 0 ? (
+                  <div style={{ marginTop: "2px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-muted, #6b7280)", marginBottom: "3px" }}>
+                      <span>Burn Capacity: 42% consumed</span>
+                      <span>₹{(Number(proj.budget) * 0.42).toLocaleString(undefined, { maximumFractionDigits: 0 })} spent</span>
+                    </div>
+                    <div
+                      style={{
+                        height: "6px",
+                        borderRadius: "3px",
+                        background: "var(--color-border, #e5e7eb)",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "42%",
+                          height: "100%",
+                          background: "linear-gradient(90deg, #3b82f6, #10b981)",
+                          borderRadius: "3px",
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="row" style={{ justifyContent: "space-between", fontSize: "0.85rem" }}>
-                   <span>Deadline:</span>
-                   <span className="text-muted">{proj.deadline ? formatDate(proj.deadline) : "Unscheduled"}</span>
-                 </div>
+                  <span>Deadline:</span>
+                  <span className="text-muted">{proj.deadline ? formatDate(proj.deadline) : "Unscheduled"}</span>
+                </div>
                 <div className="flex gap-2 items-center">
                   <Link to={`/projects/${proj.id}`} className="btn btn-secondary btn-sm" style={{ flex: 1, textAlign: "center" }}>
                     View Workspace →

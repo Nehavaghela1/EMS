@@ -18,6 +18,7 @@ export function PerformanceCyclesPage() {
   const [cycles, setCycles] = useState<PerformanceCycle[]>([]);
   const [loading, setLoading] = useState(true);
   const [report, setReport] = useState<PerformanceReport | null>(null);
+  const [statusFilter, setStatusFilter] = useState<CycleStatus | "all">("all");
 
   // Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -59,6 +60,14 @@ export function PerformanceCyclesPage() {
     e.preventDefault();
     if (!name.trim()) {
       notify("Please enter cycle name", "error");
+      return;
+    }
+    if (selfDeadline && mgrDeadline && new Date(selfDeadline) > new Date(mgrDeadline)) {
+      notify("Self-Review Deadline cannot be set after Manager Review Deadline.", "error");
+      return;
+    }
+    if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
+      notify("Cycle End Date must be after Start Date.", "error");
       return;
     }
     setSubmitting(true);
@@ -121,15 +130,30 @@ export function PerformanceCyclesPage() {
           </div>
 
           <div className="grid grid-3 gap-4">
-            <div className="p-3 bg-white rounded border">
+            <div
+              className="p-3 bg-white rounded border"
+              style={{ cursor: "pointer", transition: "all 0.15s ease" }}
+              onClick={() => setStatusFilter("all")}
+              title="View all cycles"
+            >
               <span className="text-xs text-muted block">Total Headcount</span>
               <strong className="text-xl">{report.total_employees} employees</strong>
             </div>
-            <div className="p-3 bg-white rounded border">
+            <div
+              className="p-3 bg-white rounded border"
+              style={{ cursor: "pointer", transition: "all 0.15s ease" }}
+              onClick={() => setStatusFilter("active")}
+              title="Filter by active cycles"
+            >
               <span className="text-xs text-muted block">Reviews Completed</span>
               <strong className="text-xl text-primary">{report.completed_reviews}</strong>
             </div>
-            <div className="p-3 bg-white rounded border">
+            <div
+              className="p-3 bg-white rounded border"
+              style={{ cursor: "pointer", transition: "all 0.15s ease" }}
+              onClick={() => setStatusFilter("closed")}
+              title="Filter by closed cycles"
+            >
               <span className="text-xs text-muted block">Completion Rate</span>
               <strong className="text-xl text-success">{report.completion_rate_percent}%</strong>
             </div>
@@ -157,7 +181,9 @@ export function PerformanceCyclesPage() {
               </tr>
             </thead>
             <tbody>
-              {cycles.map((c) => (
+              {cycles
+                .filter((c) => statusFilter === "all" || c.status === statusFilter)
+                .map((c) => (
                 <tr key={c.id}>
                   <td className="fw-bold">{c.name}</td>
                   <td>

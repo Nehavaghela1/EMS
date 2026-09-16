@@ -235,12 +235,12 @@ export function EmployeeProfilePage() {
               Basic Information
             </h3>
             <div className="form-grid">
-              <Field label="Full Name" value={`${e.first_name} ${e.last_name || ""}`} />
-              <Field label="Employee Code" value={e.employee_code} />
-              <Field label="Work Email" value={e.email} />
-              <Field label="Personal Email" value={e.personal_email ?? "—"} />
-              <Field label="Phone" value={e.phone ?? "—"} />
-              <Field label="Invitation Status" value={e.invitation_status.replace("_", " ")} />
+              <Field label="Full Name" value={`${e.first_name} ${e.last_name || ""}`} isLocked={true} />
+              <Field label="Employee Code" value={e.employee_code} isLocked={true} />
+              <Field label="Work Email" value={e.email} isLocked={true} />
+              <Field label="Personal Email" value={e.personal_email ?? "—"} isLocked={false} />
+              <Field label="Phone" value={e.phone ?? "—"} isLocked={false} />
+              <Field label="Invitation Status" value={e.invitation_status.replace("_", " ")} isLocked={true} />
             </div>
           </div>
 
@@ -249,12 +249,12 @@ export function EmployeeProfilePage() {
               Employment & Designation
             </h3>
             <div className="form-grid">
-              <Field label="Position / Role" value={e.position ?? "—"} />
-              <Field label="Level" value={e.level ?? "—"} />
-              <Field label="Employment Type" value={e.employment_type.replace("_", " ")} />
-              <Field label="Hire Date" value={formatDate(e.hire_date)} />
-              <Field label="Probation End Date" value={e.probation_end_date ? formatDate(e.probation_end_date) : "—"} />
-              <Field label="Notice Period" value={`${e.notice_period_days ?? 30} days`} />
+              <Field label="Position / Role" value={e.position ?? "—"} isLocked={true} />
+              <Field label="Level" value={e.level ?? "—"} isLocked={true} />
+              <Field label="Employment Type" value={e.employment_type.replace("_", " ")} isLocked={true} />
+              <Field label="Hire Date" value={formatDate(e.hire_date)} isLocked={true} />
+              <Field label="Probation End Date" value={e.probation_end_date ? formatDate(e.probation_end_date) : "—"} isLocked={true} />
+              <Field label="Notice Period" value={`${e.notice_period_days ?? 30} days`} isLocked={true} />
             </div>
           </div>
         </div>
@@ -293,11 +293,57 @@ export function EmployeeProfilePage() {
   );
 }
 
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+function Field({
+  label,
+  value,
+  isLocked,
+}: {
+  label: string;
+  value: React.ReactNode;
+  isLocked?: boolean;
+}) {
   return (
     <div className="field">
-      <label>{label}</label>
-      <div>{value}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+        <label style={{ margin: 0, fontSize: "0.8rem", color: "var(--color-muted, #64748b)" }}>{label}</label>
+        {isLocked ? (
+          <span
+            style={{
+              fontSize: "0.68rem",
+              padding: "1px 6px",
+              borderRadius: "4px",
+              background: "#f1f5f9",
+              color: "#64748b",
+              border: "1px solid #e2e8f0",
+              fontWeight: 500,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "3px",
+            }}
+            title="Managed strictly by HR Admin"
+          >
+            🔒 HR Managed
+          </span>
+        ) : (
+          <span
+            style={{
+              fontSize: "0.68rem",
+              padding: "1px 6px",
+              borderRadius: "4px",
+              background: "#ecfdf5",
+              color: "#059669",
+              border: "1px solid #a7f3d0",
+              fontWeight: 500,
+            }}
+            title="User editable"
+          >
+            ✎ Self Editable
+          </span>
+        )}
+      </div>
+      <div style={{ fontWeight: 600, color: "var(--color-heading, #1e293b)", fontSize: "0.92rem" }}>
+        {value}
+      </div>
     </div>
   );
 }

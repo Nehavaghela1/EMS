@@ -256,13 +256,45 @@ export function PerformanceReviewPage() {
             <form onSubmit={handleSubmitManagerReview} className="stack gap-4 my-2">
               <div className="field">
                 <label>Manager Rating (1.0 to 5.0)</label>
-                <select value={mgrRating} onChange={(e) => setMgrRating(e.target.value)}>
-                  <option value="5.0">5.0 — Outstanding / Exceeds All Expectations</option>
-                  <option value="4.0">4.0 — Exceeds Expectations</option>
-                  <option value="3.0">3.0 — Meets Expectations</option>
-                  <option value="2.0">2.0 — Needs Improvement</option>
-                  <option value="1.0">1.0 — Unsatisfactory</option>
-                </select>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", margin: "6px 0" }}>
+                  {[1, 2, 3, 4, 5].map((star) => {
+                    const currentVal = parseFloat(mgrRating) || 0;
+                    const isFilled = star <= currentVal;
+                    return (
+                      <button
+                        key={star}
+                        type="button"
+                        onClick={() => setMgrRating(`${star}.0`)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: "1.75rem",
+                          lineHeight: 1,
+                          padding: "2px",
+                          color: isFilled ? "#eab308" : "#d1d5db",
+                          transition: "transform 0.1s ease, color 0.1s ease",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.2)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+                        title={`${star}.0 Stars`}
+                      >
+                        ★
+                      </button>
+                    );
+                  })}
+                  <span style={{ marginLeft: "10px", fontWeight: 600, fontSize: "0.95rem", color: "var(--color-heading, #111827)" }}>
+                    {mgrRating === "5.0"
+                      ? "5.0 — Outstanding / Exceeds Expectations"
+                      : mgrRating === "4.0"
+                      ? "4.0 — Exceeds Expectations"
+                      : mgrRating === "3.0"
+                      ? "3.0 — Meets Expectations"
+                      : mgrRating === "2.0"
+                      ? "2.0 — Needs Improvement"
+                      : "1.0 — Unsatisfactory"}
+                  </span>
+                </div>
               </div>
 
               <div className="field">

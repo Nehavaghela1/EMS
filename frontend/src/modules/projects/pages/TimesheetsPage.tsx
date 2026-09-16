@@ -195,6 +195,31 @@ export function TimesheetsPage() {
             <h3>Log Time Worked</h3>
             <p className="text-muted text-xs mb-4">Record hours spent on assigned projects and tasks</p>
 
+            {/* Quick Actions & 3 Modes Switcher */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
+              <button
+                type="button"
+                className="btn btn-xs btn-outline"
+                style={{ fontSize: "0.75rem", padding: "3px 8px" }}
+                onClick={() => {
+                  if (entries.length > 0) {
+                    const last = entries[0];
+                    setSelectedProjectId(last.project_id);
+                    setSelectedTaskId(last.task_id || "");
+                    setHours(last.hours ? String(last.hours) : "4");
+                    setDescription(last.description || "Recurring project sprint work");
+                    setIsBillable(last.is_billable);
+                    notify("Copied previous time entry details!", "info");
+                  } else {
+                    notify("No previous entries found to copy.", "warning");
+                  }
+                }}
+                title="Copy details from your recent timesheet entry"
+              >
+                📋 Copy Recent Entry
+              </button>
+            </div>
+
             {/* 3 Modes Switcher (Zoho Projects / ClickUp style) */}
             <div style={{ display: "flex", gap: "6px", background: "#f1f5f9", padding: "4px", borderRadius: "6px", marginBottom: "1rem" }}>
               <button
@@ -537,7 +562,29 @@ export function TimesheetsPage() {
               <h3 className="mb-0">Manager Approval Queue</h3>
               <span className="text-xs text-muted">Review, approve, or reject team member timesheet submissions</span>
             </div>
-            <span className="text-xs text-muted">{pendingEntries.length} pending requests</span>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span className="text-xs text-muted">{pendingEntries.length} pending requests</span>
+              {pendingEntries.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-success"
+                  onClick={async () => {
+                    try {
+                      for (const p of pendingEntries) {
+                        await approveRejectTimeEntry(p.id, "approved");
+                      }
+                      notify(`Batch approved ${pendingEntries.length} timesheet entries!`, "success");
+                      loadData();
+                    } catch {
+                      notify("Failed during batch approval", "error");
+                    }
+                  }}
+                  title="1-Click Approve all pending timesheet submissions"
+                >
+                  ⚡ Batch Approve All ({pendingEntries.length})
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="table-wrap">

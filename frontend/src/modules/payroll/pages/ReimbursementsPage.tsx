@@ -27,6 +27,8 @@ export function ReimbursementsPage() {
   const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split("T")[0]);
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Review Modal state
   const [selectedClaim, setSelectedClaim] = useState<Reimbursement | null>(null);
@@ -256,6 +258,79 @@ export function ReimbursementsPage() {
                   placeholder="Explain the expense details..."
                   required
                 />
+              </div>
+
+              {/* Receipt Drag & Drop Zone */}
+              <div className="field">
+                <label>Receipt / Invoice Attachment (PDF / PNG / JPG)</label>
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragging(false);
+                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                      setReceiptFile(e.dataTransfer.files[0]);
+                    }
+                  }}
+                  style={{
+                    border: `2px dashed ${isDragging ? "var(--color-primary, #2563eb)" : "var(--color-border, #d1d5db)"}`,
+                    borderRadius: "8px",
+                    padding: "1.25rem",
+                    textAlign: "center",
+                    backgroundColor: isDragging ? "rgba(37, 99, 235, 0.04)" : "var(--color-surface, #f9fafb)",
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                  onClick={() => document.getElementById("receipt-file-input")?.click()}
+                >
+                  <input
+                    id="receipt-file-input"
+                    type="file"
+                    accept=".pdf,image/png,image/jpeg,image/jpg"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setReceiptFile(e.target.files[0]);
+                      }
+                    }}
+                  />
+                  {receiptFile ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "1.25rem" }}>📄</span>
+                      <div style={{ textAlign: "left" }}>
+                        <div style={{ fontWeight: 600, fontSize: "0.875rem" }}>{receiptFile.name}</div>
+                        <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)" }}>
+                          {(receiptFile.size / 1024).toFixed(1)} KB
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-xs btn-ghost"
+                        style={{ marginLeft: "8px", color: "#dc2626" }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReceiptFile(null);
+                        }}
+                      >
+                        ✕ Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: "1.5rem", marginBottom: "4px" }}>📎</div>
+                      <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>
+                        Drag & drop receipt here, or <span style={{ color: "var(--color-primary, #2563eb)" }}>browse files</span>
+                      </div>
+                      <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", marginTop: "2px" }}>
+                        Supports PDF, PNG, JPG up to 10MB
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex gap-2 justify-end mt-4">

@@ -888,22 +888,64 @@ export function ProjectDetailPage() {
                             ) : null}
                           </div>
 
-                          {/* Card Assignee Footer */}
-                          <div className="flex items-center justify-between pt-2 mt-1" style={{ borderTop: "1px solid #f1f5f9", fontSize: "0.78rem" }}>
-                            {task.assigned_to_name ? (
-                              <span className="badge" style={{ background: "#eff6ff", color: "#1d4ed8", display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 6px", fontWeight: 600 }}>
-                                <span style={{ width: "16px", height: "16px", borderRadius: "50%", background: "#2563eb", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: "9px", fontWeight: 700 }}>
-                                  {task.assigned_to_name.charAt(0).toUpperCase()}
-                                </span>
-                                {task.assigned_to_name}
+                          {/* Card Assignee Footer with Avatar & Inline Reassignment */}
+                          <div
+                            className="flex items-center justify-between pt-2 mt-1"
+                            style={{ borderTop: "1px solid #f1f5f9", fontSize: "0.78rem" }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                              <span
+                                style={{
+                                  width: "20px",
+                                  height: "20px",
+                                  borderRadius: "50%",
+                                  background: task.assigned_to_name ? "#2563eb" : "#94a3b8",
+                                  color: "#fff",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: "10px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {task.assigned_to_name ? task.assigned_to_name.charAt(0).toUpperCase() : "?"}
                               </span>
-                            ) : (
-                              <span className="text-muted text-xs" style={{ fontStyle: "italic" }}>
-                                Unassigned
-                              </span>
-                            )}
+                              <select
+                                value={task.assigned_to || ""}
+                                onChange={async (e) => {
+                                  const newAssigneeId = e.target.value || null;
+                                  try {
+                                    await updateTask(task.id, { assigned_to: newAssigneeId || undefined });
+                                    notify("Task assignee updated", "success");
+                                    loadData();
+                                  } catch {
+                                    notify("Failed to reassign task", "error");
+                                  }
+                                }}
+                                style={{
+                                  padding: "2px 6px",
+                                  fontSize: "0.75rem",
+                                  borderRadius: "4px",
+                                  border: "1px solid #e2e8f0",
+                                  background: "transparent",
+                                  color: task.assigned_to ? "var(--color-primary, #2563eb)" : "var(--color-muted, #64748b)",
+                                  fontWeight: 500,
+                                  cursor: "pointer",
+                                  maxWidth: "150px",
+                                }}
+                                title="Reassign task to team member"
+                              >
+                                <option value="">Unassigned</option>
+                                {members.map((m) => (
+                                  <option key={m.employee_id} value={m.employee_id}>
+                                    {m.employee_name || "Team Member"}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                             {task.assigned_to_designation && (
-                              <span className="text-muted text-xs" style={{ maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              <span className="text-muted text-xs" style={{ maxWidth: "110px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                 {task.assigned_to_designation}
                               </span>
                             )}

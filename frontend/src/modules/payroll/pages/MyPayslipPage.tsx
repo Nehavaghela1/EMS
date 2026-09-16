@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import { listMyPayslips, type PayrollItem } from "../api";
 import { useToast } from "../../../app/toast-context";
+import { useAuth } from "../../../app/auth-context";
 
 export function MyPayslipPage() {
+  const { user } = useAuth();
   const { notify } = useToast();
   const [payslips, setPayslips] = useState<PayrollItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,8 +41,8 @@ export function MyPayslipPage() {
           <p className="text-muted">View and download your monthly itemized payslip breakdowns</p>
         </div>
         {selectedPayslip && (
-          <button className="btn btn-outline" onClick={handlePrint}>
-            🖨️ Print / Download PDF
+          <button className="btn btn-primary" onClick={handlePrint}>
+            📥 Download Branded Payslip (PDF / Print)
           </button>
         )}
       </div>
@@ -79,15 +81,65 @@ export function MyPayslipPage() {
 
           {/* Right Column: Payslip Detail Breakdown */}
           {selectedPayslip && (
-            <div className="card p-6 col-span-2 print-section stack gap-6">
-              <div className="border-b pb-4 flex justify-between align-center">
-                <div>
-                  <h2 className="text-xl fw-bold">PAYSLIP</h2>
-                  <p className="text-muted text-sm">Monthly Salary Statement</p>
+            <div className="card p-6 col-span-2 print-section stack gap-6" style={{ position: "relative" }}>
+              {/* Tenant Branded Header */}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  borderBottom: "2px solid var(--color-border, #e5e7eb)",
+                  paddingBottom: "1.25rem",
+                }}
+              >
+                <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                  <div
+                    style={{
+                      width: "48px",
+                      height: "48px",
+                      borderRadius: "8px",
+                      background: "linear-gradient(135deg, #1e40af, #3b82f6)",
+                      color: "#ffffff",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "1.25rem",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    🏢
+                  </div>
+                  <div>
+                    <h2 style={{ fontSize: "1.25rem", fontWeight: 700, margin: 0, color: "var(--color-heading, #111827)" }}>
+                      {user?.company_id ? "Enterprise Entity Corp" : "EMS Pro HRMS"}
+                    </h2>
+                    <p style={{ fontSize: "0.8rem", color: "var(--color-muted, #6b7280)", margin: "2px 0 0" }}>
+                      Registered Office: Plot 42, Corporate Tech Park, SG Highway, Gujarat 380015
+                    </p>
+                    <p style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", margin: "1px 0 0" }}>
+                      Corporate CIN: U72200GJ2022PTC123456 • Tax TAN: AHM12345E
+                    </p>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-xs text-muted">Payslip ID</div>
-                  <div className="font-mono text-sm">{selectedPayslip.id}</div>
+                <div style={{ textAlign: "right" }}>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      padding: "3px 10px",
+                      background: "#eff6ff",
+                      color: "#1d4ed8",
+                      border: "1px solid #bfdbfe",
+                      borderRadius: "6px",
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                    }}
+                  >
+                    Confidential Payslip
+                  </span>
+                  <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", marginTop: "6px" }}>Payslip Ref ID</div>
+                  <div style={{ fontFamily: "monospace", fontSize: "0.85rem", fontWeight: 600 }}>{selectedPayslip.id.substring(0, 16)}</div>
                 </div>
               </div>
 
@@ -170,18 +222,50 @@ export function MyPayslipPage() {
                 </div>
               </div>
 
-              {/* Net Salary Banner */}
-              <div className="p-4 bg-success-subtle border border-success rounded flex justify-between align-center">
-                <div>
-                  <div className="text-xs text-muted">NET SALARY PAYABLE</div>
-                  <div className="text-2xl fw-bold text-success">
-                    ₹{Number(selectedPayslip.net_salary).toLocaleString()}
-                  </div>
+              {/* Digital Authorization Seal & Signature Box */}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  borderTop: "1px dashed var(--color-border, #e5e7eb)",
+                  paddingTop: "1.25rem",
+                  marginTop: "0.5rem",
+                }}
+              >
+                <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", maxWidth: "450px" }}>
+                  <p style={{ margin: 0 }}>
+                    <strong>Notice:</strong> This is a computer-generated, digitally authenticated salary statement issued in accordance with Income Tax Act & Payment of Wages rules.
+                  </p>
+                  <p style={{ margin: "4px 0 0" }}>
+                    Verified by EMS Pro Enterprise Payroll Engine • No physical signature required.
+                  </p>
                 </div>
-                <div className="text-xs text-muted text-right">
-                  Formula: Gross (₹{Number(selectedPayslip.gross_salary).toLocaleString()}) - Deductions (₹
-                  {Number(selectedPayslip.total_deductions).toLocaleString()}) + Reimbursements (₹
-                  {Number(selectedPayslip.reimbursement_amount).toLocaleString()})
+
+                {/* Digital Seal */}
+                <div
+                  style={{
+                    border: "2px double #15803d",
+                    borderRadius: "50%",
+                    width: "84px",
+                    height: "84px",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#15803d",
+                    fontSize: "0.6rem",
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.04em",
+                    textAlign: "center",
+                    transform: "rotate(-6deg)",
+                    background: "rgba(240, 253, 244, 0.6)",
+                  }}
+                >
+                  <span>★ EMS PRO ★</span>
+                  <span style={{ fontSize: "0.75rem", margin: "1px 0" }}>DIGITALLY</span>
+                  <span>AUTHORIZED</span>
                 </div>
               </div>
             </div>

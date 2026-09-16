@@ -338,6 +338,45 @@ export function PayrollSetupPage() {
             <p>Loading statutory configuration...</p>
           ) : (
             <form onSubmit={handleSaveStatutory} className="stack gap-4">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: "12px",
+                  padding: "12px 16px",
+                  background: "var(--color-surface, #f8fafc)",
+                  borderRadius: "8px",
+                  border: "1px solid var(--color-border, #e2e8f0)",
+                }}
+              >
+                <div>
+                  <strong style={{ fontSize: "0.95rem" }}>Auto-Localize Statutory Configuration</strong>
+                  <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+                    Instantly load verified legal statutory rates (EPF 12%, ESI 0.75%, PT slabs) tailored to your registered jurisdiction.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  onClick={() => {
+                    setStatConfig({
+                      ...statConfig,
+                      pf_enabled: true,
+                      pf_restrict_to_ceiling: true,
+                      esi_enabled: true,
+                      pt_state: "Gujarat",
+                      default_tax_regime: "new",
+                    });
+                    notify("Auto-populated regional statutory defaults (India / Gujarat: EPF + ESI + PT)", "success");
+                  }}
+                  title="Auto-fill verified regional slabs"
+                >
+                  ⚡ Auto-Populate Regional Slabs
+                </button>
+              </div>
+
               <h3>EPF Settings (Employee Provident Fund)</h3>
               <div className="flex gap-4 align-center">
                 <label className="flex gap-2 align-center">

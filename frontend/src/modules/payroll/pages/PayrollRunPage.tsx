@@ -157,17 +157,54 @@ export function PayrollRunPage() {
                     <span className="badge badge-outline">{r.run_type}</span>
                   </td>
                   <td>
-                    <span
-                      className={`badge ${
-                        r.status === "approved"
-                          ? "badge-success"
-                          : r.status === "processing"
-                          ? "badge-warning"
-                          : "badge-muted"
-                      }`}
-                    >
-                      {r.status}
-                    </span>
+                    {r.status === "approved" ? (
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor: "#dcfce7",
+                          color: "#15803d",
+                          border: "1px solid #bbf7d0",
+                          fontWeight: 600,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        ● Paid / Approved
+                      </span>
+                    ) : r.status === "processing" ? (
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor: "#fef3c7",
+                          color: "#b45309",
+                          border: "1px solid #fde68a",
+                          fontWeight: 600,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        ⏳ Processing / Draft
+                      </span>
+                    ) : r.status === "failed" ? (
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor: "#fee2e2",
+                          color: "#b91c1c",
+                          border: "1px solid #fecaca",
+                          fontWeight: 600,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        ✕ Failed
+                      </span>
+                    ) : (
+                      <span className="badge badge-muted">{r.status}</span>
+                    )}
                   </td>
                   <td>{r.total_employees ?? "—"}</td>
                   <td>₹{r.total_gross ? Number(r.total_gross).toLocaleString() : "0.00"}</td>
@@ -297,6 +334,41 @@ export function PayrollRunPage() {
                 </p>
               </div>
               <div className="flex align-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={() => {
+                    if (!selectedRunDetail) return;
+                    const headers = ["Employee ID", "Employee Name", "CTC Snapshot", "Gross Salary", "Deductions", "Reimbursements", "Net Salary"];
+                    const rows = selectedRunDetail.items.map((it) => {
+                      const emp = employeeMap.get(it.employee_id);
+                      const name = emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : it.employee_id;
+                      return [
+                        it.employee_id,
+                        `"${name.replace(/"/g, '""')}"`,
+                        it.ctc_snapshot,
+                        it.gross_salary,
+                        it.total_deductions,
+                        it.reimbursement_amount,
+                        it.net_salary,
+                      ].join(",");
+                    });
+                    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
+                    const encodedUri = encodeURI(csvContent);
+                    const link = document.createElement("a");
+                    link.setAttribute("href", encodedUri);
+                    link.setAttribute(
+                      "download",
+                      `Reconciliation_Summary_${MONTH_NAMES[selectedRunDetail.run.month - 1]}_${selectedRunDetail.run.year}.csv`
+                    );
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                  }}
+                  title="Export reconciliation report for accounting"
+                >
+                  📥 Download Reconciliation (CSV)
+                </button>
                 {selectedRunDetail.run.status !== "approved" && (
                   <button
                     className="btn btn-success"
