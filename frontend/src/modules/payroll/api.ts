@@ -288,6 +288,11 @@ export async function approvePayrollRun(id: string): Promise<PayrollRun> {
   return res.data;
 }
 
+export async function deletePayrollRun(id: string): Promise<void> {
+  await apiClient.delete(`/payroll/runs/${id}`);
+}
+
+
 // 4. Payslips & Reimbursements
 export async function listMyPayslips(): Promise<PayrollItem[]> {
   const res = await apiClient.get<PayrollItem[]>("/payroll/payslips/me");

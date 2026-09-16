@@ -357,6 +357,17 @@ def approve_payroll_run(
     return PayrollRunResponse.model_validate(run)
 
 
+@payroll_runs_router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_payroll_run(
+    id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+):
+    service = PayrollRunService(db)
+    service.delete_run(user.company_id, id, user)
+
+
+
 # --- Routes 95-96: payslips -----------------------------------------------
 
 payslips_router = APIRouter(prefix="/payroll/payslips", tags=["Payroll — Payslips"])

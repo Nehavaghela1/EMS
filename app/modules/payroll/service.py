@@ -712,6 +712,10 @@ class PayrollRunService:
         pt_state = statutory_config.pt_state or "Gujarat"
         run_date = date(data.year, data.month, 1)
         db_pt_slabs = self.pt_repo.list_for_state(pt_state, on_date=run_date)
+        if not db_pt_slabs:
+            db_pt_slabs = self.pt_repo.list_for_state(pt_state, on_date=None)
+        if not db_pt_slabs and pt_state != "Gujarat":
+            db_pt_slabs = self.pt_repo.list_for_state("Gujarat", on_date=None)
         pt_spec_list = [
             PTSlabSpec(
                 state=s.state,
@@ -723,6 +727,7 @@ class PayrollRunService:
             )
             for s in db_pt_slabs
         ]
+
 
         # Financial year key (April to March)
         if data.month >= 4:
@@ -954,8 +959,45 @@ class PayrollRunService:
         self.db.commit()
         return run
 
+    def delete_run(
+        self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User
+    ) -> None:
+        """Delete/cancel a payroll run. Allowed only if status in ('draft', 'processing', 'pending_approval') and not 'approved'/'paid'."""
+        run = self.repo.get_by_id(run_id, company_id)
+        if run is None:
+            raise NotFoundError("Payroll run not found.")
+
+        if run.status in (PayrollRunStatus.approved, PayrollRunStatus.paid):
+            raise ConflictError(
+                f"Cannot delete a payroll run with status '{run.status.value}'. Only draft/unapproved runs can be deleted."
+            )
+
+        # Unlink any reimbursements that were marked as paid for this run
+        from sqlalchemy import update
+        self.db.execute(
+            update(Reimbursement)
+            .where(
+                Reimbursement.company_id == company_id,
+                Reimbursement.added_to_payroll_run_id == run.id,
+            )
+            .values(added_to_payroll_run_id=None, status=ReimbursementStatus.approved)
+        )
+
+        # Delete the run (cascade deletes payroll items)
+        self.repo.delete(run)
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PAYROLL_RUN_DELETED",
+            entity_type="payroll_run",
+            entity_id=run_id,
+            details={"month": run.month, "year": run.year, "status": run.status.value},
+        )
+        self.db.commit()
+
 
 class ReimbursementService:
+
     """Routes 97-99 (Spec 10.6)."""
 
     def __init__(self, db: Session):

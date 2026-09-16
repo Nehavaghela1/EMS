@@ -312,6 +312,11 @@ class PayrollRunRepository:
         self.db.flush()
         return run
 
+    def delete(self, run: PayrollRun) -> None:
+        self.db.delete(run)
+        self.db.flush()
+
+
 
 class PayrollItemRepository:
     def __init__(self, db: Session):

@@ -228,3 +228,71 @@ def test_duplicate_regular_run_prevention(client: TestClient, company_a: TenantC
         headers={**company_a.hr_headers, "Idempotency-Key": f"reg2-{uuid.uuid4()}"},
     )
     assert res2.status_code == 409
+
+
+def test_delete_draft_payroll_run(client: TestClient, db: Session, company_a: TenantContext):
+    emp = _create_employee(db, company_a.company_id, f"draft-del-{uuid.uuid4().hex[:6]}@example.com")
+    struct_id = _setup_salary_structure(client, company_a)
+    assign_res = client.post(
+        f"/api/v1/payroll/employees/{emp.id}/assign",
+        json={"structure_id": struct_id, "ctc": "600000.00", "effective_from": "2026-01-01"},
+        headers=company_a.hr_headers,
+    )
+    assert assign_res.status_code == 201
+
+    # Create run for Month 8 / Year 2026
+    run_res = client.post(
+        "/api/v1/payroll/runs",
+        json={"month": 8, "year": 2026, "run_type": "regular"},
+        headers={**company_a.hr_headers, "Idempotency-Key": f"draft-del-{uuid.uuid4()}"},
+    )
+    assert run_res.status_code == 202
+    run_id = run_res.json()["id"]
+
+    # Verify run exists and has EPF / PT deductions calculated
+    detail_res = client.get(f"/api/v1/payroll/runs/{run_id}", headers=company_a.hr_headers)
+    assert detail_res.status_code == 200
+    items = detail_res.json()["items"]
+    assert len(items) == 1
+    deductions = items[0]["deductions_json"]
+    deduction_codes = [d["code"] for d in deductions]
+    assert "EPF_EE" in deduction_codes
+    assert "PT" in deduction_codes
+
+    # Delete draft run -> 204 No Content
+    del_res = client.delete(f"/api/v1/payroll/runs/{run_id}", headers=company_a.hr_headers)
+    assert del_res.status_code == 204
+
+    # Run should now be deleted -> 404
+    get_res = client.get(f"/api/v1/payroll/runs/{run_id}", headers=company_a.hr_headers)
+    assert get_res.status_code == 404
+
+
+def test_cannot_delete_approved_payroll_run(client: TestClient, db: Session, company_a: TenantContext):
+    emp = _create_employee(db, company_a.company_id, f"appr-del-{uuid.uuid4().hex[:6]}@example.com")
+    struct_id = _setup_salary_structure(client, company_a)
+    assign_res = client.post(
+        f"/api/v1/payroll/employees/{emp.id}/assign",
+        json={"structure_id": struct_id, "ctc": "600000.00", "effective_from": "2026-01-01"},
+        headers=company_a.hr_headers,
+    )
+    assert assign_res.status_code == 201
+
+    # Create run for Month 9 / Year 2026
+    run_res = client.post(
+        "/api/v1/payroll/runs",
+        json={"month": 9, "year": 2026, "run_type": "regular"},
+        headers={**company_a.hr_headers, "Idempotency-Key": f"appr-del-{uuid.uuid4()}"},
+    )
+    assert run_res.status_code == 202
+    run_id = run_res.json()["id"]
+
+    # Approve run
+    approve_res = client.post(f"/api/v1/payroll/runs/{run_id}/approve", headers=company_a.hr_headers)
+    assert approve_res.status_code == 200
+
+    # Attempt delete on approved run -> 409 Conflict
+    del_res = client.delete(f"/api/v1/payroll/runs/{run_id}", headers=company_a.hr_headers)
+    assert del_res.status_code == 409
+
+

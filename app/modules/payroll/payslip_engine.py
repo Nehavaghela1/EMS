@@ -129,11 +129,14 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
             assert c.value is not None
             val = _round(monthly_ctc * c.value / Decimal("100"))
             full_earnings[c.code] = val
-            if c.code == BASIC_CODE:
+            if c.code.upper() in ("BASIC", "BASIC_PAY", "BASIC_SALARY") or "BASIC" in c.name.upper():
                 basic_full = val
         elif c.calculation_type == "fixed":
             assert c.value is not None
             full_earnings[c.code] = _round(c.value)
+            if c.code.upper() in ("BASIC", "BASIC_PAY", "BASIC_SALARY") or "BASIC" in c.name.upper():
+                basic_full = full_earnings[c.code]
+
 
     # Second pass: Percentage of BASIC components
     for c in earning_specs_sorted:
@@ -197,10 +200,18 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
     deduction_lines: list[LineItem] = []
     employer_lines: list[LineItem] = []
 
-    earned_basic = earned_earnings.get(BASIC_CODE, Decimal("0.00"))
+    earned_basic = earned_earnings.get(BASIC_CODE)
+    if earned_basic is None:
+        for c in earning_specs_sorted:
+            if c.code.upper() in ("BASIC", "BASIC_PAY", "BASIC_SALARY") or "BASIC" in c.name.upper():
+                earned_basic = earned_earnings.get(c.code)
+                break
+    if earned_basic is None:
+        earned_basic = Decimal("0.00")
 
-    # EPF Calculation
+    # EPF Calculation (12% of Basic Pay, capped at statutory ceiling if checked)
     if data.statutory.pf_enabled and earned_basic > 0:
+
         pf_wage = (
             min(earned_basic, data.statutory.pf_wage_ceiling)
             if data.statutory.pf_restrict_to_ceiling

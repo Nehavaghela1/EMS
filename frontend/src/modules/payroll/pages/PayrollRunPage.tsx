@@ -4,12 +4,15 @@ import {
   createPayrollRun,
   getPayrollRunDetail,
   approvePayrollRun,
+  deletePayrollRun,
   type PayrollRun,
   type PayrollRunDetail,
 } from "../api";
 import { listEmployees, type Employee } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
 import { parseApiError } from "../../../shared/api/errors";
+import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
+
 
 export function PayrollRunPage() {
   const { notify } = useToast();
@@ -110,6 +113,26 @@ export function PayrollRunPage() {
       setApproving(false);
     }
   }
+
+  // Delete Draft Run
+  const [runToDelete, setRunToDelete] = useState<PayrollRun | null>(null);
+  const [deletingRun, setDeletingRun] = useState(false);
+
+  async function handleDeleteRun() {
+    if (!runToDelete) return;
+    setDeletingRun(true);
+    try {
+      await deletePayrollRun(runToDelete.id);
+      notify("Draft payroll run cancelled and deleted.", "success");
+      setRunToDelete(null);
+      fetchRuns();
+    } catch (err) {
+      notify(parseApiError(err).message || "Failed to delete payroll run", "error");
+    } finally {
+      setDeletingRun(false);
+    }
+  }
+
 
   const MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
@@ -213,11 +236,35 @@ export function PayrollRunPage() {
                     ₹{r.total_net ? Number(r.total_net).toLocaleString() : "0.00"}
                   </td>
                   <td>
-                    <button className="btn btn-sm btn-outline" onClick={() => handleViewDetail(r.id)}>
-                      View Details
-                    </button>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <button className="btn btn-sm btn-outline" onClick={() => handleViewDetail(r.id)}>
+                        View Details
+                      </button>
+                      {(r.status === "draft" || r.status === "processing" || r.status === "pending_approval") && (
+                        <button
+                          className="btn btn-sm btn-danger"
+                          onClick={() => setRunToDelete(r)}
+                          title="Delete / Cancel Draft Run"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            padding: "4px 8px",
+                          }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                            <line x1="10" y1="11" x2="10" y2="17" />
+                            <line x1="14" y1="11" x2="14" y2="17" />
+                          </svg>
+                          <span>Delete Draft</span>
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
+
               ))}
             </tbody>
           </table>
@@ -447,6 +494,23 @@ export function PayrollRunPage() {
           </div>
         </div>
       )}
+
+      {/* Confirmation Dialog: Delete Draft Run */}
+      <ConfirmDialog
+        open={Boolean(runToDelete)}
+        title="Cancel and Delete Draft Payroll Run?"
+        message={
+          runToDelete
+            ? `Are you sure you want to cancel the ${MONTH_NAMES[runToDelete.month - 1]} ${runToDelete.year} draft run? All draft calculations and payslip previews for this period will be deleted.`
+            : ""
+        }
+        confirmLabel="Delete Draft"
+        danger
+        busy={deletingRun}
+        onConfirm={handleDeleteRun}
+        onCancel={() => setRunToDelete(null)}
+      />
     </div>
   );
 }
+
