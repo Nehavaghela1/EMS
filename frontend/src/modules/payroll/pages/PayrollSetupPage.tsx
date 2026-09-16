@@ -25,9 +25,10 @@ const SUPPORTED_COUNTRIES = [
 ];
 
 const SUPPORTED_LEVELS = [
+  { code: "ALL", label: "All Levels" },
   { code: "L1", label: "L1 — Junior / Entry Level" },
-  { code: "L2", label: "L2 — Mid Level / Senior" },
-  { code: "L3", label: "L3 — Lead / Executive" },
+  { code: "L2", label: "L2 — Mid Level" },
+  { code: "L3", label: "L3 — Lead / Senior / Executive" },
 ];
 
 export function PayrollSetupPage() {
@@ -152,15 +153,26 @@ export function PayrollSetupPage() {
       return;
     }
 
-    // Validate percentage-based CTC components
-    let totalDirectCtc = 0;
+    // Validate total percentage-based CTC allocation (direct + derived from Basic)
+    const basicComp = components.find((c) => c.code === "BASIC");
+    const basicVal = basicComp && basicComp.calculation_type === "percentage" && basicComp.percentage_of === "ctc"
+      ? Number(basicComp.value) || 0
+      : 0;
+
+    let directCtcPercent = 0;
+    let basicDerivedCtcPercent = 0;
     for (const c of components) {
-      if (c.calculation_type === "percentage" && c.percentage_of === "ctc") {
-        totalDirectCtc += Number(c.value) || 0;
+      if (c.calculation_type === "percentage") {
+        if (c.percentage_of === "ctc") {
+          directCtcPercent += Number(c.value) || 0;
+        } else if (c.percentage_of === "basic") {
+          basicDerivedCtcPercent += ((Number(c.value) || 0) * basicVal) / 100;
+        }
       }
     }
-    if (totalDirectCtc > 100) {
-      notify(`Percentage of CTC components sum to ${totalDirectCtc}%, which exceeds 100%. Please adjust.`, "error");
+    const totalAllocated = directCtcPercent + basicDerivedCtcPercent;
+    if (totalAllocated > 100) {
+      notify(`Total salary allocation is ${totalAllocated.toFixed(1)}% of CTC, which exceeds 100%. Please adjust percentages.`, "error");
       return;
     }
 

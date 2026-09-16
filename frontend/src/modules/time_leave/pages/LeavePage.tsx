@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
@@ -69,13 +69,43 @@ export function LeavePage() {
     enabled: Boolean(user?.employee),
   });
 
+  const [searchParams, setSearchParams] = useSearchParams();
+  const employeeIdParam = searchParams.get("employee_id");
+  const employeeNameParam = searchParams.get("employee_name");
+
+  const [filterEmployee, setFilterEmployee] = useState<{ id: string; name: string } | null>(
+    employeeIdParam ? { id: employeeIdParam, name: employeeNameParam || "Selected Employee" } : null
+  );
+
   const [statusFilter, setStatusFilter] = useState<LeaveStatus | "">("");
   const { page, limit, setPage } = usePagination();
   const leavesQuery = useQuery({
-    queryKey: ["leaves", { status: statusFilter, page, limit }],
-    queryFn: () => listLeaves({ status: statusFilter || undefined, page, limit }),
+    queryKey: ["leaves", { status: statusFilter, employee_id: filterEmployee?.id, page, limit }],
+    queryFn: () => listLeaves({ status: statusFilter || undefined, employee_id: filterEmployee?.id, page, limit }),
     placeholderData: (prev) => prev,
   });
+
+  function handleSelectEmployee(empId: string, empName: string) {
+    setFilterEmployee({ id: empId, name: empName });
+    setPage(1);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("employee_id", empId);
+      next.set("employee_name", empName);
+      return next;
+    });
+  }
+
+  function handleClearEmployeeFilter() {
+    setFilterEmployee(null);
+    setPage(1);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("employee_id");
+      next.delete("employee_name");
+      return next;
+    });
+  }
 
   async function refreshAll() {
     await Promise.all([
@@ -136,7 +166,50 @@ export function LeavePage() {
           {
             key: "employee",
             label: "Employee",
-            render: (l: Leave) => employeeNameById.get(l.employee_id) ?? l.employee_id,
+            render: (l: Leave) => {
+              const empName = employeeNameById.get(l.employee_id) ?? l.employee_id;
+              const isSelected = filterEmployee?.id === l.employee_id;
+              return (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <div
+                    style={{ cursor: "pointer" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectEmployee(l.employee_id, empName);
+                    }}
+                    title="Click to view this employee's leave records"
+                  >
+                    <strong
+                      style={{
+                        color: "var(--color-primary, #2563eb)",
+                        textDecoration: isSelected ? "underline" : "none",
+                      }}
+                    >
+                      {empName}
+                    </strong>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    style={{
+                      padding: "1px 6px",
+                      fontSize: "0.72rem",
+                      color: "var(--color-muted, #6b7280)",
+                      background: "transparent",
+                      border: "1px solid var(--color-border, #e5e7eb)",
+                      borderRadius: "4px",
+                    }}
+                    title="View full profile"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/employees/${l.employee_id}`);
+                    }}
+                  >
+                    Profile ↗
+                  </button>
+                </div>
+              );
+            },
           } satisfies DataTableColumn<Leave>,
         ]
       : []),
@@ -225,7 +298,47 @@ export function LeavePage() {
         onApplied={refreshAll}
       />
 
-      <PageHeader title="Requests" />
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "12px",
+          marginTop: "2rem",
+          marginBottom: "1rem",
+        }}
+      >
+        <h2 style={{ fontSize: "1.25rem", margin: 0 }}>
+          {filterEmployee ? `Leave Requests: ${filterEmployee.name}` : "Requests"}
+        </h2>
+        {filterEmployee && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "4px 12px",
+              borderRadius: "9999px",
+              backgroundColor: "var(--color-primary-subtle, #eff6ff)",
+              border: "1px solid var(--color-primary-border, #bfdbfe)",
+              fontSize: "0.875rem",
+            }}
+          >
+            <span>Showing leaves for <strong>{filterEmployee.name}</strong></span>
+            <button
+              type="button"
+              className="btn btn-xs btn-ghost"
+              style={{ padding: "0 4px", fontWeight: "bold" }}
+              onClick={handleClearEmployeeFilter}
+              title="Show all leave records"
+            >
+              ✕ Clear Filter
+            </button>
+          </div>
+        )}
+      </div>
+
       <div className="row mb-4">
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as LeaveStatus | "")}>
           {STATUS_FILTERS.map((f) => (
@@ -245,13 +358,20 @@ export function LeavePage() {
         onPageChange={setPage}
         sort={null}
         onSortChange={() => {}}
-        emptyMessage="No leave requests."
+        emptyMessage={filterEmployee ? `No leave requests found for ${filterEmployee.name}.` : "No leave requests."}
         rowKey={(l) => l.id}
-        onRowDoubleClick={(l) => {
+        onRowClick={(l) => {
           if (l.employee_id && canPickEmployee) {
-            navigate(`/employees/${l.employee_id}`);
-          } else if (canDecide && l.status === "pending") {
+            const empName = employeeNameById.get(l.employee_id) ?? l.employee_id;
+            handleSelectEmployee(l.employee_id, empName);
+          }
+        }}
+        onRowDoubleClick={(l) => {
+          if (canDecide && l.status === "pending") {
             setDecisionTarget({ leave: l, status: "approved" });
+          } else if (l.employee_id && canPickEmployee) {
+            const empName = employeeNameById.get(l.employee_id) ?? l.employee_id;
+            handleSelectEmployee(l.employee_id, empName);
           }
         }}
       />

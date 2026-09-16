@@ -2,6 +2,7 @@ import uuid
 from datetime import timedelta
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -132,15 +133,14 @@ class EmployeeService:
         self.user_repo = UserRepository(db)
         self.audit = AuditService(db)
 
-    def _get_or_404(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> Employee:
-        # any-status, not get_by_id: a deactivated employee's row still
-        # exists (6.5's soft-delete rule) and HR must still be able to view,
-        # edit, or reactivate it — the previous is_active-filtered lookup
-        # here 404'd a deactivated employee's own profile route, which is
-        # exactly the page the frontend's "Reactivate" button lives on,
-        # making that button structurally unreachable. is_active is now
-        # visible on the response instead of hidden behind a 404.
-        employee = self.repo.get_by_id_any_status(employee_id, company_id)
+    def _get_or_404(self, company_id: uuid.UUID | None, employee_id: uuid.UUID) -> Employee:
+        if company_id is None:
+            # Platform admin direct lookup by employee_id across companies
+            employee = self.db.scalar(
+                select(Employee).where(Employee.id == employee_id, Employee.deleted_at.is_(None))
+            )
+        else:
+            employee = self.repo.get_by_id_any_status(employee_id, company_id)
         if employee is None:
             raise NotFoundError("Employee not found.")
         return employee
@@ -175,7 +175,7 @@ class EmployeeService:
 
     def list_employees(
         self,
-        company_id: uuid.UUID,
+        company_id: uuid.UUID | None,
         current_user: User,
         *,
         q: str | None,
@@ -190,13 +190,17 @@ class EmployeeService:
         """Route 19. A manager sees only their own direct reports, no matter
         what `reporting_manager_id` the client sent — the server overrides
         it, it never trusts the caller's own claim of scope."""
+        target_company_id = company_id
+        if current_user.role != UserRole.super_admin:
+            target_company_id = current_user.company_id
+
         if current_user.role == UserRole.manager:
-            caller_employee = self.repo.get_by_user_id(company_id, current_user.id)
+            caller_employee = self.repo.get_by_user_id(current_user.company_id, current_user.id)
             if caller_employee is None:
                 return [], 0, 0
             reporting_manager_id = caller_employee.id
         return self.repo.list_employees(
-            company_id=company_id,
+            company_id=target_company_id,
             q=q,
             department_id=department_id,
             is_active=is_active,
@@ -287,24 +291,25 @@ class EmployeeService:
         return employee
 
     def _assert_can_view(
-        self, company_id: uuid.UUID, employee: Employee, current_user: User
+        self, company_id: uuid.UUID | None, employee: Employee, current_user: User
     ) -> None:
-        if current_user.role == UserRole.hr_admin:
+        if current_user.role in (UserRole.hr_admin, UserRole.super_admin):
             return
         if employee.user_id == current_user.id:
             return
         if current_user.role == UserRole.manager:
-            caller_employee = self.repo.get_by_user_id(company_id, current_user.id)
+            caller_employee = self.repo.get_by_user_id(current_user.company_id, current_user.id)
             if caller_employee is not None and employee.reporting_manager_id == caller_employee.id:
                 return
         raise ForbiddenError("You do not have permission to view this employee.")
 
     def get_employee(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID, current_user: User
+        self, company_id: uuid.UUID | None, employee_id: uuid.UUID, current_user: User
     ) -> Employee:
-        """Route 22: Own, Mgr (own reports only), HR."""
-        employee = self._get_or_404(company_id, employee_id)
-        self._assert_can_view(company_id, employee, current_user)
+        """Route 22: Own, Mgr (own reports only), HR, Super Admin."""
+        lookup_company_id = None if current_user.role == UserRole.super_admin else company_id
+        employee = self._get_or_404(lookup_company_id, employee_id)
+        self._assert_can_view(lookup_company_id, employee, current_user)
         return employee
 
     def update_employee(

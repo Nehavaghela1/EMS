@@ -238,8 +238,8 @@ export function EmployeeFormPage() {
               onChange={(e) => setField("level", e.target.value)}
             >
               <option value="L1">L1 — Junior / Entry Level</option>
-              <option value="L2">L2 — Mid Level / Senior</option>
-              <option value="L3">L3 — Lead / Executive</option>
+              <option value="L2">L2 — Mid Level</option>
+              <option value="L3">L3 — Lead / Senior / Executive</option>
             </select>
             <span className="field-hint">Select the designated employee band (L1, L2, or L3).</span>
           </div>

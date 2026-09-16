@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
@@ -21,6 +22,7 @@ import {
 import { formatDate } from "../../../shared/utils/date";
 
 export function AdminDashboardPage() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"all" | "pending">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -149,7 +151,22 @@ export function AdminDashboardPage() {
   }
 
   const allColumns: DataTableColumn<CompanyResponse>[] = [
-    { key: "name", label: "Company Name", render: (c) => <strong>{c.name}</strong> },
+    {
+      key: "name",
+      label: "Company Name",
+      render: (c) => (
+        <span
+          style={{ cursor: "pointer", color: "var(--color-primary, #2563eb)", fontWeight: 700 }}
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate(`/employees?companyId=${c.id}`);
+          }}
+          title="Click to view employees of this company"
+        >
+          {c.name}
+        </span>
+      ),
+    },
     {
       key: "code",
       label: "Code",
@@ -172,22 +189,37 @@ export function AdminDashboardPage() {
     { key: "created_at", label: "Registered", render: (c) => formatDate(c.created_at) },
     {
       key: "actions",
-      label: "Actions",
+      label: "Employees",
       render: (c) => (
         <div className="row" style={{ gap: "var(--space-2)" }}>
           <button
-            className="btn btn-sm btn-ghost"
-            onClick={() => openEditModal(c)}
-            title="View details or edit company"
+            className="btn btn-sm btn-outline"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/employees?companyId=${c.id}`);
+            }}
+            title="View workforce directory of this company"
           >
-            View / Edit
+            👥 View Employees
           </button>
           {c.status === "pending" && (
             <>
-              <button className="btn btn-sm btn-primary" onClick={() => setApproveTarget(c)}>
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setApproveTarget(c);
+                }}
+              >
                 Approve
               </button>
-              <button className="btn btn-sm btn-danger" onClick={() => setRejectTarget(c)}>
+              <button
+                className="btn btn-sm btn-danger"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRejectTarget(c);
+                }}
+              >
                 Reject
               </button>
             </>
@@ -200,6 +232,8 @@ export function AdminDashboardPage() {
   const pendingColumns: DataTableColumn<CompanyResponse>[] = [
     { key: "name", label: "Name", render: (c) => c.name },
     { key: "code", label: "Code", render: (c) => c.code },
+    { key: "subdomain", label: "Workspace URL", render: (c) => c.subdomain ? `${c.subdomain}.ems-pro.com` : "—" },
+    { key: "company_size", label: "Size", render: (c) => c.company_size ?? "—" },
     { key: "email", label: "Email", render: (c) => c.email },
     { key: "industry", label: "Industry", render: (c) => c.industry ?? "—" },
     { key: "created_at", label: "Registered", render: (c) => formatDate(c.created_at) },
@@ -236,10 +270,15 @@ export function AdminDashboardPage() {
             <div className="stat-value">{stats.pending_approvals}</div>
             <div className="text-xs text-muted mt-1">Click to view pending requests</div>
           </div>
-          <div className="card">
+          <div
+            className="card"
+            style={{ cursor: "pointer" }}
+            onClick={() => navigate("/employees")}
+            title="View Platform Directory"
+          >
             <div className="stat-label">Platform users</div>
             <div className="stat-value">{stats.platform_user_count}</div>
-            <div className="text-xs text-muted mt-1">Across all registered tenants</div>
+            <div className="text-xs text-muted mt-1">Click to view all platform users / employees</div>
           </div>
           {Object.entries(stats.company_counts_by_status).map(([status, count]) => (
             <div
@@ -362,6 +401,8 @@ export function AdminDashboardPage() {
             onSortChange={() => {}}
             emptyMessage="No companies found matching the criteria."
             rowKey={(c) => c.id}
+            onRowClick={(c) => openEditModal(c)}
+            onRowDoubleClick={(c) => navigate(`/employees?companyId=${c.id}`)}
           />
         </>
       )}

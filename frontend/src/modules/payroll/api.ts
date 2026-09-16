@@ -197,10 +197,9 @@ export interface ReimbursementReviewInput {
 
 // API Functions
 
-// 1. Structures
-export async function listStructures(page = 1, limit = 20): Promise<Page<SalaryStructureListItem>> {
+export async function listStructures(page = 1, limit = 20, company_id?: string): Promise<Page<SalaryStructureListItem>> {
   const res = await apiClient.get<Page<SalaryStructureListItem>>("/payroll/structures", {
-    params: { page, limit },
+    params: { page, limit, company_id: company_id || undefined },
   });
   return res.data;
 }

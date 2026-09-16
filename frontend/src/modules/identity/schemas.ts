@@ -14,12 +14,29 @@ export const passwordPolicySchema = z
 /** Mirrors CompanyRegisterRequest. `country` isn't collected — the
  * backend defaults it to "IN" and no other value is exercised anywhere
  * else in this project yet. */
-export const registerCompanySchema = z.object({
-  company_name: z.string().trim().min(1, "Company name is required"),
-  company_email: z.email("Enter a valid email address"),
-  industry: z.string().trim().optional(),
-  phone: z.string().trim().optional(),
-});
+export const registerCompanySchema = z
+  .object({
+    company_name: z.string().trim().min(1, "Company name is required"),
+    company_email: z.string().trim().email("Enter a valid email address"),
+    subdomain: z
+      .string()
+      .trim()
+      .min(2, "Subdomain must be at least 2 characters")
+      .max(63, "Subdomain must be at most 63 characters")
+      .regex(/^[a-z0-9-]+$/, "Subdomain can only contain lowercase letters, numbers, and hyphens")
+      .refine((v) => !v.startsWith("-") && !v.endsWith("-"), "Subdomain cannot start or end with a hyphen")
+      .optional()
+      .or(z.literal("")),
+    company_size: z.string().trim().min(1, "Please select your company size"),
+    industry: z.string().trim().optional(),
+    phone: z.string().trim().optional(),
+    password: passwordPolicySchema,
+    confirm_password: z.string().min(1, "Please confirm your password"),
+  })
+  .refine((data) => data.password === data.confirm_password, {
+    message: "Passwords do not match",
+    path: ["confirm_password"],
+  });
 
 export type RegisterCompanyValues = z.infer<typeof registerCompanySchema>;
 

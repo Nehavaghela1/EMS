@@ -118,8 +118,14 @@ def list_attendance(
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
+    target_company_id = user.company_id
+    if user.role == UserRole.super_admin and employee_id is not None:
+        target_emp = db.query(Employee).filter(Employee.id == employee_id).first()
+        if target_emp:
+            target_company_id = target_emp.company_id
+
     items, total, pages = AttendanceService(db).list_attendance(
-        user.company_id,
+        target_company_id,
         user,
         employee_id=employee_id,
         date_from=date_from,
@@ -318,8 +324,14 @@ def list_leaves(
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
+    target_company_id = user.company_id
+    if user.role == UserRole.super_admin and employee_id is not None:
+        target_emp = db.query(Employee).filter(Employee.id == employee_id).first()
+        if target_emp:
+            target_company_id = target_emp.company_id
+
     items, total, pages = LeaveService(db).list_leaves(
-        user.company_id,
+        target_company_id,
         user,
         employee_id=employee_id,
         status=status,

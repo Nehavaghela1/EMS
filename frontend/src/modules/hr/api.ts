@@ -48,6 +48,8 @@ export interface Employee {
   last_working_date?: string | null;
   notice_waived?: boolean;
   notice_recovery_days?: number;
+  company_id?: string | null;
+  company_name?: string | null;
   created_at: string;
 }
 
@@ -75,6 +77,7 @@ export interface EmployeeCreateResponse extends Employee {
 
 export interface ListEmployeesParams {
   q?: string;
+  company_id?: string;
   department_id?: string;
   is_active?: boolean;
   sort?: string;

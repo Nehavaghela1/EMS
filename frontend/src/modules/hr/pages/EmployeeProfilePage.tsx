@@ -152,8 +152,13 @@ export function EmployeeProfilePage() {
                   {e.is_active ? "Active" : "Inactive"}
                 </span>
               </div>
-              <div className="text-muted" style={{ fontSize: "0.85rem", marginTop: "2px" }}>
-                {e.position || "Staff"} • {e.level || "L1"} • {e.employment_type.replace("_", " ")}
+              <div className="text-muted" style={{ fontSize: "0.85rem", marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}>
+                <span>{e.position || "Staff"} • {e.level || "L1"} • {e.employment_type.replace("_", " ")}</span>
+                {e.company_name && (
+                  <span className="badge badge-outline" style={{ fontSize: "0.75rem", padding: "1px 6px" }}>
+                    🏢 {e.company_name}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -257,7 +262,7 @@ export function EmployeeProfilePage() {
 
       {/* TAB 2: SALARY DETAILS */}
       {activeTab === "salary" && (
-        <EmployeeSalaryTab employeeId={e.id} isHr={isHr} />
+        <EmployeeSalaryTab employeeId={e.id} companyId={e.company_id} isHr={isHr} />
       )}
 
       {/* TAB 3: PAYSLIPS */}
@@ -577,7 +582,7 @@ interface EmployeeSalaryData {
   gross_earnings: string;
 }
 
-function EmployeeSalaryTab({ employeeId, isHr }: { employeeId: string; isHr: boolean }) {
+function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string; companyId?: string | null; isHr: boolean }) {
   const { notify } = useToast();
   const queryClient = useQueryClient();
 
@@ -604,8 +609,8 @@ function EmployeeSalaryTab({ employeeId, isHr }: { employeeId: string; isHr: boo
   });
 
   const structuresQuery = useQuery({
-    queryKey: ["salary_structures_list"],
-    queryFn: () => listStructures(1, 100),
+    queryKey: ["salary-structures", companyId],
+    queryFn: () => listStructures(1, 100, companyId || undefined),
     enabled: isHr && showAssignModal,
   });
 

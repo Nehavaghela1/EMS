@@ -95,6 +95,8 @@ class EmployeeResponse(BaseModel):
     last_working_date: date | None = None
     notice_waived: bool = False
     notice_recovery_days: int = 0
+    company_id: uuid.UUID | None = None
+    company_name: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

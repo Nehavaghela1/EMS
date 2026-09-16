@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
@@ -34,14 +34,44 @@ export function AttendancePage() {
     ]);
   }
 
+  const [searchParams, setSearchParams] = useSearchParams();
+  const employeeIdParam = searchParams.get("employee_id");
+  const employeeNameParam = searchParams.get("employee_name");
+
+  const [filterEmployee, setFilterEmployee] = useState<{ id: string; name: string } | null>(
+    employeeIdParam ? { id: employeeIdParam, name: employeeNameParam || "Selected Employee" } : null
+  );
+
   const { page, limit, setPage } = usePagination();
   const historyQuery = useQuery({
-    queryKey: ["attendance", "history", { page, limit }],
-    queryFn: () => listAttendance({ page, limit }),
+    queryKey: ["attendance", "history", { page, limit, employee_id: filterEmployee?.id }],
+    queryFn: () => listAttendance({ page, limit, employee_id: filterEmployee?.id }),
     placeholderData: (prev) => prev,
   });
 
   const [regularizing, setRegularizing] = useState<Attendance | null>(null);
+
+  function handleSelectEmployee(empId: string, empName: string) {
+    setFilterEmployee({ id: empId, name: empName });
+    setPage(1);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("employee_id", empId);
+      next.set("employee_name", empName);
+      return next;
+    });
+  }
+
+  function handleClearEmployeeFilter() {
+    setFilterEmployee(null);
+    setPage(1);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("employee_id");
+      next.delete("employee_name");
+      return next;
+    });
+  }
 
   const showEmployeeCol = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager";
 
@@ -51,16 +81,71 @@ export function AttendancePage() {
           {
             key: "employee",
             label: "Employee",
-            render: (a: Attendance) => (
-              <div>
-                <strong>{a.employee_name ?? "—"}</strong>
-                {a.employee_code && (
-                  <span className="text-xs text-muted block" style={{ fontFamily: "monospace" }}>
-                    {a.employee_code}
-                  </span>
-                )}
-              </div>
-            ),
+            render: (a: Attendance) => {
+              const empName = a.employee_name ?? a.employee_code ?? "Employee";
+              const isSelected = filterEmployee?.id === a.employee_id;
+              return (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <div
+                    style={{
+                      cursor: a.employee_id && (isHr || user?.role === "manager") ? "pointer" : "default",
+                    }}
+                    onClick={(e) => {
+                      if (a.employee_id && (isHr || user?.role === "manager")) {
+                        e.stopPropagation();
+                        handleSelectEmployee(a.employee_id, empName);
+                      }
+                    }}
+                    title={a.employee_id ? "Click to view this employee's attendance records" : undefined}
+                  >
+                    <strong
+                      style={{
+                        color: isSelected
+                          ? "var(--color-primary, #2563eb)"
+                          : a.employee_id && (isHr || user?.role === "manager")
+                          ? "var(--color-primary, #2563eb)"
+                          : "inherit",
+                        textDecoration: isSelected ? "underline" : "none",
+                      }}
+                    >
+                      {a.employee_name ?? "—"}
+                    </strong>
+                    {a.employee_code && (
+                      <span className="text-xs text-muted block" style={{ fontFamily: "monospace" }}>
+                        {a.employee_code}
+                      </span>
+                    )}
+                  </div>
+                  {a.employee_id && (isHr || user?.role === "manager") && (
+                    <button
+                      type="button"
+                      className="btn btn-xs"
+                      style={{
+                        padding: "1px 6px",
+                        fontSize: "0.72rem",
+                        color: "var(--color-muted, #6b7280)",
+                        background: "transparent",
+                        border: "1px solid var(--color-border, #e5e7eb)",
+                        borderRadius: "4px",
+                      }}
+                      title="View full profile"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/employees/${a.employee_id}`);
+                      }}
+                    >
+                      Profile ↗
+                    </button>
+                  )}
+                </div>
+              );
+            },
           } satisfies DataTableColumn<Attendance>,
           {
             key: "department",
@@ -100,9 +185,53 @@ export function AttendancePage() {
 
       <TodayAttendanceCard />
 
-      <PageHeader
-        title={isHr || user?.role === "super_admin" ? "All Company Attendance" : user?.role === "manager" ? "Team Attendance" : "My Attendance"}
-      />
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "12px",
+          marginTop: "1.5rem",
+          marginBottom: "0.75rem",
+        }}
+      >
+        <h2 style={{ fontSize: "1.25rem", margin: 0 }}>
+          {filterEmployee
+            ? `Attendance: ${filterEmployee.name}`
+            : isHr || user?.role === "super_admin"
+            ? "All Company Attendance"
+            : user?.role === "manager"
+            ? "Team Attendance"
+            : "My Attendance"}
+        </h2>
+        {filterEmployee && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "4px 12px",
+              borderRadius: "9999px",
+              backgroundColor: "var(--color-primary-subtle, #eff6ff)",
+              border: "1px solid var(--color-primary-border, #bfdbfe)",
+              fontSize: "0.875rem",
+            }}
+          >
+            <span>Showing attendance for <strong>{filterEmployee.name}</strong></span>
+            <button
+              type="button"
+              className="btn btn-xs btn-ghost"
+              style={{ padding: "0 4px", fontWeight: "bold" }}
+              onClick={handleClearEmployeeFilter}
+              title="Show all attendance records"
+            >
+              ✕ Clear Filter
+            </button>
+          </div>
+        )}
+      </div>
+
       <DataTable
         columns={columns}
         page={historyQuery.data}
@@ -113,13 +242,20 @@ export function AttendancePage() {
         onPageChange={setPage}
         sort={null}
         onSortChange={() => {}}
-        emptyMessage="No attendance records."
+        emptyMessage={filterEmployee ? `No attendance records found for ${filterEmployee.name}.` : "No attendance records."}
         rowKey={(a) => a.id}
-        onRowDoubleClick={(a) => {
+        onRowClick={(a) => {
           if (a.employee_id && (isHr || user?.role === "manager")) {
-            navigate(`/employees/${a.employee_id}`);
-          } else if (isHr) {
+            const empName = a.employee_name ?? a.employee_code ?? "Employee";
+            handleSelectEmployee(a.employee_id, empName);
+          }
+        }}
+        onRowDoubleClick={(a) => {
+          if (isHr) {
             setRegularizing(a);
+          } else if (a.employee_id && user?.role === "manager") {
+            const empName = a.employee_name ?? a.employee_code ?? "Employee";
+            handleSelectEmployee(a.employee_id, empName);
           }
         }}
       />

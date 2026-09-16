@@ -70,23 +70,27 @@ def password_reset_otp_email(*, otp: str, expires_minutes: int) -> tuple[str, st
 
 
 def hr_admin_credentials_email(
-    *, company_name: str, email: str, temporary_password: str, login_link: str
+    *, company_name: str, email: str, temporary_password: str | None = None, login_link: str
 ) -> tuple[str, str, str]:
-    """Route 15 (company approval) — sent instead of returning the raw
-    temporary password in the API response."""
+    """Route 15 (company approval) — sent upon company approval."""
     subject = f"Your EMS admin account for {company_name} is ready"
+    if temporary_password:
+        pw_text = f"  Temporary password: {temporary_password}\n\nYou'll be asked to change this password the first time you sign in."
+        pw_html = f"<p>Email: {email}<br>Temporary password: <strong>{temporary_password}</strong></p><p>You'll be asked to change this password the first time you sign in.</p>"
+    else:
+        pw_text = "  Password: [The password chosen during company registration]\n\nYou can log in directly with the password you created."
+        pw_html = f"<p>Email: {email}<br>Password: <em>(The password chosen during company registration)</em></p><p>You can sign in immediately with your account password.</p>"
+
     text = (
         f"{company_name} has been approved on EMS.\n\n"
         f"Sign in at {login_link} with:\n"
         f"  Email: {email}\n"
-        f"  Temporary password: {temporary_password}\n\n"
-        "You'll be asked to change this password the first time you sign in."
+        f"{pw_text}"
     )
     html = _wrap_html(
         f"<p>{company_name} has been approved on EMS.</p>"
         f'<p>Sign in at <a href="{login_link}">{login_link}</a> with:</p>'
-        f"<p>Email: {email}<br>Temporary password: <strong>{temporary_password}</strong></p>"
-        "<p>You'll be asked to change this password the first time you sign in.</p>"
+        f"{pw_html}"
     )
     return subject, text, html
 

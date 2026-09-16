@@ -70,6 +70,9 @@ class Company(TimeStampedBase):
     state: Mapped[str | None] = mapped_column(String(100), nullable=True)
     pincode: Mapped[str | None] = mapped_column(String(10), nullable=True)
     website: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subdomain: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    company_size: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    admin_password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     logo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[CompanyStatus] = mapped_column(
         Enum(CompanyStatus, name="company_status"),

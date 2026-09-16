@@ -45,10 +45,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "employees",
     label: "Employees",
-    roles: ["hr_admin", "manager"],
+    roles: ["hr_admin", "manager", "super_admin"],
     children: [
-      { to: "/employees", label: "Directory", roles: ["hr_admin", "manager"] },
-      { to: "/departments", label: "Departments", roles: ["hr_admin"] },
+      { to: "/employees", label: "Directory", roles: ["hr_admin", "manager", "super_admin"] },
+      { to: "/departments", label: "Departments", roles: ["hr_admin", "super_admin"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -63,7 +63,7 @@ const NAV_SECTIONS: NavSection[] = [
     children: [
       { to: "/attendance", label: "Attendance", roles: ["employee", "manager", "hr_admin", "super_admin"] },
       { to: "/leaves", label: "Leave Requests", roles: ["employee", "manager", "hr_admin", "super_admin"] },
-      { to: "/shifts", label: "Shift Schedule", roles: ["hr_admin"] },
+      { to: "/shifts", label: "Shift Schedule", roles: ["hr_admin", "super_admin"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -76,8 +76,8 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Payroll",
     roles: ["employee", "manager", "hr_admin", "super_admin"],
     children: [
-      { to: "/payroll/run", label: "Pay Runs", roles: ["hr_admin"] },
-      { to: "/payroll/setup", label: "Payroll Setup", roles: ["hr_admin"] },
+      { to: "/payroll/run", label: "Pay Runs", roles: ["hr_admin", "super_admin"] },
+      { to: "/payroll/setup", label: "Payroll Setup", roles: ["hr_admin", "super_admin"] },
       { to: "/payroll/payslip", label: "My Payslips", roles: ["employee", "manager", "hr_admin", "super_admin"] },
       { to: "/payroll/reimbursements", label: "Reimbursements", roles: ["employee", "manager", "hr_admin", "super_admin"] },
     ],
@@ -92,7 +92,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Performance",
     roles: ["employee", "manager", "hr_admin", "super_admin"],
     children: [
-      { to: "/performance", label: "Cycles & Review", roles: ["hr_admin"] },
+      { to: "/performance", label: "Cycles & Review", roles: ["hr_admin", "super_admin"] },
       { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "super_admin"] },
     ],
     icon: (active) => (

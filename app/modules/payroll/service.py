@@ -368,14 +368,22 @@ class EmployeeSalaryService:
     def assign_salary(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, data: SalaryAssignRequest, actor: User
     ) -> tuple[EmployeeSalary, SalaryStructure, list, list, Decimal]:
-        employee = self.employee_repo.get_by_id(employee_id, company_id)
-        if employee is None:
-            raise NotFoundError("Employee not found.")
-        structure = self.structure_repo.get_by_id(data.structure_id, company_id)
+        target_company_id = company_id
+        if actor.role == UserRole.super_admin:
+            employee = self.employee_repo.get_by_id_any_status(employee_id, None)
+            if employee is None:
+                raise NotFoundError("Employee not found.")
+            target_company_id = employee.company_id
+        else:
+            employee = self.employee_repo.get_by_id(employee_id, target_company_id)
+            if employee is None:
+                raise NotFoundError("Employee not found.")
+
+        structure = self.structure_repo.get_by_id(data.structure_id, target_company_id)
         if structure is None:
             raise NotFoundError("Salary structure not found.")
 
-        overlapping = self.repo.get_overlapping(employee_id, company_id, data.effective_from)
+        overlapping = self.repo.get_overlapping(employee_id, target_company_id, data.effective_from)
         open_ended = None
         for row in overlapping:
             if row.effective_to is None:
@@ -429,7 +437,7 @@ class EmployeeSalaryService:
             self.repo.close(open_ended, data.effective_from - timedelta(days=1))
 
         salary = self.repo.create(
-            company_id=company_id,
+            company_id=target_company_id,
             employee_id=employee_id,
             structure_id=data.structure_id,
             ctc=data.ctc,
@@ -438,7 +446,7 @@ class EmployeeSalaryService:
             created_by=actor.id,
         )
         self.audit.record(
-            company_id=company_id,
+            company_id=target_company_id,
             actor=actor,
             action="EMPLOYEE_SALARY_ASSIGNED",
             entity_type="employee_salary",
@@ -457,19 +465,26 @@ class EmployeeSalaryService:
     def get_current_salary(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, current_user: User
     ) -> tuple[EmployeeSalary, SalaryStructure, list, list, Decimal]:
-        """Route 84: Own, HR."""
-        employee = self.employee_repo.get_by_id_any_status(employee_id, company_id)
-        if employee is None:
-            raise NotFoundError("Employee not found.")
-        is_hr = current_user.role == UserRole.hr_admin
-        is_own = employee.user_id == current_user.id
-        if not (is_hr or is_own):
-            raise ForbiddenError("You do not have permission to view this employee's salary.")
+        """Route 84: Own, HR, Super Admin."""
+        lookup_company_id = company_id
+        if current_user.role == UserRole.super_admin:
+            employee = self.employee_repo.get_by_id_any_status(employee_id, None)
+            if employee is None:
+                raise NotFoundError("Employee not found.")
+            lookup_company_id = employee.company_id
+        else:
+            employee = self.employee_repo.get_by_id_any_status(employee_id, lookup_company_id)
+            if employee is None:
+                raise NotFoundError("Employee not found.")
+            is_hr = current_user.role == UserRole.hr_admin
+            is_own = employee.user_id == current_user.id
+            if not (is_hr or is_own):
+                raise ForbiddenError("You do not have permission to view this employee's salary.")
 
-        salary = self.repo.get_in_force(employee_id, company_id, date.today())
+        salary = self.repo.get_in_force(employee_id, lookup_company_id, date.today())
         if salary is None:
             raise NotFoundError("No salary is currently assigned to this employee.")
-        structure = self.structure_repo.get_by_id(salary.structure_id, company_id)
+        structure = self.structure_repo.get_by_id(salary.structure_id, lookup_company_id)
         assert structure is not None  # FK guarantees this
         earnings, deductions, gross = resolve_earning_breakdown(structure.components, salary.ctc)
         return salary, structure, earnings, deductions, gross

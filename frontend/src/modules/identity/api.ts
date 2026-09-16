@@ -8,6 +8,9 @@ import type { Page } from "../../shared/api/pagination";
 export interface RegisterCompanyInput {
   company_name: string;
   company_email: string;
+  subdomain?: string;
+  company_size?: string;
+  password?: string;
   industry?: string;
   phone?: string;
 }
@@ -20,6 +23,8 @@ export interface CompanyResponse {
   industry: string | null;
   country: string;
   status: string;
+  subdomain?: string | null;
+  company_size?: string | null;
   created_at: string;
 }
 

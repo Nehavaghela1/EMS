@@ -66,7 +66,7 @@ def _to_structure_response(structure: SalaryStructure) -> SalaryStructureRespons
 def create_structure(
     data: SalaryStructureCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     structure = SalaryStructureService(db).create_structure(user.company_id, data, user)
     return _to_structure_response(structure)
@@ -74,11 +74,13 @@ def create_structure(
 
 @structures_router.get("", response_model=Page[SalaryStructureListItem])
 def list_structures(
+    company_id: uuid.UUID | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
-    items, total, pages = SalaryStructureService(db).list_structures(user.company_id, params)
+    target_company_id = company_id if user.role == UserRole.super_admin and company_id else user.company_id
+    items, total, pages = SalaryStructureService(db).list_structures(target_company_id, params)
     return Page(
         items=[
             SalaryStructureListItem(
@@ -104,7 +106,7 @@ def list_structures(
 def get_structure(
     structure_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     structure = SalaryStructureService(db).get_structure(user.company_id, structure_id)
     return _to_structure_response(structure)
@@ -115,7 +117,7 @@ def update_structure(
     structure_id: uuid.UUID,
     data: SalaryStructureUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     structure = SalaryStructureService(db).update_structure(
         user.company_id, structure_id, data, user
@@ -127,7 +129,7 @@ def update_structure(
 def delete_structure(
     structure_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     SalaryStructureService(db).delete_structure(user.company_id, structure_id, user)
 
@@ -142,7 +144,7 @@ def assign_salary(
     employee_id: uuid.UUID,
     data: SalaryAssignRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     salary, structure, earnings, deductions, gross = EmployeeSalaryService(db).assign_salary(
         user.company_id, employee_id, data, user
@@ -195,7 +197,7 @@ def _to_statutory_config_response(config) -> StatutoryConfigResponse:
 @statutory_config_router.get("", response_model=StatutoryConfigResponse)
 def get_statutory_config(
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     config = StatutoryConfigService(db).get_or_create(user.company_id)
     return _to_statutory_config_response(config)
@@ -205,7 +207,7 @@ def get_statutory_config(
 def update_statutory_config(
     data: StatutoryConfigUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     config = StatutoryConfigService(db).update(user.company_id, data, user)
     return _to_statutory_config_response(config)
@@ -221,7 +223,7 @@ def _to_pt_slab_response(slab: PtSlab) -> PtSlabResponse:
 @pt_slabs_router.get("", response_model=list[PtSlabResponse])
 def list_pt_slabs(
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     config = StatutoryConfigService(db).get_or_create(user.company_id)
     state = config.pt_state or "Gujarat"
@@ -280,7 +282,7 @@ def create_payroll_run(
     data: PayrollRunCreateRequest,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     if not idempotency_key:
         raise HTTPException(
@@ -303,7 +305,7 @@ def list_payroll_runs(
     status_filter: PayrollRunStatus | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     service = PayrollRunService(db)
     runs, total, pages = service.list_runs(user.company_id, params, status_filter)
@@ -322,7 +324,7 @@ def list_payroll_runs(
 def get_payroll_run_detail(
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.employee, UserRole.manager)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.employee, UserRole.manager, UserRole.super_admin)),
 ):
     service = PayrollRunService(db)
     run, items = service.get_run_detail(user.company_id, id)
@@ -348,7 +350,7 @@ def get_payroll_run_detail(
 def approve_payroll_run(
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     service = PayrollRunService(db)
     run = service.approve_run(user.company_id, id, user)
@@ -376,9 +378,14 @@ def list_my_payslips(
 def list_employee_payslips(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
-    items = PayrollItemRepository(db).list_by_employee_id(user.company_id, employee_id)
+    target_company_id = user.company_id
+    if user.role == UserRole.super_admin:
+        emp = db.query(Employee).filter(Employee.id == employee_id).first()
+        if emp:
+            target_company_id = emp.company_id
+    items = PayrollItemRepository(db).list_by_employee_id(target_company_id, employee_id)
     return [PayrollItemResponse.model_validate(i) for i in items]
 
 

@@ -29,8 +29,8 @@ PasswordStr = Annotated[str, AfterValidator(_validate_password_policy)]
 
 # Company
 class CompanyRegisterRequest(BaseModel):
-    """Route 12 — company self-registration only. No user is created here;
-    the HR admin is created at approval time (route 15), per Spec 10.2.
+    """Route 12 — company self-registration. Admin password and workspace
+    subdomain can be specified upfront.
     """
 
     company_name: str
@@ -38,6 +38,9 @@ class CompanyRegisterRequest(BaseModel):
     industry: str | None = None
     phone: str | None = None
     country: str = "IN"
+    subdomain: str | None = None
+    company_size: str | None = None
+    password: PasswordStr | None = None
 
 
 class CompanyResponse(BaseModel):
@@ -48,6 +51,8 @@ class CompanyResponse(BaseModel):
     industry: str | None
     country: str
     status: CompanyStatus
+    subdomain: str | None = None
+    company_size: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

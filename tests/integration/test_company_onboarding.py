@@ -36,6 +36,35 @@ def test_register_creates_a_pending_company_with_no_user(client, db):
     assert user_count == 0
 
 
+def test_register_with_password_subdomain_and_size_and_approval(client, db, super_admin_headers):
+    from app.modules.identity.models import Company, User
+
+    payload = {
+        "company_name": "Apex Cloud Tech",
+        "company_email": "founder@apexcloud.io",
+        "subdomain": "apexcloud",
+        "company_size": "11-50",
+        "password": "Password123!",
+        "industry": "Technology",
+    }
+    resp = client.post("/api/v1/companies/register", json=payload)
+    assert resp.status_code == 201, resp.text
+    company_data = resp.json()
+    assert company_data["status"] == "pending"
+    assert company_data["subdomain"] == "apexcloud"
+    assert company_data["company_size"] == "11-50"
+
+    # Approve company as super admin
+    approve_resp = client.post(
+        f"/api/v1/companies/{company_data['id']}/approve", headers=super_admin_headers
+    )
+    assert approve_resp.status_code == 200, approve_resp.text
+
+    # Verify HR admin can log in directly with their pre-set password
+    token = _login(client, "founder@apexcloud.io", "Password123!")
+    assert token is not None
+
+
 def test_approve_seeds_company_settings_departments_and_hr_admin_in_one_transaction(
     client, super_admin_headers, email_outbox
 ):

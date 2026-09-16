@@ -155,7 +155,11 @@ export interface Leave {
 }
 
 export interface ListLeavesParams {
+  employee_id?: string;
   status?: LeaveStatus;
+  leave_type_id?: string;
+  date_from?: string;
+  date_to?: string;
   page: number;
   limit: number;
 }

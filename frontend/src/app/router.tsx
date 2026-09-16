@@ -119,7 +119,7 @@ export function AppRouter() {
       <Route
         path="/shifts"
         element={
-          <Protected roles={["hr_admin"]}>
+          <Protected roles={["hr_admin", "super_admin"]}>
             <ShiftsPage />
           </Protected>
         }
@@ -128,7 +128,7 @@ export function AppRouter() {
       <Route
         path="/employees"
         element={
-          <Protected roles={["hr_admin", "manager"]}>
+          <Protected roles={["hr_admin", "manager", "super_admin"]}>
             <EmployeeListPage />
           </Protected>
         }
@@ -136,7 +136,7 @@ export function AppRouter() {
       <Route
         path="/employees/new"
         element={
-          <Protected roles={["hr_admin"]}>
+          <Protected roles={["hr_admin", "super_admin"]}>
             <EmployeeFormPage />
           </Protected>
         }
@@ -144,7 +144,7 @@ export function AppRouter() {
       <Route
         path="/employees/:id/edit"
         element={
-          <Protected roles={["hr_admin"]}>
+          <Protected roles={["hr_admin", "super_admin"]}>
             <EmployeeFormPage />
           </Protected>
         }
@@ -152,7 +152,7 @@ export function AppRouter() {
       <Route
         path="/employees/:id"
         element={
-          <Protected roles={["hr_admin", "manager"]}>
+          <Protected roles={["hr_admin", "manager", "super_admin"]}>
             <EmployeeProfilePage />
           </Protected>
         }
@@ -161,7 +161,7 @@ export function AppRouter() {
       <Route
         path="/departments"
         element={
-          <Protected roles={["hr_admin"]}>
+          <Protected roles={["hr_admin", "super_admin"]}>
             <DepartmentListPage />
           </Protected>
         }
@@ -170,7 +170,7 @@ export function AppRouter() {
       <Route
         path="/payroll/setup"
         element={
-          <Protected roles={["hr_admin"]}>
+          <Protected roles={["hr_admin", "super_admin"]}>
             <PayrollSetupPage />
           </Protected>
         }
@@ -178,7 +178,7 @@ export function AppRouter() {
       <Route
         path="/payroll/run"
         element={
-          <Protected roles={["hr_admin"]}>
+          <Protected roles={["hr_admin", "super_admin"]}>
             <PayrollRunPage />
           </Protected>
         }
@@ -203,7 +203,7 @@ export function AppRouter() {
       <Route
         path="/performance"
         element={
-          <Protected roles={["hr_admin"]}>
+          <Protected roles={["hr_admin", "super_admin"]}>
             <PerformanceCyclesPage />
           </Protected>
         }
@@ -219,7 +219,7 @@ export function AppRouter() {
       <Route
         path="/performance/review/:employeeId"
         element={
-          <Protected roles={["hr_admin", "manager"]}>
+          <Protected roles={["hr_admin", "manager", "super_admin"]}>
             <PerformanceReviewPage />
           </Protected>
         }

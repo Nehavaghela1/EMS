@@ -120,6 +120,27 @@ class AccountInactiveError(AppError):
         super().__init__("Account is not active.")
 
 
+class CompanyPendingApprovalError(AppError):
+    status_code = 403
+    code = "company_pending_approval"
+
+    def __init__(self, company_name: str) -> None:
+        super().__init__(
+            f"Your registration for '{company_name}' is currently pending review and approval by the platform administrator. You will be able to sign in once approved."
+        )
+
+
+class CompanyRejectedError(AppError):
+    status_code = 403
+    code = "company_rejected"
+
+    def __init__(self, company_name: str, reason: str | None = None) -> None:
+        msg = f"Your company registration for '{company_name}' was not approved."
+        if reason:
+            msg += f" Reason: {reason}"
+        super().__init__(msg)
+
+
 class InvalidCurrentPasswordError(UnauthorizedError):
     """Route 6 — deliberately a distinct message from login's generic one:
     the caller is already authenticated as themselves here, so there is no
@@ -188,7 +209,27 @@ class AuthService:
                 self.user_repo.increment_failed_attempts(u)
                 if u.failed_attempts >= settings.MAX_LOGIN_ATTEMPTS:
                     self.user_repo.lock(u, utcnow() + timedelta(minutes=settings.LOCKOUT_MINUTES))
-            self.db.commit()
+            if candidates:
+                self.db.commit()
+                raise InvalidCredentialsError()
+
+            # If no active/candidate user was found, check if this email belongs to a pending or rejected company
+            pending_or_unapproved = self.company_repo.get_by_email(payload.email)
+            if pending_or_unapproved:
+                if pending_or_unapproved.status == CompanyStatus.pending:
+                    # If an admin password was chosen at registration, verify it if possible, or inform them of pending approval
+                    if pending_or_unapproved.admin_password_hash:
+                        if verify_password(payload.password, pending_or_unapproved.admin_password_hash):
+                            raise CompanyPendingApprovalError(pending_or_unapproved.name)
+                        else:
+                            raise InvalidCredentialsError()
+                    else:
+                        raise CompanyPendingApprovalError(pending_or_unapproved.name)
+                elif pending_or_unapproved.status == CompanyStatus.rejected:
+                    raise CompanyRejectedError(
+                        pending_or_unapproved.name, pending_or_unapproved.rejection_reason
+                    )
+
             raise InvalidCredentialsError()
 
         if len(matched) > 1:
@@ -462,12 +503,12 @@ class CompanyService:
         self.industry_preset_repo = IndustryPresetRepository(db)
 
     def register_company(self, data: CompanyRegisterRequest) -> Company:
-        """Route 12: company self-registration only, status = pending. No
-        user is created here — the HR admin is created at approval (route
-        15), in one transaction with the rest of onboarding.
-        """
+        """Route 12: company self-registration with status = pending."""
         if self.company_repo.get_by_email(data.company_email):
             raise ConflictError("A company with this email already exists.")
+        
+        password_hash = hash_password(data.password) if data.password else None
+
         company = self.company_repo.create(
             name=data.company_name,
             code=_generate_company_code(data.company_name),
@@ -475,6 +516,9 @@ class CompanyService:
             phone=data.phone,
             industry=data.industry,
             country=data.country,
+            subdomain=data.subdomain.strip().lower() if data.subdomain else None,
+            company_size=data.company_size.strip() if data.company_size else None,
+            admin_password_hash=password_hash,
             status=CompanyStatus.pending,
         )
         self.db.commit()
@@ -550,14 +594,22 @@ class CompanyService:
                         is_encashable=leave_type["is_encashable"],
                     )
 
-        raw_password = secrets.token_urlsafe(12)
+        if company.admin_password_hash:
+            user_hashed_pw = company.admin_password_hash
+            raw_password = None
+            must_change = False
+        else:
+            raw_password = secrets.token_urlsafe(12)
+            user_hashed_pw = hash_password(raw_password)
+            must_change = True
+
         hr_admin = self.user_repo.create(
             company_id=company.id,
             email=company.email,
-            hashed_password=hash_password(raw_password),
+            hashed_password=user_hashed_pw,
             role=UserRole.hr_admin,
             is_active=True,
-            must_change_password=True,
+            must_change_password=must_change,
         )
         # Never log the password (6.8, rule 10) — it leaves this function in
         # only one place now: the email sent below, never the return value.

@@ -74,7 +74,14 @@ export function LoginPage() {
         {!error && !locationState?.passwordReset && sessionExpired && (
           <div className="alert alert-error">Your session expired. Sign in again to continue.</div>
         )}
-        {error && <div className="alert alert-error">{formatLoginError(error)}</div>}
+        {error && error.code === "company_pending_approval" && (
+          <div className="alert alert-warning" style={{ background: "#fffbeb", borderColor: "#fef3c7", color: "#92400e" }}>
+            <strong>⏳ Pending Review:</strong> {formatLoginError(error)}
+          </div>
+        )}
+        {error && error.code !== "company_pending_approval" && (
+          <div className="alert alert-error">{formatLoginError(error)}</div>
+        )}
 
         <div className="field">
           <label htmlFor="email">Email</label>

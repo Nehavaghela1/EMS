@@ -234,7 +234,7 @@ class EmployeeRepository:
     def list_employees(
         self,
         *,
-        company_id: uuid.UUID,
+        company_id: uuid.UUID | None = None,
         q: str | None,
         department_id: uuid.UUID | None,
         is_active: bool | None,
@@ -244,9 +244,9 @@ class EmployeeRepository:
         sort: str | None,
         page_params: PageParams,
     ) -> tuple[list[Employee], int, int]:
-        stmt = select(Employee).where(
-            Employee.company_id == company_id, Employee.deleted_at.is_(None)
-        )
+        stmt = select(Employee).where(Employee.deleted_at.is_(None))
+        if company_id is not None:
+            stmt = stmt.where(Employee.company_id == company_id)
         if q:
             pattern = f"%{q.lower()}%"
             stmt = stmt.where(

@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
@@ -97,8 +98,14 @@ def delete_department(
     DepartmentService(db).delete_department(user.company_id, department_id)
 
 
-def _to_employee_response(employee: Employee) -> EmployeeResponse:
-    return EmployeeResponse.model_validate(employee)
+from app.modules.identity.models import Company
+
+def _to_employee_response(employee: Employee, company_map: dict[uuid.UUID, str] | None = None) -> EmployeeResponse:
+    resp = EmployeeResponse.model_validate(employee)
+    resp.company_id = employee.company_id
+    if company_map and employee.company_id in company_map:
+        resp.company_name = company_map[employee.company_id]
+    return resp
 
 
 def _to_employee_create_response(employee: Employee, sent_to: str) -> EmployeeCreateResponse:
@@ -114,6 +121,7 @@ def _to_employee_create_response(employee: Employee, sent_to: str) -> EmployeeCr
 @employees_router.get("", response_model=Page[EmployeeResponse])
 def list_employees(
     q: str | None = None,
+    company_id: uuid.UUID | None = None,
     department_id: uuid.UUID | None = None,
     is_active: bool | None = None,
     level: str | None = None,
@@ -122,10 +130,11 @@ def list_employees(
     sort: str | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
 ):
+    target_company_id = company_id if user.role == UserRole.super_admin else user.company_id
     items, total, pages = EmployeeService(db).list_employees(
-        user.company_id,
+        target_company_id,
         user,
         q=q,
         department_id=department_id,
@@ -136,8 +145,17 @@ def list_employees(
         sort=sort,
         page_params=params,
     )
+
+    company_map: dict[uuid.UUID, str] = {}
+    if items:
+        company_ids = {e.company_id for e in items if e.company_id}
+        if company_ids:
+            from sqlalchemy import select
+            rows = db.execute(select(Company.id, Company.name).where(Company.id.in_(company_ids))).all()
+            company_map = {r[0]: r[1] for r in rows}
+
     return Page(
-        items=[_to_employee_response(e) for e in items],
+        items=[_to_employee_response(e, company_map) for e in items],
         page=params.page,
         limit=params.limit,
         total=total,
@@ -150,7 +168,7 @@ def list_employees(
 def create_employee(
     data: EmployeeCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     employee, sent_to = EmployeeService(db).create_employee(user.company_id, data, user)
     return _to_employee_create_response(employee, sent_to)
@@ -168,7 +186,7 @@ def get_my_employee(
 @employees_router.get("/resignations", response_model=list[EmployeeResponse])
 def list_resignations(
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
 ):
     items, total, pages = EmployeeService(db).list_employees(
         user.company_id,
@@ -192,7 +210,12 @@ def get_employee(
     user: User = Depends(get_current_user),
 ):
     employee = EmployeeService(db).get_employee(user.company_id, employee_id, user)
-    return _to_employee_response(employee)
+    company_map: dict[uuid.UUID, str] = {}
+    if employee.company_id:
+        company = db.scalar(select(Company).where(Company.id == employee.company_id))
+        if company:
+            company_map[company.id] = company.name
+    return _to_employee_response(employee, company_map)
 
 
 @employees_router.put("/{employee_id}", response_model=EmployeeResponse)
@@ -210,7 +233,7 @@ def update_employee(
 def deactivate_employee(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     EmployeeService(db).deactivate_employee(user.company_id, employee_id, user)
 
@@ -219,7 +242,7 @@ def deactivate_employee(
 def toggle_active_employee(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     employee = EmployeeService(db).reactivate_employee(user.company_id, employee_id)
     return _to_employee_response(employee)
@@ -229,7 +252,7 @@ def toggle_active_employee(
 def resend_invite(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     employee, sent_to = EmployeeService(db).resend_invite(user.company_id, employee_id)
     return _to_employee_create_response(employee, sent_to)
@@ -253,7 +276,7 @@ def approve_resignation(
     employee_id: uuid.UUID,
     data: ResignationApproveRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     employee = EmployeeService(db).approve_resignation(user.company_id, employee_id, data)
     return _to_employee_response(employee)
@@ -262,6 +285,6 @@ def approve_resignation(
 def get_fnf_settlement(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     return EmployeeService(db).calculate_fnf(user.company_id, employee_id)
