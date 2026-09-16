@@ -10,8 +10,10 @@ import {
   listDepartments,
   updateEmployee,
   type EmployeeCreateInput,
+  type EmployeeCreateResponse,
   type EmploymentType,
 } from "../api";
+import { listStructures, assignEmployeeSalary } from "../../payroll/api";
 import { employeeFormSchema } from "../schemas";
 
 const EMPLOYMENT_TYPES: EmploymentType[] = ["full_time", "part_time", "contract", "intern"];
@@ -41,7 +43,7 @@ const EMPTY: FormState = {
   position: "",
   level: "L1",
   employment_type: "full_time",
-  hire_date: "",
+  hire_date: new Date().toISOString().split("T")[0],
   probation_end_date: "",
   notice_period_days: "30",
 };
@@ -52,6 +54,17 @@ export function EmployeeFormPage() {
   const navigate = useNavigate();
   const { notify } = useToast();
 
+  // Wizard step: 1 = Basic & Job Role, 2 = Compensation & Payroll Breakdown
+  const [wizardStep, setWizardStep] = useState<1 | 2>(1);
+  const [createdEmployee, setCreatedEmployee] = useState<EmployeeCreateResponse | null>(null);
+
+  // Step 2 Compensation State
+  const [structureId, setStructureId] = useState<string>("");
+  const [ctc, setCtc] = useState<string>("");
+  const [effectiveFrom, setEffectiveFrom] = useState<string>(new Date().toISOString().split("T")[0]);
+  const [assigningSalary, setAssigningSalary] = useState(false);
+  const [step2Error, setStep2Error] = useState<string | null>(null);
+
   const [form, setForm] = useState<FormState>(EMPTY);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -60,6 +73,12 @@ export function EmployeeFormPage() {
   const departmentsQuery = useQuery({
     queryKey: ["departments", "all-for-form"],
     queryFn: () => listDepartments({ page: 1, limit: 100 }),
+  });
+
+  const structuresQuery = useQuery({
+    queryKey: ["salary-structures-for-wizard"],
+    queryFn: () => listStructures(1, 100),
+    enabled: !isEdit,
   });
 
   const existingQuery = useQuery({
@@ -92,7 +111,7 @@ export function EmployeeFormPage() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleStep1Submit(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
     setFieldErrors({});
@@ -117,7 +136,7 @@ export function EmployeeFormPage() {
       email: form.email.trim(),
       personal_email: form.personal_email.trim() || undefined,
       phone: form.phone.trim() || undefined,
-      department_id: form.department_id || undefined,
+      department_id: form.department_id, // Strictly required
       position: form.position.trim() || undefined,
       level: form.level.trim() || undefined,
       employment_type: form.employment_type,
@@ -134,8 +153,9 @@ export function EmployeeFormPage() {
         navigate(`/employees/${id}`);
       } else {
         const created = await createEmployee(payload);
-        notify("Employee created.");
-        navigate(`/employees/${created.id}`, { state: { invite: created.invite } });
+        notify("Employee created & invite triggered!");
+        setCreatedEmployee(created);
+        setWizardStep(2);
       }
     } catch (err) {
       const parsedErr = parseApiError(err);
@@ -144,6 +164,39 @@ export function EmployeeFormPage() {
       if (Object.keys(fromServer).length > 0) setFieldErrors(fromServer);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleAssignSalary(e: FormEvent) {
+    e.preventDefault();
+    if (!createdEmployee?.id) return;
+    if (!structureId || !ctc) {
+      setStep2Error("Please select a salary structure and enter annual CTC.");
+      return;
+    }
+    setAssigningSalary(true);
+    setStep2Error(null);
+    try {
+      await assignEmployeeSalary(createdEmployee.id, {
+        structure_id: structureId,
+        ctc: ctc.trim(),
+        effective_from: effectiveFrom,
+      });
+      notify("Salary structure assigned.");
+      navigate(`/employees/${createdEmployee.id}`, { state: { invite: createdEmployee.invite } });
+    } catch (err) {
+      const parsed = parseApiError(err);
+      setStep2Error(parsed.message);
+    } finally {
+      setAssigningSalary(false);
+    }
+  }
+
+  function handleSkipSalary() {
+    if (createdEmployee) {
+      navigate(`/employees/${createdEmployee.id}`, { state: { invite: createdEmployee.invite } });
+    } else {
+      navigate("/employees");
     }
   }
 
@@ -170,127 +223,302 @@ export function EmployeeFormPage() {
         </button>
       </div>
 
-      <PageHeader title={isEdit ? "Edit employee" : "New employee"} breadcrumb="HR / Employees" />
-      <form className="card stack" onSubmit={handleSubmit} style={{ maxWidth: 640 }}>
-        {formError && <div className="alert alert-error">{formError}</div>}
+      <PageHeader
+        title={isEdit ? "Edit employee" : "Onboard New Employee"}
+        breadcrumb={isEdit ? "HR / Edit Employee" : "HR / Employee Onboarding Wizard"}
+      />
 
-        <div className="form-grid">
-          <div className={"field" + (fieldErrors.first_name ? " has-error" : "")}>
-            <label>First name</label>
-            <input value={form.first_name} onChange={(e) => setField("first_name", e.target.value)} />
-            {fieldErrors.first_name && <span className="field-error">{fieldErrors.first_name}</span>}
-          </div>
-          <div className="field">
-            <label>Last name</label>
-            <input value={form.last_name} onChange={(e) => setField("last_name", e.target.value)} />
-          </div>
-
-          <div className={"field" + (fieldErrors.email ? " has-error" : "")}>
-            <label>Work email</label>
-            <input
-              type="email"
-              value={form.email}
-              onChange={(e) => setField("email", e.target.value)}
-              disabled={isEdit}
-            />
-            {fieldErrors.email && <span className="field-error">{fieldErrors.email}</span>}
-          </div>
-          <div className={"field" + (fieldErrors.personal_email ? " has-error" : "")}>
-            <label>Personal email</label>
-            <input
-              type="email"
-              value={form.personal_email}
-              onChange={(e) => setField("personal_email", e.target.value)}
-            />
-            {fieldErrors.personal_email && <span className="field-error">{fieldErrors.personal_email}</span>}
-            {!isEdit && (
-              <span className="field-hint">
-                The activation invite goes here — they can't reach their work email until they've
-                activated. Falls back to the work email above if left blank.
-              </span>
-            )}
-          </div>
-
-          <div className="field">
-            <label>Phone</label>
-            <input value={form.phone} onChange={(e) => setField("phone", e.target.value)} />
-          </div>
-          <div className="field">
-            <label>Department</label>
-            <select value={form.department_id} onChange={(e) => setField("department_id", e.target.value)}>
-              <option value="">— None —</option>
-              {departmentsQuery.data?.items.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="field">
-            <label>Position</label>
-            <input value={form.position} onChange={(e) => setField("position", e.target.value)} />
-          </div>
-          <div className="field">
-            <label>Level (Band)</label>
-            <select
-              value={form.level}
-              onChange={(e) => setField("level", e.target.value)}
+      {/* Onboarding Wizard Stepper (Only on New Employee) */}
+      {!isEdit && (
+        <div
+          style={{
+            maxWidth: 640,
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "12px",
+            marginBottom: "8px",
+          }}
+        >
+          <div
+            style={{
+              padding: "12px 16px",
+              borderRadius: "8px",
+              border: wizardStep === 1 ? "2px solid #2563eb" : "1px solid #e2e8f0",
+              background: wizardStep === 1 ? "#eff6ff" : "#f8fafc",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+            }}
+          >
+            <span
+              style={{
+                width: "28px",
+                height: "28px",
+                borderRadius: "50%",
+                background: wizardStep >= 1 ? "#2563eb" : "#cbd5e1",
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontWeight: 700,
+                fontSize: "0.85rem",
+              }}
             >
-              <option value="L1">L1 — Junior / Entry Level</option>
-              <option value="L2">L2 — Mid Level</option>
-              <option value="L3">L3 — Lead / Senior / Executive</option>
-            </select>
-            <span className="field-hint">Select the designated employee band (L1, L2, or L3).</span>
+              {createdEmployee ? "✓" : "1"}
+            </span>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: "0.9rem", color: "#1e293b" }}>
+                Step 1: Basic & Job Role
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "#64748b" }}>
+                Profile details & email invite
+              </div>
+            </div>
           </div>
 
-          <div className="field">
-            <label>Employment type</label>
-            <select
-              value={form.employment_type}
-              onChange={(e) => setField("employment_type", e.target.value as EmploymentType)}
+          <div
+            style={{
+              padding: "12px 16px",
+              borderRadius: "8px",
+              border: wizardStep === 2 ? "2px solid #2563eb" : "1px solid #e2e8f0",
+              background: wizardStep === 2 ? "#eff6ff" : "#f8fafc",
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+            }}
+          >
+            <span
+              style={{
+                width: "28px",
+                height: "28px",
+                borderRadius: "50%",
+                background: wizardStep === 2 ? "#2563eb" : "#cbd5e1",
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontWeight: 700,
+                fontSize: "0.85rem",
+              }}
             >
-              {EMPLOYMENT_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t.replace("_", " ")}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className={"field" + (fieldErrors.hire_date ? " has-error" : "")}>
-            <label>Hire date</label>
-            <input type="date" value={form.hire_date} onChange={(e) => setField("hire_date", e.target.value)} />
-            {fieldErrors.hire_date && <span className="field-error">{fieldErrors.hire_date}</span>}
-          </div>
-
-          <div className="field">
-            <label>Probation end date</label>
-            <input
-              type="date"
-              value={form.probation_end_date}
-              onChange={(e) => setField("probation_end_date", e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label>Notice period (days)</label>
-            <input
-              type="number"
-              min={0}
-              value={form.notice_period_days}
-              onChange={(e) => setField("notice_period_days", e.target.value)}
-            />
+              2
+            </span>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: "0.9rem", color: "#1e293b" }}>
+                Step 2: Compensation Setup
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "#64748b" }}>
+                Salary structure (Optional)
+              </div>
+            </div>
           </div>
         </div>
+      )}
 
-        <div className="row">
-          <button className="btn btn-primary" type="submit" disabled={submitting}>
-            {submitting ? "Saving…" : isEdit ? "Save changes" : "Create employee"}
-          </button>
-          <button type="button" className="btn" onClick={() => navigate(-1)}>
-            Cancel
-          </button>
-        </div>
-      </form>
+      {/* Step 1 Form */}
+      {wizardStep === 1 && (
+        <form className="card stack" onSubmit={handleStep1Submit} style={{ maxWidth: 640 }}>
+          {formError && <div className="alert alert-error">{formError}</div>}
+
+          <div className="form-grid">
+            <div className={"field" + (fieldErrors.first_name ? " has-error" : "")}>
+              <label>First name *</label>
+              <input value={form.first_name} onChange={(e) => setField("first_name", e.target.value)} />
+              {fieldErrors.first_name && <span className="field-error">{fieldErrors.first_name}</span>}
+            </div>
+            <div className="field">
+              <label>Last name</label>
+              <input value={form.last_name} onChange={(e) => setField("last_name", e.target.value)} />
+            </div>
+
+            <div className={"field" + (fieldErrors.email ? " has-error" : "")}>
+              <label>Work email *</label>
+              <input
+                type="email"
+                value={form.email}
+                onChange={(e) => setField("email", e.target.value)}
+                disabled={isEdit}
+              />
+              {fieldErrors.email && <span className="field-error">{fieldErrors.email}</span>}
+            </div>
+            <div className={"field" + (fieldErrors.personal_email ? " has-error" : "")}>
+              <label>Personal email</label>
+              <input
+                type="email"
+                value={form.personal_email}
+                onChange={(e) => setField("personal_email", e.target.value)}
+              />
+              {fieldErrors.personal_email && <span className="field-error">{fieldErrors.personal_email}</span>}
+              {!isEdit && (
+                <span className="field-hint">
+                  Activation invite is sent here. Falls back to work email if empty.
+                </span>
+              )}
+            </div>
+
+            <div className="field">
+              <label>Phone</label>
+              <input value={form.phone} onChange={(e) => setField("phone", e.target.value)} />
+            </div>
+            
+            {/* Mandatory Department Selection */}
+            <div className={"field" + (fieldErrors.department_id ? " has-error" : "")}>
+              <label>Department *</label>
+              <select
+                value={form.department_id}
+                onChange={(e) => setField("department_id", e.target.value)}
+              >
+                <option value="">— Select Department (Mandatory) —</option>
+                {departmentsQuery.data?.items.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+              {fieldErrors.department_id && (
+                <span className="field-error">{fieldErrors.department_id}</span>
+              )}
+            </div>
+
+            <div className="field">
+              <label>Position</label>
+              <input value={form.position} onChange={(e) => setField("position", e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Level (Band)</label>
+              <select
+                value={form.level}
+                onChange={(e) => setField("level", e.target.value)}
+              >
+                <option value="L1">L1 — Junior / Entry Level</option>
+                <option value="L2">L2 — Mid Level</option>
+                <option value="L3">L3 — Lead / Senior / Executive</option>
+              </select>
+              <span className="field-hint">Select designated employee band.</span>
+            </div>
+
+            <div className="field">
+              <label>Employment type</label>
+              <select
+                value={form.employment_type}
+                onChange={(e) => setField("employment_type", e.target.value as EmploymentType)}
+              >
+                {EMPLOYMENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t.replace("_", " ")}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className={"field" + (fieldErrors.hire_date ? " has-error" : "")}>
+              <label>Hire date *</label>
+              <input type="date" value={form.hire_date} onChange={(e) => setField("hire_date", e.target.value)} />
+              {fieldErrors.hire_date && <span className="field-error">{fieldErrors.hire_date}</span>}
+            </div>
+
+            <div className="field">
+              <label>Probation end date</label>
+              <input
+                type="date"
+                value={form.probation_end_date}
+                onChange={(e) => setField("probation_end_date", e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label>Notice period (days)</label>
+              <input
+                type="number"
+                min={0}
+                value={form.notice_period_days}
+                onChange={(e) => setField("notice_period_days", e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="row" style={{ marginTop: "1rem" }}>
+            <button className="btn btn-primary" type="submit" disabled={submitting}>
+              {submitting
+                ? "Saving…"
+                : isEdit
+                ? "Save changes"
+                : "Create & Continue to Step 2 →"}
+            </button>
+            <button type="button" className="btn" onClick={() => navigate(-1)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Step 2: Compensation & Payroll Setup */}
+      {wizardStep === 2 && (
+        <form className="card stack" onSubmit={handleAssignSalary} style={{ maxWidth: 640 }}>
+          <div className="alert alert-success">
+            <strong>Step 1 Complete:</strong> Employee profile created and activation invite triggered!
+          </div>
+
+          <div>
+            <h2 style={{ fontSize: "1.1rem", margin: "0 0 4px" }}>Step 2: Compensation & Payroll Breakdown</h2>
+            <p className="subtitle" style={{ margin: 0, fontSize: "0.85rem" }}>
+              Assign a pre-configured salary structure and annual CTC for this employee. You can also skip this and configure it later under Payroll Setup.
+            </p>
+          </div>
+
+          {step2Error && <div className="alert alert-error">{step2Error}</div>}
+
+          <div className="form-grid">
+            <div className="field">
+              <label>Salary Structure</label>
+              <select value={structureId} onChange={(e) => setStructureId(e.target.value)}>
+                <option value="">— Select Salary Structure —</option>
+                {structuresQuery.data?.items.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.country} • {s.level || "All Levels"})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field">
+              <label>Annual CTC (Gross Cost to Company)</label>
+              <input
+                type="number"
+                step="1000"
+                placeholder="e.g. 1200000"
+                value={ctc}
+                onChange={(e) => setCtc(e.target.value)}
+              />
+            </div>
+
+            <div className="field">
+              <label>Effective From</label>
+              <input
+                type="date"
+                value={effectiveFrom}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="row" style={{ marginTop: "1rem" }}>
+            <button
+              className="btn btn-primary"
+              type="submit"
+              disabled={assigningSalary || !structureId || !ctc}
+            >
+              {assigningSalary ? "Assigning…" : "Save Compensation & Finish"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={handleSkipSalary}
+            >
+              Skip for now →
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }
+

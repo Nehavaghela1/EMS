@@ -1,7 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth, type UserRole } from "./auth-context";
 import { useTimer } from "./timer-context";
+import { listCompanies } from "../modules/identity/api";
 
 interface SubItem {
   to: string;
@@ -135,6 +137,20 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
 
   const role = user?.role ?? "employee";
+
+  const [selectedWorkspace, setSelectedWorkspace] = useState<string>(user?.company_id || "");
+
+  useEffect(() => {
+    if (user?.company_id && !selectedWorkspace) {
+      setSelectedWorkspace(user.company_id);
+    }
+  }, [user?.company_id, selectedWorkspace]);
+
+  const companiesQuery = useQuery({
+    queryKey: ["all-tenant-companies"],
+    queryFn: () => listCompanies({ limit: 100 }),
+    enabled: user?.role === "super_admin",
+  });
 
   // Filter sections visible to current role
   const visibleSections = NAV_SECTIONS.filter((sec) => sec.roles.includes(role))
@@ -460,65 +476,85 @@ export function AppLayout({ children }: { children: ReactNode }) {
             zIndex: 40,
           }}
         >
-          {/* Tenant Organization Switcher */}
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <span style={{ fontSize: "0.8rem", color: "var(--color-muted, #64748b)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              Active Workspace:
-            </span>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span
-                style={{
-                  width: "24px",
-                  height: "24px",
-                  borderRadius: "6px",
-                  background: "linear-gradient(135deg, #2563eb, #3b82f6)",
-                  color: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                }}
-              >
-                🏢
+          {/* Tenant Organization Switcher - Role-based (Hidden for standard employees like Niku) */}
+          {user && user.role !== "employee" ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <span style={{ fontSize: "0.8rem", color: "var(--color-muted, #64748b)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                Active Workspace:
               </span>
-              <select
-                style={{
-                  padding: "4px 10px",
-                  fontSize: "0.85rem",
-                  fontWeight: 600,
-                  borderRadius: "6px",
-                  border: "1px solid var(--color-border, #cbd5e1)",
-                  background: "var(--color-surface, #f8fafc)",
-                  color: "var(--color-heading, #1e293b)",
-                  cursor: "pointer",
-                }}
-                defaultValue={user?.company_id || "infiria"}
-                onChange={(e) => {
-                  // Instant tenant switch notification
-                  const selectedName = e.target.options[e.target.selectedIndex].text;
-                  alert(`Switched active workspace to: ${selectedName}`);
-                }}
-                title="Switch parent/subsidiary organization workspace"
-              >
-                <option value="infiria">🏢 Infiria Tech Platforms (Parent Entity)</option>
-                <option value="solaria">🏢 Solaria Energy Corp (Subsidiary)</option>
-                <option value="all_tenants">🌐 Global Platform View (All Entities)</option>
-              </select>
-              <span
-                className="badge"
-                style={{
-                  background: "#f0fdf4",
-                  color: "#166534",
-                  border: "1px solid #bbf7d0",
-                  fontSize: "0.72rem",
-                  fontWeight: 600,
-                }}
-              >
-                ● Connected Multi-Tenant
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span
+                  style={{
+                    width: "24px",
+                    height: "24px",
+                    borderRadius: "6px",
+                    background: "linear-gradient(135deg, #2563eb, #3b82f6)",
+                    color: "#fff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                  }}
+                >
+                  🏢
+                </span>
+                <select
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: "0.85rem",
+                    fontWeight: 600,
+                    borderRadius: "6px",
+                    border: "1px solid var(--color-border, #cbd5e1)",
+                    background: "var(--color-surface, #f8fafc)",
+                    color: "var(--color-heading, #1e293b)",
+                    cursor: "pointer",
+                  }}
+                  value={selectedWorkspace}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    setSelectedWorkspace(nextId);
+                    const selectedName = e.target.options[e.target.selectedIndex].text;
+                    alert(`Switched active workspace to: ${selectedName}`);
+                  }}
+                  title="Switch parent/subsidiary organization workspace"
+                >
+                  {/* Primary authenticated workspace */}
+                  <option value={user.company_id}>
+                    🏢 {user.company_name || "Primary Tenant"} {user.company_code ? `(${user.company_code})` : ""}
+                  </option>
+                  {/* Super admin multi-entity options fetched dynamically */}
+                  {user.role === "super_admin" &&
+                    companiesQuery.data?.items
+                      .filter((c) => c.id !== user.company_id)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          🏢 {c.name} ({c.code})
+                        </option>
+                      ))}
+                </select>
+                <span
+                  className="badge"
+                  style={{
+                    background: "#f0fdf4",
+                    color: "#166534",
+                    border: "1px solid #bbf7d0",
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  ● Active Tenant
+                </span>
+              </div>
+            </div>
+          ) : (
+            /* Clean header title for regular employees */
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-heading, #1e293b)" }}>
+                🏢 {user?.company_name || "Workspace"}
               </span>
             </div>
-          </div>
+          )}
 
           {/* User Quick Info */}
           <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>

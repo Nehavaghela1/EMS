@@ -17,6 +17,8 @@ export interface CurrentUser {
   email: string;
   role: UserRole;
   company_id: string;
+  company_name?: string | null;
+  company_code?: string | null;
   is_active: boolean;
   must_change_password: boolean;
   employee: EmployeeSummary | null;

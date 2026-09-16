@@ -29,7 +29,12 @@ export const registerCompanySchema = z
       .or(z.literal("")),
     company_size: z.string().trim().min(1, "Please select your company size"),
     industry: z.string().trim().optional(),
-    phone: z.string().trim().optional(),
+    phone: z
+      .string()
+      .trim()
+      .regex(/^(\+?[0-9\s-]{7,15})?$/, "Enter a valid international phone number (e.g. +91 9876543210)")
+      .optional()
+      .or(z.literal("")),
     password: passwordPolicySchema,
     confirm_password: z.string().min(1, "Please confirm your password"),
   })

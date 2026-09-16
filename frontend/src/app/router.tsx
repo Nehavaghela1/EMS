@@ -68,11 +68,7 @@ export function AppRouter() {
       />
       <Route
         path="/activate/:token"
-        element={
-          <Public>
-            <ActivatePage />
-          </Public>
-        }
+        element={<ActivatePage />}
       />
       <Route
         path="/forgot-password"

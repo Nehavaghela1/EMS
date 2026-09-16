@@ -166,6 +166,8 @@ class MeResponse(BaseModel):
     email: str
     role: UserRole
     company_id: uuid.UUID
+    company_name: str | None = None
+    company_code: str | None = None
     is_active: bool
     must_change_password: bool
     employee: EmployeeSummary | None

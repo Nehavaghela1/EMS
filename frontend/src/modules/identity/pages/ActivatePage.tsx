@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../../../app/auth-context";
@@ -16,6 +16,17 @@ export function ActivatePage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const { establishSession } = useAuth();
+
+  // Active Session Override: clear cached session / auth tokens prior to activation
+  // to avoid cross-user session pollution in the same browser
+  useEffect(() => {
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
 
   const previewQuery = useQuery({
     queryKey: ["activation-preview", token],

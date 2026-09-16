@@ -345,11 +345,15 @@ class AuthService:
         caller has no Employee row — e.g. an HR admin created directly at
         company approval, WP-05), and role-derived permissions."""
         employee = self.employee_repo.get_by_user_id(user.company_id, user.id)
+        company_name = user.company.name if user.company else None
+        company_code = user.company.code if user.company else None
         return MeResponse(
             id=user.id,
             email=user.email,
             role=user.role,
             company_id=user.company_id,
+            company_name=company_name,
+            company_code=company_code,
             is_active=user.is_active,
             must_change_password=user.must_change_password,
             employee=EmployeeSummary.model_validate(employee) if employee else None,

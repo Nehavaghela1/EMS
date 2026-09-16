@@ -44,7 +44,7 @@ export function RegisterCompanyPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [submitted, setSubmitted] = useState<{ name: string; code: string; email: string } | null>(null);
+  const [submitted, setSubmitted] = useState<{ name: string; code: string; email: string; subdomain?: string } | null>(null);
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => {
@@ -88,7 +88,12 @@ export function RegisterCompanyPage() {
         phone: form.phone.trim() || undefined,
         password: form.password,
       });
-      setSubmitted({ name: company.name, code: company.code, email: form.company_email.trim() });
+      setSubmitted({
+        name: company.name,
+        code: company.code,
+        email: form.company_email.trim(),
+        subdomain: company.subdomain || form.subdomain.trim() || undefined,
+      });
     } catch (err) {
       const parsedErr = parseApiError(err);
       setFormError(parsedErr.message);
@@ -103,19 +108,34 @@ export function RegisterCompanyPage() {
     return (
       <div className="center-screen">
         <div className="card stack auth-card auth-card-wide" style={{ maxWidth: 540 }}>
-          <h1>Registration submitted</h1>
-          <div className="alert alert-success">
-            <strong>{submitted.name}</strong> (code <code>{submitted.code}</code>) is registered and now{" "}
-            <strong>awaiting approval</strong>.
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontSize: "28px" }}>🏢</span>
+            <div>
+              <h1 style={{ margin: 0 }}>Workspace Registered!</h1>
+              <p className="subtitle" style={{ margin: 0, fontSize: "0.85rem" }}>
+                Welcome to EMS Pro, <strong>{submitted.name}</strong>
+              </p>
+            </div>
+          </div>
+          <div className="alert alert-success" style={{ marginTop: "10px" }}>
+            Workspace: <strong>{submitted.name}</strong> • Tenant Code: <code>{submitted.code}</code>
+            {submitted.subdomain && (
+              <div>
+                Workspace URL: <code>https://{submitted.subdomain}.ems-pro.com</code>
+              </div>
+            )}
           </div>
           <p className="subtitle" style={{ lineHeight: 1.6 }}>
-            Your account password and workspace preferences have been saved securely. Once our platform
-            administrator approves your company request, your account will be activated immediately and you can
-            sign in directly at <strong>{submitted.email}</strong> using the password you just set.
+            Your admin workspace preferences and credentials have been established. Platform approval is underway for{" "}
+            <strong>{submitted.name}</strong>. You can sign in directly using <strong>{submitted.email}</strong> as your tenant admin.
           </p>
           <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
-            <Link to="/login" className="btn btn-primary" style={{ flex: 1, textAlign: "center" }}>
-              Proceed to sign in
+            <Link
+              to={`/login?email=${encodeURIComponent(submitted.email)}&company=${encodeURIComponent(submitted.code)}`}
+              className="btn btn-primary"
+              style={{ flex: 1, textAlign: "center" }}
+            >
+              Enter {submitted.name} Workspace
             </Link>
           </div>
         </div>
@@ -257,14 +277,18 @@ export function RegisterCompanyPage() {
               )}
             </div>
 
-            <div className="field">
+            <div className={"field" + (fieldErrors.phone ? " has-error" : "")}>
               <label htmlFor="phone">Contact phone (optional)</label>
               <input
                 id="phone"
+                type="tel"
                 placeholder="+91 9876543210"
                 value={form.phone}
                 onChange={(e) => setField("phone", e.target.value)}
+                pattern="^(\+?[0-9\s-]{7,15})?$"
+                title="International phone number e.g. +91 9876543210"
               />
+              {fieldErrors.phone && <span className="field-error">{fieldErrors.phone}</span>}
             </div>
           </div>
 
