@@ -95,7 +95,8 @@ def create_time_entry(
     if not emp_id:
         raise AppError("No employee profile found to attach time log to. Please select an employee or add a team member first.")
 
-    return service.create_time_entry(project.company_id, emp_id, data)
+    is_admin_or_manager = current_user.role in (UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
+    return service.create_time_entry(project.company_id, emp_id, data, is_admin_or_manager=is_admin_or_manager)
 
 @router.get("/time-entries", response_model=List[TimeEntryResponse])
 def list_time_entries(

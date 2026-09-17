@@ -2086,14 +2086,41 @@ export function ProjectDetailPage() {
                   }}
                 >
                   <option value="">-- General Project Work (Unlinked) --</option>
-                  {tasks.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.title} ({t.status.toUpperCase()})
-                    </option>
-                  ))}
+                  {canManage || isProjectLead ? (
+                    <>
+                      <optgroup label="My Assigned Tasks">
+                        {tasks
+                          .filter((t) => user?.employee?.id && t.assigned_to === user.employee.id)
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.title} ({t.status.toUpperCase()})
+                            </option>
+                          ))}
+                      </optgroup>
+                      <optgroup label="Team Member Tasks">
+                        {tasks
+                          .filter((t) => !user?.employee?.id || t.assigned_to !== user.employee.id)
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.title} — {t.assigned_to_name || "Unassigned"} ({t.status.toUpperCase()})
+                            </option>
+                          ))}
+                      </optgroup>
+                    </>
+                  ) : (
+                    tasks
+                      .filter((t) => user?.employee?.id && t.assigned_to === user.employee.id)
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.title} ({t.status.toUpperCase()})
+                        </option>
+                      ))
+                  )}
                 </select>
                 <span className="field-hint" style={{ fontSize: "0.75rem" }}>
-                  Binds logged hours directly to the task card to synchronize progress.
+                  {!canManage && !isProjectLead && tasks.every((t) => !user?.employee?.id || t.assigned_to !== user.employee.id)
+                    ? "ℹ️ You have no assigned tasks in this project yet. Log time as general project work."
+                    : "Binds logged hours directly to the task card to synchronize progress."}
                 </span>
               </div>
 

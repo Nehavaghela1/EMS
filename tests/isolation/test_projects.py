@@ -166,3 +166,67 @@ def test_task_update_permissions(client: TestClient, db: Session, company_a: Ten
     )
     assert res_lead.status_code == 200
     assert res_lead.json()["status"] == "in_progress"
+
+    # Demote Yashvi back to member for time entry tests
+    client.delete(
+        f"/api/v1/projects/{project_id}/members/{emp_2.id}",
+        headers=admin_headers
+    )
+    client.post(
+        f"/api/v1/projects/{project_id}/members",
+        json={"employee_id": str(emp_2.id), "role": "member"},
+        headers=admin_headers
+    )
+
+    # 4. Timesheet Logging Tests:
+    # 4a. Yashvi tries to log time against Nik's task -> 403 Forbidden
+    time_payload_forbidden = {
+        "project_id": project_id,
+        "task_id": task_id,
+        "date": str(date.today()),
+        "hours": 4.5,
+        "description": "Attempting to log on Nik's task"
+    }
+    res_time_forbidden = client.post(
+        "/api/v1/projects/time-entries",
+        json=time_payload_forbidden,
+        headers=headers_emp2
+    )
+    assert res_time_forbidden.status_code == 403
+    assert "You cannot log time against a task assigned to another teammate" in res_time_forbidden.json()["error"]["message"]
+
+    # 4b. Nik logs time against his own task -> Allowed and does not throw TypeError on employee_id
+    time_payload_nik = {
+        "project_id": project_id,
+        "task_id": task_id,
+        "date": str(date.today()),
+        "hours": 3.0,
+        "description": "Logged 3 hours on Nik's feature task"
+    }
+    res_time_nik = client.post(
+        "/api/v1/projects/time-entries",
+        json=time_payload_nik,
+        headers=headers_emp1
+    )
+    assert res_time_nik.status_code == 201
+    assert float(res_time_nik.json()["hours"]) == 3.0
+    assert res_time_nik.json()["task_id"] == task_id
+    assert res_time_nik.json()["employee_id"] == str(emp_1.id)
+
+    # 4c. General time entry without task -> Allowed for any project member
+    general_time_payload = {
+        "project_id": project_id,
+        "date": str(date.today()),
+        "hours": 2.0,
+        "description": "Weekly alignment and planning meeting"
+    }
+    res_time_general = client.post(
+        "/api/v1/projects/time-entries",
+        json=general_time_payload,
+        headers=headers_emp2
+    )
+    assert res_time_general.status_code == 201
+    assert float(res_time_general.json()["hours"]) == 2.0
+    assert res_time_general.json()["task_id"] is None
+    assert res_time_general.json()["employee_id"] == str(emp_2.id)
+

@@ -254,7 +254,13 @@ class ProjectService:
         return [TaskCommentResponse.from_orm(c) for c in comments]
 
     # --- Time Entries ---
-    def create_time_entry(self, company_id: UUID, employee_id: UUID, data: TimeEntryCreate) -> TimeEntryResponse:
+    def create_time_entry(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        data: TimeEntryCreate,
+        is_admin_or_manager: bool = False
+    ) -> TimeEntryResponse:
         project = self.repo.get_project_by_id(company_id, data.project_id)
         if not project:
             raise NotFoundError("Project not found.")
@@ -262,6 +268,17 @@ class ProjectService:
             task = self.repo.get_task_by_id(company_id, data.task_id)
             if not task:
                 raise NotFoundError("Task not found.")
+            # Server-side validation: Regular employees can only log time against their own assigned tasks
+            if not is_admin_or_manager:
+                # Check if employee is Project Lead
+                is_lead = False
+                member = self.repo.get_member(company_id, data.project_id, employee_id)
+                if member and member.role == "lead":
+                    is_lead = True
+
+                if task.assigned_to and task.assigned_to != employee_id and not is_lead:
+                    assignee_name = task.assigned_to_name if hasattr(task, "assigned_to_name") else "another teammate"
+                    raise ForbiddenError(f"You cannot log time against a task assigned to {assignee_name}. Employees can only log hours on their own assigned tasks.")
 
         # Check total daily logged hours ceiling (max 24 hrs per day)
         existing_entries = self.repo.list_time_entries(company_id, employee_id=employee_id, start_date=data.date, end_date=data.date)

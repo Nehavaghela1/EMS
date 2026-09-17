@@ -303,11 +303,45 @@ export function TimesheetsPage() {
                   onChange={(e) => setSelectedTaskId(e.target.value)}
                   disabled={!selectedProjectId}
                 >
-                  <option value="">-- No specific task --</option>
-                  {tasks.map((t) => (
-                    <option key={t.id} value={t.id}>{t.title}</option>
-                  ))}
+                  <option value="">-- No specific task (General work / Meeting) --</option>
+                  {isManagerOrAdmin ? (
+                    <>
+                      {/* For managers/admins: Group by My Tasks vs Team Tasks */}
+                      <optgroup label="My Tasks">
+                        {tasks
+                          .filter((t) => user?.employee?.id && t.assigned_to === user.employee.id)
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.title} ({t.status.toUpperCase()})
+                            </option>
+                          ))}
+                      </optgroup>
+                      <optgroup label="Team Member Tasks">
+                        {tasks
+                          .filter((t) => !user?.employee?.id || t.assigned_to !== user.employee.id)
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.title} — {t.assigned_to_name || "Unassigned"} ({t.status.toUpperCase()})
+                            </option>
+                          ))}
+                      </optgroup>
+                    </>
+                  ) : (
+                    /* For regular employees: Strictly filter to their own assigned tasks */
+                    tasks
+                      .filter((t) => user?.employee?.id && t.assigned_to === user.employee.id)
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.title} ({t.status.toUpperCase()})
+                        </option>
+                      ))
+                  )}
                 </select>
+                {!isManagerOrAdmin && tasks.length > 0 && tasks.every((t) => !user?.employee?.id || t.assigned_to !== user.employee.id) && (
+                  <span className="field-hint text-warning" style={{ fontSize: "0.75rem", display: "block", marginTop: "3px" }}>
+                    ℹ️ You have no assigned tasks in this project yet. You can log time as general project work.
+                  </span>
+                )}
               </div>
 
               <div className="field">

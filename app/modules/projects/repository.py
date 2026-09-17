@@ -195,10 +195,11 @@ class ProjectRepository:
 
     # --- Time Entries ---
     def create_time_entry(self, company_id: UUID, employee_id: UUID, data: TimeEntryCreate) -> TimeEntry:
+        entry_dict = data.dict(exclude={"employee_id"})
         entry = TimeEntry(
             company_id=company_id,
             employee_id=employee_id,
-            **data.dict()
+            **entry_dict
         )
         self.db.add(entry)
         self.db.commit()
