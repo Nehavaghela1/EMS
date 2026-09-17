@@ -24,6 +24,7 @@ export function ProjectDetailPage() {
   const { user } = useAuth();
   const { activeTimer, startTimer, stopTimer, formatTime, elapsedSeconds } = useTimer();
   const canManage = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager";
+  const [taskFilter, setTaskFilter] = useState<"all" | "my">("all");
 
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -33,6 +34,23 @@ export function ProjectDetailPage() {
   const [employeeList, setEmployeeList] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"kanban" | "milestones" | "team" | "timelogs" | "documents" | "settings">("kanban");
+
+  // Enterprise Role & Ownership Permissions
+  // Teammates can view tasks (Read-Only). Only Assignee, Project Lead, or Admins can modify/complete/track tasks.
+  const isProjectLead = Boolean(
+    user?.employee?.id && members.some((m) => m.employee_id === user.employee?.id && m.role === "lead")
+  );
+
+  const canModifyTask = (t: Task) => {
+    if (canManage || isProjectLead) return true;
+    if (user?.employee?.id && t.assigned_to === user.employee.id) return true;
+    return false;
+  };
+
+  const getTaskLockMessage = (t: Task) => {
+    const assignee = t.assigned_to_name || "the Assignee";
+    return `Only ${assignee} or the Project Lead can modify this task.`;
+  };
 
   // Documents State
   const [documents, setDocuments] = useState<ProjectDocument[]>([]);
@@ -642,9 +660,81 @@ export function ProjectDetailPage() {
 
       {/* TAB 1: KANBAN BOARD */}
       {activeTab === "kanban" && (
-        <div className="kanban-board">
+        <div>
+          {/* Kanban Toolbar with View Mode Filter ("All Tasks" vs "My Tasks") */}
+          <div
+            className="flex items-center justify-between mb-4 p-2"
+            style={{
+              background: "#f8fafc",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-md)",
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-muted)" }}>
+                View Mode:
+              </span>
+              <div
+                style={{
+                  display: "inline-flex",
+                  borderRadius: "6px",
+                  background: "#e2e8f0",
+                  padding: "2px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setTaskFilter("all")}
+                  style={{
+                    padding: "4px 12px",
+                    fontSize: "0.8rem",
+                    fontWeight: taskFilter === "all" ? 600 : 500,
+                    borderRadius: "4px",
+                    background: taskFilter === "all" ? "#fff" : "transparent",
+                    color: taskFilter === "all" ? "var(--color-primary)" : "var(--color-muted)",
+                    boxShadow: taskFilter === "all" ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                    border: "none",
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  🌐 All Tasks ({tasks.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTaskFilter("my")}
+                  style={{
+                    padding: "4px 12px",
+                    fontSize: "0.8rem",
+                    fontWeight: taskFilter === "my" ? 600 : 500,
+                    borderRadius: "4px",
+                    background: taskFilter === "my" ? "#fff" : "transparent",
+                    color: taskFilter === "my" ? "var(--color-primary)" : "var(--color-muted)",
+                    boxShadow: taskFilter === "my" ? "0 1px 2px rgba(0,0,0,0.08)" : "none",
+                    border: "none",
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  👤 My Tasks ({tasks.filter((t) => t.assigned_to === user?.employee?.id).length})
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs text-muted">
+              {isProjectLead && <span className="badge badge-primary">👑 Project Lead</span>}
+              {!canManage && !isProjectLead && (
+                <span>Teammate View: Read-only access to peers' tasks</span>
+              )}
+            </div>
+          </div>
+
+          <div className="kanban-board">
             {kanbanColumns.map((col) => {
-              const colTasks = tasks.filter((t) => t.status === col.key);
+              const visibleTasks = taskFilter === "my"
+                ? tasks.filter((t) => t.assigned_to === user?.employee?.id)
+                : tasks;
+              const colTasks = visibleTasks.filter((t) => t.status === col.key);
               const isOver = dragOverCol === col.key;
               return (
                 <div
@@ -664,6 +754,12 @@ export function ProjectDetailPage() {
                     setDragOverCol(null);
                     const taskId = e.dataTransfer.getData("text/plain") || draggedTaskId;
                     if (taskId) {
+                      const targetTask = tasks.find((t) => t.id === taskId);
+                      if (targetTask && !canModifyTask(targetTask)) {
+                        notify(getTaskLockMessage(targetTask), "error");
+                        setDraggedTaskId(null);
+                        return;
+                      }
                       handleStatusChange(taskId, col.key);
                       setDraggedTaskId(null);
                     }
@@ -701,12 +797,20 @@ export function ProjectDetailPage() {
                   ) : (
                     colTasks.map((task) => {
                       const isDraggingThis = draggedTaskId === task.id;
+                      const hasPermission = canModifyTask(task);
+                      const lockTooltip = getTaskLockMessage(task);
+
                       return (
                         <div
                           key={task.id}
                           className={`kanban-task-card ${isDraggingThis ? "is-dragging" : ""}`}
-                          draggable
+                          draggable={hasPermission}
                           onDragStart={(e) => {
+                            if (!hasPermission) {
+                              e.preventDefault();
+                              notify(lockTooltip, "error");
+                              return;
+                            }
                             setDraggedTaskId(task.id);
                             e.dataTransfer.setData("text/plain", task.id);
                             e.dataTransfer.effectAllowed = "move";
@@ -715,9 +819,19 @@ export function ProjectDetailPage() {
                             setDraggedTaskId(null);
                             setDragOverCol(null);
                           }}
-                          onDoubleClick={() => openEditTaskModal(task)}
+                          onDoubleClick={() => {
+                            if (!hasPermission) {
+                              notify(lockTooltip, "error");
+                              return;
+                            }
+                            openEditTaskModal(task);
+                          }}
                           onContextMenu={(e) => {
                             e.preventDefault();
+                            if (!hasPermission) {
+                              notify(lockTooltip, "error");
+                              return;
+                            }
                             if (task.status !== "done") {
                               handleStatusChange(task.id, "done");
                               notify("Task marked as Done!", "success");
@@ -772,21 +886,27 @@ export function ProjectDetailPage() {
                                 <button
                                   type="button"
                                   className="btn btn-ghost btn-sm"
+                                  disabled={!hasPermission}
                                   style={{
                                     padding: "2px 6px",
                                     fontSize: "11px",
                                     borderRadius: "4px",
-                                    color: "#2563eb",
-                                    background: "#eff6ff",
-                                    border: "1px solid #bfdbfe",
-                                    cursor: "pointer",
+                                    color: hasPermission ? "#2563eb" : "#94a3b8",
+                                    background: hasPermission ? "#eff6ff" : "#f1f5f9",
+                                    border: `1px solid ${hasPermission ? "#bfdbfe" : "#e2e8f0"}`,
+                                    cursor: hasPermission ? "pointer" : "not-allowed",
                                     display: "flex",
                                     alignItems: "center",
                                     gap: "3px",
                                     fontWeight: 600,
+                                    opacity: hasPermission ? 1 : 0.6,
                                   }}
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    if (!hasPermission) {
+                                      notify(lockTooltip, "error");
+                                      return;
+                                    }
                                     if (!id) return;
                                     startTimer({
                                       id: task.id,
@@ -796,7 +916,7 @@ export function ProjectDetailPage() {
                                     });
                                     notify(`Timer started for "${task.title}"`, "info");
                                   }}
-                                  title="Start Live Stopwatch Timer"
+                                  title={hasPermission ? "Start Live Stopwatch Timer" : lockTooltip}
                                 >
                                   ▶ Start
                                 </button>
@@ -806,22 +926,28 @@ export function ProjectDetailPage() {
                                 <button
                                   type="button"
                                   className="btn btn-sm"
+                                  disabled={!hasPermission}
                                   style={{
                                     padding: "2px 7px",
                                     fontSize: "11px",
                                     fontWeight: 700,
-                                    background: "#ecfdf5",
-                                    color: "#059669",
-                                    border: "1px solid #a7f3d0",
+                                    background: hasPermission ? "#ecfdf5" : "#f1f5f9",
+                                    color: hasPermission ? "#059669" : "#94a3b8",
+                                    border: `1px solid ${hasPermission ? "#a7f3d0" : "#e2e8f0"}`,
                                     borderRadius: "4px",
-                                    cursor: "pointer",
+                                    cursor: hasPermission ? "pointer" : "not-allowed",
+                                    opacity: hasPermission ? 1 : 0.5,
                                   }}
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    if (!hasPermission) {
+                                      notify(lockTooltip, "error");
+                                      return;
+                                    }
                                     handleStatusChange(task.id, "done");
                                     notify("Task marked as Done!", "success");
                                   }}
-                                  title="Mark as Done"
+                                  title={hasPermission ? "Mark as Done" : lockTooltip}
                                 >
                                   ✓
                                 </button>
@@ -843,18 +969,25 @@ export function ProjectDetailPage() {
                               <button
                                 type="button"
                                 className="btn btn-ghost btn-sm"
+                                disabled={!hasPermission}
                                 style={{
                                   padding: "3px 6px",
                                   borderRadius: "4px",
-                                  color: "#64748b",
+                                  color: hasPermission ? "#64748b" : "#cbd5e1",
+                                  cursor: hasPermission ? "pointer" : "not-allowed",
                                   display: "flex",
                                   alignItems: "center",
+                                  opacity: hasPermission ? 1 : 0.5,
                                 }}
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  if (!hasPermission) {
+                                    notify(lockTooltip, "error");
+                                    return;
+                                  }
                                   openEditTaskModal(task);
                                 }}
-                                title="Edit Task"
+                                title={hasPermission ? "Edit Task" : lockTooltip}
                               >
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -869,7 +1002,7 @@ export function ProjectDetailPage() {
                                   e.stopPropagation();
                                   openTaskComments(task);
                                 }}
-                                title="Task comments"
+                                title="Task comments (Read & Collaborate)"
                               >
                                 💬
                               </button>
@@ -921,7 +1054,12 @@ export function ProjectDetailPage() {
                               </span>
                               <select
                                 value={task.assigned_to || ""}
+                                disabled={!hasPermission}
                                 onChange={async (e) => {
+                                  if (!hasPermission) {
+                                    notify(lockTooltip, "error");
+                                    return;
+                                  }
                                   const newAssigneeId = e.target.value || null;
                                   try {
                                     await updateTask(task.id, { assigned_to: newAssigneeId || undefined });
@@ -936,13 +1074,14 @@ export function ProjectDetailPage() {
                                   fontSize: "0.75rem",
                                   borderRadius: "4px",
                                   border: "1px solid #e2e8f0",
-                                  background: "transparent",
+                                  background: hasPermission ? "transparent" : "#f8fafc",
                                   color: task.assigned_to ? "var(--color-primary, #2563eb)" : "var(--color-muted, #64748b)",
                                   fontWeight: 500,
-                                  cursor: "pointer",
+                                  cursor: hasPermission ? "pointer" : "not-allowed",
                                   maxWidth: "150px",
+                                  opacity: hasPermission ? 1 : 0.7,
                                 }}
-                                title="Reassign task to team member"
+                                title={hasPermission ? "Reassign task to team member" : lockTooltip}
                               >
                                 <option value="">Unassigned</option>
                                 {members.map((m) => (
@@ -966,6 +1105,7 @@ export function ProjectDetailPage() {
               </div>
             );
           })}
+          </div>
         </div>
       )}
 

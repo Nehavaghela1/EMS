@@ -206,10 +206,29 @@ class ProjectService:
             responses.append(resp)
         return responses
 
-    def update_task(self, company_id: Optional[UUID], task_id: UUID, data: TaskUpdate) -> TaskResponse:
+    def update_task(
+        self,
+        company_id: Optional[UUID],
+        task_id: UUID,
+        data: TaskUpdate,
+        current_emp_id: Optional[UUID] = None,
+        is_admin_or_manager: bool = False
+    ) -> TaskResponse:
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
             raise NotFoundError("Task not found.")
+
+        # Permission check: If not admin/manager, employee must be assignee or project lead
+        if not is_admin_or_manager and current_emp_id:
+            is_assignee = task.assigned_to == current_emp_id
+            is_lead = False
+            if task.company_id and task.project_id:
+                member = self.repo.get_member(task.company_id, task.project_id, current_emp_id)
+                if member and member.role == "lead":
+                    is_lead = True
+            if not is_assignee and not is_lead:
+                raise ForbiddenError("Only the task assignee or Project Lead can modify this task.")
+
         updated = self.repo.update_task(task, data)
         return self._enrich_task_response(updated)
 

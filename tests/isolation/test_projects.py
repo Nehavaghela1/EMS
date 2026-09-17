@@ -50,3 +50,119 @@ def test_projects_tenant_isolation(client: TestClient, db: Session, company_a: T
     # 3. Tenant B fetching Tenant A's project directly should get 404
     res_get_b = client.get(f"/api/v1/projects/{project_id_a}", headers=headers_b)
     assert res_get_b.status_code == 404
+
+def test_task_update_permissions(client: TestClient, db: Session, company_a: TenantContext):
+    # Setup admin
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+    admin_headers = _create_user_and_headers(db, company_a.company_id)
+
+    # Create project
+    p_res = client.post(
+        "/api/v1/projects",
+        json={"name": "Permissions Project", "code": f"PRJ-{uuid.uuid4().hex[:4].upper()}"},
+        headers=admin_headers
+    )
+    assert p_res.status_code == 201
+    project_id = p_res.json()["id"]
+
+    # Create Employee 1 (Assignee)
+    user_1 = User(
+        company_id=company_a.company_id,
+        email=f"emp1-{uuid.uuid4().hex[:6]}@example.test",
+        hashed_password=hash_password("Pass123!"),
+        role=UserRole.employee,
+        is_active=True,
+    )
+    db.add(user_1)
+    db.commit()
+    emp_1 = Employee(
+        company_id=company_a.company_id,
+        user_id=user_1.id,
+        employee_code=f"EMP-{uuid.uuid4().hex[:4].upper()}",
+        first_name="Nik",
+        last_name="Vaghela",
+        email=user_1.email,
+        hire_date=date.today(),
+        employment_type=EmploymentType.full_time,
+        invitation_status=InvitationStatus.activated,
+    )
+    db.add(emp_1)
+
+    # Create Employee 2 (Teammate - e.g., Yashvi)
+    user_2 = User(
+        company_id=company_a.company_id,
+        email=f"emp2-{uuid.uuid4().hex[:6]}@example.test",
+        hashed_password=hash_password("Pass123!"),
+        role=UserRole.employee,
+        is_active=True,
+    )
+    db.add(user_2)
+    db.commit()
+    emp_2 = Employee(
+        company_id=company_a.company_id,
+        user_id=user_2.id,
+        employee_code=f"EMP-{uuid.uuid4().hex[:4].upper()}",
+        first_name="Yashvi",
+        last_name="Patel",
+        email=user_2.email,
+        hire_date=date.today(),
+        employment_type=EmploymentType.full_time,
+        invitation_status=InvitationStatus.activated,
+    )
+    db.add(emp_2)
+    db.commit()
+
+    token_1 = create_access_token(sub=str(user_1.id), company_id=str(company_a.company_id), role=UserRole.employee.value)
+    token_2 = create_access_token(sub=str(user_2.id), company_id=str(company_a.company_id), role=UserRole.employee.value)
+    headers_emp1 = {"Authorization": f"Bearer {token_1}"}
+    headers_emp2 = {"Authorization": f"Bearer {token_2}"}
+
+    # Add both to project members
+    client.post(f"/api/v1/projects/{project_id}/members", json={"employee_id": str(emp_1.id), "role": "member"}, headers=admin_headers)
+    client.post(f"/api/v1/projects/{project_id}/members", json={"employee_id": str(emp_2.id), "role": "member"}, headers=admin_headers)
+
+    # Admin creates task assigned to Employee 1 (Nik)
+    t_res = client.post(
+        f"/api/v1/projects/{project_id}/tasks",
+        json={"title": "Nik's Feature Task", "assigned_to": str(emp_1.id), "status": "todo"},
+        headers=admin_headers
+    )
+    assert t_res.status_code == 201
+    task_id = t_res.json()["id"]
+
+    # 1. Teammate (Yashvi) tries to modify Nik's task -> Should be 403 Forbidden
+    res_forbidden = client.put(
+        f"/api/v1/projects/tasks/{task_id}",
+        json={"status": "done"},
+        headers=headers_emp2
+    )
+    assert res_forbidden.status_code == 403
+    assert "Only the task assignee or Project Lead" in res_forbidden.json()["error"]["message"]
+
+    # 2. Assignee (Nik) modifies his own task -> Allowed
+    res_nik = client.put(
+        f"/api/v1/projects/tasks/{task_id}",
+        json={"status": "done"},
+        headers=headers_emp1
+    )
+    assert res_nik.status_code == 200
+    assert res_nik.json()["status"] == "done"
+
+    # 3. Promote Yashvi to Project Lead -> She can now modify Nik's task
+    client.delete(
+        f"/api/v1/projects/{project_id}/members/{emp_2.id}",
+        headers=admin_headers
+    )
+    client.post(
+        f"/api/v1/projects/{project_id}/members",
+        json={"employee_id": str(emp_2.id), "role": "lead"},
+        headers=admin_headers
+    )
+    # Re-test Yashvi modifying task -> Allowed now that she is lead
+    res_lead = client.put(
+        f"/api/v1/projects/tasks/{task_id}",
+        json={"status": "in_progress"},
+        headers=headers_emp2
+    )
+    assert res_lead.status_code == 200
+    assert res_lead.json()["status"] == "in_progress"

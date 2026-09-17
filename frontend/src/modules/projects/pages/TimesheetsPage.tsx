@@ -157,7 +157,7 @@ export function TimesheetsPage() {
           <div className="stat-value" style={{ color: "var(--color-success)" }}>{approvedHours.toFixed(1)} hrs</div>
         </div>
         <div className="card">
-          <div className="stat-label">Pending Approval</div>
+          <div className="stat-label">{isManagerOrAdmin ? "Pending Approval" : "My Pending Submissions"}</div>
           <div className="stat-value" style={{ color: pendingEntries.length > 0 ? "var(--color-warning-text)" : "inherit" }}>
             {pendingEntries.length} entries
           </div>

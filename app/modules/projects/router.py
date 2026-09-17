@@ -170,7 +170,23 @@ def update_task(
 ):
     service = ProjectService(db)
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.update_task(cid, task_id, data)
+    is_admin_or_manager = current_user.role in (UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
+    current_emp_id = None
+    if not is_admin_or_manager:
+        from app.modules.hr.repository import EmployeeRepository
+        emp = EmployeeRepository(db).get_by_user_id(current_user.company_id, current_user.id)
+        if emp:
+            current_emp_id = emp.id
+        else:
+            from app.core.exceptions import ForbiddenError
+            raise ForbiddenError("Employee profile required to update tasks.")
+    return service.update_task(
+        cid,
+        task_id,
+        data,
+        current_emp_id=current_emp_id,
+        is_admin_or_manager=is_admin_or_manager
+    )
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(
