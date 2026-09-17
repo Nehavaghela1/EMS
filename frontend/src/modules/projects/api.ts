@@ -103,10 +103,20 @@ export async function createTimeEntry(payload: TimeEntryCreatePayload): Promise<
   return res.data;
 }
 
-export async function approveRejectTimeEntry(entryId: string, statusAction: "approved" | "rejected"): Promise<TimeEntry> {
-  const res = await apiClient.post<TimeEntry>(`/projects/time-entries/${entryId}/approve?status_action=${statusAction}`, {});
+export async function approveRejectTimeEntry(
+  entryId: string,
+  statusAction: "approved" | "rejected",
+  rejectionReason?: string,
+): Promise<TimeEntry> {
+  const params = new URLSearchParams({ status_action: statusAction });
+  if (rejectionReason) params.append("rejection_reason", rejectionReason);
+  const res = await apiClient.post<TimeEntry>(
+    `/projects/time-entries/${entryId}/approve?${params.toString()}`,
+    {},
+  );
   return res.data;
 }
+
 
 export async function deleteTimeEntry(entryId: string): Promise<void> {
   await apiClient.delete<void>(`/projects/time-entries/${entryId}`);

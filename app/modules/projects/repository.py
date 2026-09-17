@@ -271,14 +271,21 @@ class ProjectRepository:
         self.db.refresh(entry)
         return entry
 
-    def approve_reject_time_entry(self, entry: TimeEntry, status: str, approved_by: UUID) -> TimeEntry:
+    def approve_reject_time_entry(
+        self, entry: TimeEntry, status: str, approved_by: UUID,
+        rejection_reason: str | None = None
+    ) -> TimeEntry:
         entry.status = status
         entry.approved_by = approved_by
         entry.approved_at = datetime.utcnow()
         entry.updated_at = datetime.utcnow()
+        # Store rejection reason if the model column exists
+        if rejection_reason is not None and hasattr(entry, "rejection_reason"):
+            entry.rejection_reason = rejection_reason
         self.db.commit()
         self.db.refresh(entry)
         return entry
+
 
     def delete_time_entry(self, entry: TimeEntry) -> None:
         self.db.delete(entry)

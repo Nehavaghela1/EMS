@@ -135,11 +135,16 @@ def update_time_entry(
 def approve_time_entry(
     entry_id: UUID,
     status_action: str = Query("approved", pattern="^(approved|rejected)$"),
+    rejection_reason: Optional[str] = Query(None),
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
     service = ProjectService(db)
-    return service.approve_reject_time_entry(current_user.company_id, entry_id, status_action, current_user.id)
+    return service.approve_reject_time_entry(
+        current_user.company_id, entry_id, status_action, current_user.id,
+        rejection_reason=rejection_reason,
+    )
+
 
 @router.delete("/time-entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_time_entry(

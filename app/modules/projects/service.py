@@ -336,13 +336,18 @@ class ProjectService:
         updated = self.repo.update_time_entry(entry, data)
         return TimeEntryResponse.from_orm(updated)
 
-    def approve_reject_time_entry(self, company_id: UUID, entry_id: UUID, status: str, approver_user_id: UUID) -> TimeEntryResponse:
+    def approve_reject_time_entry(
+        self, company_id: UUID, entry_id: UUID, status: str,
+        approver_user_id: UUID, rejection_reason: str | None = None
+    ) -> TimeEntryResponse:
         if status not in ("approved", "rejected"):
             raise AppError("Status must be either 'approved' or 'rejected'.")
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
             raise NotFoundError("Time entry not found.")
-        updated = self.repo.approve_reject_time_entry(entry, status, approver_user_id)
+        updated = self.repo.approve_reject_time_entry(
+            entry, status, approver_user_id, rejection_reason=rejection_reason
+        )
         return TimeEntryResponse.from_orm(updated)
 
     def delete_time_entry(self, company_id: UUID, entry_id: UUID) -> None:

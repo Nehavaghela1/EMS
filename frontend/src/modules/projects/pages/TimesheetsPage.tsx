@@ -33,6 +33,13 @@ export function TimesheetsPage() {
   const [isBillable, setIsBillable] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
+  // Approvals Queue: drawer + reject reason prompt
+  const [drawerEntry, setDrawerEntry] = useState<TimeEntry | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<TimeEntry | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectBusy, setRejectBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState<Record<string, boolean>>({});
+
   const navigate = useNavigate();
   const { user } = useAuth();
   const { notify } = useToast();
@@ -111,13 +118,32 @@ export function TimesheetsPage() {
     }
   }
 
-  async function handleApproveReject(entryId: string, statusAction: "approved" | "rejected") {
+  async function handleApproveReject(
+    entryId: string,
+    statusAction: "approved" | "rejected",
+    rejectionReason?: string,
+  ) {
+    // Optimistic update: flip the badge immediately
+    setEntries((prev) =>
+      prev.map((e) => (e.id === entryId ? { ...e, status: statusAction } : e))
+    );
+    setActionBusy((prev) => ({ ...prev, [entryId]: true }));
     try {
-      await approveRejectTimeEntry(entryId, statusAction);
-      notify(`Time entry ${statusAction}!`, "success");
-      loadData();
+      await approveRejectTimeEntry(entryId, statusAction, rejectionReason);
+      notify(
+        statusAction === "approved" ? "Time entry approved ✅" : "Time entry rejected.",
+        statusAction === "approved" ? "success" : "info",
+      );
+      // Close drawer/modal if the acted-on entry is open
+      setDrawerEntry((prev) => (prev?.id === entryId ? null : prev));
+      setRejectTarget(null);
+      setRejectReason("");
     } catch (err: any) {
-      notify(`Failed to ${statusAction} entry`, "error");
+      // Roll back the optimistic update on failure
+      notify(err?.response?.data?.error?.message || `Failed to ${statusAction} entry`, "error");
+      loadData();
+    } finally {
+      setActionBusy((prev) => ({ ...prev, [entryId]: false }));
     }
   }
 
@@ -605,10 +631,9 @@ export function TimesheetsPage() {
                   onClick={async () => {
                     try {
                       for (const p of pendingEntries) {
-                        await approveRejectTimeEntry(p.id, "approved");
+                        await handleApproveReject(p.id, "approved");
                       }
                       notify(`Batch approved ${pendingEntries.length} timesheet entries!`, "success");
-                      loadData();
                     } catch {
                       notify("Failed during batch approval", "error");
                     }
@@ -622,8 +647,8 @@ export function TimesheetsPage() {
           </div>
 
           <div className="table-wrap">
-            {pendingEntries.length === 0 ? (
-              <div className="empty-state">No pending timesheet entries awaiting approval.</div>
+            {entries.filter(e => e.status === "draft" || e.status === "submitted" || e.status === "approved" || e.status === "rejected").length === 0 ? (
+              <div className="empty-state">No timesheet entries found.</div>
             ) : (
               <table className="data-table">
                 <thead>
@@ -633,27 +658,26 @@ export function TimesheetsPage() {
                     <th>Hours</th>
                     <th>Billable</th>
                     <th>Description</th>
+                    <th>Status</th>
                     <th style={{ textAlign: "right" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pendingEntries.map((entry) => {
+                  {entries.map((entry) => {
                     const emp = employeeMap.get(entry.employee_id);
                     const empName =
                       entry.employee_name ||
                       (emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : "Team Member");
                     const empCode = entry.employee_code || emp?.employee_code || null;
+                    const isPending = entry.status === "draft" || entry.status === "submitted";
+                    const isBusy = actionBusy[entry.id];
 
                     return (
                       <tr
                         key={entry.id}
-                        onDoubleClick={() => {
-                          if (entry.employee_id) {
-                            navigate(`/employees/${entry.employee_id}`);
-                          }
-                        }}
-                        style={{ cursor: "pointer" }}
-                        title="Double-click to open employee profile"
+                        style={{ cursor: "pointer", background: drawerEntry?.id === entry.id ? "var(--color-primary-subtle, #eff6ff)" : undefined }}
+                        title="Click to view entry details"
+                        onClick={() => setDrawerEntry(entry)}
                       >
                         <td>
                           <div className="font-semibold">{empName}</div>
@@ -668,32 +692,44 @@ export function TimesheetsPage() {
                             <span className="badge badge-muted">Non-billable</span>
                           )}
                         </td>
-                        <td style={{ maxWidth: "260px", whiteSpace: "normal", wordBreak: "break-word" }}>
+                        <td style={{ maxWidth: "200px", whiteSpace: "normal", wordBreak: "break-word" }}>
                           {entry.description || <span className="text-faint">—</span>}
                         </td>
+                        <td>
+                          <span className={`badge ${statusBadges[entry.status] || "badge-muted"}`}>
+                            {entry.status}
+                          </span>
+                        </td>
                         <td style={{ textAlign: "right" }}>
-                          <div className="row-end">
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-success"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleApproveReject(entry.id, "approved");
-                              }}
-                            >
-                              Approve
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-danger"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleApproveReject(entry.id, "rejected");
-                              }}
-                            >
-                              Reject
-                            </button>
-                          </div>
+                          {isPending ? (
+                            <div className="row-end" style={{ gap: "6px" }}>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-success"
+                                disabled={isBusy}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleApproveReject(entry.id, "approved");
+                                }}
+                              >
+                                {isBusy ? "⏳" : "✅ Approve"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-danger"
+                                disabled={isBusy}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRejectTarget(entry);
+                                  setRejectReason("");
+                                }}
+                              >
+                                ❌ Reject
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted">—</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -703,6 +739,188 @@ export function TimesheetsPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Reject Reason Modal */}
+      {rejectTarget && (
+        <div className="modal-backdrop" onClick={() => { setRejectTarget(null); setRejectReason(""); }}>
+          <div className="modal card" style={{ maxWidth: "460px" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0 }}>Reject Time Entry</h3>
+              <button type="button" className="modal-close-btn" onClick={() => { setRejectTarget(null); setRejectReason(""); }}>✕</button>
+            </div>
+            <div className="stack gap-3 mt-2">
+              <div className="p-3 bg-muted rounded border" style={{ fontSize: "0.875rem" }}>
+                <div><span className="text-muted text-xs">Employee</span></div>
+                <strong>{rejectTarget.employee_name || "Team Member"}</strong>
+                <div style={{ marginTop: "4px" }}><span className="text-muted text-xs">Date · Hours</span></div>
+                <span>{formatDate(rejectTarget.date)} &nbsp;·&nbsp; {rejectTarget.hours} hrs</span>
+                {rejectTarget.description && (
+                  <><div style={{ marginTop: "4px" }}><span className="text-muted text-xs">Description</span></div>
+                  <p style={{ margin: 0 }}>{rejectTarget.description}</p></>
+                )}
+              </div>
+              <div className="field">
+                <label>Rejection Reason <span style={{ color: "#dc2626" }}>*</span></label>
+                <textarea
+                  rows={3}
+                  autoFocus
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="Explain why this time entry is being rejected..."
+                />
+              </div>
+            </div>
+            <div className="row-end mt-4" style={{ gap: "8px" }}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => { setRejectTarget(null); setRejectReason(""); }}
+                disabled={rejectBusy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={rejectBusy || !rejectReason.trim()}
+                onClick={async () => {
+                  if (!rejectReason.trim()) return;
+                  setRejectBusy(true);
+                  try {
+                    await handleApproveReject(rejectTarget.id, "rejected", rejectReason.trim());
+                  } finally {
+                    setRejectBusy(false);
+                  }
+                }}
+              >
+                {rejectBusy ? "Rejecting…" : "❌ Confirm Reject"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Slide-out Detail Drawer */}
+      {drawerEntry && (
+        <>
+          {/* Backdrop */}
+          <div
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", zIndex: 199 }}
+            onClick={() => setDrawerEntry(null)}
+          />
+          {/* Drawer panel */}
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: "420px",
+              maxWidth: "95vw",
+              background: "var(--color-surface, #fff)",
+              boxShadow: "-4px 0 24px rgba(0,0,0,0.15)",
+              zIndex: 200,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {/* Drawer Header */}
+            <div
+              style={{
+                padding: "16px 20px",
+                borderBottom: "1px solid var(--color-border, #e5e7eb)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700, fontSize: "1rem" }}>Timesheet Entry Detail</div>
+                <div className="text-xs text-muted">{drawerEntry.employee_name || "Team Member"} &nbsp;·&nbsp; {formatDate(drawerEntry.date)}</div>
+              </div>
+              <button type="button" className="modal-close-btn" onClick={() => setDrawerEntry(null)}>✕</button>
+            </div>
+
+            {/* Drawer Body */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "20px" }}>
+              <dl style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "10px 8px", fontSize: "0.875rem" }}>
+                <dt className="text-muted">Status</dt>
+                <dd>
+                  <span className={`badge ${statusBadges[drawerEntry.status] || "badge-muted"}`}>
+                    {drawerEntry.status}
+                  </span>
+                </dd>
+
+                <dt className="text-muted">Date</dt>
+                <dd className="font-semibold">{formatDate(drawerEntry.date)}</dd>
+
+                <dt className="text-muted">Hours</dt>
+                <dd className="font-semibold">{drawerEntry.hours} hrs &nbsp;
+                  {drawerEntry.is_billable
+                    ? <span className="badge badge-success">Billable</span>
+                    : <span className="badge badge-muted">Non-billable</span>}
+                </dd>
+
+                {(() => {
+                  const emp = employeeMap.get(drawerEntry.employee_id);
+                  const empCode = drawerEntry.employee_code || emp?.employee_code;
+                  return empCode ? (
+                    <><dt className="text-muted">Emp Code</dt><dd>{empCode}</dd></>
+                  ) : null;
+                })()}
+
+                <dt className="text-muted">Project</dt>
+                <dd>{projects.find(p => p.id === drawerEntry.project_id)?.name || drawerEntry.project_id}</dd>
+
+                {drawerEntry.task_id && (
+                  <><dt className="text-muted">Task</dt><dd>{drawerEntry.task_id}</dd></>
+                )}
+
+                <dt className="text-muted" style={{ gridColumn: "1 / -1", paddingTop: "8px", borderTop: "1px solid var(--color-border, #e5e7eb)", marginTop: "4px" }}>Work Description</dt>
+                <dd style={{ gridColumn: "1 / -1" }}>
+                  {drawerEntry.description
+                    ? <p style={{ margin: 0, lineHeight: 1.6 }}>{drawerEntry.description}</p>
+                    : <span className="text-muted">(No description provided)</span>}
+                </dd>
+              </dl>
+            </div>
+
+            {/* Drawer Footer: Approve / Reject if pending */}
+            {(drawerEntry.status === "draft" || drawerEntry.status === "submitted") && (
+              <div
+                style={{
+                  padding: "14px 20px",
+                  borderTop: "1px solid var(--color-border, #e5e7eb)",
+                  display: "flex",
+                  gap: "10px",
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  style={{ flex: 1 }}
+                  disabled={actionBusy[drawerEntry.id]}
+                  onClick={() => handleApproveReject(drawerEntry.id, "approved")}
+                >
+                  {actionBusy[drawerEntry.id] ? "⏳ Working…" : "✅ Approve"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  style={{ flex: 1 }}
+                  disabled={actionBusy[drawerEntry.id]}
+                  onClick={() => {
+                    setRejectTarget(drawerEntry);
+                    setRejectReason("");
+                  }}
+                >
+                  ❌ Reject
+                </button>
+              </div>
+            )}
+          </div>
+        </>
       )}
     </div>
   );
