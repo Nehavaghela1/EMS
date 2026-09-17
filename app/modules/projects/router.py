@@ -1,7 +1,7 @@
 from datetime import date
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_tenant_db, get_current_user, require_role
@@ -371,15 +371,49 @@ def list_milestones(
 # --- Project Documents ---
 
 @router.post("/{project_id}/documents", response_model=ProjectDocumentResponse, status_code=status.HTTP_201_CREATED)
-def add_project_document(
+async def add_project_document(
     project_id: UUID,
-    data: ProjectDocumentCreate,
+    request: Request,
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.add_document(cid, project_id, data, current_user.id)
+
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        from app.modules.platform.service import FileService
+        form = await request.form()
+        uploaded_file = form.get("file")
+        if not uploaded_file or not hasattr(uploaded_file, "read"):
+            from app.core.exceptions import ValidationError
+            raise ValidationError("File is required for upload.")
+        desc = form.get("description")
+        desc_str = str(desc) if desc else None
+        file_bytes = await uploaded_file.read()
+        file_name = getattr(uploaded_file, "filename", "document") or "document"
+        file_type = getattr(uploaded_file, "content_type", "application/octet-stream") or "application/octet-stream"
+
+        file_obj = FileService(db).upload_file(
+            company_id=current_user.company_id,
+            user_id=current_user.id,
+            file_name=file_name,
+            file_type=file_type,
+            file_bytes=file_bytes
+        )
+        doc_create = ProjectDocumentCreate(
+            file_id=file_obj.id,
+            name=file_obj.file_name,
+            file_size=file_obj.file_size,
+            file_type=file_obj.file_type,
+            description=desc_str
+        )
+        return service.add_document(cid, project_id, doc_create, current_user.id)
+    else:
+        # Standard JSON body
+        body = await request.json()
+        doc_create = ProjectDocumentCreate.model_validate(body)
+        return service.add_document(cid, project_id, doc_create, current_user.id)
 
 @router.get("/{project_id}/documents", response_model=List[ProjectDocumentResponse])
 def list_project_documents(

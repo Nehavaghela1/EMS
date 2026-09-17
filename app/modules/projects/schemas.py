@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, List
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # --- Projects ---
 
@@ -166,11 +166,27 @@ class TimeEntryResponse(BaseModel):
 # --- Project Documents ---
 
 class ProjectDocumentCreate(BaseModel):
-    file_id: UUID
-    name: str = Field(..., min_length=1, max_length=255)
+    file_id: Optional[UUID] = None
+    file_object_id: Optional[UUID] = None
+    name: Optional[str] = Field(None, max_length=255)
+    file_name: Optional[str] = Field(None, max_length=255)
     file_size: int = 0
     file_type: str = "application/octet-stream"
     description: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fields(cls, values):
+        if isinstance(values, dict):
+            fid = values.get("file_id") or values.get("file_object_id")
+            if not fid:
+                raise ValueError("file_id or file_object_id is required")
+            values["file_id"] = fid
+            nm = values.get("name") or values.get("file_name")
+            if not nm:
+                raise ValueError("name or file_name is required")
+            values["name"] = nm
+        return values
 
 class ProjectDocumentResponse(BaseModel):
     id: UUID

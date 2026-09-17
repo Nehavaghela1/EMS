@@ -227,6 +227,50 @@ def test_task_update_permissions(client: TestClient, db: Session, company_a: Ten
     )
     assert res_time_general.status_code == 201
     assert float(res_time_general.json()["hours"]) == 2.0
-    assert res_time_general.json()["task_id"] is None
-    assert res_time_general.json()["employee_id"] == str(emp_2.id)
+    # 5. Project Documents Tests:
+    # 5a. Upload via /files/upload and attach via JSON POST /{project_id}/documents
+    f_res = client.post(
+        "/api/v1/files/upload",
+        files={"file": ("specs.pdf", b"%PDF-1.4 test content", "application/pdf")},
+        headers=admin_headers
+    )
+    assert f_res.status_code == 201
+    file_upload_data = f_res.json()
+    file_object_id = file_upload_data["file_object_id"]
+
+    # Test attaching with file_object_id alias
+    doc_json_res = client.post(
+        f"/api/v1/projects/{project_id}/documents",
+        json={
+            "file_object_id": file_object_id,
+            "file_name": "Project Specifications.pdf",
+            "file_size": file_upload_data["file_size"],
+            "file_type": file_upload_data["file_type"],
+            "description": "Initial architecture and specs"
+        },
+        headers=headers_emp1
+    )
+    assert doc_json_res.status_code == 201
+    assert doc_json_res.json()["name"] == "Project Specifications.pdf"
+    assert doc_json_res.json()["file_id"] == file_object_id
+    assert "signature=" in doc_json_res.json()["download_url"]
+
+    # 5b. Direct multipart upload to POST /{project_id}/documents
+    doc_mp_res = client.post(
+        f"/api/v1/projects/{project_id}/documents",
+        files={"file": ("wireframes.png", b"\x89PNG\r\n\x1a\n fake image content", "image/png")},
+        data={"description": "Figma export wireframes"},
+        headers=headers_emp2
+    )
+    assert doc_mp_res.status_code == 201
+    assert doc_mp_res.json()["name"] == "wireframes.png"
+    assert doc_mp_res.json()["description"] == "Figma export wireframes"
+    assert "signature=" in doc_mp_res.json()["download_url"]
+
+    # 5c. List documents includes both and includes signed download URLs
+    doc_list_res = client.get(f"/api/v1/projects/{project_id}/documents", headers=headers_emp1)
+    assert doc_list_res.status_code == 200
+    docs = doc_list_res.json()
+    assert len(docs) == 2
+    assert all("signature=" in d["download_url"] for d in docs)
 

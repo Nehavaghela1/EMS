@@ -141,13 +141,21 @@ export async function fetchProjectDocuments(projectId: string): Promise<ProjectD
 export async function uploadProjectDocument(projectId: string, file: File, description?: string): Promise<ProjectDocument> {
   const formData = new FormData();
   formData.append("file", file);
-  const uploadRes = await apiClient.post<{ file_id: string; file_name: string; file_size: number; file_type: string }>("/files/upload", formData, {
+  const uploadRes = await apiClient.post<{
+    file_object_id?: string;
+    file_id?: string;
+    file_name: string;
+    file_size: number;
+    file_type: string;
+  }>("/files/upload", formData, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   const fileData = uploadRes.data;
+  const resolvedFileId = fileData.file_object_id || fileData.file_id;
 
   const docRes = await apiClient.post<ProjectDocument>(`/projects/${projectId}/documents`, {
-    file_id: fileData.file_id,
+    file_id: resolvedFileId,
+    file_object_id: resolvedFileId,
     name: fileData.file_name,
     file_size: fileData.file_size,
     file_type: fileData.file_type,

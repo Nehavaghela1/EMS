@@ -230,7 +230,13 @@ export function ProjectDetailPage() {
       setDocDesc("");
       notify("Document uploaded successfully!", "success");
     } catch (err: any) {
-      notify(err?.response?.data?.error?.message || err?.message || "Failed to upload document", "error");
+      const errorMsg =
+        err?.response?.data?.error?.details?.errors?.[0]?.msg ||
+        err?.response?.data?.error?.message ||
+        err?.response?.data?.message ||
+        err?.message ||
+        "Failed to upload document. Please ensure the file is under 25MB.";
+      notify(errorMsg, "error");
     } finally {
       setUploadingDoc(false);
     }

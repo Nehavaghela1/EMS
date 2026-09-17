@@ -386,7 +386,12 @@ class ProjectService:
             raise NotFoundError("Project not found.")
         doc = self.repo.create_project_document(project.company_id, project_id, data, uploaded_by)
         resp = ProjectDocumentResponse.from_orm(doc)
-        resp.download_url = f"/api/v1/files/download/{doc.file_id}"
+        try:
+            from app.modules.platform.service import FileService
+            signed = FileService(self.repo.db).generate_signed_url(project.company_id, doc.file_id)
+            resp.download_url = signed.url
+        except Exception:
+            resp.download_url = f"/api/v1/files/download/{doc.file_id}"
         return resp
 
     def list_documents(self, company_id: Optional[UUID], project_id: UUID) -> List[ProjectDocumentResponse]:
@@ -395,10 +400,16 @@ class ProjectService:
             raise NotFoundError("Project not found.")
         results = self.repo.list_project_documents(project.company_id, project_id)
         responses = []
+        from app.modules.platform.service import FileService
+        file_service = FileService(self.repo.db)
         for doc, user_email in results:
             resp = ProjectDocumentResponse.from_orm(doc)
             resp.uploaded_by_name = user_email or "Team Member"
-            resp.download_url = f"/api/v1/files/download/{doc.file_id}"
+            try:
+                signed = file_service.generate_signed_url(project.company_id, doc.file_id)
+                resp.download_url = signed.url
+            except Exception:
+                resp.download_url = f"/api/v1/files/download/{doc.file_id}"
             responses.append(resp)
         return responses
 

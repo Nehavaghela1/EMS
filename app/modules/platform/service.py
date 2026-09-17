@@ -419,9 +419,9 @@ class FileService:
         self.repo = FileRepository(db)
 
     def upload_file(self, company_id: uuid.UUID, user_id: uuid.UUID, file_name: str, file_type: str, file_bytes: bytes) -> FileObject:
-        # 1. Validate Size (< 10MB)
-        if len(file_bytes) > 10 * 1024 * 1024:
-            raise AppError("File size exceeds 10MB limit.")
+        # 1. Validate Size (< 25MB)
+        if len(file_bytes) > 25 * 1024 * 1024:
+            raise AppError("File size exceeds the 25MB limit.")
 
         # 2. Store in local uploads folder
         import os
