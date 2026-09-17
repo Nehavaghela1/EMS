@@ -151,3 +151,34 @@ class PerformanceSummary(TenantBase):
         PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     finalized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PIPStatus(str, enum.Enum):
+    active = "active"
+    passed = "passed"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+class PerformancePIP(TenantBase):
+    """Performance Improvement Plan (PIP)."""
+
+    __tablename__ = "performance_pips"
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    mentor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    milestones_kpis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="active")
+    outcome_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    evaluated_by: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )

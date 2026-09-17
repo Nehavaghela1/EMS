@@ -124,3 +124,40 @@ class PerformanceReportResponse(BaseModel):
     completed_reviews: int
     completion_rate_percent: Decimal
     rating_distribution: dict[str, int]
+
+
+# --- Performance Improvement Plan (PIP) Schemas ---
+class PIPCreateRequest(BaseModel):
+    employee_id: uuid.UUID
+    mentor_id: uuid.UUID | None = None
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    milestones_kpis: str | None = None
+    start_date: date
+    end_date: date
+
+
+class PIPEvaluateRequest(BaseModel):
+    outcome: str = Field(pattern="^(passed|failed|cancelled)$")  # passed, failed, cancelled
+    outcome_notes: str | None = None
+
+
+class PerformancePIPResponse(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    employee_name: str | None = None
+    employee_code: str | None = None
+    mentor_id: uuid.UUID | None = None
+    mentor_name: str | None = None
+    title: str
+    description: str | None
+    milestones_kpis: str | None
+    start_date: date
+    end_date: date
+    status: str
+    outcome_notes: str | None
+    evaluated_at: datetime | None
+    evaluated_by: uuid.UUID | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

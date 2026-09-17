@@ -1,6 +1,7 @@
 import enum
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric as SANumeric,
     String,
     Text,
 )
@@ -141,3 +143,15 @@ class Employee(TenantBase):
     last_working_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     notice_waived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     notice_recovery_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Separation / Involuntary Termination & FnF settlement tracking
+    separation_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # voluntary, involuntary, pip_failed
+    termination_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    severance_pay: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True, default=Decimal("0.00"))
+    pending_reimbursements: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True, default=Decimal("0.00"))
+    gratuity_bonus: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True, default=Decimal("0.00"))
+    asset_deductions: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True, default=Decimal("0.00"))
+    it_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    hr_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    finance_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    fnf_settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

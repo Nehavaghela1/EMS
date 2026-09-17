@@ -5,8 +5,10 @@ import {
   setPerformanceGoals,
   updatePerformanceGoal,
   submitSelfReview,
+  getActivePIP,
   type PerformanceCycle,
   type PerformanceGoal,
+  type PerformancePIP,
   type GoalCreateItem,
   type GoalStatus,
 } from "../api";
@@ -26,6 +28,7 @@ export function MyGoalsPage() {
 
   const [activeCycle, setActiveCycle] = useState<PerformanceCycle | null>(null);
   const [goals, setGoals] = useState<PerformanceGoal[]>([]);
+  const [activePip, setActivePip] = useState<PerformancePIP | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Set Goals Modal state
@@ -89,8 +92,15 @@ export function MyGoalsPage() {
         if (targetId) {
           const empGoals = await listPerformanceGoals(targetId);
           setGoals(empGoals);
+          try {
+            const pip = await getActivePIP(targetId);
+            setActivePip(pip);
+          } catch {
+            setActivePip(null);
+          }
         } else {
           setGoals([]);
+          setActivePip(null);
         }
       }
     } catch {
@@ -259,6 +269,53 @@ export function MyGoalsPage() {
           {!user?.employee?.id && (
             <div className="mt-2 pt-2 text-xs text-muted" style={{ borderTop: "1px dashed #cbd5e1" }}>
               💡 <em>You are managing goals as an Administrator. Goals are saved directly to the selected employee profile.</em>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Persistent Amber PIP Banner for Track C Warning Period */}
+      {activePip && (
+        <div
+          className="card my-3 p-4"
+          style={{
+            backgroundColor: "#fffbeb",
+            borderColor: "#f59e0b",
+            borderLeft: "5px solid #d97706",
+            boxShadow: "0 2px 8px rgba(217, 119, 6, 0.15)",
+          }}
+        >
+          <div className="flex justify-between align-center" style={{ flexWrap: "wrap", gap: "10px" }}>
+            <div>
+              <div className="flex items-center gap-2">
+                <span style={{ fontSize: "1.25rem" }}>⚠️</span>
+                <strong style={{ color: "#92400e", fontSize: "1rem" }}>
+                  Active Performance Improvement Plan (Ends {formatDate(activePip.end_date)})
+                </strong>
+                <span className="badge badge-warning" style={{ background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" }}>
+                  WARNING PERIOD
+                </span>
+              </div>
+              <p className="text-sm mt-1 mb-0" style={{ color: "#b45309" }}>
+                You are currently in an active Performance Evaluation Plan (Ends {formatDate(activePip.end_date)}). Review targets and required KPIs below.
+              </p>
+            </div>
+            <div className="text-right text-xs" style={{ color: "#92400e" }}>
+              <div>Assigned Mentor: <b>{activePip.mentor_name || "Assigned Manager"}</b></div>
+              <div>Deadline: <b>{formatDate(activePip.end_date)}</b></div>
+            </div>
+          </div>
+          {activePip.milestones_kpis && (
+            <div
+              className="mt-3 p-3 rounded"
+              style={{ background: "rgba(254, 243, 199, 0.6)", border: "1px dashed #f59e0b" }}
+            >
+              <div className="text-xs font-semibold uppercase" style={{ color: "#92400e", letterSpacing: "0.05em" }}>
+                🎯 Required Improvement Milestones & Targets
+              </div>
+              <div className="text-sm mt-1" style={{ color: "#78350f", whiteSpace: "pre-wrap" }}>
+                {activePip.milestones_kpis}
+              </div>
             </div>
           )}
         </div>

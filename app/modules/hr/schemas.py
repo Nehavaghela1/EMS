@@ -95,6 +95,16 @@ class EmployeeResponse(BaseModel):
     last_working_date: date | None = None
     notice_waived: bool = False
     notice_recovery_days: int = 0
+    separation_type: str | None = None
+    termination_reason: str | None = None
+    severance_pay: Decimal | None = None
+    pending_reimbursements: Decimal | None = None
+    gratuity_bonus: Decimal | None = None
+    asset_deductions: Decimal | None = None
+    it_clearance: bool = False
+    hr_clearance: bool = False
+    finance_clearance: bool = False
+    fnf_settled_at: datetime | None = None
     company_id: uuid.UUID | None = None
     company_name: str | None = None
     created_at: datetime
@@ -131,10 +141,31 @@ class ResignationApproveRequest(BaseModel):
     notice_recovery_days: int = 0
 
 
+class TerminationRequest(BaseModel):
+    termination_date: date
+    reason: str
+    severance_pay: Decimal = Decimal("0.00")
+    notice_pay_in_lieu: Decimal = Decimal("0.00")
+    notes: str | None = None
+
+
+class FnFClearanceUpdateRequest(BaseModel):
+    it_clearance: bool | None = None
+    hr_clearance: bool | None = None
+    finance_clearance: bool | None = None
+    severance_pay: Decimal | None = None
+    pending_reimbursements: Decimal | None = None
+    gratuity_bonus: Decimal | None = None
+    asset_deductions: Decimal | None = None
+    mark_settled: bool | None = None
+
+
 class FnFSettlementResponse(BaseModel):
     employee_id: uuid.UUID
     employee_name: str
     last_working_date: date
+    separation_type: str | None = "voluntary"
+    termination_reason: str | None = None
     notice_days_required: int
     notice_days_served: int
     notice_waived: bool
@@ -144,5 +175,14 @@ class FnFSettlementResponse(BaseModel):
     leave_encashment_amount: Decimal
     unpaid_salary_days: int
     unpaid_salary_amount: Decimal
+    severance_pay: Decimal = Decimal("0.00")
+    pending_reimbursements: Decimal = Decimal("0.00")
+    gratuity_bonus: Decimal = Decimal("0.00")
+    asset_deductions: Decimal = Decimal("0.00")
+    it_clearance: bool = False
+    hr_clearance: bool = False
+    finance_clearance: bool = False
+    can_release_settlement: bool = False
+    fnf_settled_at: datetime | None = None
     total_settlement_amount: Decimal
 

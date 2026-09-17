@@ -5,7 +5,7 @@ import { PasswordInput } from "../../../shared/components/PasswordInput";
 import { parseApiError, fieldErrorsFromDetails } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
-import { getMyEmployee, listDepartments, updateEmployee, type Employee } from "../../hr/api";
+import { getMyEmployee, listDepartments, updateEmployee, submitResignation, type Employee } from "../../hr/api";
 import { changePassword } from "../api";
 import { changePasswordSchema } from "../schemas";
 
@@ -67,6 +67,14 @@ export function SettingsPage() {
           onSaved={() => queryClient.invalidateQueries({ queryKey: ["employee", "me"] })}
         />
       ) : null}
+
+      {/* Employee Track A Resignation & Departure Section */}
+      {employee && (
+        <EmployeeResignationSection
+          employee={employee}
+          onUpdated={() => queryClient.invalidateQueries({ queryKey: ["employee", "me"] })}
+        />
+      )}
 
       <ChangePasswordSection notify={notify} />
 
@@ -420,5 +428,195 @@ function ChangePasswordSection({ notify }: { notify: (message: string, kind?: "s
         </button>
       </div>
     </form>
+  );
+}
+
+function EmployeeResignationSection({
+  employee,
+  onUpdated,
+}: {
+  employee: Employee;
+  onUpdated: () => void;
+}) {
+  const { notify } = useToast();
+  const [showModal, setShowModal] = useState(false);
+  const [resignationDate, setResignationDate] = useState(new Date().toISOString().split("T")[0]);
+  const defaultLwd = new Date(Date.now() + (employee.notice_period_days || 30) * 86400000).toISOString().split("T")[0];
+  const [lastWorkingDate, setLastWorkingDate] = useState(defaultLwd);
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const status = employee.resignation_status ?? "none";
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!lastWorkingDate) {
+      notify("Please select a proposed Last Working Day.", "error");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await submitResignation(employee.id, {
+        resignation_date: resignationDate,
+        last_working_date: lastWorkingDate,
+        reason: reason || undefined,
+      });
+      notify("Resignation request submitted successfully. HR Admin will review your notice period.", "success");
+      setShowModal(false);
+      onUpdated();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="card stack mb-6" style={{ borderLeft: "4px solid #f59e0b" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Career Transition & Resignation</h3>
+          <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+            Formal voluntary resignation lifecycle, notice period tracking & separation terms.
+          </p>
+        </div>
+        <span
+          className="badge"
+          style={{
+            background:
+              status === "approved"
+                ? "#eff6ff"
+                : status === "submitted"
+                ? "#fef3c7"
+                : "#f1f5f9",
+            color:
+              status === "approved"
+                ? "#1d4ed8"
+                : status === "submitted"
+                ? "#b45309"
+                : "#475569",
+            border: "1px solid currentColor",
+            fontWeight: 600,
+          }}
+        >
+          {status === "approved"
+            ? "📋 Serving Notice / Separation Active"
+            : status === "submitted"
+            ? "⏳ Resignation Pending Review"
+            : "Active Employment"}
+        </span>
+      </div>
+
+      {status === "none" && (
+        <div className="mt-2">
+          <p className="text-sm" style={{ margin: "0 0 12px 0" }}>
+            Your contractual notice period is <strong>{employee.notice_period_days || 30} days</strong>.
+            Submitting a voluntary resignation initiates the formal handover period and routes your request to HR & Management.
+          </p>
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{ color: "#b45309", borderColor: "#f59e0b" }}
+            onClick={() => setShowModal(true)}
+          >
+            + Request Resignation
+          </button>
+        </div>
+      )}
+
+      {status === "submitted" && (
+        <div className="alert alert-warning mt-2">
+          <strong>⏳ Resignation Under Review:</strong> You submitted a resignation on{" "}
+          <b>{employee.resignation_date || "—"}</b> with proposed Last Working Day (LWD) of{" "}
+          <b>{employee.last_working_date || "—"}</b>. HR and your manager are currently reviewing notice requirements and handover plans.
+        </div>
+      )}
+
+      {status === "approved" && (
+        <div className="p-3 bg-muted rounded border mt-2">
+          <div className="grid grid-3 gap-3">
+            <div>
+              <span className="text-xs text-muted block">Separation Track</span>
+              <strong>{employee.separation_type === "involuntary" ? "Involuntary Separation" : "Voluntary Resignation"}</strong>
+            </div>
+            <div>
+              <span className="text-xs text-muted block">Confirmed Last Working Day (LWD)</span>
+              <strong className="text-primary">{employee.last_working_date || "—"}</strong>
+            </div>
+            <div>
+              <span className="text-xs text-muted block">Notice Status</span>
+              <strong>{employee.notice_waived ? "Waived by Company" : "Serving Contractual Notice"}</strong>
+            </div>
+          </div>
+          <div className="text-xs text-muted mt-2">
+            💡 Full & Final (FnF) financial settlement will be calculated following your Last Working Day once IT, HR, and Finance clearance are completed.
+          </div>
+        </div>
+      )}
+
+      {/* Resignation Request Modal */}
+      {showModal && (
+        <div className="modal-backdrop" onClick={() => setShowModal(false)}>
+          <div className="modal card" style={{ maxWidth: "520px", width: "95%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0 }}>Request Voluntary Resignation</h3>
+              <button type="button" className="modal-close-btn" onClick={() => setShowModal(false)}>✕</button>
+            </div>
+            <form onSubmit={handleSubmit} className="stack gap-3 mt-2">
+              <p className="text-xs text-muted" style={{ margin: 0 }}>
+                Please specify your intended departure timeline. Notice period policy requires <b>{employee.notice_period_days || 30} days</b> of service unless officially waived.
+              </p>
+
+              <div className="form-grid">
+                <div className="field">
+                  <label>Resignation Submission Date *</label>
+                  <input
+                    type="date"
+                    value={resignationDate}
+                    onChange={(e) => setResignationDate(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label>Proposed Last Working Day (LWD) *</label>
+                  <input
+                    type="date"
+                    value={lastWorkingDate}
+                    onChange={(e) => setLastWorkingDate(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Departure Reason *</label>
+                <select
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  required
+                >
+                  <option value="">Select departure reason...</option>
+                  <option value="Better Opportunity">Better Opportunity / Career Growth</option>
+                  <option value="Higher Studies">Higher Studies / Certification</option>
+                  <option value="Personal / Relocation">Personal / Family Relocation</option>
+                  <option value="Career Transition">Career Transition / Freelance</option>
+                  <option value="Health / Medical">Health / Medical Reasons</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div className="row-end gap-2 mt-2">
+                <button type="button" className="btn btn-ghost" onClick={() => setShowModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submitting}>
+                  {submitting ? "Submitting…" : "Confirm Resignation Request"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

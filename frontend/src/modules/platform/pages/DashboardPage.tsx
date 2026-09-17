@@ -15,6 +15,8 @@ import {
   type CompanyDetailResponse,
   type AdminCompanyUpdateInput,
 } from "../../identity/api";
+import { getActivePIP } from "../../performance/api";
+import { useAuth } from "../../../app/auth-context";
 import { formatDate } from "../../../shared/utils/date";
 
 function Stat({ label, value, to, subtitle }: { label: string; value: React.ReactNode; to?: string; subtitle?: string }) {
@@ -42,6 +44,7 @@ function Stat({ label, value, to, subtitle }: { label: string; value: React.Reac
  * 14.3's "Auth" access column.
  */
 export function DashboardPage() {
+  const { user } = useAuth();
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["dashboard"],
     queryFn: fetchDashboard,
@@ -52,9 +55,56 @@ export function DashboardPage() {
     queryFn: fetchAnnouncements,
   });
 
+  const activePipQuery = useQuery({
+    queryKey: ["active_pip", user?.employee?.id],
+    queryFn: () => getActivePIP(user!.employee!.id),
+    enabled: Boolean(user?.employee?.id),
+  });
+  const activePip = activePipQuery.data;
+
   return (
     <div>
       <PageHeader title="Dashboard" breadcrumb="Overview" />
+
+      {/* Persistent Amber PIP Warning Banner for Employee Portal */}
+      {activePip && (
+        <div
+          className="card mb-4"
+          style={{
+            backgroundColor: "#fffbeb",
+            borderColor: "#f59e0b",
+            borderLeft: "5px solid #d97706",
+            padding: "1rem 1.25rem",
+          }}
+        >
+          <div className="flex justify-between items-center" style={{ flexWrap: "wrap", gap: "10px" }}>
+            <div className="flex items-center gap-3">
+              <span style={{ fontSize: "1.5rem" }}>⚠️</span>
+              <div>
+                <strong style={{ color: "#92400e", fontSize: "0.95rem" }}>
+                  You are currently in an active Performance Evaluation Plan (Ends {formatDate(activePip.end_date)}).
+                </strong>
+                <p className="text-xs mb-0 mt-0.5" style={{ color: "#b45309" }}>
+                  Track C warning period active. Review required milestone targets and mentor checkpoints.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/performance/goals"
+              className="btn btn-sm"
+              style={{
+                backgroundColor: "#d97706",
+                color: "#ffffff",
+                borderColor: "#b45309",
+                fontWeight: 600,
+                textDecoration: "none",
+              }}
+            >
+              Review Targets Here →
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Announcements Banner / List */}
       {announcementsQuery.data && announcementsQuery.data.length > 0 && (

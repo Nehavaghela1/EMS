@@ -11,6 +11,7 @@ from app.modules.performance.models import (
     GoalStatus,
     PerformanceCycle,
     PerformanceGoal,
+    PerformancePIP,
     PerformanceReview,
     PerformanceSummary,
     ReviewerRole,
@@ -149,3 +150,56 @@ class PerformanceSummaryRepository:
         self.db.add(summary)
         self.db.flush()
         return summary
+
+
+class PerformancePIPRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_id(self, pip_id: uuid.UUID, company_id: uuid.UUID) -> PerformancePIP | None:
+        return self.db.scalar(
+            select(PerformancePIP).where(
+                PerformancePIP.id == pip_id,
+                PerformancePIP.company_id == company_id,
+                PerformancePIP.deleted_at.is_(None),
+            )
+        )
+
+    def list_pips(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID | None = None, status: str | None = None
+    ) -> list[PerformancePIP]:
+        stmt = select(PerformancePIP).where(
+            PerformancePIP.company_id == company_id,
+            PerformancePIP.deleted_at.is_(None),
+        ).order_by(PerformancePIP.created_at.desc())
+
+        if employee_id is not None:
+            stmt = stmt.where(PerformancePIP.employee_id == employee_id)
+        if status is not None:
+            stmt = stmt.where(PerformancePIP.status == status)
+
+        return list(self.db.scalars(stmt).all())
+
+    def get_active_pip_for_employee(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID
+    ) -> PerformancePIP | None:
+        return self.db.scalar(
+            select(PerformancePIP).where(
+                PerformancePIP.company_id == company_id,
+                PerformancePIP.employee_id == employee_id,
+                PerformancePIP.status == "active",
+                PerformancePIP.deleted_at.is_(None),
+            )
+        )
+
+    def create(self, **kwargs) -> PerformancePIP:
+        pip = PerformancePIP(**kwargs)
+        self.db.add(pip)
+        self.db.flush()
+        return pip
+
+    def update(self, pip: PerformancePIP, **kwargs) -> PerformancePIP:
+        for k, v in kwargs.items():
+            setattr(pip, k, v)
+        self.db.flush()
+        return pip

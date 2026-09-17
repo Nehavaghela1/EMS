@@ -13,7 +13,9 @@ import {
   resendInvite,
   submitResignation,
   approveResignation,
+  terminateEmployee,
   getFnFSettlement,
+  updateFnFClearance,
   type Employee,
 } from "../api";
 import {
@@ -379,18 +381,36 @@ function ResignationAndFnFCard({
   const { notify } = useToast();
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [terminating, setTerminating] = useState(false);
+  const [updatingClearance, setUpdatingClearance] = useState(false);
+
+  // Resignation state (Track A)
   const [resignationDate, setResignationDate] = useState("");
   const [lastWorkingDate, setLastWorkingDate] = useState("");
   const [reason, setReason] = useState("");
   const [noticeWaived, setNoticeWaived] = useState(false);
   const [recoveryDays, setRecoveryDays] = useState(0);
 
+  // Termination state (Track B)
+  const [showTerminateModal, setShowTerminateModal] = useState(false);
+  const [termDate, setTermDate] = useState(new Date().toISOString().slice(0, 10));
+  const [termReason, setTermReason] = useState("Involuntary - Misconduct");
+  const [severancePay, setSeverancePay] = useState("0");
+  const [noticePayInLieu, setNoticePayInLieu] = useState("0");
+  const [termNotes, setTermNotes] = useState("");
+
+  // FnF settlement clearance adjustments
+  const [editReimbursements, setEditReimbursements] = useState(String(employee.pending_reimbursements || 0));
+  const [editGratuity, setEditGratuity] = useState(String(employee.gratuity_bonus || 0));
+  const [editDeductions, setEditDeductions] = useState(String(employee.asset_deductions || 0));
+
   const status = employee.resignation_status ?? "none";
+  const isSeparated = status === "approved" || !employee.is_active;
 
   const fnfQuery = useQuery({
     queryKey: ["fnf", employee.id],
     queryFn: () => getFnFSettlement(employee.id),
-    enabled: isHr && (status === "approved" || !employee.is_active),
+    enabled: isSeparated,
   });
 
   async function handleSubmitResignation(e: React.FormEvent) {
@@ -402,7 +422,7 @@ function ResignationAndFnFCard({
         last_working_date: lastWorkingDate || undefined,
         reason: reason || undefined,
       });
-      notify("Resignation submitted successfully.");
+      notify("Resignation submitted successfully. Status updated to Serving Notice.");
       onRefresh();
     } catch (err) {
       notify(parseApiError(err).message, "error");
@@ -420,7 +440,7 @@ function ResignationAndFnFCard({
         notice_waived: noticeWaived,
         notice_recovery_days: recoveryDays,
       });
-      notify(approved ? "Resignation approved." : "Resignation rejected.");
+      notify(approved ? "Resignation approved. Employee is Serving Notice / Separated." : "Resignation rejected.");
       onRefresh();
     } catch (err) {
       notify(parseApiError(err).message, "error");
@@ -429,78 +449,273 @@ function ResignationAndFnFCard({
     }
   }
 
+  async function handleTerminate(e: React.FormEvent) {
+    e.preventDefault();
+    setTerminating(true);
+    try {
+      await terminateEmployee(employee.id, {
+        termination_date: termDate,
+        reason: termReason + (termNotes ? `: ${termNotes}` : ""),
+        severance_pay: parseFloat(severancePay) || 0,
+        notice_pay_in_lieu: parseFloat(noticePayInLieu) || 0,
+      });
+      notify("Employee separation initiated successfully. Status updated.");
+      setShowTerminateModal(false);
+      onRefresh();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setTerminating(false);
+    }
+  }
+
+  async function handleClearanceToggle(key: "it_clearance" | "hr_clearance" | "finance_clearance", currentVal: boolean) {
+    setUpdatingClearance(true);
+    try {
+      await updateFnFClearance(employee.id, { [key]: !currentVal });
+      notify("Clearance sign-off updated.");
+      fnfQuery.refetch();
+      onRefresh();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setUpdatingClearance(false);
+    }
+  }
+
+  async function handleSaveFinancialAdjustments() {
+    setUpdatingClearance(true);
+    try {
+      await updateFnFClearance(employee.id, {
+        pending_reimbursements: parseFloat(editReimbursements) || 0,
+        gratuity_bonus: parseFloat(editGratuity) || 0,
+        asset_deductions: parseFloat(editDeductions) || 0,
+      });
+      notify("FnF financial adjustments saved.");
+      fnfQuery.refetch();
+      onRefresh();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setUpdatingClearance(false);
+    }
+  }
+
+  async function handleFinalSettlementRelease() {
+    if (!fnfQuery.data?.can_release_settlement) {
+      notify("All department clearances (IT, HR, Finance) must be signed off before release.", "error");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Confirm final settlement release of ₹${Number(fnfQuery.data.total_settlement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}? This locks the settlement and excludes employee from future recurring monthly pay runs.`
+    );
+    if (!confirmed) return;
+
+    setUpdatingClearance(true);
+    try {
+      await updateFnFClearance(employee.id, { mark_settled: true });
+      notify("FnF Settlement released successfully! Employee account finalized.", "success");
+      fnfQuery.refetch();
+      onRefresh();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setUpdatingClearance(false);
+    }
+  }
+
   return (
     <div className="card mb-4">
       <div className="row-between mb-3">
-        <h3 className="mb-0">Resignation & Full-and-Final (FnF) Settlement</h3>
-        <span
-          className={
-            "badge " +
-            (status === "approved"
-              ? "badge-danger"
+        <div>
+          <h3 className="mb-0">Departure & Separation Lifecycle (Resignation, Termination & FnF)</h3>
+          <p className="text-muted text-xs mb-0">Audited offboarding tracks: Employee Resignation, Company Termination, and Full & Final settlement.</p>
+        </div>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <span
+            className={
+              "badge " +
+              (employee.fnf_settled_at
+                ? "badge-success"
+                : status === "approved"
+                ? "badge-danger"
+                : status === "submitted"
+                ? "badge-warning"
+                : "badge-muted")
+            }
+          >
+            {employee.fnf_settled_at
+              ? "FnF Settled"
+              : employee.separation_type === "involuntary"
+              ? "Terminated"
+              : status === "approved"
+              ? "Serving Notice / Separated"
               : status === "submitted"
-              ? "badge-warning"
-              : "badge-muted")
-          }
-        >
-          {status === "none" ? "Not Resigned" : `Resignation ${status}`}
-        </span>
+              ? "Resignation Pending Review"
+              : "Active"}
+          </span>
+          {isHr && employee.is_active && status === "none" && (
+            <button
+              type="button"
+              className="btn btn-sm btn-danger"
+              onClick={() => setShowTerminateModal(true)}
+              title="Company initiated involuntary termination"
+            >
+              + Initiate Separation / Terminate
+            </button>
+          )}
+        </div>
       </div>
 
+      {/* TRACK A: VOLUNTARY RESIGNATION FORM */}
       {status === "none" && (
         <form onSubmit={handleSubmitResignation} className="stack">
-          <p className="text-muted text-sm mt-0">
-            Submit formal resignation request with effective dates and reason.
-          </p>
-          <div className="form-grid">
-            <div className="field">
-              <label>Resignation date</label>
-              <input
-                type="date"
-                value={resignationDate}
-                onChange={(e) => setResignationDate(e.target.value)}
-                required
-              />
+          <div style={{ background: "var(--color-bg, #f8fafc)", padding: "12px 14px", borderRadius: "6px", border: "1px solid var(--color-border)" }}>
+            <h4 style={{ margin: "0 0 4px 0", fontSize: "0.9rem" }}>Track A: Formal Voluntary Resignation</h4>
+            <p className="text-muted text-xs mb-3">
+              Standard notice period is <b>{employee.notice_period_days || 30} days</b>. Submit formal resignation with proposed Last Working Day (LWD).
+            </p>
+            <div className="form-grid">
+              <div className="field">
+                <label>Resignation submission date</label>
+                <input
+                  type="date"
+                  value={resignationDate}
+                  onChange={(e) => setResignationDate(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="field">
+                <label>Proposed Last Working Day (LWD)</label>
+                <input
+                  type="date"
+                  value={lastWorkingDate}
+                  onChange={(e) => setLastWorkingDate(e.target.value)}
+                  required
+                />
+              </div>
             </div>
-            <div className="field">
-              <label>Proposed last working date</label>
-              <input
-                type="date"
-                value={lastWorkingDate}
-                onChange={(e) => setLastWorkingDate(e.target.value)}
-                required
-              />
+            <div className="field mt-2">
+              <label>Reason for Resignation</label>
+              <select
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                style={{ marginBottom: "8px" }}
+              >
+                <option value="">Select departure reason...</option>
+                <option value="Better Opportunity">Better Opportunity</option>
+                <option value="Higher Studies">Higher Studies</option>
+                <option value="Personal / Relocation">Personal / Family Relocation</option>
+                <option value="Career Transition">Career Transition / Freelance</option>
+                <option value="Health / Medical">Health / Medical</option>
+                <option value="Other">Other</option>
+              </select>
             </div>
-          </div>
-          <div className="field">
-            <label>Reason for resignation</label>
-            <textarea
-              rows={2}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="State reason for resignation…"
-            />
-          </div>
-          <div className="row-end">
-            <button type="submit" className="btn btn-danger" disabled={submitting}>
-              {submitting ? "Submitting…" : "Submit Resignation"}
-            </button>
+            <div className="row-end">
+              <button type="submit" className="btn btn-danger" disabled={submitting}>
+                {submitting ? "Submitting…" : "Request Resignation"}
+              </button>
+            </div>
           </div>
         </form>
       )}
 
+      {/* TRACK B: TERMINATION MODAL */}
+      {showTerminateModal && (
+        <div className="modal-backdrop" onClick={() => setShowTerminateModal(false)}>
+          <div className="modal card" style={{ maxWidth: "520px" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0, color: "#dc2626" }}>⚠️ Initiate Involuntary Termination</h3>
+              <button type="button" className="modal-close-btn" onClick={() => setShowTerminateModal(false)}>✕</button>
+            </div>
+            <form onSubmit={handleTerminate} className="stack gap-3 mt-3">
+              <div className="alert alert-error text-xs" style={{ margin: 0 }}>
+                This action initiates company-directed separation for <b>{employee.first_name} {employee.last_name}</b>. It schedules account deactivation and activates the Full & Final settlement pipeline.
+              </div>
+
+              <div className="form-grid">
+                <div className="field">
+                  <label>Termination Date (LWD) <span style={{ color: "#dc2626" }}>*</span></label>
+                  <input
+                    type="date"
+                    value={termDate}
+                    onChange={(e) => setTermDate(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label>Primary Reason <span style={{ color: "#dc2626" }}>*</span></label>
+                  <select value={termReason} onChange={(e) => setTermReason(e.target.value)}>
+                    <option value="Involuntary - Misconduct">Involuntary - Misconduct / Code of Conduct</option>
+                    <option value="Involuntary - Restructuring / Redundancy">Involuntary - Restructuring / Redundancy</option>
+                    <option value="Involuntary - Failed Probation">Involuntary - Failed Probation Period</option>
+                    <option value="Involuntary - Failed Performance PIP">Involuntary - Failed Performance PIP</option>
+                    <option value="Mutual Separation">Mutual Separation Agreement</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-grid">
+                <div className="field">
+                  <label>Severance Pay (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={severancePay}
+                    onChange={(e) => setSeverancePay(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="field">
+                  <label>Notice Pay in Lieu (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={noticePayInLieu}
+                    onChange={(e) => setNoticePayInLieu(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Confidential Notes / Documentation</label>
+                <textarea
+                  rows={2}
+                  value={termNotes}
+                  onChange={(e) => setTermNotes(e.target.value)}
+                  placeholder="Reference HR case, disciplinary hearing, or severance terms..."
+                />
+              </div>
+
+              <div className="row-end gap-2 mt-2">
+                <button type="button" className="btn" onClick={() => setShowTerminateModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-danger" disabled={terminating}>
+                  {terminating ? "Processing…" : "Confirm Termination"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* STATUS: SUBMITTED (PENDING HR REVIEW) */}
       {status === "submitted" && (
         <div className="stack">
           <div className="form-grid">
             <Field label="Resignation date" value={employee.resignation_date ?? "—"} />
-            <Field label="Last working date" value={employee.last_working_date ?? "—"} />
+            <Field label="Proposed Last Working Day" value={employee.last_working_date ?? "—"} />
           </div>
           {isHr ? (
             <div className="card" style={{ background: "var(--color-bg)" }}>
-              <h4 className="mt-0 mb-2">HR Approval & Notice Terms</h4>
+              <h4 className="mt-0 mb-2">HR Approval & Notice Terms (Track A Review)</h4>
               <div className="form-grid mb-3">
                 <div className="field">
-                  <label>Confirmed last working date</label>
+                  <label>Confirmed Last Working Day (LWD)</label>
                   <input
                     type="date"
                     defaultValue={employee.last_working_date ?? ""}
@@ -525,17 +740,17 @@ function ResignationAndFnFCard({
                   onChange={(e) => setNoticeWaived(e.target.checked)}
                 />
                 <label htmlFor="noticeWaived" className="text-sm font-medium">
-                  Waive notice period and notice recovery deduction
+                  Waive notice period (exempt employee from notice shortfall deduction)
                 </label>
               </div>
-              <div className="row">
+              <div className="row gap-2">
                 <button
                   type="button"
                   className="btn btn-primary"
                   onClick={() => handleApprove(true)}
                   disabled={approving}
                 >
-                  {approving ? "Processing…" : "Approve Resignation"}
+                  {approving ? "Processing…" : "Approve Resignation & Set Serving Notice"}
                 </button>
                 <button
                   type="button"
@@ -543,91 +758,257 @@ function ResignationAndFnFCard({
                   onClick={() => handleApprove(false)}
                   disabled={approving}
                 >
-                  Reject
+                  Discuss / Reject
                 </button>
               </div>
             </div>
           ) : (
             <div className="alert alert-warning">
-              Resignation submitted. Awaiting HR review and clearance.
+              Resignation submitted. Currently under review by HR Admin / Manager.
             </div>
           )}
         </div>
       )}
 
-      {status === "approved" && (
-        <div className="stack">
+      {/* STATUS: APPROVED OR TERMINATED (FULL & FINAL SETTLEMENT) */}
+      {isSeparated && (
+        <div className="stack mt-2">
           <div className="form-grid mb-3">
-            <Field label="Resignation date" value={formatDate(employee.resignation_date)} />
-            <Field label="Last working date" value={formatDate(employee.last_working_date)} />
-            <Field
-              label="Notice waived"
-              value={employee.notice_waived ? "Yes (Waived)" : "No"}
-            />
-            <Field
-              label="Notice recovery days"
-              value={employee.notice_recovery_days ?? 0}
-            />
+            <Field label="Separation Track" value={employee.separation_type === "involuntary" ? "Involuntary Termination" : employee.separation_type === "pip_failed" ? "Failed PIP Separation" : "Voluntary Resignation"} />
+            <Field label="Last Working Day (LWD)" value={formatDate(employee.last_working_date)} />
+            <Field label="Notice Waived" value={employee.notice_waived ? "Yes (Waived)" : "No"} />
+            <Field label="Notice Recovery Days" value={employee.notice_recovery_days ?? 0} />
           </div>
 
-          {isHr && (
-            <div>
-              <h4 className="mb-2">Full-and-Final (FnF) Settlement Calculation</h4>
-              {fnfQuery.isLoading && (
-                <div className="row">
-                  <div className="spinner" />
-                  <span className="text-muted">Calculating FnF statement…</span>
+          {/* ASSET & CLEARANCE SIGN-OFF SECTION */}
+          <div className="card mb-3" style={{ background: "#f8fafc", border: "1px solid var(--color-border)" }}>
+            <h4 className="mt-0 mb-1" style={{ fontSize: "0.95rem" }}>🏢 Department Asset & Clearance Sign-Off</h4>
+            <p className="text-muted text-xs mb-3">
+              IT, HR, and Finance clearance confirmations are strictly mandatory before the Full & Final payout release button unlocks.
+            </p>
+
+            <div className="grid grid-3 gap-3">
+              {/* IT Clearance */}
+              <div className="p-3 bg-white rounded border" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <strong style={{ fontSize: "0.85rem" }}>💻 IT Department</strong>
+                  <div className="text-xs text-muted">Laptop, access keys, monitors</div>
                 </div>
-              )}
-              {fnfQuery.isError && (
-                <div className="alert alert-error">
-                  {parseApiError(fnfQuery.error).message}
-                </div>
-              )}
-              {fnfQuery.data && (
-                <div className="card" style={{ background: "var(--color-bg)" }}>
-                  <div className="form-grid">
-                    <Field
-                      label="Unpaid salary days"
-                      value={`${fnfQuery.data.unpaid_salary_days} days`}
-                    />
-                    <Field
-                      label="Unpaid salary amount"
-                      value={`₹${Number(fnfQuery.data.unpaid_salary_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                    />
-                    <Field
-                      label="Encashable leave days"
-                      value={`${fnfQuery.data.encashable_leave_days} days`}
-                    />
-                    <Field
-                      label="Leave encashment"
-                      value={`₹${Number(fnfQuery.data.leave_encashment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                    />
-                    <Field
-                      label="Notice recovery days"
-                      value={`${fnfQuery.data.notice_recovery_days} days`}
-                    />
-                    <Field
-                      label="Notice recovery deduction"
-                      value={`- ₹${Number(fnfQuery.data.notice_recovery_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                    />
-                  </div>
-                  <div
-                    className="row-between mt-3"
-                    style={{
-                      borderTop: "1px solid var(--color-border)",
-                      paddingTop: "var(--space-3)",
-                    }}
+                {isHr ? (
+                  <button
+                    type="button"
+                    className={`btn btn-xs ${employee.it_clearance ? "btn-success" : "btn-outline"}`}
+                    disabled={updatingClearance}
+                    onClick={() => handleClearanceToggle("it_clearance", Boolean(employee.it_clearance))}
                   >
-                    <span className="font-semibold">Total Net Settlement</span>
-                    <span className="text-lg font-semibold" style={{ color: "var(--color-primary)" }}>
+                    {employee.it_clearance ? "✓ Returned" : "Pending"}
+                  </button>
+                ) : (
+                  <span className={`badge ${employee.it_clearance ? "badge-success" : "badge-muted"}`}>
+                    {employee.it_clearance ? "Cleared" : "Pending"}
+                  </span>
+                )}
+              </div>
+
+              {/* HR Clearance */}
+              <div className="p-3 bg-white rounded border" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <strong style={{ fontSize: "0.85rem" }}>🪪 HR Department</strong>
+                  <div className="text-xs text-muted">ID card, access badges, NDA</div>
+                </div>
+                {isHr ? (
+                  <button
+                    type="button"
+                    className={`btn btn-xs ${employee.hr_clearance ? "btn-success" : "btn-outline"}`}
+                    disabled={updatingClearance}
+                    onClick={() => handleClearanceToggle("hr_clearance", Boolean(employee.hr_clearance))}
+                  >
+                    {employee.hr_clearance ? "✓ Returned" : "Pending"}
+                  </button>
+                ) : (
+                  <span className={`badge ${employee.hr_clearance ? "badge-success" : "badge-muted"}`}>
+                    {employee.hr_clearance ? "Cleared" : "Pending"}
+                  </span>
+                )}
+              </div>
+
+              {/* Finance Clearance */}
+              <div className="p-3 bg-white rounded border" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <strong style={{ fontSize: "0.85rem" }}>💰 Finance Department</strong>
+                  <div className="text-xs text-muted">Loans, advance reconciliations</div>
+                </div>
+                {isHr ? (
+                  <button
+                    type="button"
+                    className={`btn btn-xs ${employee.finance_clearance ? "btn-success" : "btn-outline"}`}
+                    disabled={updatingClearance}
+                    onClick={() => handleClearanceToggle("finance_clearance", Boolean(employee.finance_clearance))}
+                  >
+                    {employee.finance_clearance ? "✓ Cleared" : "Pending"}
+                  </button>
+                ) : (
+                  <span className={`badge ${employee.finance_clearance ? "badge-success" : "badge-muted"}`}>
+                    {employee.finance_clearance ? "Cleared" : "Pending"}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* FNF CALCULATION BREAKDOWN */}
+          <div>
+            <div className="row-between mb-2">
+              <h4 className="mb-0">Full-and-Final (FnF) Settlement Statement</h4>
+              {employee.fnf_settled_at && (
+                <span className="badge badge-success">Settlement Released on {formatDate(employee.fnf_settled_at)}</span>
+              )}
+            </div>
+
+            {fnfQuery.isLoading && (
+              <div className="row">
+                <div className="spinner" />
+                <span className="text-muted">Calculating FnF statement…</span>
+              </div>
+            )}
+            {fnfQuery.isError && (
+              <div className="alert alert-error">
+                {parseApiError(fnfQuery.error).message}
+              </div>
+            )}
+
+            {fnfQuery.data && (
+              <div className="card" style={{ background: "var(--color-bg)" }}>
+                {/* Financial Component Grid */}
+                <div className="form-grid mb-3">
+                  <Field
+                    label="Unpaid Salary Days"
+                    value={`${fnfQuery.data.unpaid_salary_days} days`}
+                  />
+                  <Field
+                    label="Prorated Unpaid Salary"
+                    value={`₹${Number(fnfQuery.data.unpaid_salary_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                  />
+                  <Field
+                    label="Encashable Leave Days"
+                    value={`${fnfQuery.data.encashable_leave_days} days`}
+                  />
+                  <Field
+                    label="Leave Encashment (Add)"
+                    value={`+ ₹${Number(fnfQuery.data.leave_encashment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                  />
+                  <Field
+                    label="Severance / Notice In Lieu"
+                    value={`+ ₹${Number(fnfQuery.data.severance_pay).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                  />
+                  <Field
+                    label="Pending Reimbursements"
+                    value={`+ ₹${Number(fnfQuery.data.pending_reimbursements).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                  />
+                  <Field
+                    label="Gratuity / Special Bonus"
+                    value={`+ ₹${Number(fnfQuery.data.gratuity_bonus).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                  />
+                  <Field
+                    label="Notice Shortfall Deduction"
+                    value={`- ₹${Number(fnfQuery.data.notice_recovery_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })} (${fnfQuery.data.notice_recovery_days} days)`}
+                  />
+                  <Field
+                    label="Asset Damage / Deductions"
+                    value={`- ₹${Number(fnfQuery.data.asset_deductions).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                  />
+                </div>
+
+                {/* HR Adjustment inputs if not settled */}
+                {isHr && !employee.fnf_settled_at && (
+                  <div className="p-3 bg-white rounded border mb-3">
+                    <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "8px" }}>Adjust Financial Items</strong>
+                    <div className="grid grid-3 gap-3">
+                      <div className="field">
+                        <label style={{ fontSize: "11px" }}>Pending Reimbursements (₹)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={editReimbursements}
+                          onChange={(e) => setEditReimbursements(e.target.value)}
+                        />
+                      </div>
+                      <div className="field">
+                        <label style={{ fontSize: "11px" }}>Gratuity / Bonus (₹)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={editGratuity}
+                          onChange={(e) => setEditGratuity(e.target.value)}
+                        />
+                      </div>
+                      <div className="field">
+                        <label style={{ fontSize: "11px" }}>Asset Damage / Deductions (₹)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={editDeductions}
+                          onChange={(e) => setEditDeductions(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="row-end mt-2">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline"
+                        onClick={handleSaveFinancialAdjustments}
+                        disabled={updatingClearance}
+                      >
+                        Recalculate Statement
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Net Payout Summary Bar */}
+                <div
+                  className="row-between align-center mt-3"
+                  style={{
+                    borderTop: "2px solid var(--color-border)",
+                    paddingTop: "var(--space-3)",
+                  }}
+                >
+                  <div>
+                    <div className="font-semibold text-base">FnF Net Payout</div>
+                    <div className="text-xs text-muted">
+                      (Salary + Leaves + Reimbursements + Gratuity + Severance) - (Notice Shortfall + Deductions)
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xl font-bold" style={{ color: "var(--color-primary)" }}>
                       ₹{Number(fnfQuery.data.total_settlement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
+
+                {/* Final Settlement Release Action */}
+                {isHr && !employee.fnf_settled_at && (
+                  <div className="row-end mt-4 pt-3 border-t">
+                    <button
+                      type="button"
+                      className="btn btn-success"
+                      disabled={!fnfQuery.data.can_release_settlement || updatingClearance}
+                      onClick={handleFinalSettlementRelease}
+                      title={
+                        fnfQuery.data.can_release_settlement
+                          ? "Release and lock FnF Settlement"
+                          : "Requires IT, HR, and Finance clearance sign-off"
+                      }
+                    >
+                      {fnfQuery.data.can_release_settlement
+                        ? "🚀 Generate & Release FnF Settlement"
+                        : "🔒 Sign-off Required for Release"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

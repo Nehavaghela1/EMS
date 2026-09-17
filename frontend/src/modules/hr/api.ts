@@ -48,6 +48,16 @@ export interface Employee {
   last_working_date?: string | null;
   notice_waived?: boolean;
   notice_recovery_days?: number;
+  separation_type?: string | null;
+  termination_reason?: string | null;
+  severance_pay?: number | string | null;
+  pending_reimbursements?: number | string | null;
+  gratuity_bonus?: number | string | null;
+  asset_deductions?: number | string | null;
+  it_clearance?: boolean;
+  hr_clearance?: boolean;
+  finance_clearance?: boolean;
+  fnf_settled_at?: string | null;
   company_id?: string | null;
   company_name?: string | null;
   created_at: string;
@@ -67,9 +77,21 @@ export interface EmployeeCreateInput {
   hire_date: string;
   probation_end_date?: string | null;
   notice_period_days?: number;
+  company_id?: string | null;
 }
 
-export type EmployeeUpdateInput = Partial<EmployeeCreateInput>;
+export interface EmployeeUpdateInput {
+  last_name?: string | null;
+  personal_email?: string | null;
+  phone?: string | null;
+  department_id?: string | null;
+  position?: string | null;
+  level?: string | null;
+  reporting_manager_id?: string | null;
+  employment_type?: EmploymentType;
+  probation_end_date?: string | null;
+  notice_period_days?: number;
+}
 
 export interface EmployeeCreateResponse extends Employee {
   invite: { sent_to: string; expires_at: string };
@@ -77,21 +99,29 @@ export interface EmployeeCreateResponse extends Employee {
 
 export interface ListEmployeesParams {
   q?: string;
-  company_id?: string;
   department_id?: string;
+  company_id?: string;
   is_active?: boolean;
+  level?: string;
+  employment_type?: string;
+  reporting_manager_id?: string;
   sort?: string;
-  page: number;
-  limit: number;
+  page?: number;
+  limit?: number;
 }
 
-export async function listEmployees(params: ListEmployeesParams): Promise<Page<Employee>> {
+export async function listEmployees(params: ListEmployeesParams = {}): Promise<Page<Employee>> {
   const { data } = await apiClient.get<Page<Employee>>("/employees", { params });
   return data;
 }
 
 export async function getEmployee(id: string): Promise<Employee> {
   const { data } = await apiClient.get<Employee>(`/employees/${id}`);
+  return data;
+}
+
+export async function getMyEmployee(): Promise<Employee> {
+  const { data } = await apiClient.get<Employee>("/employees/me");
   return data;
 }
 
@@ -102,6 +132,11 @@ export async function createEmployee(input: EmployeeCreateInput): Promise<Employ
 
 export async function updateEmployee(id: string, input: EmployeeUpdateInput): Promise<Employee> {
   const { data } = await apiClient.put<Employee>(`/employees/${id}`, input);
+  return data;
+}
+
+export async function toggleActiveEmployee(id: string): Promise<Employee> {
+  const { data } = await apiClient.post<Employee>(`/employees/${id}/toggle-active`);
   return data;
 }
 
@@ -119,20 +154,18 @@ export async function resendInvite(id: string): Promise<EmployeeCreateResponse> 
   return data;
 }
 
-export async function getMyEmployee(): Promise<Employee> {
-  const { data } = await apiClient.get<Employee>("/employees/me");
+export interface ListDepartmentsParams {
+  page?: number;
+  limit?: number;
+}
+
+export async function listDepartments(params: ListDepartmentsParams = {}): Promise<Page<Department>> {
+  const { data } = await apiClient.get<Page<Department>>("/departments", { params });
   return data;
 }
 
-export interface ListDepartmentsParams {
-  q?: string;
-  sort?: string;
-  page: number;
-  limit: number;
-}
-
-export async function listDepartments(params: ListDepartmentsParams): Promise<Page<Department>> {
-  const { data } = await apiClient.get<Page<Department>>("/departments", { params });
+export async function getDepartment(id: string): Promise<Department> {
+  const { data } = await apiClient.get<Department>(`/departments/${id}`);
   return data;
 }
 
@@ -163,10 +196,31 @@ export interface ResignationApproveInput {
   notice_recovery_days?: number;
 }
 
+export interface TerminationInput {
+  termination_date: string;
+  reason: string;
+  severance_pay?: number;
+  notice_pay_in_lieu?: number;
+  notes?: string;
+}
+
+export interface FnFClearanceInput {
+  it_clearance?: boolean;
+  hr_clearance?: boolean;
+  finance_clearance?: boolean;
+  severance_pay?: number;
+  pending_reimbursements?: number;
+  gratuity_bonus?: number;
+  asset_deductions?: number;
+  mark_settled?: boolean;
+}
+
 export interface FnFSettlement {
   employee_id: string;
   employee_name: string;
   last_working_date: string;
+  separation_type?: string | null;
+  termination_reason?: string | null;
   notice_days_required: number;
   notice_days_served: number;
   notice_waived: boolean;
@@ -176,6 +230,15 @@ export interface FnFSettlement {
   leave_encashment_amount: string | number;
   unpaid_salary_days: number;
   unpaid_salary_amount: string | number;
+  severance_pay: string | number;
+  pending_reimbursements: string | number;
+  gratuity_bonus: string | number;
+  asset_deductions: string | number;
+  it_clearance: boolean;
+  hr_clearance: boolean;
+  finance_clearance: boolean;
+  can_release_settlement: boolean;
+  fnf_settled_at: string | null;
   total_settlement_amount: string | number;
 }
 
@@ -189,8 +252,18 @@ export async function approveResignation(employeeId: string, input: ResignationA
   return data;
 }
 
+export async function terminateEmployee(employeeId: string, input: TerminationInput): Promise<Employee> {
+  const { data } = await apiClient.post<Employee>(`/employees/${employeeId}/terminate`, input);
+  return data;
+}
+
 export async function getFnFSettlement(employeeId: string): Promise<FnFSettlement> {
   const { data } = await apiClient.get<FnFSettlement>(`/employees/${employeeId}/fnf`);
+  return data;
+}
+
+export async function updateFnFClearance(employeeId: string, input: FnFClearanceInput): Promise<FnFSettlement> {
+  const { data } = await apiClient.put<FnFSettlement>(`/employees/${employeeId}/fnf/clearance`, input);
   return data;
 }
 
@@ -198,4 +271,3 @@ export async function listResignations(): Promise<Employee[]> {
   const { data } = await apiClient.get<Employee[]>("/employees/resignations");
   return data;
 }
-

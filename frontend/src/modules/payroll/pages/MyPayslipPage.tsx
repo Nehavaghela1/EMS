@@ -1,13 +1,17 @@
 import { useState, useEffect } from "react";
 import { listMyPayslips, type PayrollItem } from "../api";
 import { getMyCompany, type CompanyResponse } from "../../identity/api";
+import { getFnFSettlement, type FnFSettlement } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
 import { useAuth } from "../../../app/auth-context";
+import { formatDate } from "../../../shared/utils/date";
 
 export function MyPayslipPage() {
   const { user } = useAuth();
   const { notify } = useToast();
+  const [activeTab, setActiveTab] = useState<"payslips" | "fnf">("payslips");
   const [payslips, setPayslips] = useState<PayrollItem[]>([]);
+  const [fnfData, setFnfData] = useState<FnFSettlement | null>(null);
   const [company, setCompany] = useState<CompanyResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedPayslip, setSelectedPayslip] = useState<PayrollItem | null>(null);
@@ -15,7 +19,10 @@ export function MyPayslipPage() {
   useEffect(() => {
     fetchPayslips();
     fetchCompany();
-  }, []);
+    if (user?.employee?.id) {
+      fetchFnF();
+    }
+  }, [user?.employee?.id]);
 
   async function fetchCompany() {
     try {
@@ -23,6 +30,17 @@ export function MyPayslipPage() {
       setCompany(comp);
     } catch {
       // Non-critical, fallback to user company name
+    }
+  }
+
+  async function fetchFnF() {
+    if (!user?.employee?.id) return;
+    try {
+      const fnf = await getFnFSettlement(user.employee.id);
+      setFnfData(fnf);
+    } catch {
+      // Not yet separated / no FnF available
+      setFnfData(null);
     }
   }
 
@@ -49,17 +67,229 @@ export function MyPayslipPage() {
     <div className="container">
       <div className="page-header flex justify-between align-center">
         <div>
-          <h1>My Payslips</h1>
-          <p className="text-muted">View and download your monthly itemized payslip breakdowns</p>
+          <h1>My Payslips & Statements</h1>
+          <p className="text-muted">Monthly itemized payslip breakdowns and Full & Final (FnF) statements</p>
         </div>
-        {selectedPayslip && (
-          <button className="btn btn-primary" onClick={handlePrint}>
-            📥 Download Branded Payslip (PDF / Print)
-          </button>
-        )}
+        <div className="flex gap-2">
+          {(selectedPayslip || fnfData) && (
+            <button className="btn btn-primary" onClick={handlePrint}>
+              📥 Download Statement (PDF / Print)
+            </button>
+          )}
+        </div>
       </div>
 
-      {loading ? (
+      {/* Tabs */}
+      <div className="flex gap-4 border-b mb-4" style={{ borderColor: "var(--color-border)" }}>
+        <button
+          type="button"
+          className="btn-ghost"
+          style={{
+            padding: "0.5rem 1rem",
+            fontWeight: activeTab === "payslips" ? 600 : 400,
+            borderBottom: activeTab === "payslips" ? "2px solid var(--color-primary, #2563eb)" : "2px solid transparent",
+            color: activeTab === "payslips" ? "var(--color-primary, #2563eb)" : "var(--color-text-muted)",
+            cursor: "pointer",
+          }}
+          onClick={() => setActiveTab("payslips")}
+        >
+          📄 Monthly Payslips ({payslips.length})
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          style={{
+            padding: "0.5rem 1rem",
+            fontWeight: activeTab === "fnf" ? 600 : 400,
+            borderBottom: activeTab === "fnf" ? "2px solid #16a34a" : "2px solid transparent",
+            color: activeTab === "fnf" ? "#16a34a" : "var(--color-text-muted)",
+            cursor: "pointer",
+          }}
+          onClick={() => setActiveTab("fnf")}
+        >
+          📑 Full & Final (FnF) Statement
+        </button>
+      </div>
+
+      {activeTab === "fnf" ? (
+        <div className="card p-6 mt-4">
+          <div className="row-between align-center border-b pb-3 mb-4">
+            <div>
+              <h3 style={{ margin: 0, fontSize: "1.2rem" }}>📑 Full & Final Settlement (FnF) Statement</h3>
+              <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+                Official terminal financial settlement following resignation or company separation
+              </p>
+            </div>
+            {fnfData && (
+              <span
+                className="badge"
+                style={{
+                  backgroundColor: fnfData.fnf_settled_at ? "#dcfce7" : "#fef3c7",
+                  color: fnfData.fnf_settled_at ? "#15803d" : "#b45309",
+                  border: "1px solid currentColor",
+                  fontWeight: 600,
+                  fontSize: "0.85rem",
+                  padding: "4px 10px",
+                }}
+              >
+                {fnfData.fnf_settled_at ? "✅ Settled & Disbursed" : "⏳ Clearance In Progress"}
+              </span>
+            )}
+          </div>
+
+          {!fnfData ? (
+            <div style={{ textAlign: "center", padding: "3rem 1rem" }}>
+              <span style={{ fontSize: "2.5rem" }}>📄</span>
+              <h4 style={{ margin: "0.75rem 0 0.25rem" }}>No Active Separation or FnF Statement</h4>
+              <p className="text-muted text-sm" style={{ maxWidth: "480px", margin: "0 auto" }}>
+                Full & Final Settlement statements are generated when a formal resignation is approved or separation is initiated. Your employment status is currently active.
+              </p>
+            </div>
+          ) : (
+            <div className="stack gap-4">
+              {/* Formula Callout Banner */}
+              <div
+                style={{
+                  background: "#f8fafc",
+                  padding: "12px 16px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--color-border)",
+                  fontSize: "0.85rem",
+                }}
+              >
+                <strong>FnF Formula:</strong>{" "}
+                <code>Net Payout = (Unpaid Salary + Leave Encashment + Pending Reimbursements + Gratuity/Bonus + Severance) - (Notice Recovery + Asset Deductions)</code>
+              </div>
+
+              {/* Department Clearance Progress */}
+              <div className="card" style={{ background: "#fafafa", padding: "1rem" }}>
+                <div className="text-xs font-semibold uppercase text-muted mb-2">Department Clearance Sign-Offs</div>
+                <div className="grid grid-3 gap-3">
+                  <div className="p-2 bg-white rounded border flex justify-between align-center">
+                    <span className="text-sm">💻 IT Clearance</span>
+                    <span className={`badge ${fnfData.it_clearance ? "badge-success" : "badge-warning"}`}>
+                      {fnfData.it_clearance ? "Cleared" : "Pending"}
+                    </span>
+                  </div>
+                  <div className="p-2 bg-white rounded border flex justify-between align-center">
+                    <span className="text-sm">👤 HR Clearance</span>
+                    <span className={`badge ${fnfData.hr_clearance ? "badge-success" : "badge-warning"}`}>
+                      {fnfData.hr_clearance ? "Cleared" : "Pending"}
+                    </span>
+                  </div>
+                  <div className="p-2 bg-white rounded border flex justify-between align-center">
+                    <span className="text-sm">💰 Finance Clearance</span>
+                    <span className={`badge ${fnfData.finance_clearance ? "badge-success" : "badge-warning"}`}>
+                      {fnfData.finance_clearance ? "Cleared" : "Pending"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Itemized Financial Breakdown */}
+              <div className="grid grid-2 gap-6">
+                {/* Earnings & Additions */}
+                <div>
+                  <h4 className="text-success border-b pb-2 mb-3">Additions & Encashments (+)</h4>
+                  <table className="table text-sm" style={{ width: "100%" }}>
+                    <tbody>
+                      <tr>
+                        <td>
+                          <strong>Prorated Unpaid Salary</strong>
+                          <div className="text-xs text-muted">{fnfData.unpaid_salary_days} payable days up to LWD</div>
+                        </td>
+                        <td className="text-right font-mono text-success">
+                          +₹{Number(fnfData.unpaid_salary_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <strong>Leave Encashment</strong>
+                          <div className="text-xs text-muted">{fnfData.encashable_leave_days} accrued paid leave days</div>
+                        </td>
+                        <td className="text-right font-mono text-success">
+                          +₹{Number(fnfData.leave_encashment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <strong>Pending Reimbursements</strong>
+                          <div className="text-xs text-muted">Approved expense claims</div>
+                        </td>
+                        <td className="text-right font-mono text-success">
+                          +₹{Number(fnfData.pending_reimbursements).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <strong>Gratuity / Separation Bonus</strong>
+                        </td>
+                        <td className="text-right font-mono text-success">
+                          +₹{Number(fnfData.gratuity_bonus).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <strong>Severance / Notice Pay in Lieu</strong>
+                        </td>
+                        <td className="text-right font-mono text-success">
+                          +₹{Number(fnfData.severance_pay).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Deductions & Recoveries */}
+                <div>
+                  <h4 className="text-red border-b pb-2 mb-3">Deductions & Recoveries (-)</h4>
+                  <table className="table text-sm" style={{ width: "100%" }}>
+                    <tbody>
+                      <tr>
+                        <td>
+                          <strong>Notice Shortfall Recovery</strong>
+                          <div className="text-xs text-muted">Unserved contractual notice period</div>
+                        </td>
+                        <td className="text-right font-mono text-red">
+                          -₹{Number(fnfData.notice_recovery_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <strong>Asset Damage / Loan Deductions</strong>
+                          <div className="text-xs text-muted">Equipment replacement / pending advances</div>
+                        </td>
+                        <td className="text-right font-mono text-red">
+                          -₹{Number(fnfData.asset_deductions).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  {/* Net Payable Settlement Box */}
+                  <div
+                    className="p-4 rounded mt-4"
+                    style={{
+                      background: "linear-gradient(135deg, #eff6ff, #dbeafe)",
+                      border: "1px solid #bfdbfe",
+                    }}
+                  >
+                    <div className="text-xs text-muted font-semibold uppercase">Total Net FnF Payout</div>
+                    <div className="text-2xl font-bold" style={{ color: "#1e40af", marginTop: "4px" }}>
+                      ₹{Number(fnfData.total_settlement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-xs text-muted mt-1">
+                      {fnfData.fnf_settled_at
+                        ? `Disbursed on ${formatDate(fnfData.fnf_settled_at)} • Excluded from future pay runs`
+                        : "Payable via direct bank transfer upon complete department clearance"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : loading ? (
         <p className="mt-4">Loading payslips...</p>
       ) : payslips.length === 0 ? (
         <div className="card mt-4 p-8 text-center" style={{ maxWidth: "560px", margin: "2rem auto" }}>

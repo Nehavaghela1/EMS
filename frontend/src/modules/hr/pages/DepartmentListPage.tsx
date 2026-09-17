@@ -22,8 +22,8 @@ export function DepartmentListPage() {
   const { notify } = useToast();
 
   const departmentsQuery = useQuery({
-    queryKey: ["departments", { page, limit, sort }],
-    queryFn: () => listDepartments({ page, limit, sort: sort ?? undefined }),
+    queryKey: ["departments", { page, limit }],
+    queryFn: () => listDepartments({ page, limit }),
     placeholderData: (prev) => prev,
   });
 

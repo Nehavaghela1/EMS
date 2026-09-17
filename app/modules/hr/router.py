@@ -259,7 +259,13 @@ def resend_invite(
 
 
 # ── Resignation & Full-and-Final (Routes 27-30) ─────────────────
-from app.modules.hr.schemas import ResignationSubmitRequest, ResignationApproveRequest, FnFSettlementResponse
+from app.modules.hr.schemas import (
+    ResignationSubmitRequest,
+    ResignationApproveRequest,
+    TerminationRequest,
+    FnFClearanceUpdateRequest,
+    FnFSettlementResponse,
+)
 
 @employees_router.post("/{employee_id}/resignation", response_model=EmployeeResponse)
 def submit_resignation(
@@ -281,10 +287,29 @@ def approve_resignation(
     employee = EmployeeService(db).approve_resignation(user.company_id, employee_id, data)
     return _to_employee_response(employee)
 
+@employees_router.post("/{employee_id}/terminate", response_model=EmployeeResponse)
+def terminate_employee(
+    employee_id: uuid.UUID,
+    data: TerminationRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+):
+    employee = EmployeeService(db).terminate_employee(user.company_id, employee_id, data, user)
+    return _to_employee_response(employee)
+
 @employees_router.get("/{employee_id}/fnf", response_model=FnFSettlementResponse)
 def get_fnf_settlement(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(get_current_user),
 ):
     return EmployeeService(db).calculate_fnf(user.company_id, employee_id)
+
+@employees_router.put("/{employee_id}/fnf/clearance", response_model=FnFSettlementResponse)
+def update_fnf_clearance(
+    employee_id: uuid.UUID,
+    data: FnFClearanceUpdateRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+):
+    return EmployeeService(db).update_fnf_clearance(user.company_id, employee_id, data, user)

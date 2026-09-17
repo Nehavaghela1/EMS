@@ -15,9 +15,12 @@ from app.modules.performance.schemas import (
     PerformanceCycleResponse,
     PerformanceCycleUpdateRequest,
     PerformanceGoalResponse,
+    PerformancePIPResponse,
     PerformanceReportResponse,
     PerformanceReviewResponse,
     PerformanceSummaryResponse,
+    PIPCreateRequest,
+    PIPEvaluateRequest,
     SelfReviewRequest,
     SummaryFinalizeRequest,
 )
@@ -215,3 +218,67 @@ def finalize_performance_summary(
     service = PerformanceService(db)
     summary = service.finalize_summary(user.company_id, employee_id, data, user)
     return PerformanceSummaryResponse.model_validate(summary)
+
+
+# --- Performance Improvement Plan (PIP) Endpoints ---
+
+@performance_router.post("/pips", response_model=PerformancePIPResponse, status_code=201)
+def initiate_pip(
+    data: PIPCreateRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
+):
+    service = PerformanceService(db)
+    pip = service.create_pip(user.company_id, data, user)
+    return service.get_active_pip(user.company_id, pip.employee_id) or PerformancePIPResponse.model_validate(pip)
+
+
+@performance_router.get("/pips", response_model=list[PerformancePIPResponse])
+def list_pips(
+    employee_id: uuid.UUID | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    service = PerformanceService(db)
+    target_emp_id = employee_id
+
+    # If employee, can only see their own PIPs
+    if user.role == UserRole.employee:
+        emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
+        if not emp:
+            return []
+        target_emp_id = emp.id
+
+    return service.list_pips(user.company_id, target_emp_id, status_filter)
+
+
+@performance_router.get("/pips/active/{employee_id}", response_model=PerformancePIPResponse | None)
+def get_active_pip(
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    service = PerformanceService(db)
+    # Check scoping
+    if user.role == UserRole.employee:
+        emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
+        if not emp or (emp.id != employee_id and user.id != employee_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Employees can only view their own active PIP.",
+            )
+        employee_id = emp.id
+
+    return service.get_active_pip(user.company_id, employee_id)
+
+
+@performance_router.post("/pips/{pip_id}/evaluate", response_model=PerformancePIPResponse)
+def evaluate_pip(
+    pip_id: uuid.UUID,
+    data: PIPEvaluateRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
+):
+    service = PerformanceService(db)
+    return service.evaluate_pip(user.company_id, pip_id, data, user)

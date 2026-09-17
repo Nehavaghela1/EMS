@@ -164,3 +164,58 @@ export async function getPerformanceReport(): Promise<PerformanceReport> {
   const res = await apiClient.get<PerformanceReport>("/performance/report");
   return res.data;
 }
+
+// --- PIP (Performance Improvement Plan) API ---
+export interface PerformancePIP {
+  id: string;
+  employee_id: string;
+  employee_name?: string | null;
+  employee_code?: string | null;
+  mentor_id?: string | null;
+  mentor_name?: string | null;
+  title: string;
+  description?: string | null;
+  milestones_kpis?: string | null;
+  start_date: string;
+  end_date: string;
+  status: "active" | "passed" | "failed" | "cancelled";
+  outcome_notes?: string | null;
+  evaluated_at?: string | null;
+  evaluated_by?: string | null;
+  created_at: string;
+}
+
+export interface PIPCreateInput {
+  employee_id: string;
+  mentor_id?: string | null;
+  title: string;
+  description?: string | null;
+  milestones_kpis?: string | null;
+  start_date: string;
+  end_date: string;
+}
+
+export interface PIPEvaluateInput {
+  outcome: "passed" | "failed" | "cancelled";
+  outcome_notes?: string | null;
+}
+
+export async function listPIPs(params?: { employee_id?: string; status?: string }): Promise<PerformancePIP[]> {
+  const res = await apiClient.get<PerformancePIP[]>("/performance/pips", { params });
+  return res.data;
+}
+
+export async function getActivePIP(employeeId: string): Promise<PerformancePIP | null> {
+  const res = await apiClient.get<PerformancePIP | null>(`/performance/pips/active/${employeeId}`);
+  return res.data;
+}
+
+export async function initiatePIP(data: PIPCreateInput): Promise<PerformancePIP> {
+  const res = await apiClient.post<PerformancePIP>("/performance/pips", data);
+  return res.data;
+}
+
+export async function evaluatePIP(pipId: string, data: PIPEvaluateInput): Promise<PerformancePIP> {
+  const res = await apiClient.post<PerformancePIP>(`/performance/pips/${pipId}/evaluate`, data);
+  return res.data;
+}

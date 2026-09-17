@@ -1,5 +1,6 @@
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
@@ -13,6 +14,7 @@ from app.modules.performance.models import (
     GoalStatus,
     PerformanceCycle,
     PerformanceGoal,
+    PerformancePIP,
     PerformanceReview,
     PerformanceSummary,
     ReviewerRole,
@@ -20,6 +22,7 @@ from app.modules.performance.models import (
 from app.modules.performance.repository import (
     PerformanceCycleRepository,
     PerformanceGoalRepository,
+    PerformancePIPRepository,
     PerformanceReviewRepository,
     PerformanceSummaryRepository,
 )
@@ -28,7 +31,10 @@ from app.modules.performance.schemas import (
     ManagerReviewRequest,
     PerformanceCycleCreateRequest,
     PerformanceCycleUpdateRequest,
+    PerformancePIPResponse,
     PerformanceReportResponse,
+    PIPCreateRequest,
+    PIPEvaluateRequest,
     SelfReviewRequest,
     SummaryFinalizeRequest,
 )
@@ -47,6 +53,7 @@ class PerformanceService:
         self.goal_repo = PerformanceGoalRepository(db)
         self.review_repo = PerformanceReviewRepository(db)
         self.summary_repo = PerformanceSummaryRepository(db)
+        self.pip_repo = PerformancePIPRepository(db)
         self.employee_repo = EmployeeRepository(db)
         self.audit = AuditService(db)
 
@@ -333,3 +340,138 @@ class PerformanceService:
             completion_rate_percent=rate,
             rating_distribution=distribution,
         )
+
+    # 6. Performance Improvement Plans (PIP)
+    def create_pip(self, company_id: uuid.UUID, data: PIPCreateRequest, actor: User) -> PerformancePIP:
+        emp = self.employee_repo.get_by_id(company_id, data.employee_id)
+        if emp is None:
+            raise NotFoundError("Employee not found.")
+
+        # Check if already has an active PIP
+        existing = self.pip_repo.get_active_pip_for_employee(company_id, data.employee_id)
+        if existing is not None:
+            raise ConflictError("Employee already has an active Performance Improvement Plan (PIP).")
+
+        pip = self.pip_repo.create(
+            company_id=company_id,
+            employee_id=data.employee_id,
+            mentor_id=data.mentor_id,
+            title=data.title,
+            description=data.description,
+            milestones_kpis=data.milestones_kpis,
+            start_date=data.start_date,
+            end_date=data.end_date,
+            status="active",
+        )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PIP_INITIATED",
+            entity_type="performance_pip",
+            entity_id=pip.id,
+            details={"employee_id": str(data.employee_id), "end_date": str(data.end_date)},
+        )
+        self.db.commit()
+        return pip
+
+    def list_pips(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID | None = None, status: str | None = None
+    ) -> list[PerformancePIPResponse]:
+        pips = self.pip_repo.list_pips(company_id, employee_id, status)
+        res = []
+        for p in pips:
+            emp = self.employee_repo.get_by_id(company_id, p.employee_id)
+            mentor = self.employee_repo.get_by_id(company_id, p.mentor_id) if p.mentor_id else None
+            res.append(
+                PerformancePIPResponse(
+                    id=p.id,
+                    employee_id=p.employee_id,
+                    employee_name=f"{emp.first_name} {emp.last_name or ''}".strip() if emp else None,
+                    employee_code=emp.employee_code if emp else None,
+                    mentor_id=p.mentor_id,
+                    mentor_name=f"{mentor.first_name} {mentor.last_name or ''}".strip() if mentor else None,
+                    title=p.title,
+                    description=p.description,
+                    milestones_kpis=p.milestones_kpis,
+                    start_date=p.start_date,
+                    end_date=p.end_date,
+                    status=p.status,
+                    outcome_notes=p.outcome_notes,
+                    evaluated_at=p.evaluated_at,
+                    evaluated_by=p.evaluated_by,
+                    created_at=p.created_at,
+                )
+            )
+        return res
+
+    def get_active_pip(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> PerformancePIPResponse | None:
+        p = self.pip_repo.get_active_pip_for_employee(company_id, employee_id)
+        if p is None:
+            return None
+        emp = self.employee_repo.get_by_id(company_id, p.employee_id)
+        mentor = self.employee_repo.get_by_id(company_id, p.mentor_id) if p.mentor_id else None
+        return PerformancePIPResponse(
+            id=p.id,
+            employee_id=p.employee_id,
+            employee_name=f"{emp.first_name} {emp.last_name or ''}".strip() if emp else None,
+            employee_code=emp.employee_code if emp else None,
+            mentor_id=p.mentor_id,
+            mentor_name=f"{mentor.first_name} {mentor.last_name or ''}".strip() if mentor else None,
+            title=p.title,
+            description=p.description,
+            milestones_kpis=p.milestones_kpis,
+            start_date=p.start_date,
+            end_date=p.end_date,
+            status=p.status,
+            outcome_notes=p.outcome_notes,
+            evaluated_at=p.evaluated_at,
+            evaluated_by=p.evaluated_by,
+            created_at=p.created_at,
+        )
+
+    def evaluate_pip(
+        self, company_id: uuid.UUID, pip_id: uuid.UUID, data: PIPEvaluateRequest, actor: User
+    ) -> PerformancePIPResponse:
+        pip = self.pip_repo.get_by_id(pip_id, company_id)
+        if pip is None:
+            raise NotFoundError("PIP record not found.")
+
+        self.pip_repo.update(
+            pip,
+            status=data.outcome,
+            outcome_notes=data.outcome_notes,
+            evaluated_at=utcnow(),
+            evaluated_by=actor.id,
+        )
+
+        # Track C rule: "If marked Failed, automatically triggers separation/termination"
+        if data.outcome == "failed":
+            emp = self.employee_repo.get_by_id(company_id, pip.employee_id)
+            if emp:
+                from app.modules.hr.models import ResignationStatus
+                self.employee_repo.update(
+                    emp,
+                    is_active=False,
+                    resignation_status=ResignationStatus.approved,
+                    separation_type="pip_failed",
+                    termination_reason=f"Failed Performance Improvement Plan: {pip.title}",
+                    last_working_date=utcnow().date(),
+                    notice_waived=True,
+                    notice_recovery_days=0,
+                )
+                if emp.user_id:
+                    user = self.db.scalar(select(User).where(User.id == emp.user_id))
+                    if user:
+                        user.is_active = False
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action=f"PIP_{data.outcome.upper()}",
+            entity_type="performance_pip",
+            entity_id=pip.id,
+            details={"outcome": data.outcome, "notes": data.outcome_notes},
+        )
+        self.db.commit()
+        return self.get_active_pip(company_id, pip.employee_id) or PerformancePIPResponse.model_validate(pip)

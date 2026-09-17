@@ -20,6 +20,8 @@ from app.modules.hr.schemas import (
     EmployeeUpdateRequest,
     ResignationSubmitRequest,
     ResignationApproveRequest,
+    TerminationRequest,
+    FnFClearanceUpdateRequest,
     FnFSettlementResponse,
 )
 from app.modules.identity.models import User, UserRole
@@ -433,6 +435,7 @@ class EmployeeService:
             resignation_status=ResignationStatus.submitted,
             resignation_date=data.resignation_date,
             last_working_date=data.last_working_date,
+            separation_type="voluntary",
         )
         self.db.commit()
         return employee
@@ -449,6 +452,39 @@ class EmployeeService:
                 notice_waived=data.notice_waived,
                 notice_recovery_days=data.notice_recovery_days if not data.notice_waived else 0,
             )
+        self.db.commit()
+        return employee
+
+    def terminate_employee(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: TerminationRequest, actor: User) -> Employee:
+        employee = self._get_or_404(company_id, employee_id)
+        # Schedule separation / involuntary termination
+        # Severance pay or notice pay in lieu can be configured
+        total_severance = Decimal(str(data.severance_pay)) + Decimal(str(data.notice_pay_in_lieu))
+        self.repo.update(
+            employee,
+            is_active=False,
+            resignation_status=ResignationStatus.approved,
+            separation_type="involuntary",
+            termination_reason=data.reason,
+            last_working_date=data.termination_date,
+            severance_pay=total_severance,
+            notice_waived=True,
+            notice_recovery_days=0,
+        )
+        # If employee has user account, deactivate it on termination date
+        if employee.user_id and data.termination_date <= utcnow().date():
+            user = self.db.scalar(select(User).where(User.id == employee.user_id))
+            if user:
+                user.is_active = False
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEE_TERMINATED",
+            entity_type="employee",
+            entity_id=employee.id,
+            details={"reason": data.reason, "termination_date": str(data.termination_date), "severance": str(total_severance)},
+        )
         self.db.commit()
         return employee
 
@@ -498,12 +534,28 @@ class EmployeeService:
         leave_encashment_amount = (encashable_days * per_day_basic).quantize(Decimal("0.01"))
         unpaid_salary_days = last_working.day
         unpaid_salary_amount = (Decimal(str(unpaid_salary_days)) * per_day_gross).quantize(Decimal("0.01"))
-        total_settlement = (unpaid_salary_amount + leave_encashment_amount - notice_recovery_amount).quantize(Decimal("0.01"))
+
+        # Extra FnF components: severance, reimbursements, gratuity, asset deductions
+        severance_pay = Decimal(str(employee.severance_pay or 0)).quantize(Decimal("0.01"))
+        pending_reimbursements = Decimal(str(employee.pending_reimbursements or 0)).quantize(Decimal("0.01"))
+        gratuity_bonus = Decimal(str(employee.gratuity_bonus or 0)).quantize(Decimal("0.01"))
+        asset_deductions = Decimal(str(employee.asset_deductions or 0)).quantize(Decimal("0.01"))
+
+        # Net Formula:
+        # FnF Net Payout = (Payable Days Salary + Encashable Leaves + Pending Reimbursements + Gratuity/Bonus + Severance)
+        #                  - (Notice Shortfall Recovery + Asset Damage/Deductions)
+        total_additions = unpaid_salary_amount + leave_encashment_amount + pending_reimbursements + gratuity_bonus + severance_pay
+        total_deductions = notice_recovery_amount + asset_deductions
+        total_settlement = (total_additions - total_deductions).quantize(Decimal("0.01"))
+
+        can_release = bool(employee.it_clearance and employee.hr_clearance and employee.finance_clearance)
 
         return FnFSettlementResponse(
             employee_id=employee.id,
             employee_name=f"{employee.first_name} {employee.last_name or ''}".strip(),
             last_working_date=last_working,
+            separation_type=employee.separation_type or "voluntary",
+            termination_reason=employee.termination_reason,
             notice_days_required=notice_required,
             notice_days_served=max(0, notice_served),
             notice_waived=employee.notice_waived,
@@ -513,5 +565,42 @@ class EmployeeService:
             leave_encashment_amount=leave_encashment_amount,
             unpaid_salary_days=unpaid_salary_days,
             unpaid_salary_amount=unpaid_salary_amount,
+            severance_pay=severance_pay,
+            pending_reimbursements=pending_reimbursements,
+            gratuity_bonus=gratuity_bonus,
+            asset_deductions=asset_deductions,
+            it_clearance=employee.it_clearance,
+            hr_clearance=employee.hr_clearance,
+            finance_clearance=employee.finance_clearance,
+            can_release_settlement=can_release,
+            fnf_settled_at=employee.fnf_settled_at,
             total_settlement_amount=total_settlement,
         )
+
+    def update_fnf_clearance(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: FnFClearanceUpdateRequest, actor: User) -> FnFSettlementResponse:
+        employee = self._get_or_404(company_id, employee_id)
+        updates = {}
+        if data.it_clearance is not None:
+            updates["it_clearance"] = data.it_clearance
+        if data.hr_clearance is not None:
+            updates["hr_clearance"] = data.hr_clearance
+        if data.finance_clearance is not None:
+            updates["finance_clearance"] = data.finance_clearance
+        if data.severance_pay is not None:
+            updates["severance_pay"] = data.severance_pay
+        if data.pending_reimbursements is not None:
+            updates["pending_reimbursements"] = data.pending_reimbursements
+        if data.gratuity_bonus is not None:
+            updates["gratuity_bonus"] = data.gratuity_bonus
+        if data.asset_deductions is not None:
+            updates["asset_deductions"] = data.asset_deductions
+        if data.mark_settled:
+            updates["fnf_settled_at"] = utcnow()
+            # Ensure employee is marked inactive upon settlement
+            updates["is_active"] = False
+
+        if updates:
+            self.repo.update(employee, **updates)
+            self.db.commit()
+
+        return self.calculate_fnf(company_id, employee_id)
