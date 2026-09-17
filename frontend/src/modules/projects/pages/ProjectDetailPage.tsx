@@ -48,6 +48,7 @@ export function ProjectDetailPage() {
   // Log Time Modal in Project with 3 Modes: duration, range, stopwatch
   const [showTimeModal, setShowTimeModal] = useState(false);
   const [timeInputMode, setTimeInputMode] = useState<"duration" | "range" | "stopwatch">("duration");
+  const [logEmployeeId, setLogEmployeeId] = useState("");
   const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10));
   const [logHours, setLogHours] = useState("");
   const [logStartTime, setLogStartTime] = useState("09:00");
@@ -244,8 +245,9 @@ export function ProjectDetailPage() {
     setMsTitle("");
     setMsDesc("");
     setMsDueDate("");
-    setMsPct("0");
-    setMsStatus("pending");
+    const defaultPct = summary?.completion_percentage || 0;
+    setMsPct(String(defaultPct));
+    setMsStatus(defaultPct >= 100 ? "completed" : defaultPct > 0 ? "in_progress" : "pending");
     setShowMilestoneModal(true);
   }
 
@@ -378,6 +380,7 @@ export function ProjectDetailPage() {
       await createTimeEntry({
         project_id: id,
         task_id: logTaskId || undefined,
+        employee_id: logEmployeeId || undefined,
         date: logDate,
         hours: hrs,
         description: logDesc || undefined,
@@ -388,6 +391,7 @@ export function ProjectDetailPage() {
       setLogHours("");
       setLogDesc("");
       setLogTaskId("");
+      setLogEmployeeId("");
       loadData();
     } catch (err: any) {
       notify(err?.response?.data?.error?.message || err?.message || "Failed to log time", "error");
@@ -556,7 +560,11 @@ export function ProjectDetailPage() {
             {summary.overdue_tasks}
           </div>
           <div className="text-muted text-xs mt-2">
-            {summary.overdue_tasks > 0 ? "⚠️ Needs Attention" : "✓ On Track"}
+            {summary.overdue_tasks > 0
+              ? "⚠️ Needs Attention"
+              : summary.total_tasks === 0 && summary.members_count === 0
+              ? "⚪ Not Started"
+              : "✓ On Track"}
           </div>
         </div>
 
@@ -1392,8 +1400,22 @@ export function ProjectDetailPage() {
                 </div>
                 <div className="field">
                   <label>Delivery Health</label>
-                  <div style={{ fontWeight: 600, color: summary.overdue_tasks > 0 ? "#dc2626" : "#16a34a" }}>
-                    {summary.overdue_tasks > 0 ? `⚠️ ${summary.overdue_tasks} Overdue Task(s)` : "✓ On Schedule"}
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      color:
+                        summary.overdue_tasks > 0
+                          ? "#dc2626"
+                          : summary.members_count === 0 && Number(summary.total_logged_hours) === 0 && Number(summary.completion_percentage) === 0
+                          ? "#64748b"
+                          : "#16a34a",
+                    }}
+                  >
+                    {summary.overdue_tasks > 0
+                      ? `⚠️ ${summary.overdue_tasks} Overdue Task(s)`
+                      : summary.members_count === 0 && Number(summary.total_logged_hours) === 0 && Number(summary.completion_percentage) === 0
+                      ? "⚪ Not Started"
+                      : "✓ On Schedule"}
                   </div>
                 </div>
               </div>
@@ -1447,14 +1469,28 @@ export function ProjectDetailPage() {
                 <select
                   value={taskAssignedTo}
                   onChange={(e) => setTaskAssignedTo(e.target.value)}
+                  disabled={members.length === 0}
                 >
-                  <option value="">-- Unassigned --</option>
+                  <option value="">
+                    {members.length === 0
+                      ? "-- No members in project yet --"
+                      : "-- Unassigned --"}
+                  </option>
                   {members.map((m) => (
                     <option key={m.employee_id} value={m.employee_id}>
                       {m.employee_name || "Team Member"} ({m.designation || "Staff"} • {m.role === "lead" ? "👑 Lead" : "Member"})
                     </option>
                   ))}
                 </select>
+                {members.length === 0 ? (
+                  <span className="field-hint text-warning" style={{ fontSize: "0.75rem", display: "block", marginTop: "3px" }}>
+                    ⚠️ No members in this project yet. Add team members under the <strong>Users & Team</strong> tab first.
+                  </span>
+                ) : (
+                  <span className="field-hint" style={{ fontSize: "0.75rem" }}>
+                    Select an assigned team contributor or leave unassigned.
+                  </span>
+                )}
               </div>
               <div className="grid-2">
                 <div className="field">
@@ -1547,8 +1583,41 @@ export function ProjectDetailPage() {
               </div>
               <div className="grid-2">
                 <div className="field">
-                  <label>Completion %</label>
-                  <input type="number" min="0" max="100" value={msPct} onChange={(e) => setMsPct(e.target.value)} />
+                  <div className="row-between align-center mb-1">
+                    <label style={{ margin: 0 }}>Completion %</label>
+                    {tasks.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs text-primary"
+                        style={{ padding: "0 4px", fontSize: "0.7rem", fontWeight: 600 }}
+                        onClick={() => {
+                          const autoPct = summary.completion_percentage || 0;
+                          setMsPct(String(autoPct));
+                          if (autoPct >= 100) setMsStatus("completed");
+                          else if (autoPct > 0) setMsStatus("in_progress");
+                          notify(`Calculated ${autoPct}% based on completed tasks`, "info");
+                        }}
+                        title="Calculate percentage based on completed tasks in project"
+                      >
+                        ⚡ Sync from Tasks ({summary.completion_percentage}%)
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={msPct}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setMsPct(val);
+                      if (Number(val) >= 100) setMsStatus("completed");
+                      else if (Number(val) > 0 && msStatus === "pending") setMsStatus("in_progress");
+                    }}
+                  />
+                  <span className="field-hint" style={{ fontSize: "0.72rem" }}>
+                    Auto-calculates from linked project tasks ({summary.completed_tasks}/{summary.total_tasks} completed).
+                  </span>
                 </div>
                 <div className="field">
                   <label>Status</label>
@@ -1830,6 +1899,64 @@ export function ProjectDetailPage() {
             </div>
 
             <form onSubmit={handleLogTime} className="stack gap-4 my-2">
+              {/* Employee Selector for Admins / Managers */}
+              {canManage && (
+                <div className="field">
+                  <label>Log Time On Behalf Of (Employee)</label>
+                  <select
+                    value={logEmployeeId}
+                    onChange={(e) => setLogEmployeeId(e.target.value)}
+                  >
+                    <option value="">
+                      {members.length > 0 ? "-- Current User / Auto Member --" : "-- Select Employee --"}
+                    </option>
+                    {members.map((m) => (
+                      <option key={m.employee_id} value={m.employee_id}>
+                        {m.employee_name || "Team Member"} ({m.designation || "Staff"} • {m.role === "lead" ? "👑 Lead" : "Member"})
+                      </option>
+                    ))}
+                    {employeeList
+                      .filter((emp) => !members.some((m) => m.employee_id === emp.id))
+                      .map((emp) => (
+                        <option key={emp.id} value={emp.id}>
+                          {emp.first_name} {emp.last_name || ""} ({emp.employee_code} • {emp.position || "Staff"}) [External]
+                        </option>
+                      ))}
+                  </select>
+                  <span className="field-hint" style={{ fontSize: "0.75rem" }}>
+                    Captures which employee completed the work so hours attribute accurately in reports.
+                  </span>
+                </div>
+              )}
+
+              {/* Task Binding Selector */}
+              <div className="field">
+                <label>Attached Task (Task Card Binding)</label>
+                <select
+                  value={logTaskId}
+                  onChange={(e) => {
+                    const tid = e.target.value;
+                    setLogTaskId(tid);
+                    if (tid) {
+                      const t = tasks.find((tk) => tk.id === tid);
+                      if (t && !logDesc) {
+                        setLogDesc(`Worked on: ${t.title}`);
+                      }
+                    }
+                  }}
+                >
+                  <option value="">-- General Project Work (Unlinked) --</option>
+                  {tasks.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.title} ({t.status.toUpperCase()})
+                    </option>
+                  ))}
+                </select>
+                <span className="field-hint" style={{ fontSize: "0.75rem" }}>
+                  Binds logged hours directly to the task card to synchronize progress.
+                </span>
+              </div>
+
               <div className="field">
                 <label>Log Date *</label>
                 <input
@@ -1979,23 +2106,6 @@ export function ProjectDetailPage() {
                 </div>
               )}
 
-              {tasks.length > 0 && (
-                <div className="field">
-                  <label>Link to Task (Optional)</label>
-                  <select
-                    value={logTaskId}
-                    onChange={(e) => setLogTaskId(e.target.value)}
-                  >
-                    <option value="">-- General Project Work --</option>
-                    {tasks.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.title} ({t.status.toUpperCase()})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
               <div className="field">
                 <label>Work Description *</label>
                 <textarea
@@ -2051,9 +2161,22 @@ export function ProjectDetailPage() {
                 <label>Select File *</label>
                 <input
                   type="file"
-                  onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                  accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.xlsx,.xls,.zip"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    if (file && file.size > 25 * 1024 * 1024) {
+                      notify("File size exceeds the 25MB limit.", "error");
+                      e.target.value = "";
+                      setUploadFile(null);
+                      return;
+                    }
+                    setUploadFile(file);
+                  }}
                   required
                 />
+                <span className="field-hint" style={{ fontSize: "0.75rem", display: "block", marginTop: "3px" }}>
+                  Supported formats: <strong>PDF, DOCX, PNG, JPG, XLSX, ZIP</strong> up to <strong>25MB</strong>.
+                </span>
               </div>
               <div className="field">
                 <label>Document Description / Notes (Optional)</label>
@@ -2065,11 +2188,18 @@ export function ProjectDetailPage() {
                 />
               </div>
               <div className="flex gap-2 justify-end mt-4">
-                <button type="button" className="btn btn-ghost" onClick={() => setShowDocModal(false)}>
+                <button type="button" className="btn btn-ghost" onClick={() => setShowDocModal(false)} disabled={uploadingDoc}>
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={uploadingDoc || !uploadFile}>
-                  {uploadingDoc ? "Uploading..." : "Upload Document"}
+                  {uploadingDoc ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                      <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" style={{ width: "14px", height: "14px", border: "2px solid #fff", borderRightColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "spin 0.75s linear infinite" }} />
+                      Uploading File...
+                    </span>
+                  ) : (
+                    "Upload Document"
+                  )}
                 </button>
               </div>
             </form>

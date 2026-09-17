@@ -142,6 +142,7 @@ export interface ProjectDocument {
 export interface TimeEntryCreatePayload {
   project_id: string;
   task_id?: string;
+  employee_id?: string;
   date: string;
   hours: number;
   description?: string;

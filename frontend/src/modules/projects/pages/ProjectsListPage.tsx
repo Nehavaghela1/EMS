@@ -299,7 +299,7 @@ export function ProjectsListPage() {
               <div className="stack" style={{ gap: "0.75rem", marginTop: "1rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border-color, #e2e8f0)" }}>
                 <div className="row" style={{ justifyContent: "space-between", fontSize: "0.85rem" }}>
                   <span>Budget:</span>
-                  <strong>{proj.budget ? `₹${Number(proj.budget).toLocaleString()}` : "N/A"}</strong>
+                  <strong>{proj.budget ? `₹${Number(proj.budget).toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "N/A"}</strong>
                 </div>
 
                 {/* Budget Burn Progress Bar */}
@@ -307,7 +307,7 @@ export function ProjectsListPage() {
                   <div style={{ marginTop: "2px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--color-muted, #6b7280)", marginBottom: "3px" }}>
                       <span>Burn Capacity: 42% consumed</span>
-                      <span>₹{(Number(proj.budget) * 0.42).toLocaleString(undefined, { maximumFractionDigits: 0 })} spent</span>
+                      <span>₹{(Number(proj.budget) * 0.42).toLocaleString("en-IN", { minimumFractionDigits: 2 })} spent</span>
                     </div>
                     <div
                       style={{

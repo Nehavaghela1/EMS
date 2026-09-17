@@ -63,18 +63,39 @@ def create_time_entry(
     if not project:
         raise NotFoundError("Project not found.")
 
-    query = db.query(Employee).filter(Employee.user_id == current_user.id)
-    if current_user.role != UserRole.super_admin and current_user.company_id:
-        query = query.filter(Employee.company_id == project.company_id)
-    emp = query.first()
+    emp_id = None
+    # If admin/manager provided an employee_id explicitly, use it
+    if data.employee_id and current_user.role in (UserRole.super_admin, UserRole.hr_admin, UserRole.manager):
+        target_emp = db.query(Employee).filter(
+            Employee.id == data.employee_id,
+            Employee.company_id == project.company_id
+        ).first()
+        if not target_emp:
+            raise NotFoundError("Selected employee record not found.")
+        emp_id = target_emp.id
+    else:
+        query = db.query(Employee).filter(Employee.user_id == current_user.id)
+        if current_user.role != UserRole.super_admin and current_user.company_id:
+            query = query.filter(Employee.company_id == project.company_id)
+        emp = query.first()
 
-    if not emp and current_user.role == UserRole.super_admin:
-        emp = db.query(Employee).filter(Employee.company_id == project.company_id).first()
+        if not emp and current_user.role in (UserRole.super_admin, UserRole.hr_admin, UserRole.manager):
+            # If admin is not linked to an employee profile, check project members or pick first active employee
+            first_member = service.repo.get_project_members(project.company_id, project.id)
+            if first_member:
+                emp_id = first_member[0].employee_id
+            else:
+                any_emp = db.query(Employee).filter(Employee.company_id == project.company_id).first()
+                if any_emp:
+                    emp_id = any_emp.id
 
-    if not emp:
-        raise AppError("User profile is not linked to an employee record.")
+        elif emp:
+            emp_id = emp.id
 
-    return service.create_time_entry(project.company_id, emp.id, data)
+    if not emp_id:
+        raise AppError("No employee profile found to attach time log to. Please select an employee or add a team member first.")
+
+    return service.create_time_entry(project.company_id, emp_id, data)
 
 @router.get("/time-entries", response_model=List[TimeEntryResponse])
 def list_time_entries(

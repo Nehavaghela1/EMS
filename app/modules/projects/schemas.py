@@ -126,6 +126,7 @@ class TaskCommentResponse(BaseModel):
 class TimeEntryCreate(BaseModel):
     project_id: UUID
     task_id: Optional[UUID] = None
+    employee_id: Optional[UUID] = None
     date: date
     hours: Decimal = Field(..., gt=0, le=24)
     description: Optional[str] = None
