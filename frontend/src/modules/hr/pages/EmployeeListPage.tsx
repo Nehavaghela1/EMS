@@ -10,6 +10,7 @@ import { parseApiError } from "../../../shared/api/errors";
 import { listDepartments, listEmployees, updateEmployee, type Employee } from "../api";
 import { listCompanies } from "../../identity/api";
 import { formatDate } from "../../../shared/utils/date";
+import { getPositionsForDepartment } from "../constants/departmentPositions";
 
 export function EmployeeListPage() {
   const navigate = useNavigate();
@@ -275,14 +276,51 @@ export function EmployeeListPage() {
             </div>
             {quickError && <div className="alert alert-error">{quickError}</div>}
             <div className="field">
-              <label>Designation / Position</label>
-              <input
-                value={quickPosition}
-                onChange={(evt) => setQuickPosition(evt.target.value)}
-                placeholder="e.g. Developer, Senior Engineer, Sales Executive"
-                autoFocus
-              />
-              <span className="field-hint">Quickly correct typos or update role titles.</span>
+              <div className="row-between align-center mb-1">
+                <label style={{ margin: 0 }}>Designation / Position</label>
+                {quickEditEmp.department_id && (
+                  <span className="text-xs text-muted">
+                    {departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name || "Department"} Roles
+                  </span>
+                )}
+              </div>
+              <div className="stack gap-2">
+                <select
+                  value={
+                    getPositionsForDepartment(
+                      departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name
+                    ).includes(quickPosition)
+                      ? quickPosition
+                      : quickPosition
+                      ? "__custom__"
+                      : ""
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val !== "__custom__") {
+                      setQuickPosition(val);
+                    }
+                  }}
+                >
+                  <option value="">— Select Standard Position —</option>
+                  {getPositionsForDepartment(
+                    departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name
+                  ).map((pos) => (
+                    <option key={pos} value={pos}>
+                      {pos}
+                    </option>
+                  ))}
+                  <option value="__custom__">✎ Custom Role / Enter Manually...</option>
+                </select>
+
+                <input
+                  value={quickPosition}
+                  onChange={(evt) => setQuickPosition(evt.target.value)}
+                  placeholder="e.g. Developer, Senior Engineer, Sales Executive"
+                  autoFocus
+                />
+              </div>
+              <span className="field-hint">Select a standard department role or type a custom designation.</span>
             </div>
             <div className="row-end mt-4">
               <button type="button" className="btn" onClick={() => setQuickEditEmp(null)} disabled={quickSaving}>

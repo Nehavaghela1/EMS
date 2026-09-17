@@ -15,6 +15,7 @@ import {
 } from "../api";
 import { listStructures, assignEmployeeSalary } from "../../payroll/api";
 import { employeeFormSchema } from "../schemas";
+import { getPositionsForDepartment } from "../constants/departmentPositions";
 
 const EMPLOYMENT_TYPES: EmploymentType[] = ["full_time", "part_time", "contract", "intern"];
 
@@ -380,9 +381,57 @@ export function EmployeeFormPage() {
               )}
             </div>
 
+            {/* Department-Aware Position / Role Selection */}
             <div className="field">
-              <label>Position</label>
-              <input value={form.position} onChange={(e) => setField("position", e.target.value)} />
+              <div className="row-between align-center mb-1">
+                <label style={{ margin: 0 }}>Position / Role Designation</label>
+                {form.department_id && (
+                  <span className="text-xs text-muted">
+                    Recommended for {departmentsQuery.data?.items.find((d) => d.id === form.department_id)?.name}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <select
+                  style={{ flex: 1 }}
+                  value={
+                    getPositionsForDepartment(
+                      departmentsQuery.data?.items.find((d) => d.id === form.department_id)?.name
+                    ).includes(form.position)
+                      ? form.position
+                      : form.position
+                      ? "__custom__"
+                      : ""
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === "__custom__") {
+                      // Keep current custom or clear
+                    } else {
+                      setField("position", val);
+                    }
+                  }}
+                >
+                  <option value="">— Select Standard Position —</option>
+                  {getPositionsForDepartment(
+                    departmentsQuery.data?.items.find((d) => d.id === form.department_id)?.name
+                  ).map((pos) => (
+                    <option key={pos} value={pos}>
+                      {pos}
+                    </option>
+                  ))}
+                  <option value="__custom__">✎ Custom Role / Enter Manually...</option>
+                </select>
+                <input
+                  style={{ flex: 1 }}
+                  placeholder="Or type custom designation…"
+                  value={form.position}
+                  onChange={(e) => setField("position", e.target.value)}
+                />
+              </div>
+              <span className="field-hint">
+                Choose a standardized title or type a tailored company designation.
+              </span>
             </div>
             <div className="field">
               <label>Level (Band)</label>
