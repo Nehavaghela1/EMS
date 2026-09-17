@@ -171,9 +171,31 @@ class EmployeeSalaryRepository:
         self.db.flush()
         return salary
 
+    def update(self, salary: EmployeeSalary, **kwargs) -> EmployeeSalary:
+        for key, value in kwargs.items():
+            setattr(salary, key, value)
+        self.db.flush()
+        return salary
+
     def close(self, salary: EmployeeSalary, effective_to: date) -> None:
         salary.effective_to = effective_to
         self.db.flush()
+
+    def count_for_employee(self, employee_id: uuid.UUID, company_id: uuid.UUID) -> int:
+        from sqlalchemy import func
+        return (
+            self.db.scalar(
+                select(func.count())
+                .select_from(EmployeeSalary)
+                .where(
+                    EmployeeSalary.employee_id == employee_id,
+                    EmployeeSalary.company_id == company_id,
+                    EmployeeSalary.deleted_at.is_(None),
+                )
+            )
+            or 0
+        )
+
 
 
 class StatutoryConfigRepository:

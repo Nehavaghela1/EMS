@@ -1207,6 +1207,56 @@ table.table tbody tr:hover {
   color: var(--color-primary);
 }
 
+
+/* ── Print Styles for Official Documents (e.g. Payslip) ── */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Hide app shell chrome: sidebar, topbar, timer bar, action buttons, breadcrumbs */
+  aside,
+  .sidebar,
+  header,
+  nav,
+  .page-header,
+  .modal-backdrop,
+  button,
+  .btn,
+  .card:not(.print-section) {
+    display: none !important;
+  }
+
+  /* Reset shell layouts */
+  .app-shell,
+  .main,
+  .container,
+  .grid {
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: transparent !important;
+  }
+
+  /* Style the payslip printable card */
+  .print-section {
+    display: block !important;
+    box-shadow: none !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 8px !important;
+    margin: 0 auto !important;
+    padding: 24px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    page-break-inside: avoid !important;
+  }
+}
+
 .border-t {
   border-top: 1px solid var(--color-border);
 }
@@ -1218,7 +1268,3 @@ table.table tbody tr:hover {
 .text-2xl {
   font-size: var(--text-2xl);
 }
-
-
-
-

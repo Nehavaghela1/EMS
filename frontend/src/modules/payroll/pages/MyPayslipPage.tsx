@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { listMyPayslips, type PayrollItem } from "../api";
+import { getMyCompany, type CompanyResponse } from "../../identity/api";
 import { useToast } from "../../../app/toast-context";
 import { useAuth } from "../../../app/auth-context";
 
@@ -7,12 +8,23 @@ export function MyPayslipPage() {
   const { user } = useAuth();
   const { notify } = useToast();
   const [payslips, setPayslips] = useState<PayrollItem[]>([]);
+  const [company, setCompany] = useState<CompanyResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedPayslip, setSelectedPayslip] = useState<PayrollItem | null>(null);
 
   useEffect(() => {
     fetchPayslips();
+    fetchCompany();
   }, []);
+
+  async function fetchCompany() {
+    try {
+      const comp = await getMyCompany();
+      setCompany(comp);
+    } catch {
+      // Non-critical, fallback to user company name
+    }
+  }
 
   async function fetchPayslips() {
     setLoading(true);
@@ -50,8 +62,32 @@ export function MyPayslipPage() {
       {loading ? (
         <p className="mt-4">Loading payslips...</p>
       ) : payslips.length === 0 ? (
-        <div className="card mt-4 p-8 text-center">
-          <p className="text-muted">No approved payslips available yet.</p>
+        <div className="card mt-4 p-8 text-center" style={{ maxWidth: "560px", margin: "2rem auto" }}>
+          {!user?.employee ? (
+            <div className="stack gap-3" style={{ alignItems: "center" }}>
+              <div
+                style={{
+                  width: "48px",
+                  height: "48px",
+                  borderRadius: "50%",
+                  backgroundColor: "#eff6ff",
+                  color: "#2563eb",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1.4rem",
+                }}
+              >
+                🏢
+              </div>
+              <h3 style={{ fontSize: "1.15rem", margin: 0 }}>HR Admin Account</h3>
+              <p className="text-muted" style={{ fontSize: "0.875rem", lineHeight: 1.5, margin: 0 }}>
+                Payslips are generated exclusively for registered employee compensation profiles. As a corporate HR administrator, you can run payroll, configure structures, and view staff payslips under <strong>Payroll Runs</strong>.
+              </p>
+            </div>
+          ) : (
+            <p className="text-muted">No approved payslips available yet.</p>
+          )}
         </div>
       ) : (
         <div className="grid grid-3 gap-6 mt-4">
@@ -93,31 +129,51 @@ export function MyPayslipPage() {
                 }}
               >
                 <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                  <div
-                    style={{
-                      width: "48px",
-                      height: "48px",
-                      borderRadius: "8px",
-                      background: "linear-gradient(135deg, #1e40af, #3b82f6)",
-                      color: "#ffffff",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "1.25rem",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    🏢
-                  </div>
+                  {company?.logo_url ? (
+                    <img
+                      src={company.logo_url}
+                      alt={company.name}
+                      style={{
+                        width: "48px",
+                        height: "48px",
+                        borderRadius: "8px",
+                        objectFit: "contain",
+                        border: "1px solid var(--color-border, #e5e7eb)",
+                        background: "#fff",
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: "48px",
+                        height: "48px",
+                        borderRadius: "8px",
+                        background: "linear-gradient(135deg, #1e40af, #3b82f6)",
+                        color: "#ffffff",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "1.25rem",
+                        fontWeight: "bold",
+                      }}
+                    >
+                      🏢
+                    </div>
+                  )}
                   <div>
                     <h2 style={{ fontSize: "1.25rem", fontWeight: 700, margin: 0, color: "var(--color-heading, #111827)" }}>
-                      {user?.company_id ? "Enterprise Entity Corp" : "EMS Pro HRMS"}
+                      {company?.name || user?.company_name || "Enterprise Workspace"}
                     </h2>
                     <p style={{ fontSize: "0.8rem", color: "var(--color-muted, #6b7280)", margin: "2px 0 0" }}>
-                      Registered Office: Plot 42, Corporate Tech Park, SG Highway, Gujarat 380015
+                      Registered Office: {
+                        [company?.address, company?.city, company?.state, company?.pincode].filter(Boolean).join(", ") ||
+                        (company?.city ? `${company.city}, ${company.state || "India"}` : "Plot 42, Corporate Tech Park, SG Highway, Gujarat 380015")
+                      }
                     </p>
                     <p style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", margin: "1px 0 0" }}>
-                      Corporate CIN: U72200GJ2022PTC123456 • Tax TAN: AHM12345E
+                      {company?.gst_number ? `GSTIN: ${company.gst_number} • ` : ""}
+                      {company?.pan_number ? `PAN: ${company.pan_number} • ` : ""}
+                      {company?.code ? `Entity Code: ${company.code}` : "Tax Verified • Registered Entity"}
                     </p>
                   </div>
                 </div>

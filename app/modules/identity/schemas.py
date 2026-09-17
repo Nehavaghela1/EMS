@@ -53,6 +53,15 @@ class CompanyResponse(BaseModel):
     status: CompanyStatus
     subdomain: str | None = None
     company_size: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    pincode: str | None = None
+    website: str | None = None
+    logo_url: str | None = None
+    gst_number: str | None = None
+    pan_number: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

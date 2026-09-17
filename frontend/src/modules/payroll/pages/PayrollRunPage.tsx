@@ -180,7 +180,7 @@ export function PayrollRunPage() {
                     <span className="badge badge-outline">{r.run_type}</span>
                   </td>
                   <td>
-                    {r.status === "approved" ? (
+                    {r.status === "approved" || r.status === "paid" ? (
                       <span
                         className="badge"
                         style={{
@@ -193,9 +193,9 @@ export function PayrollRunPage() {
                           gap: "4px",
                         }}
                       >
-                        ● Paid / Approved
+                        ● Approved
                       </span>
-                    ) : r.status === "processing" ? (
+                    ) : r.status === "pending_approval" ? (
                       <span
                         className="badge"
                         style={{
@@ -208,7 +208,37 @@ export function PayrollRunPage() {
                           gap: "4px",
                         }}
                       >
-                        ⏳ Processing / Draft
+                        ⏳ Pending Approval
+                      </span>
+                    ) : r.status === "processing" ? (
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor: "#e0e7ff",
+                          color: "#3730a3",
+                          border: "1px solid #c7d2fe",
+                          fontWeight: 600,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        ⚙️ Processing
+                      </span>
+                    ) : r.status === "draft" ? (
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor: "#f1f5f9",
+                          color: "#475569",
+                          border: "1px solid #cbd5e1",
+                          fontWeight: 600,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        📝 Draft
                       </span>
                     ) : r.status === "failed" ? (
                       <span
@@ -226,7 +256,7 @@ export function PayrollRunPage() {
                         ✕ Failed
                       </span>
                     ) : (
-                      <span className="badge badge-muted">{r.status}</span>
+                      <span className="badge badge-muted">{r.status.replace("_", " ")}</span>
                     )}
                   </td>
                   <td>{r.total_employees ?? "—"}</td>
@@ -244,7 +274,7 @@ export function PayrollRunPage() {
                         <button
                           className="btn btn-sm btn-danger"
                           onClick={() => setRunToDelete(r)}
-                          title="Delete / Cancel Draft Run"
+                          title={r.status === "pending_approval" ? "Cancel Run (Pending Approval)" : "Delete Draft Run"}
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
@@ -258,7 +288,7 @@ export function PayrollRunPage() {
                             <line x1="10" y1="11" x2="10" y2="17" />
                             <line x1="14" y1="11" x2="14" y2="17" />
                           </svg>
-                          <span>Delete Draft</span>
+                          <span>{r.status === "pending_approval" ? "Cancel Run" : "Delete Draft"}</span>
                         </button>
                       )}
                     </div>
@@ -377,7 +407,31 @@ export function PayrollRunPage() {
                 </h2>
                 <p className="text-muted text-sm">
                   Run ID: {selectedRunDetail.run.id} | Status:{" "}
-                  <strong className="text-primary">{selectedRunDetail.run.status}</strong>
+                  <span
+                    className="badge"
+                    style={{
+                      backgroundColor:
+                        selectedRunDetail.run.status === "approved" || selectedRunDetail.run.status === "paid"
+                          ? "#dcfce7"
+                          : selectedRunDetail.run.status === "pending_approval"
+                          ? "#fef3c7"
+                          : selectedRunDetail.run.status === "processing"
+                          ? "#e0e7ff"
+                          : "#f1f5f9",
+                      color:
+                        selectedRunDetail.run.status === "approved" || selectedRunDetail.run.status === "paid"
+                          ? "#15803d"
+                          : selectedRunDetail.run.status === "pending_approval"
+                          ? "#b45309"
+                          : selectedRunDetail.run.status === "processing"
+                          ? "#3730a3"
+                          : "#475569",
+                      fontWeight: 600,
+                      textTransform: "capitalize",
+                    }}
+                  >
+                    {selectedRunDetail.run.status.replace("_", " ")}
+                  </span>
                 </p>
               </div>
               <div className="flex align-center gap-2">
@@ -495,16 +549,22 @@ export function PayrollRunPage() {
         </div>
       )}
 
-      {/* Confirmation Dialog: Delete Draft Run */}
+      {/* Confirmation Dialog: Delete / Cancel Run */}
       <ConfirmDialog
         open={Boolean(runToDelete)}
-        title="Cancel and Delete Draft Payroll Run?"
+        title={
+          runToDelete?.status === "pending_approval"
+            ? `Cancel ${MONTH_NAMES[(runToDelete?.month || 1) - 1]} ${runToDelete?.year} Payroll Run?`
+            : "Cancel and Delete Draft Payroll Run?"
+        }
         message={
           runToDelete
-            ? `Are you sure you want to cancel the ${MONTH_NAMES[runToDelete.month - 1]} ${runToDelete.year} draft run? All draft calculations and payslip previews for this period will be deleted.`
+            ? runToDelete.status === "pending_approval"
+              ? `This payroll run is currently pending approval. Cancelling it will discard the calculated payslips and allow HR to recalculate or re-run this cycle whenever ready.`
+              : `Are you sure you want to cancel the ${MONTH_NAMES[runToDelete.month - 1]} ${runToDelete.year} draft run? All draft calculations and payslip previews for this period will be deleted.`
             : ""
         }
-        confirmLabel="Delete Draft"
+        confirmLabel={runToDelete?.status === "pending_approval" ? "Cancel Run" : "Delete Draft"}
         danger
         busy={deletingRun}
         onConfirm={handleDeleteRun}

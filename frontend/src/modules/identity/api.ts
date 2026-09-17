@@ -25,7 +25,21 @@ export interface CompanyResponse {
   status: string;
   subdomain?: string | null;
   company_size?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+  website?: string | null;
+  logo_url?: string | null;
+  gst_number?: string | null;
+  pan_number?: string | null;
   created_at: string;
+}
+
+export async function getMyCompany(): Promise<CompanyResponse> {
+  const { data } = await apiClient.get<CompanyResponse>("/companies/me");
+  return data;
 }
 
 export async function registerCompany(input: RegisterCompanyInput): Promise<CompanyResponse> {
