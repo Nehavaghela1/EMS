@@ -153,7 +153,12 @@ def delete_time_entry(
     current_user: User = Depends(get_current_user)
 ):
     service = ProjectService(db)
-    service.delete_time_entry(current_user.company_id, entry_id)
+    user_emp_id = None
+    if current_user.role == UserRole.employee:
+        from app.modules.hr.repository import EmployeeRepository
+        emp = EmployeeRepository(db).get_by_user_id(current_user.company_id, current_user.id)
+        user_emp_id = emp.id if emp else None
+    service.delete_time_entry(current_user.company_id, entry_id, user_employee_id=user_emp_id)
 
 # --- Tasks & Task Comments Specific Endpoints (not starting with {project_id}) ---
 

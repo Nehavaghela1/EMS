@@ -280,11 +280,11 @@ class ProjectService:
                     assignee_name = task.assigned_to_name if hasattr(task, "assigned_to_name") else "another teammate"
                     raise ForbiddenError(f"You cannot log time against a task assigned to {assignee_name}. Employees can only log hours on their own assigned tasks.")
 
-        # Check total daily logged hours ceiling (max 24 hrs per day)
+        # Check total daily logged hours ceiling (max 14 hrs per day across all tasks combined)
         existing_entries = self.repo.list_time_entries(company_id, employee_id=employee_id, start_date=data.date, end_date=data.date)
         daily_total = sum((e.hours for e in existing_entries), Decimal("0.00"))
-        if daily_total + data.hours > Decimal("24.00"):
-            raise AppError(f"Total logged hours for {data.date} cannot exceed 24 hours. (Current total: {daily_total})")
+        if daily_total + data.hours > Decimal("14.00"):
+            raise AppError(f"Total logged time across all projects cannot exceed 14 hours per day. (Currently logged: {daily_total} hrs, attempting: {data.hours} hrs)")
 
         entry = self.repo.create_time_entry(company_id, employee_id, data)
         resp = TimeEntryResponse.from_orm(entry)
@@ -296,6 +296,9 @@ class ProjectService:
             resp.employee_code = emp.employee_code
         if data.task_id and task:
             resp.task_title = task.title
+        if project:
+            resp.project_name = project.name
+            resp.project_code = project.code
         return resp
 
     def list_time_entries(
@@ -309,7 +312,7 @@ class ProjectService:
     ) -> List[TimeEntryResponse]:
         results = self.repo.list_time_entries_with_details(company_id, project_id, employee_id, status, start_date, end_date)
         responses = []
-        for entry, emp, task_title in results:
+        for entry, emp, task_title, proj_name, proj_code in results:
             resp = TimeEntryResponse.from_orm(entry)
             if emp:
                 resp.employee_name = f"{emp.first_name} {emp.last_name or ''}".strip()
@@ -317,6 +320,10 @@ class ProjectService:
                 resp.employee_code = emp.employee_code
             if task_title:
                 resp.task_title = task_title
+            if proj_name:
+                resp.project_name = proj_name
+            if proj_code:
+                resp.project_code = proj_code
             responses.append(resp)
         return responses
 
@@ -324,14 +331,20 @@ class ProjectService:
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
             raise NotFoundError("Time entry not found.")
-        if user_employee_id and entry.employee_id != user_employee_id and entry.status != "draft":
-            raise ForbiddenError("You can only modify your own time entries.")
+        
+        # Lock check: once submitted/pending or approved, employees cannot modify it. Only draft or rejected can be edited.
+        if user_employee_id:
+            if entry.employee_id != user_employee_id:
+                raise ForbiddenError("You can only modify your own time entries.")
+            if entry.status in ("approved", "submitted"):
+                raise AppError(f"Cannot edit time entry in '{entry.status}' status. Only draft or rejected entries can be edited.")
 
+        target_date = data.date if data.date is not None else entry.date
         if data.hours is not None:
-            existing_entries = self.repo.list_time_entries(company_id, employee_id=entry.employee_id, start_date=entry.date, end_date=entry.date)
+            existing_entries = self.repo.list_time_entries(company_id, employee_id=entry.employee_id, start_date=target_date, end_date=target_date)
             daily_total = sum((e.hours for e in existing_entries if e.id != entry.id), Decimal("0.00"))
-            if daily_total + data.hours > Decimal("24.00"):
-                raise AppError(f"Total logged hours for {entry.date} cannot exceed 24 hours.")
+            if daily_total + data.hours > Decimal("14.00"):
+                raise AppError(f"Total logged time across all projects cannot exceed 14 hours per day. (Currently logged: {daily_total} hrs, attempting: {data.hours} hrs)")
 
         updated = self.repo.update_time_entry(entry, data)
         return TimeEntryResponse.from_orm(updated)
@@ -342,18 +355,25 @@ class ProjectService:
     ) -> TimeEntryResponse:
         if status not in ("approved", "rejected"):
             raise AppError("Status must be either 'approved' or 'rejected'.")
+        if status == "rejected" and not (rejection_reason and rejection_reason.strip()):
+            raise AppError("A rejection reason is required when rejecting a time entry.")
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
             raise NotFoundError("Time entry not found.")
         updated = self.repo.approve_reject_time_entry(
-            entry, status, approver_user_id, rejection_reason=rejection_reason
+            entry, status, approver_user_id, rejection_reason=rejection_reason.strip() if rejection_reason else None
         )
         return TimeEntryResponse.from_orm(updated)
 
-    def delete_time_entry(self, company_id: UUID, entry_id: UUID) -> None:
+    def delete_time_entry(self, company_id: UUID, entry_id: UUID, user_employee_id: Optional[UUID] = None) -> None:
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
             raise NotFoundError("Time entry not found.")
+        if user_employee_id:
+            if entry.employee_id != user_employee_id:
+                raise ForbiddenError("You can only delete your own time entries.")
+            if entry.status in ("approved", "submitted"):
+                raise AppError(f"Cannot delete time entry in '{entry.status}' status. Only draft or rejected entries can be deleted.")
         self.repo.delete_time_entry(entry)
 
     # --- Milestones ---

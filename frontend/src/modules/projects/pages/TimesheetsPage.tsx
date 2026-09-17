@@ -1,5 +1,4 @@
 import { useEffect, useState, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   fetchTimeEntries, createTimeEntry, approveRejectTimeEntry,
   fetchProjects, fetchTasks
@@ -10,7 +9,7 @@ import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { useTimer } from "../../../app/timer-context";
 import { PageHeader } from "../../../shared/components/PageHeader";
-import { formatDate } from "../../../shared/utils/date";
+import { formatDate, formatDateTime } from "../../../shared/utils/date";
 
 export function TimesheetsPage() {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -33,14 +32,15 @@ export function TimesheetsPage() {
   const [isBillable, setIsBillable] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  // Approvals Queue: drawer + reject reason prompt
+  // Approvals Queue: drawer + reject reason prompt + bulk selection
   const [drawerEntry, setDrawerEntry] = useState<TimeEntry | null>(null);
+  const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
   const [rejectTarget, setRejectTarget] = useState<TimeEntry | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejectBusy, setRejectBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState<Record<string, boolean>>({});
+  const [bulkBusy, setBulkBusy] = useState(false);
 
-  const navigate = useNavigate();
   const { user } = useAuth();
   const { notify } = useToast();
   const { activeTimer, startTimer, stopTimer, formatTime, elapsedSeconds } = useTimer();
@@ -97,6 +97,33 @@ export function TimesheetsPage() {
       notify("Hours must be between 0.1 and 24", "error");
       return;
     }
+
+    // 1. Check existing logged hours on that date for this employee
+    const currentEmpId = user?.employee?.id;
+    const sameDayEntries = entries.filter((ent) => {
+      if (ent.date !== logDate) return false;
+      if (currentEmpId && ent.employee_id) {
+        return ent.employee_id === currentEmpId;
+      }
+      return true;
+    });
+    const currentDaySum = sameDayEntries.reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
+    if (currentDaySum + parsedHours > 14.0) {
+      notify(
+        `Total logged time across all projects cannot exceed 14 hours per day. (Currently logged: ${currentDaySum.toFixed(1)}h, trying to add: ${parsedHours}h)`,
+        "error"
+      );
+      return;
+    }
+
+    // 2. Prompt confirmation if single entry exceeds 10 hours
+    if (parsedHours > 10) {
+      const confirmed = window.confirm(
+        `This single entry is ${parsedHours} hours (longer than a standard shift). Are you sure you want to log this duration?`
+      );
+      if (!confirmed) return;
+    }
+
     try {
       setSubmitting(true);
       await createTimeEntry({
@@ -134,6 +161,12 @@ export function TimesheetsPage() {
         statusAction === "approved" ? "Time entry approved ✅" : "Time entry rejected.",
         statusAction === "approved" ? "success" : "info",
       );
+      // Deselect from bulk set if present
+      setSelectedEntryIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entryId);
+        return next;
+      });
       // Close drawer/modal if the acted-on entry is open
       setDrawerEntry((prev) => (prev?.id === entryId ? null : prev));
       setRejectTarget(null);
@@ -147,6 +180,28 @@ export function TimesheetsPage() {
     }
   }
 
+  async function handleBulkApprove() {
+    if (selectedEntryIds.size === 0) return;
+    const idsToApprove = Array.from(selectedEntryIds);
+    setBulkBusy(true);
+    let successCount = 0;
+    try {
+      for (const id of idsToApprove) {
+        try {
+          await approveRejectTimeEntry(id, "approved");
+          successCount++;
+        } catch (e) {
+          console.error(`Failed to approve ${id}`, e);
+        }
+      }
+      notify(`Successfully approved ${successCount} timesheet entries!`, "success");
+      setSelectedEntryIds(new Set());
+      await loadData();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   const statusBadges: Record<string, string> = {
     approved: "badge-success",
     submitted: "badge-warning",
@@ -155,6 +210,31 @@ export function TimesheetsPage() {
   };
 
   const pendingEntries = entries.filter((e) => e.status === "draft" || e.status === "submitted");
+
+  // Overtime helper: Calculate Monday-Sunday total approved/submitted hours for employee in that date's week
+  function isWeeklyOvertime(entry: TimeEntry): boolean {
+    if (!entry.date) return false;
+    const d = new Date(entry.date);
+    const day = d.getDay(); // 0 is Sunday, 1 is Monday...
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + diffToMonday);
+    monday.setHours(0, 0, 0, 0);
+
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+
+    const mondayStr = monday.toISOString().slice(0, 10);
+    const sundayStr = sunday.toISOString().slice(0, 10);
+
+    const empId = entry.employee_id;
+    const weekTotal = entries
+      .filter((e) => e.employee_id === empId && e.date >= mondayStr && e.date <= sundayStr)
+      .reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
+
+    return weekTotal > 40;
+  }
 
   // Summary calculations
   const totalHours = entries.reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
@@ -554,7 +634,7 @@ export function TimesheetsPage() {
             <div className="p-4 border-b row-between align-center" style={{ background: "var(--color-bg)" }}>
               <div>
                 <h3 className="mb-0" style={{ fontSize: "1rem" }}>My Submitted Logs</h3>
-                <span className="text-xs text-muted">Your recorded and approved time entries</span>
+                <span className="text-xs text-muted">Your recorded and approved time entries (click row to inspect)</span>
               </div>
               <span className="badge badge-muted">{entries.length} records</span>
             </div>
@@ -571,41 +651,62 @@ export function TimesheetsPage() {
                       <th>Date</th>
                       <th>Hours</th>
                       <th>Billable</th>
+                      <th>Project / Task</th>
                       <th>Description</th>
                       <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {entries.map((entry) => (
-                      <tr
-                        key={entry.id}
-                        onDoubleClick={() => {
-                          if (entry.project_id) {
-                            navigate(`/projects/${entry.project_id}`);
-                          }
-                        }}
-                        style={{ cursor: "pointer" }}
-                        title="Double-click to open project details"
-                      >
-                        <td className="font-medium">{formatDate(entry.date)}</td>
-                        <td className="font-semibold">{entry.hours} hrs</td>
-                        <td>
-                          {entry.is_billable ? (
-                            <span className="badge badge-success">Billable</span>
-                          ) : (
-                            <span className="badge badge-muted">Non-billable</span>
-                          )}
-                        </td>
-                        <td style={{ maxWidth: "260px", whiteSpace: "normal", wordBreak: "break-word" }}>
-                          {entry.description || <span className="text-faint">—</span>}
-                        </td>
-                        <td>
-                          <span className={`badge ${statusBadges[entry.status] || "badge-muted"}`}>
-                            {entry.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                    {entries.map((entry) => {
+                      const isOT = isWeeklyOvertime(entry);
+                      const projName = entry.project_name || projects.find(p => p.id === entry.project_id)?.name || entry.project_id;
+                      return (
+                        <tr
+                          key={entry.id}
+                          onClick={() => setDrawerEntry(entry)}
+                          style={{
+                            cursor: "pointer",
+                            background: drawerEntry?.id === entry.id ? "var(--color-primary-subtle, #eff6ff)" : undefined
+                          }}
+                          title="Click to inspect time entry details"
+                        >
+                          <td className="font-medium">{formatDate(entry.date)}</td>
+                          <td>
+                            <span className="font-semibold">{entry.hours} hrs</span>
+                            {isOT && (
+                              <span
+                                className="badge"
+                                style={{ marginLeft: "6px", background: "#fef3c7", color: "#b45309", fontSize: "10px", padding: "1px 6px" }}
+                                title="Approved hours exceed 40h in this calendar week"
+                              >
+                                Overtime
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            {entry.is_billable ? (
+                              <span className="badge badge-success">Billable</span>
+                            ) : (
+                              <span className="badge badge-muted">Non-billable</span>
+                            )}
+                          </td>
+                          <td>
+                            <div className="font-medium" style={{ fontSize: "0.85rem" }}>{projName}</div>
+                            {entry.task_title && (
+                              <div className="text-xs text-muted">{entry.task_title}</div>
+                            )}
+                          </td>
+                          <td style={{ maxWidth: "240px", whiteSpace: "normal", wordBreak: "break-word" }}>
+                            {entry.description || <span className="text-faint">—</span>}
+                          </td>
+                          <td>
+                            <span className={`badge ${statusBadges[entry.status] || "badge-muted"}`}>
+                              {entry.status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
@@ -620,14 +721,25 @@ export function TimesheetsPage() {
           <div className="row-between">
             <div>
               <h3 className="mb-0">Manager Approval Queue</h3>
-              <span className="text-xs text-muted">Review, approve, or reject team member timesheet submissions</span>
+              <span className="text-xs text-muted">Review, inspect logged work, or take action right inside the timesheet module</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <span className="text-xs text-muted">{pendingEntries.length} pending requests</span>
-              {pendingEntries.length > 0 && (
+              {selectedEntryIds.size > 0 && (
                 <button
                   type="button"
                   className="btn btn-sm btn-success"
+                  onClick={handleBulkApprove}
+                  disabled={bulkBusy}
+                  title="Approve all selected timesheets"
+                >
+                  {bulkBusy ? "Approving..." : `✅ Approve Selected (${selectedEntryIds.size})`}
+                </button>
+              )}
+              {pendingEntries.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
                   onClick={async () => {
                     try {
                       for (const p of pendingEntries) {
@@ -647,16 +759,33 @@ export function TimesheetsPage() {
           </div>
 
           <div className="table-wrap">
-            {entries.filter(e => e.status === "draft" || e.status === "submitted" || e.status === "approved" || e.status === "rejected").length === 0 ? (
+            {entries.length === 0 ? (
               <div className="empty-state">No timesheet entries found.</div>
             ) : (
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th style={{ width: "40px", textAlign: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={pendingEntries.length > 0 && pendingEntries.every(p => selectedEntryIds.has(p.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedEntryIds(new Set(pendingEntries.map(p => p.id)));
+                          } else {
+                            setSelectedEntryIds(new Set());
+                          }
+                        }}
+                        disabled={pendingEntries.length === 0}
+                        title="Select all pending"
+                        style={{ cursor: "pointer" }}
+                      />
+                    </th>
                     <th>Employee</th>
                     <th>Date</th>
                     <th>Hours</th>
                     <th>Billable</th>
+                    <th>Project / Task</th>
                     <th>Description</th>
                     <th>Status</th>
                     <th style={{ textAlign: "right" }}>Actions</th>
@@ -671,20 +800,64 @@ export function TimesheetsPage() {
                     const empCode = entry.employee_code || emp?.employee_code || null;
                     const isPending = entry.status === "draft" || entry.status === "submitted";
                     const isBusy = actionBusy[entry.id];
+                    const isOT = isWeeklyOvertime(entry);
+                    const projName = entry.project_name || projects.find(p => p.id === entry.project_id)?.name || entry.project_id;
+                    const isSelected = selectedEntryIds.has(entry.id);
 
                     return (
                       <tr
                         key={entry.id}
-                        style={{ cursor: "pointer", background: drawerEntry?.id === entry.id ? "var(--color-primary-subtle, #eff6ff)" : undefined }}
-                        title="Click to view entry details"
+                        style={{
+                          cursor: "pointer",
+                          background: drawerEntry?.id === entry.id
+                            ? "var(--color-primary-subtle, #eff6ff)"
+                            : isSelected
+                            ? "rgba(59, 130, 246, 0.05)"
+                            : undefined
+                        }}
+                        title="Click to open inspection drawer"
                         onClick={() => setDrawerEntry(entry)}
                       >
+                        <td style={{ textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+                          {isPending ? (
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                const next = new Set(selectedEntryIds);
+                                if (e.target.checked) {
+                                  next.add(entry.id);
+                                } else {
+                                  next.delete(entry.id);
+                                }
+                                setSelectedEntryIds(next);
+                              }}
+                              style={{ cursor: "pointer" }}
+                            />
+                          ) : (
+                            <span className="text-faint">—</span>
+                          )}
+                        </td>
                         <td>
                           <div className="font-semibold">{empName}</div>
-                          {empCode && <div className="text-xs text-muted">{empCode}</div>}
+                          <div className="text-xs text-muted">
+                            {emp?.position || "Staff"}
+                            {empCode ? ` · ${empCode}` : ""}
+                          </div>
                         </td>
                         <td className="font-medium">{formatDate(entry.date)}</td>
-                        <td className="font-semibold">{entry.hours} hrs</td>
+                        <td>
+                          <span className="font-semibold">{entry.hours} hrs</span>
+                          {isOT && (
+                            <span
+                              className="badge"
+                              style={{ marginLeft: "6px", background: "#fef3c7", color: "#b45309", fontSize: "10px", padding: "1px 6px" }}
+                              title="Approved hours exceed 40h in this calendar week"
+                            >
+                              Overtime
+                            </span>
+                          )}
+                        </td>
                         <td>
                           {entry.is_billable ? (
                             <span className="badge badge-success">Billable</span>
@@ -692,7 +865,13 @@ export function TimesheetsPage() {
                             <span className="badge badge-muted">Non-billable</span>
                           )}
                         </td>
-                        <td style={{ maxWidth: "200px", whiteSpace: "normal", wordBreak: "break-word" }}>
+                        <td>
+                          <div className="font-medium" style={{ fontSize: "0.85rem" }}>{projName}</div>
+                          {entry.task_title && (
+                            <div className="text-xs text-muted">{entry.task_title}</div>
+                          )}
+                        </td>
+                        <td style={{ maxWidth: "180px", whiteSpace: "normal", wordBreak: "break-word" }}>
                           {entry.description || <span className="text-faint">—</span>}
                         </td>
                         <td>
@@ -700,31 +879,29 @@ export function TimesheetsPage() {
                             {entry.status}
                           </span>
                         </td>
-                        <td style={{ textAlign: "right" }}>
+                        <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                           {isPending ? (
                             <div className="row-end" style={{ gap: "6px" }}>
                               <button
                                 type="button"
-                                className="btn btn-sm btn-success"
+                                className="btn btn-xs btn-success"
                                 disabled={isBusy}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleApproveReject(entry.id, "approved");
-                                }}
+                                title="Direct Approve"
+                                onClick={() => handleApproveReject(entry.id, "approved")}
                               >
-                                {isBusy ? "⏳" : "✅ Approve"}
+                                {isBusy ? "⏳" : "✓ Approve"}
                               </button>
                               <button
                                 type="button"
-                                className="btn btn-sm btn-danger"
+                                className="btn btn-xs btn-danger"
                                 disabled={isBusy}
-                                onClick={(e) => {
-                                  e.stopPropagation();
+                                title="Direct Reject (Prompt reason)"
+                                onClick={() => {
                                   setRejectTarget(entry);
                                   setRejectReason("");
                                 }}
                               >
-                                ❌ Reject
+                                ✕ Reject
                               </button>
                             </div>
                           ) : (
@@ -767,7 +944,7 @@ export function TimesheetsPage() {
                   autoFocus
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
-                  placeholder="Explain why this time entry is being rejected..."
+                  placeholder="Explain why this time entry is being rejected (e.g. Work description too vague, exceeded budgeted hours)..."
                 />
               </div>
             </div>
@@ -801,127 +978,268 @@ export function TimesheetsPage() {
         </div>
       )}
 
-      {/* Slide-out Detail Drawer */}
-      {drawerEntry && (
-        <>
-          {/* Backdrop */}
-          <div
-            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", zIndex: 199 }}
-            onClick={() => setDrawerEntry(null)}
-          />
-          {/* Drawer panel */}
-          <div
-            style={{
-              position: "fixed",
-              top: 0,
-              right: 0,
-              bottom: 0,
-              width: "420px",
-              maxWidth: "95vw",
-              background: "var(--color-surface, #fff)",
-              boxShadow: "-4px 0 24px rgba(0,0,0,0.15)",
-              zIndex: 200,
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            {/* Drawer Header */}
+      {/* Slide-out Inspection Drawer */}
+      {drawerEntry && (() => {
+        const emp = employeeMap.get(drawerEntry.employee_id);
+        const empName = drawerEntry.employee_name || (emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : "Team Member");
+        const empRole = emp?.position || "Employee";
+        const empCode = drawerEntry.employee_code || emp?.employee_code;
+        const initials = empName.split(" ").map((n) => n[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+        const proj = projects.find(p => p.id === drawerEntry.project_id);
+        const projName = drawerEntry.project_name || proj?.name || drawerEntry.project_id;
+        const taskTitle = drawerEntry.task_title || (drawerEntry.task_id ? tasks.find(t => t.id === drawerEntry.task_id)?.title || drawerEntry.task_id : "General Project Work");
+        const isOT = isWeeklyOvertime(drawerEntry);
+        const isPending = drawerEntry.status === "draft" || drawerEntry.status === "submitted";
+
+        return (
+          <>
+            {/* Backdrop */}
+            <div
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 199, backdropFilter: "blur(2px)" }}
+              onClick={() => setDrawerEntry(null)}
+            />
+            {/* Drawer panel */}
             <div
               style={{
-                padding: "16px 20px",
-                borderBottom: "1px solid var(--color-border, #e5e7eb)",
+                position: "fixed",
+                top: 0,
+                right: 0,
+                bottom: 0,
+                width: "480px",
+                maxWidth: "95vw",
+                background: "var(--color-surface, #fff)",
+                boxShadow: "-4px 0 24px rgba(0,0,0,0.18)",
+                zIndex: 200,
                 display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
+                flexDirection: "column",
               }}
             >
-              <div>
-                <div style={{ fontWeight: 700, fontSize: "1rem" }}>Timesheet Entry Detail</div>
-                <div className="text-xs text-muted">{drawerEntry.employee_name || "Team Member"} &nbsp;·&nbsp; {formatDate(drawerEntry.date)}</div>
-              </div>
-              <button type="button" className="modal-close-btn" onClick={() => setDrawerEntry(null)}>✕</button>
-            </div>
-
-            {/* Drawer Body */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "20px" }}>
-              <dl style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "10px 8px", fontSize: "0.875rem" }}>
-                <dt className="text-muted">Status</dt>
-                <dd>
-                  <span className={`badge ${statusBadges[drawerEntry.status] || "badge-muted"}`}>
-                    {drawerEntry.status}
-                  </span>
-                </dd>
-
-                <dt className="text-muted">Date</dt>
-                <dd className="font-semibold">{formatDate(drawerEntry.date)}</dd>
-
-                <dt className="text-muted">Hours</dt>
-                <dd className="font-semibold">{drawerEntry.hours} hrs &nbsp;
-                  {drawerEntry.is_billable
-                    ? <span className="badge badge-success">Billable</span>
-                    : <span className="badge badge-muted">Non-billable</span>}
-                </dd>
-
-                {(() => {
-                  const emp = employeeMap.get(drawerEntry.employee_id);
-                  const empCode = drawerEntry.employee_code || emp?.employee_code;
-                  return empCode ? (
-                    <><dt className="text-muted">Emp Code</dt><dd>{empCode}</dd></>
-                  ) : null;
-                })()}
-
-                <dt className="text-muted">Project</dt>
-                <dd>{projects.find(p => p.id === drawerEntry.project_id)?.name || drawerEntry.project_id}</dd>
-
-                {drawerEntry.task_id && (
-                  <><dt className="text-muted">Task</dt><dd>{drawerEntry.task_id}</dd></>
-                )}
-
-                <dt className="text-muted" style={{ gridColumn: "1 / -1", paddingTop: "8px", borderTop: "1px solid var(--color-border, #e5e7eb)", marginTop: "4px" }}>Work Description</dt>
-                <dd style={{ gridColumn: "1 / -1" }}>
-                  {drawerEntry.description
-                    ? <p style={{ margin: 0, lineHeight: 1.6 }}>{drawerEntry.description}</p>
-                    : <span className="text-muted">(No description provided)</span>}
-                </dd>
-              </dl>
-            </div>
-
-            {/* Drawer Footer: Approve / Reject if pending */}
-            {(drawerEntry.status === "draft" || drawerEntry.status === "submitted") && (
+              {/* Drawer Header with Employee Avatar, Name, Role */}
               <div
                 style={{
-                  padding: "14px 20px",
-                  borderTop: "1px solid var(--color-border, #e5e7eb)",
+                  padding: "18px 20px",
+                  borderBottom: "1px solid var(--color-border, #e5e7eb)",
                   display: "flex",
-                  gap: "10px",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  background: "var(--color-bg, #f8fafc)"
                 }}
               >
+                <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+                  <div
+                    style={{
+                      width: "44px",
+                      height: "44px",
+                      borderRadius: "50%",
+                      background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
+                      color: "#fff",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: 700,
+                      fontSize: "1rem",
+                      boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+                    }}
+                  >
+                    {initials || "EM"}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "var(--color-text, #0f172a)" }}>{empName}</div>
+                    <div className="text-xs text-muted">
+                      {empRole} {empCode ? `· ${empCode}` : ""}
+                    </div>
+                  </div>
+                </div>
                 <button
                   type="button"
-                  className="btn btn-success"
-                  style={{ flex: 1 }}
-                  disabled={actionBusy[drawerEntry.id]}
-                  onClick={() => handleApproveReject(drawerEntry.id, "approved")}
+                  className="modal-close-btn"
+                  onClick={() => setDrawerEntry(null)}
+                  title="Close inspection drawer"
                 >
-                  {actionBusy[drawerEntry.id] ? "⏳ Working…" : "✅ Approve"}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  style={{ flex: 1 }}
-                  disabled={actionBusy[drawerEntry.id]}
-                  onClick={() => {
-                    setRejectTarget(drawerEntry);
-                    setRejectReason("");
-                  }}
-                >
-                  ❌ Reject
+                  ✕
                 </button>
               </div>
-            )}
-          </div>
-        </>
-      )}
+
+              {/* Drawer Body: Audited details */}
+              <div style={{ flex: 1, overflowY: "auto", padding: "20px" }}>
+                {/* Rejection Alert if rejected */}
+                {drawerEntry.status === "rejected" && drawerEntry.rejection_reason && (
+                  <div
+                    style={{
+                      background: "#fef2f2",
+                      border: "1px solid #fecaca",
+                      borderRadius: "6px",
+                      padding: "12px 14px",
+                      marginBottom: "16px",
+                      color: "#991b1b"
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "4px" }}>⚠️ Rejection Reason</div>
+                    <div style={{ fontSize: "0.85rem", lineHeight: 1.5 }}>{drawerEntry.rejection_reason}</div>
+                  </div>
+                )}
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
+                  <div className="card" style={{ padding: "10px 14px", margin: 0, background: "var(--color-bg, #f8fafc)" }}>
+                    <div className="text-xs text-muted">Status</div>
+                    <div style={{ marginTop: "4px" }}>
+                      <span className={`badge ${statusBadges[drawerEntry.status] || "badge-muted"}`}>
+                        {drawerEntry.status}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="card" style={{ padding: "10px 14px", margin: 0, background: "var(--color-bg, #f8fafc)" }}>
+                    <div className="text-xs text-muted">Billing Category</div>
+                    <div style={{ marginTop: "4px" }}>
+                      {drawerEntry.is_billable ? (
+                        <span className="badge badge-success">Billable</span>
+                      ) : (
+                        <span className="badge badge-muted">Non-billable</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <dl style={{ display: "grid", gridTemplateColumns: "130px 1fr", gap: "12px 10px", fontSize: "0.875rem" }}>
+                  <dt className="text-muted">Date Logged</dt>
+                  <dd className="font-semibold">{formatDate(drawerEntry.date)}</dd>
+
+                  <dt className="text-muted">Hours</dt>
+                  <dd className="font-semibold">
+                    {drawerEntry.hours} hrs
+                    {isOT && (
+                      <span
+                        className="badge"
+                        style={{ marginLeft: "8px", background: "#fef3c7", color: "#b45309", fontSize: "10px", padding: "1px 6px" }}
+                      >
+                        Overtime (&gt;40h/wk)
+                      </span>
+                    )}
+                  </dd>
+
+                  <dt className="text-muted">Project</dt>
+                  <dd>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span className="font-semibold">{projName}</span>
+                      {drawerEntry.project_id && (
+                        <a
+                          href={`/projects/${drawerEntry.project_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open project in new tab"
+                          style={{ color: "var(--color-primary, #2563eb)", textDecoration: "none", fontSize: "12px" }}
+                        >
+                          ↗
+                        </a>
+                      )}
+                    </div>
+                    {drawerEntry.project_code && (
+                      <span className="text-xs text-muted">Code: {drawerEntry.project_code}</span>
+                    )}
+                  </dd>
+
+                  <dt className="text-muted">Task</dt>
+                  <dd>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span>{taskTitle}</span>
+                      {drawerEntry.project_id && drawerEntry.task_id && (
+                        <a
+                          href={`/projects/${drawerEntry.project_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open task in new tab"
+                          style={{ color: "var(--color-primary, #2563eb)", textDecoration: "none", fontSize: "12px" }}
+                        >
+                          ↗
+                        </a>
+                      )}
+                    </div>
+                  </dd>
+
+                  <dt className="text-muted" style={{ gridColumn: "1 / -1", paddingTop: "12px", borderTop: "1px solid var(--color-border, #e5e7eb)", marginTop: "4px" }}>
+                    Work Notes / Description
+                  </dt>
+                  <dd style={{ gridColumn: "1 / -1" }}>
+                    {drawerEntry.description ? (
+                      <div
+                        style={{
+                          margin: 0,
+                          padding: "10px 12px",
+                          background: "var(--color-bg, #f8fafc)",
+                          borderRadius: "6px",
+                          border: "1px solid var(--color-border, #e2e8f0)",
+                          lineHeight: 1.6,
+                          whiteSpace: "pre-wrap"
+                        }}
+                      >
+                        {drawerEntry.description}
+                      </div>
+                    ) : (
+                      <span className="text-muted">(No work description provided)</span>
+                    )}
+                  </dd>
+
+                  <dt className="text-muted" style={{ gridColumn: "1 / -1", paddingTop: "14px", borderTop: "1px solid var(--color-border, #e5e7eb)", marginTop: "8px" }}>
+                    Activity Audit History
+                  </dt>
+                  <dd style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted, #64748b)", display: "flex", flexDirection: "column", gap: "6px" }}>
+                      {drawerEntry.created_at && (
+                        <div>📅 Submitted: <b>{formatDateTime(drawerEntry.created_at)}</b></div>
+                      )}
+                      {drawerEntry.updated_at && drawerEntry.updated_at !== drawerEntry.created_at && (
+                        <div>✏️ Last Modified: <b>{formatDateTime(drawerEntry.updated_at)}</b></div>
+                      )}
+                      {drawerEntry.approved_at && (
+                        <div>
+                          ✅ Approved at: <b>{formatDateTime(drawerEntry.approved_at)}</b>
+                          {drawerEntry.approved_by ? ` (by ${drawerEntry.approved_by})` : ""}
+                        </div>
+                      )}
+                    </div>
+                  </dd>
+                </dl>
+              </div>
+
+              {/* Drawer Footer: Docked Approve (Green) & Reject (Red) Action Buttons */}
+              {isManagerOrAdmin && isPending && (
+                <div
+                  style={{
+                    padding: "16px 20px",
+                    borderTop: "1px solid var(--color-border, #e5e7eb)",
+                    display: "flex",
+                    gap: "12px",
+                    background: "var(--color-surface, #fff)",
+                    boxShadow: "0 -2px 8px rgba(0,0,0,0.05)"
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="btn btn-success"
+                    style={{ flex: 1, padding: "10px", fontWeight: 700 }}
+                    disabled={actionBusy[drawerEntry.id]}
+                    onClick={() => handleApproveReject(drawerEntry.id, "approved")}
+                  >
+                    {actionBusy[drawerEntry.id] ? "⏳ Processing…" : "✅ Approve"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    style={{ flex: 1, padding: "10px", fontWeight: 700 }}
+                    disabled={actionBusy[drawerEntry.id]}
+                    onClick={() => {
+                      setRejectTarget(drawerEntry);
+                      setRejectReason("");
+                    }}
+                  >
+                    ❌ Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

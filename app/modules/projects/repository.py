@@ -245,9 +245,10 @@ class ProjectRepository:
     ):
         from app.modules.hr.models import Employee
         query = (
-            self.db.query(TimeEntry, Employee, Task.title.label("task_title"))
+            self.db.query(TimeEntry, Employee, Task.title.label("task_title"), Project.name.label("project_name"), Project.code.label("project_code"))
             .outerjoin(Employee, TimeEntry.employee_id == Employee.id)
             .outerjoin(Task, TimeEntry.task_id == Task.id)
+            .outerjoin(Project, TimeEntry.project_id == Project.id)
             .filter(TimeEntry.company_id == company_id)
         )
         if project_id:

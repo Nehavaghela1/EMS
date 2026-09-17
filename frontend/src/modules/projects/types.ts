@@ -122,6 +122,9 @@ export interface TimeEntry {
   employee_email?: string;
   employee_code?: string;
   task_title?: string;
+  project_name?: string;
+  project_code?: string;
+  rejection_reason?: string;
 }
 
 export interface ProjectDocument {

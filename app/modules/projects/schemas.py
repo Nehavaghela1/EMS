@@ -159,6 +159,9 @@ class TimeEntryResponse(BaseModel):
     employee_email: Optional[str] = None
     employee_code: Optional[str] = None
     task_title: Optional[str] = None
+    project_name: Optional[str] = None
+    project_code: Optional[str] = None
+    rejection_reason: Optional[str] = None
 
     class Config:
         from_attributes = True
