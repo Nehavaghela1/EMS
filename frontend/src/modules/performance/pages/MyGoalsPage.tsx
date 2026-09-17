@@ -213,6 +213,13 @@ export function MyGoalsPage() {
         )}
       </div>
 
+      {/* Admin Information Card when user is not linked to an employee profile */}
+      {!user?.employee?.id && !isHrOrManager && (
+        <div className="alert alert-info my-3">
+          <strong>ℹ️ Employee Profile Required:</strong> Performance goals are tracked on employee profiles. Since your current account is not linked to an employee profile, you cannot submit personal goals.
+        </div>
+      )}
+
       {/* Employee Selector for HR Admin / Manager */}
       {isHrOrManager && (
         <div className="card p-4 my-3" style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}>
@@ -224,25 +231,36 @@ export function MyGoalsPage() {
                 <span style={{ fontSize: "0.9rem", fontWeight: 700 }}>
                   {employees.find((e) => e.id === selectedEmployeeId)
                     ? `${employees.find((e) => e.id === selectedEmployeeId)?.first_name} ${employees.find((e) => e.id === selectedEmployeeId)?.last_name || ""} (${employees.find((e) => e.id === selectedEmployeeId)?.employee_code})`
+                    : employees.length === 0
+                    ? "No employees in company"
                     : "Select an employee"}
                 </span>
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <label className="text-xs text-muted">Switch Employee:</label>
-              <select
-                value={selectedEmployeeId}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                style={{ minWidth: "220px", padding: "6px 10px", fontSize: "0.85rem" }}
-              >
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.first_name} {emp.last_name || ""} ({emp.employee_code}) - {emp.position || "Staff"}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {employees.length > 0 ? (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <label className="text-xs text-muted">Switch Employee:</label>
+                <select
+                  value={selectedEmployeeId}
+                  onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                  style={{ minWidth: "220px", padding: "6px 10px", fontSize: "0.85rem" }}
+                >
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.first_name} {emp.last_name || ""} ({emp.employee_code}) - {emp.position || "Staff"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <span className="text-xs text-muted">Add employee records in Employee Directory first to assign goals.</span>
+            )}
           </div>
+          {!user?.employee?.id && (
+            <div className="mt-2 pt-2 text-xs text-muted" style={{ borderTop: "1px dashed #cbd5e1" }}>
+              💡 <em>You are managing goals as an Administrator. Goals are saved directly to the selected employee profile.</em>
+            </div>
+          )}
         </div>
       )}
 
@@ -451,16 +469,31 @@ export function MyGoalsPage() {
                 ))}
               </div>
 
-              <div className="row-between p-3 bg-muted rounded border">
+              <div className="row-between p-3 bg-muted rounded border align-center">
                 <button type="button" className="btn btn-sm btn-outline" onClick={addGoalLine}>
                   + Add Goal
                 </button>
-                <div className="text-sm">
-                  Total Weightage:{" "}
-                  <strong className={newGoalTotalWeightage === 100 ? "text-success font-mono" : "text-red font-mono"}>
-                    {newGoalTotalWeightage}%
-                  </strong>{" "}
-                  <span className="text-muted">/ 100%</span>
+                <div className="text-right text-sm">
+                  <div>
+                    Total Weightage:{" "}
+                    <strong className={newGoalTotalWeightage === 100 ? "text-success font-mono" : "text-red font-mono"}>
+                      {newGoalTotalWeightage}%
+                    </strong>{" "}
+                    <span className="text-muted">/ 100%</span>
+                  </div>
+                  <div style={{ fontSize: "0.75rem", marginTop: "2px" }}>
+                    {newGoalTotalWeightage === 100 ? (
+                      <span className="text-success" style={{ fontWeight: 600 }}>✓ Balanced (100% allocated)</span>
+                    ) : newGoalTotalWeightage < 100 ? (
+                      <span className="text-warning" style={{ fontWeight: 600 }}>
+                        ⏳ {(100 - newGoalTotalWeightage).toFixed(2).replace(/\.00$/, "")}% remaining to allocate
+                      </span>
+                    ) : (
+                      <span className="text-red" style={{ fontWeight: 600 }}>
+                        ⚠️ Over by {(newGoalTotalWeightage - 100).toFixed(2).replace(/\.00$/, "")}% (must equal 100%)
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 

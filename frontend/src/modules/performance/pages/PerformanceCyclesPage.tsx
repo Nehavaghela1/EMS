@@ -56,24 +56,44 @@ export function PerformanceCyclesPage() {
     }
   }
 
+  const CYCLE_TYPE_LABELS: Record<CycleType, string> = {
+    annual: "Annual",
+    half_yearly: "Half Yearly",
+    quarterly: "Quarterly",
+  };
+
+  const CYCLE_STATUS_LABELS: Record<CycleStatus, string> = {
+    draft: "Draft",
+    active: "Active",
+    closed: "Closed",
+  };
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) {
       notify("Please enter cycle name", "error");
       return;
     }
-    if (selfDeadline && mgrDeadline && new Date(selfDeadline) > new Date(mgrDeadline)) {
-      notify("Self-Review Deadline cannot be set after Manager Review Deadline.", "error");
+    if (startDate && endDate && new Date(startDate) >= new Date(endDate)) {
+      notify("Cycle End Date must be after Start Date.", "error");
       return;
     }
-    if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
-      notify("Cycle End Date must be after Start Date.", "error");
+    if (selfDeadline && endDate && new Date(selfDeadline) > new Date(endDate)) {
+      notify("Self-Review Deadline cannot be after the overall Cycle End Date.", "error");
+      return;
+    }
+    if (mgrDeadline && endDate && new Date(mgrDeadline) > new Date(endDate)) {
+      notify("Manager Review Deadline cannot be after the overall Cycle End Date.", "error");
+      return;
+    }
+    if (selfDeadline && mgrDeadline && new Date(selfDeadline) > new Date(mgrDeadline)) {
+      notify("Self-Review Deadline cannot be set later than the Manager Review Deadline.", "error");
       return;
     }
     setSubmitting(true);
     try {
       await createPerformanceCycle({
-        name,
+        name: name.trim(),
         cycle_type: cycleType,
         start_date: startDate,
         end_date: endDate,
@@ -187,7 +207,9 @@ export function PerformanceCyclesPage() {
                 <tr key={c.id}>
                   <td className="fw-bold">{c.name}</td>
                   <td>
-                    <span className="badge badge-outline">{c.cycle_type}</span>
+                    <span className="badge badge-outline">
+                      {CYCLE_TYPE_LABELS[c.cycle_type] || c.cycle_type}
+                    </span>
                   </td>
                   <td>{formatDate(c.start_date)} to {formatDate(c.end_date)}</td>
                   <td>{formatDate(c.self_review_deadline)}</td>
@@ -202,7 +224,7 @@ export function PerformanceCyclesPage() {
                           : "badge-warning"
                       }`}
                     >
-                      {c.status}
+                      {CYCLE_STATUS_LABELS[c.status] || c.status}
                     </span>
                   </td>
                   <td>
@@ -250,11 +272,12 @@ export function PerformanceCyclesPage() {
                 <label>Cycle Name *</label>
                 <input
                   type="text"
-                  placeholder="e.g. FY 2026-27 Annual Appraisal"
+                  placeholder="e.g. FY 2026–27 Annual Review, Q3 2026 Engineering Appraisal"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
                 />
+                <span className="field-hint">Use a descriptive title including fiscal year or quarter.</span>
               </div>
 
               <div className="grid-2">
@@ -282,7 +305,7 @@ export function PerformanceCyclesPage() {
 
               <div className="grid-2">
                 <div className="field">
-                  <label>End Date *</label>
+                  <label>Cycle End Date *</label>
                   <input
                     type="date"
                     value={endDate}
@@ -297,6 +320,7 @@ export function PerformanceCyclesPage() {
                     value={selfDeadline}
                     onChange={(e) => setSelfDeadline(e.target.value)}
                   />
+                  <span className="field-hint">Must be on or before Manager Review Deadline.</span>
                 </div>
               </div>
 
@@ -307,6 +331,7 @@ export function PerformanceCyclesPage() {
                   value={mgrDeadline}
                   onChange={(e) => setMgrDeadline(e.target.value)}
                 />
+                <span className="field-hint">Must be on or before overall Cycle End Date.</span>
               </div>
 
               <div className="flex gap-2 justify-end mt-4">
