@@ -36,6 +36,7 @@ export interface GoalCreateItem {
 
 export interface GoalsCreateInput {
   cycle_id: string;
+  employee_id?: string;
   goals: GoalCreateItem[];
 }
 

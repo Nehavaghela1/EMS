@@ -47,6 +47,7 @@ class GoalCreateItem(BaseModel):
 
 class GoalsCreateRequest(BaseModel):
     cycle_id: uuid.UUID
+    employee_id: uuid.UUID | None = None
     goals: list[GoalCreateItem] = Field(min_length=1)
 
 

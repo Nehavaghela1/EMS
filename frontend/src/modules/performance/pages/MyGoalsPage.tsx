@@ -10,6 +10,7 @@ import {
   type GoalCreateItem,
   type GoalStatus,
 } from "../api";
+import { listEmployees, type Employee } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { formatDate } from "../../../shared/utils/date";
@@ -18,6 +19,10 @@ import { parseApiError } from "../../../shared/api/errors";
 export function MyGoalsPage() {
   const { user } = useAuth();
   const { notify } = useToast();
+
+  const isHrOrManager = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager";
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(user?.employee?.id || "");
 
   const [activeCycle, setActiveCycle] = useState<PerformanceCycle | null>(null);
   const [goals, setGoals] = useState<PerformanceGoal[]>([]);
@@ -61,20 +66,31 @@ export function MyGoalsPage() {
 
   useEffect(() => {
     init();
-  }, []);
+  }, [selectedEmployeeId]);
 
   async function init() {
     setLoading(true);
     try {
+      if (isHrOrManager && employees.length === 0) {
+        const empRes = await listEmployees({ page: 1, limit: 100 });
+        setEmployees(empRes.items);
+        if (!selectedEmployeeId && empRes.items.length > 0) {
+          const firstEmpId = user?.employee?.id || empRes.items[0].id;
+          setSelectedEmployeeId(firstEmpId);
+        }
+      }
+
       const res = await listPerformanceCycles("active");
       if (res.items.length > 0) {
         const cycle = res.items[0];
         setActiveCycle(cycle);
-        // If user profile is available, fetch employee's goals
-        if (user) {
-          const targetId = user.employee?.id || user.id;
+
+        const targetId = selectedEmployeeId || user?.employee?.id;
+        if (targetId) {
           const empGoals = await listPerformanceGoals(targetId);
           setGoals(empGoals);
+        } else {
+          setGoals([]);
         }
       }
     } catch {
@@ -91,10 +107,17 @@ export function MyGoalsPage() {
       notify(`Goal weightages must sum to exactly 100% (currently ${newGoalTotalWeightage}%)`, "error");
       return;
     }
+    const targetEmpId = selectedEmployeeId || user?.employee?.id;
+    if (!targetEmpId) {
+      notify("Please select an employee profile to set goals for.", "error");
+      return;
+    }
+
     setSubmittingGoals(true);
     try {
       await setPerformanceGoals({
         cycle_id: activeCycle.id,
+        employee_id: targetEmpId,
         goals: goalInputs,
       });
       notify("Goals saved successfully", "success");
@@ -189,6 +212,39 @@ export function MyGoalsPage() {
           </button>
         )}
       </div>
+
+      {/* Employee Selector for HR Admin / Manager */}
+      {isHrOrManager && (
+        <div className="card p-4 my-3" style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+          <div className="row-between align-center" style={{ flexWrap: "wrap", gap: "10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "1.1rem" }}>👤</span>
+              <div>
+                <span className="text-xs text-muted block" style={{ fontWeight: 600 }}>Viewing & Setting Goals For</span>
+                <span style={{ fontSize: "0.9rem", fontWeight: 700 }}>
+                  {employees.find((e) => e.id === selectedEmployeeId)
+                    ? `${employees.find((e) => e.id === selectedEmployeeId)?.first_name} ${employees.find((e) => e.id === selectedEmployeeId)?.last_name || ""} (${employees.find((e) => e.id === selectedEmployeeId)?.employee_code})`
+                    : "Select an employee"}
+                </span>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <label className="text-xs text-muted">Switch Employee:</label>
+              <select
+                value={selectedEmployeeId}
+                onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                style={{ minWidth: "220px", padding: "6px 10px", fontSize: "0.85rem" }}
+              >
+                {employees.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.first_name} {emp.last_name || ""} ({emp.employee_code}) - {emp.position || "Staff"}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Active Cycle Banner */}
       {activeCycle ? (

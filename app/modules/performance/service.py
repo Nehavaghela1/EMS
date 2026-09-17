@@ -113,9 +113,17 @@ class PerformanceService:
         if cycle.status != CycleStatus.active:
             raise ConflictError("Goals can only be submitted for active performance cycles.")
 
-        emp = self.employee_repo.get_by_user_id(company_id, actor.id)
-        if emp is None:
-            raise NotFoundError("Employee profile not found for current user.")
+        emp = None
+        if data.employee_id:
+            emp = self.employee_repo.get_by_id(company_id, data.employee_id)
+            if emp is None:
+                raise NotFoundError("Specified employee profile not found.")
+        else:
+            emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if emp is None:
+                raise NotFoundError(
+                    "Employee profile not found for current user. Admin or manager accounts must select an employee profile when creating goals."
+                )
 
         created = []
         for item in data.goals:
