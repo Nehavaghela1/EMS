@@ -227,3 +227,11 @@ export async function getLeaveBalance(employeeId: string, year: number): Promise
   const { data } = await apiClient.get<LeaveBalance[]>(`/leaves/balance/${employeeId}`, { params: { year } });
   return data;
 }
+
+export async function seedLeaveBalances(employeeId: string, year?: number): Promise<LeaveBalance[]> {
+  const { data } = await apiClient.post<LeaveBalance[]>("/leaves/balances/seed", {
+    employee_id: employeeId,
+    year,
+  });
+  return data;
+}

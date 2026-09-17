@@ -37,6 +37,8 @@ export function ReimbursementsPage() {
 
   const isHR = user?.role === "hr_admin" || user?.role === "super_admin";
   const isManager = user?.role === "manager";
+  // Employees can NEVER approve or reject claims — only HR Admins and Managers can.
+  // Managers can only review their direct reports' claims (enforced server-side too).
   const canReview = isHR || isManager;
 
   useEffect(() => {
@@ -164,17 +166,32 @@ export function ReimbursementsPage() {
                   <td>{c.description}</td>
                   <td className="fw-bold">₹{Number(c.amount).toLocaleString()}</td>
                   <td>
-                    <span
-                      className={`badge ${
-                        c.status === "approved" || c.status === "paid"
-                          ? "badge-success"
-                          : c.status === "rejected"
-                          ? "badge-danger text-red"
-                          : "badge-warning"
-                      }`}
-                    >
-                      {c.status}
-                    </span>
+                    {/* 3-state reimbursement lifecycle badges */}
+                    {c.status === "paid" ? (
+                      <span className="badge badge-success" title="Included and paid in a finalised payroll run">
+                        ✅ Paid in Payroll
+                      </span>
+                    ) : c.status === "approved" && c.added_to_payroll_run_id ? (
+                      <span
+                        className="badge"
+                        style={{ backgroundColor: "#fef3c7", color: "#92400e", border: "1px solid #fcd34d" }}
+                        title="Locked into an active pay run — awaiting payroll finalization"
+                      >
+                        🔒 Locked in Pay Run
+                      </span>
+                    ) : c.status === "approved" ? (
+                      <span
+                        className="badge"
+                        style={{ backgroundColor: "#ecfdf5", color: "#065f46", border: "1px solid #6ee7b7" }}
+                        title="Approved — will roll into the next open pay run automatically"
+                      >
+                        ⏳ Pending Payroll
+                      </span>
+                    ) : c.status === "rejected" ? (
+                      <span className="badge badge-danger text-red">Rejected</span>
+                    ) : (
+                      <span className="badge badge-warning">Pending</span>
+                    )}
                   </td>
                   {canReview && (
                     <td>

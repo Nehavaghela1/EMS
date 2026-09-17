@@ -473,6 +473,95 @@ class LeaveRepository:
         stmt = stmt.order_by(Leave.start_date.desc())
         return paginate(self.db, stmt, page_params)
 
+    def sum_approved_lop_days(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        month_start: date,
+        month_end: date,
+    ) -> "Decimal":
+        """Sum of approved *unpaid* leave days that fall within [month_start, month_end].
+
+        Uses GREATEST/LEAST to intersect each leave record's date range with the
+        payroll month boundary — correctly handles cross-month leaves such as
+        March 28 → April 3 (counts only the March portion in March's pay run).
+        """
+        from decimal import Decimal as _Decimal
+
+        from sqlalchemy import func as _func
+
+        stmt = (
+            select(Leave)
+            .join(LeaveType, Leave.leave_type_id == LeaveType.id)
+            .where(
+                Leave.company_id == company_id,
+                Leave.employee_id == employee_id,
+                Leave.deleted_at.is_(None),
+                Leave.status == LeaveStatus.approved,
+                LeaveType.is_paid.is_(False),
+                # Overlap: leave touches the payroll month
+                Leave.start_date <= month_end,
+                Leave.end_date >= month_start,
+            )
+        )
+        leaves = list(self.db.scalars(stmt).all())
+
+        total = _Decimal("0.0")
+        for leave in leaves:
+            # Clamp each leave to the payroll month boundary
+            clamped_start = max(leave.start_date, month_start)
+            clamped_end = min(leave.end_date, month_end)
+            if clamped_start > clamped_end:
+                continue
+            # Proportional share: use ratio of clamped days to full leave days
+            full_span = (leave.end_date - leave.start_date).days + 1
+            clamped_span = (clamped_end - clamped_start).days + 1
+            if full_span > 0:
+                ratio = _Decimal(clamped_span) / _Decimal(full_span)
+                total += (leave.total_days * ratio).quantize(_Decimal("0.5"))
+        return total
+
+    def sum_approved_paid_leave_days(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        month_start: date,
+        month_end: date,
+    ) -> "Decimal":
+        """Sum of approved *paid* leave days within [month_start, month_end].
+
+        Uses the same cross-month intersection logic as sum_approved_lop_days.
+        """
+        from decimal import Decimal as _Decimal
+
+        stmt = (
+            select(Leave)
+            .join(LeaveType, Leave.leave_type_id == LeaveType.id)
+            .where(
+                Leave.company_id == company_id,
+                Leave.employee_id == employee_id,
+                Leave.deleted_at.is_(None),
+                Leave.status == LeaveStatus.approved,
+                LeaveType.is_paid.is_(True),
+                Leave.start_date <= month_end,
+                Leave.end_date >= month_start,
+            )
+        )
+        leaves = list(self.db.scalars(stmt).all())
+
+        total = _Decimal("0.0")
+        for leave in leaves:
+            clamped_start = max(leave.start_date, month_start)
+            clamped_end = min(leave.end_date, month_end)
+            if clamped_start > clamped_end:
+                continue
+            full_span = (leave.end_date - leave.start_date).days + 1
+            clamped_span = (clamped_end - clamped_start).days + 1
+            if full_span > 0:
+                ratio = _Decimal(clamped_span) / _Decimal(full_span)
+                total += (leave.total_days * ratio).quantize(_Decimal("0.5"))
+        return total
+
     def create(self, **kwargs) -> Leave:
         leave = Leave(**kwargs)
         self.db.add(leave)

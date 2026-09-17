@@ -15,8 +15,10 @@ import {
   getLeaveBalance,
   listLeaveTypes,
   listLeaves,
+  seedLeaveBalances,
   type Leave,
   type LeaveStatus,
+  type LeaveType,
 } from "../api";
 import { formatDate } from "../../../shared/utils/date";
 
@@ -43,6 +45,8 @@ export function LeavePage() {
   const queryClient = useQueryClient();
   const canDecide = user?.role === "hr_admin" || user?.role === "manager" || user?.role === "super_admin";
   const canPickEmployee = user?.role === "hr_admin" || user?.role === "manager" || user?.role === "super_admin";
+  const isHR = user?.role === "hr_admin" || user?.role === "super_admin";
+  const [seedingBalances, setSeedingBalances] = useState(false);
 
   const leaveTypesQuery = useQuery({ queryKey: ["leave-types"], queryFn: listLeaveTypes });
   const employeesQuery = useQuery({
@@ -268,15 +272,46 @@ export function LeavePage() {
 
       {user?.employee && (
         <div className="card mb-6">
-          <h3>My balances</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
+            <h3 style={{ margin: 0 }}>My balances</h3>
+            {isHR && user.employee && (
+              <button
+                className="btn btn-sm btn-outline"
+                disabled={seedingBalances}
+                title="Create leave balance records for all active leave types for this employee"
+                onClick={async () => {
+                  if (!user.employee?.id) return;
+                  setSeedingBalances(true);
+                  try {
+                    await seedLeaveBalances(user.employee.id, new Date().getFullYear());
+                    await queryClient.invalidateQueries({ queryKey: ["leave-balance"] });
+                    notify("Leave balances seeded successfully.");
+                  } catch {
+                    notify("Failed to seed leave balances", "error");
+                  } finally {
+                    setSeedingBalances(false);
+                  }
+                }}
+              >
+                {seedingBalances ? "Seeding…" : "⚡ Seed Balances"}
+              </button>
+            )}
+          </div>
           {balancesQuery.isLoading && <span className="text-muted">Loading…</span>}
           {balancesQuery.isError && (
             <div className="alert alert-error">{parseApiError(balancesQuery.error).message}</div>
           )}
           {balancesQuery.data && balancesQuery.data.length === 0 && (
-            <span className="text-muted">
-              No balances yet — they're created the first time you need one.
-            </span>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <span className="text-muted">
+                No balances yet — they're created the first time you apply for leave.
+              </span>
+              {isHR && user.employee && (
+                <span className="text-muted" style={{ fontSize: "0.8rem" }}>
+                  💡 Click <strong>⚡ Seed Balances</strong> above to instantly create all leave allocations for this employee based on the company's leave policy.
+                </span>
+              )}
+            </div>
           )}
           {balancesQuery.data && balancesQuery.data.length > 0 && (
             <div className="stat-grid">
@@ -284,6 +319,9 @@ export function LeavePage() {
                 <div className="card" key={b.leave_type_id}>
                   <div className="stat-label">{b.leave_type_name}</div>
                   <div className="stat-value">{b.available}</div>
+                  <div className="text-xs text-muted" style={{ marginTop: "2px" }}>
+                    {b.allocated} allocated · {b.used} used
+                  </div>
                 </div>
               ))}
             </div>
@@ -431,8 +469,8 @@ function ApplyLeaveForm({
 }: {
   canPickEmployee: boolean;
   employees: { id: string; first_name: string; last_name: string | null }[];
-  leaveTypes: { id: string; name: string }[];
-  currentUser?: { email: string; employee?: { id: string } | null } | null;
+  leaveTypes: LeaveType[];
+  currentUser?: { email: string; employee?: { id: string } | null; role?: string } | null;
   onApplied: () => void;
 }) {
   const { notify } = useToast();
@@ -447,6 +485,9 @@ function ApplyLeaveForm({
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Derive the selected leave type to show LOP warning
+  const selectedLeaveType = leaveTypes.find((lt) => lt.id === leaveTypeId) ?? null;
 
   // Sync end date automatically whenever start date changes if end date is empty or was same as previous start date
   function handleStartDateChange(val: string) {
@@ -570,10 +611,33 @@ function ApplyLeaveForm({
             <option value="">— Select —</option>
             {leaveTypes.map((lt) => (
               <option key={lt.id} value={lt.id}>
-                {lt.name}
+                {lt.name}{!lt.is_paid ? " (Unpaid / LOP)" : ""}
               </option>
             ))}
           </select>
+          {selectedLeaveType && !selectedLeaveType.is_paid && (
+            <div
+              style={{
+                marginTop: "6px",
+                padding: "8px 12px",
+                borderRadius: "6px",
+                backgroundColor: "#fffbeb",
+                border: "1px solid #fcd34d",
+                fontSize: "0.82rem",
+                color: "#92400e",
+                display: "flex",
+                gap: "6px",
+                alignItems: "flex-start",
+              }}
+            >
+              <span>⚠️</span>
+              <span>
+                <strong>Loss of Pay (Unpaid Leave)</strong> — This leave type is unpaid. Your salary will
+                be automatically deducted for each day taken, calculated as{" "}
+                <em>Monthly Gross ÷ Calendar Days in Month × Days Taken</em>.
+              </span>
+            </div>
+          )}
         </div>
         <div className="field">
           <label>Start date *</label>

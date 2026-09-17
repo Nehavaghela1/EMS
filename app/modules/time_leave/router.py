@@ -2,6 +2,7 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
@@ -431,3 +432,39 @@ def cancel_leave(
     user: User = Depends(get_current_user),
 ):
     return _to_leave_response(LeaveService(db).cancel_leave(user.company_id, leave_id, user))
+
+
+class LeaveSeedRequest(BaseModel):
+    employee_id: uuid.UUID
+    year: int | None = None
+
+
+@leaves_router.post("/balances/seed", response_model=list[LeaveBalanceResponse])
+def seed_leave_balances(
+    data: LeaveSeedRequest,
+    db=Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin)),
+):
+    """HR only. Seeds leave balance rows for every active leave type for the given
+    employee and year. Safe to call multiple times — skips types already allocated.
+    Resolves the 'No balances yet' UX problem for newly onboarded employees.
+    """
+    from app.core.time import utcnow as _utcnow
+    target_year = data.year if data.year is not None else _utcnow().date().year
+    results = LeaveService(db).allocate_balances_for_employee(
+        user.company_id, data.employee_id, target_year, user
+    )
+    return [
+        LeaveBalanceResponse(
+            leave_type_id=b.leave_type_id,
+            leave_type_name=name,
+            year=b.year,
+            opening_balance=b.opening_balance,
+            allocated=b.allocated,
+            used=b.used,
+            encashed=b.encashed,
+            available=b.opening_balance + b.allocated - b.used - b.encashed,
+        )
+        for b, name in results
+    ]
+

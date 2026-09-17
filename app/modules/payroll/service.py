@@ -6,7 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.core.pagination import PageParams
+from app.modules.hr.models import EmploymentType
 from app.modules.hr.repository import EmployeeRepository
+from app.modules.time_leave.repository import LeaveRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import (
     CalculationType,
@@ -643,6 +645,7 @@ class PayrollRunService:
         self.salary_repo = EmployeeSalaryRepository(db)
         self.structure_repo = SalaryStructureRepository(db)
         self.employee_repo = EmployeeRepository(db)
+        self.leave_repo = LeaveRepository(db)
         from app.modules.projects.repository import ProjectRepository
         self.project_repo = ProjectRepository(db)
         self.audit = AuditService(db)
@@ -814,14 +817,37 @@ class PayrollRunService:
                 for c in structure.components
             ]
 
-            reimbursements = self.reimbursement_repo.list_unpaid_approved(company_id, emp.id)
-            reimbursement_amount = sum((r.amount for r in reimbursements), Decimal("0.00"))
-
-            # Query approved project timesheet hours for this employee in the payroll month (Zoho Projects / ClickUp Integration)
+            # ── Attendance: calendar days in the payroll month ────────────────
             from calendar import monthrange
             _, last_day = monthrange(data.year, data.month)
             month_start = date(data.year, data.month, 1)
             month_end = date(data.year, data.month, last_day)
+            working_days = Decimal(str(last_day))
+
+            # Real LOP from approved unpaid leaves — cross-month intersection
+            lop_days = self.leave_repo.sum_approved_lop_days(
+                company_id, emp.id, month_start, month_end
+            )
+            paid_leave_days = self.leave_repo.sum_approved_paid_leave_days(
+                company_id, emp.id, month_start, month_end
+            )
+            # Absent days = non-leave, non-paid days we don't track explicitly here
+            absent_days = Decimal("0.0")
+            present_days = max(Decimal("0.0"), working_days - lop_days - paid_leave_days)
+
+            # ── Reimbursements: approved, not yet locked to any run ───────────
+            # IMPORTANT: reimbursements are tax-free expense paybacks. They are
+            # NEVER added to earnings_json (which would inflate taxable gross and
+            # distort TDS/ESI calculations). They live only in reimbursement_amount
+            # and are added to net_pay after statutory deductions.
+            reimbursements = self.reimbursement_repo.list_unpaid_approved(company_id, emp.id)
+            reimbursement_amount = sum((r.amount for r in reimbursements), Decimal("0.00"))
+
+            # ── Timesheet hours: only billable for contract/hourly employees ──
+            # Salaried employees (full_time, part_time, intern) use project
+            # timesheet hours for project-cost tracking and client billing only —
+            # their paycheck is their fixed monthly CTC regardless of hours logged.
+            is_hourly = emp.employment_type == EmploymentType.contract
 
             approved_time_entries = self.project_repo.list_time_entries(
                 company_id=company_id,
@@ -830,13 +856,28 @@ class PayrollRunService:
                 start_date=month_start,
                 end_date=month_end,
             )
-            total_approved_project_hours = sum((Decimal(str(te.hours)) for te in approved_time_entries), Decimal("0.00"))
+            total_approved_project_hours = sum(
+                (Decimal(str(te.hours)) for te in approved_time_entries), Decimal("0.00")
+            )
 
-            # Calculate hourly pay rate based on monthly CTC (assuming standard 160 hrs/month)
-            monthly_ctc = (salary_record.ctc / Decimal("12")).quantize(Decimal("0.01"))
-            hourly_rate = (monthly_ctc / Decimal("160.00")).quantize(Decimal("0.01"))
-            project_hours_pay = (total_approved_project_hours * hourly_rate).quantize(Decimal("0.01"))
+            # Hourly rate: use explicit hourly_rate if set, else fall back to
+            # monthly_ctc / 160 (standard Indian payroll convention).
+            if is_hourly and total_approved_project_hours > 0:
+                if salary_record.hourly_rate is not None:
+                    hourly_rate = salary_record.hourly_rate
+                else:
+                    monthly_ctc = _round(salary_record.ctc / Decimal("12"))
+                    hourly_rate = _round(monthly_ctc / Decimal("160.00"))
+                project_hours_pay = _round(total_approved_project_hours * hourly_rate)
+            else:
+                # Salaried: hours are for project tracking only — no pay impact
+                project_hours_pay = Decimal("0.00")
+                hourly_rate = Decimal("0.00")
 
+            # ── Engine: compute earned_gross and statutory deductions ──────────
+            # The engine applies the LOP ratio (paid_days/working_days) to scale
+            # earned_gross down. Statutory deductions (EPF, ESI, PT) are then
+            # computed on earned_gross — not full gross — satisfying Indian law.
             payslip_in = PayslipInput(
                 ctc_annual=salary_record.ctc,
                 components=component_specs,
@@ -846,27 +887,51 @@ class PayrollRunService:
                 month=data.month,
                 year=data.year,
                 financial_year=fy_str,
-                working_days=Decimal("30.0"),
-                present_days=Decimal("30.0"),
-                paid_leave_days=Decimal("0.0"),
-                lop_days=Decimal("0.0"),
+                working_days=working_days,
+                present_days=present_days,
+                paid_leave_days=paid_leave_days,
+                lop_days=lop_days,
+                # reimbursement_amount fed to engine so net_salary is correct.
+                # Engine formula: net = earned_gross - deductions + reimbursement_amount
                 reimbursement_amount=reimbursement_amount,
             )
 
             payslip_out = calculate_payslip(payslip_in)
 
-            # Build JSON line items
-            earnings_json = [{"code": e.code, "name": e.name, "amount": str(e.amount)} for e in payslip_out.earnings]
-            if project_hours_pay > Decimal("0.00"):
+            # ── Build snapshot JSON ──────────────────────────────────────────
+            # earnings_json: only salary components from the structure.
+            # For hourly employees, add the PROJECT_HOURS line as a base-pay
+            # replacement (their gross IS the hours pay).
+            earnings_json = [
+                {"code": e.code, "name": e.name, "amount": str(e.amount)}
+                for e in payslip_out.earnings
+            ]
+            if is_hourly and project_hours_pay > Decimal("0.00"):
                 earnings_json.append({
                     "code": "PROJECT_HOURS",
-                    "name": f"Approved Project Hours ({total_approved_project_hours} hrs @ ₹{hourly_rate}/hr)",
+                    "name": (
+                        f"Hourly Pay — {total_approved_project_hours} hrs"
+                        f" @ ₹{hourly_rate}/hr (approved project timesheets)"
+                    ),
                     "amount": str(project_hours_pay),
                 })
 
-            deductions_json = [{"code": d.code, "name": d.name, "amount": str(d.amount)} for d in payslip_out.deductions]
-            employer_json = [{"code": er.code, "name": er.name, "amount": str(er.amount)} for er in payslip_out.employer_contributions]
+            # deductions_json: statutory lines only (EPF, ESI, PT, TDS, LWF).
+            # LOP is NOT a subtracted deduction line — it is already reflected in
+            # the lower earned_gross produced by the engine. Adding it again here
+            # would cause a double-deduction. The frontend displays it as an
+            # informational attendance note using payroll_item.lop_days.
+            deductions_json = [
+                {"code": d.code, "name": d.name, "amount": str(d.amount)}
+                for d in payslip_out.deductions
+            ]
+            employer_json = [
+                {"code": er.code, "name": er.name, "amount": str(er.amount)}
+                for er in payslip_out.employer_contributions
+            ]
 
+            # For hourly employees their project_hours_pay IS their gross;
+            # for salaried employees the engine's earned_gross is the gross.
             final_gross = payslip_out.gross_salary + project_hours_pay
             final_net = payslip_out.net_salary + project_hours_pay
             final_employer_cost = payslip_out.employer_cost + project_hours_pay
@@ -883,19 +948,23 @@ class PayrollRunService:
                 earnings_json=earnings_json,
                 deductions_json=deductions_json,
                 employer_contributions_json=employer_json,
-                working_days=Decimal("30.0"),
-                present_days=Decimal("30.0"),
-                absent_days=Decimal("0.0"),
+                working_days=working_days,
+                present_days=present_days,
+                absent_days=absent_days,
                 half_days=Decimal("0.0"),
-                paid_leave_days=Decimal("0.0"),
-                lop_days=Decimal("0.0"),
+                paid_leave_days=paid_leave_days,
+                lop_days=lop_days,
                 reimbursement_amount=reimbursement_amount,
             )
 
+            # ── Reimbursement lifecycle: lock into this run ─────────────────
+            # Phase 1 of 3: mark added_to_payroll_run_id so the claim cannot be
+            # included in another run. Status stays APPROVED until approve_run
+            # finalises the pay run (Phase 2). If the run is deleted before
+            # approval, delete_run clears added_to_payroll_run_id back to NULL
+            # (Phase 3), releasing the claim for the next cycle.
             for r in reimbursements:
-                self.reimbursement_repo.update(
-                    r, added_to_payroll_run_id=run.id, status=ReimbursementStatus.paid
-                )
+                self.reimbursement_repo.update(r, added_to_payroll_run_id=run.id)
 
             total_gross += final_gross
             total_deductions += payslip_out.total_deductions
@@ -948,6 +1017,7 @@ class PayrollRunService:
         self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User
     ) -> PayrollRun:
         from app.core.time import utcnow
+        from sqlalchemy import update
 
         run = self.repo.get_by_id(run_id, company_id)
         if run is None:
@@ -962,6 +1032,20 @@ class PayrollRunService:
             approved_by=actor.id,
             approved_at=utcnow(),
         )
+
+        # Phase 2 of 3: Bulk-transition all claims locked into this run from
+        # APPROVED → PAID now that the pay run is formally finalised.
+        # This is the only place status becomes PAID for reimbursements.
+        self.db.execute(
+            update(Reimbursement)
+            .where(
+                Reimbursement.company_id == company_id,
+                Reimbursement.added_to_payroll_run_id == run.id,
+                Reimbursement.status == ReimbursementStatus.approved,
+            )
+            .values(status=ReimbursementStatus.paid)
+        )
+
         self.audit.record(
             company_id=company_id,
             actor=actor,
@@ -986,15 +1070,19 @@ class PayrollRunService:
                 f"Cannot delete a payroll run with status '{run.status.value}'. Only draft/unapproved runs can be deleted."
             )
 
-        # Unlink any reimbursements that were marked as paid for this run
+        # Phase 3 of 3: Unlink all reimbursements that were locked into this
+        # run but never finalised. Since approve_run hasn't been called yet,
+        # their status is still APPROVED (not PAID). Clear the run reference so
+        # they roll forward into the next pay cycle automatically.
         from sqlalchemy import update
         self.db.execute(
             update(Reimbursement)
             .where(
                 Reimbursement.company_id == company_id,
                 Reimbursement.added_to_payroll_run_id == run.id,
+                Reimbursement.status == ReimbursementStatus.approved,
             )
-            .values(added_to_payroll_run_id=None, status=ReimbursementStatus.approved)
+            .values(added_to_payroll_run_id=None)
         )
 
         # Delete the run (cascade deletes payroll items)
@@ -1083,6 +1171,15 @@ class ReimbursementService:
         if claim is None:
             raise NotFoundError("Reimbursement claim not found.")
 
+        # Only HR Admins and Super Admins may approve/reject claims.
+        # Managers may approve only their direct reports' claims.
+        # Employees (including the submitter) are never allowed to self-approve.
+        if actor.role not in (UserRole.hr_admin, UserRole.super_admin, UserRole.manager):
+            raise ForbiddenError(
+                "You do not have permission to perform this action. "
+                "Only HR Admins can approve or reject reimbursement claims."
+            )
+
         if actor.role == UserRole.manager:
             mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
             if not mgr_emp:
@@ -1090,6 +1187,12 @@ class ReimbursementService:
             team_ids = self.employee_repo.list_direct_report_ids(company_id, mgr_emp.id)
             if claim.employee_id not in team_ids:
                 raise ForbiddenError("Managers can only review reimbursement claims for their direct reports.")
+
+        # Block anyone from approving a claim already locked into a pay run
+        if claim.added_to_payroll_run_id is not None:
+            raise ConflictError(
+                "This claim is already locked into a payroll run and cannot be modified."
+            )
 
         new_status = (
             ReimbursementStatus.approved if data.action == "approve" else ReimbursementStatus.rejected

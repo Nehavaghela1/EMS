@@ -200,7 +200,7 @@ export function MyPayslipPage() {
               </div>
 
               {/* Attendance & Summary Stats */}
-              <div className="grid grid-4 gap-4 p-3 bg-muted rounded text-sm">
+              <div className="grid grid-4 gap-4 p-3 bg-muted rounded text-sm" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
                 <div>
                   <span className="text-muted block text-xs">Working Days</span>
                   <strong>{selectedPayslip.working_days}</strong>
@@ -210,14 +210,38 @@ export function MyPayslipPage() {
                   <strong>{selectedPayslip.present_days}</strong>
                 </div>
                 <div>
+                  <span className="text-muted block text-xs">Paid Leave</span>
+                  <strong>{selectedPayslip.paid_leave_days}</strong>
+                </div>
+                <div>
                   <span className="text-muted block text-xs">LOP Days</span>
-                  <strong>{selectedPayslip.lop_days}</strong>
+                  <strong style={{ color: Number(selectedPayslip.lop_days) > 0 ? "#dc2626" : undefined }}>
+                    {selectedPayslip.lop_days}
+                  </strong>
                 </div>
                 <div>
                   <span className="text-muted block text-xs">Reimbursements</span>
-                  <strong>₹{Number(selectedPayslip.reimbursement_amount).toLocaleString()}</strong>
+                  <strong style={{ color: Number(selectedPayslip.reimbursement_amount) > 0 ? "#15803d" : undefined }}>
+                    ₹{Number(selectedPayslip.reimbursement_amount).toLocaleString()}
+                  </strong>
                 </div>
               </div>
+              {Number(selectedPayslip.lop_days) > 0 && (
+                <div
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: "6px",
+                    backgroundColor: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    fontSize: "0.8rem",
+                    color: "#7f1d1d",
+                  }}
+                >
+                  ⚠️ <strong>Loss of Pay</strong>: {selectedPayslip.lop_days} day(s) of unpaid leave were taken this month.
+                  Your gross earnings have been proportionally reduced (<em>Earned Gross = Monthly Gross × (Present Days / Working Days)</em>).
+                  Statutory deductions (EPF, ESI, PT) are calculated on earned gross only.
+                </div>
+              )}
 
               {/* Breakdown Tables: Earnings & Deductions */}
               <div className="grid grid-2 gap-6">
@@ -273,6 +297,20 @@ export function MyPayslipPage() {
                           -₹{Number(selectedPayslip.total_deductions).toLocaleString()}
                         </td>
                       </tr>
+                      {/* Reimbursements: tax-free expense payback — shown as a positive
+                          adjustment AFTER deductions, never inside earnings (which would
+                          inflate taxable income). Net Pay = Earned Gross - Deductions + Reimbursements. */}
+                      {Number(selectedPayslip.reimbursement_amount) > 0 && (
+                        <tr style={{ backgroundColor: "#f0fdf4" }}>
+                          <td style={{ color: "#15803d" }}>
+                            💰 Expense Reimbursement
+                            <span className="text-xs text-muted" style={{ display: "block" }}>Tax-free — expense payback only</span>
+                          </td>
+                          <td className="text-right font-mono" style={{ color: "#15803d" }}>
+                            +₹{Number(selectedPayslip.reimbursement_amount).toLocaleString()}
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>

@@ -972,3 +972,33 @@ class LeaveService:
         balances = self.balance_repo.list_for_employee_year(employee_id, year)
         leave_type_names = {lt.id: lt.name for lt in self.leave_type_repo.list_all(company_id)}
         return [(b, leave_type_names.get(b.leave_type_id, "Unknown")) for b in balances]
+
+    def allocate_balances_for_employee(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, year: int, actor: User
+    ) -> list[tuple["LeaveBalance", str]]:
+        """HR-callable batch seeding: creates a LeaveBalance row for every active
+        leave type the company has configured, for the given employee and year.
+        Skips types that already have a row. Returns all (balance, type_name)
+        pairs after seeding, including pre-existing ones.
+        """
+        employee = self.employee_repo.get_by_id(employee_id, company_id)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+
+        active_types = [lt for lt in self.leave_type_repo.list_all(company_id) if lt.is_active]
+        for lt in active_types:
+            existing = self.balance_repo.get(employee_id, lt.id, year)
+            if existing is None:
+                self.balance_repo.create(
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    leave_type_id=lt.id,
+                    year=year,
+                    opening_balance=Decimal("0"),
+                    allocated=lt.annual_allowance,
+                )
+
+        self.db.commit()
+        balances = self.balance_repo.list_for_employee_year(employee_id, year)
+        type_name_map = {lt.id: lt.name for lt in active_types}
+        return [(b, type_name_map.get(b.leave_type_id, "Unknown")) for b in balances]

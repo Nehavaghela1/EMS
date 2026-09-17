@@ -145,6 +145,10 @@ class EmployeeSalary(TenantBase):
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     revision_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # hourly_rate: used for contract/hourly employees. If NULL, the payroll engine
+    # falls back to monthly_ctc / 160 (standard for full-time equivalents).
+    # Store as ₹/hour to 2 decimal places (e.g. 500.00 for ₹500/hr).
+    hourly_rate: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
