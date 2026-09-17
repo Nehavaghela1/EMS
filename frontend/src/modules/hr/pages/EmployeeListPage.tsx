@@ -10,7 +10,7 @@ import { parseApiError } from "../../../shared/api/errors";
 import { listDepartments, listEmployees, updateEmployee, type Employee } from "../api";
 import { listCompanies } from "../../identity/api";
 import { formatDate } from "../../../shared/utils/date";
-import { getPositionsForDepartment } from "../constants/departmentPositions";
+import { getPositionsForDepartment, toTitleCase } from "../constants/departmentPositions";
 
 export function EmployeeListPage() {
   const navigate = useNavigate();
@@ -58,11 +58,30 @@ export function EmployeeListPage() {
   });
 
   const [quickEditEmp, setQuickEditEmp] = useState<Employee | null>(null);
-  const [quickPosition, setQuickPosition] = useState("");
+  const [quickPositionMode, setQuickPositionMode] = useState("");
+  const [quickCustomPosition, setQuickCustomPosition] = useState("");
   const [quickSaving, setQuickSaving] = useState(false);
   const [quickError, setQuickError] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
+
+  // Open quick edit modal and configure dropdown vs custom
+  function handleOpenQuickEdit(emp: Employee) {
+    setQuickEditEmp(emp);
+    setQuickError(null);
+    const deptName = departmentsQuery.data?.items.find((d) => d.id === emp.department_id)?.name;
+    const stdPositions = getPositionsForDepartment(deptName);
+    if (emp.position && stdPositions.includes(emp.position)) {
+      setQuickPositionMode(emp.position);
+      setQuickCustomPosition("");
+    } else if (emp.position) {
+      setQuickPositionMode("__other__");
+      setQuickCustomPosition(emp.position);
+    } else {
+      setQuickPositionMode("");
+      setQuickCustomPosition("");
+    }
+  }
 
   // Color generator for positions / roles
   function getPositionBadgeStyle(pos: string | null | undefined) {
@@ -88,11 +107,21 @@ export function EmployeeListPage() {
 
   async function handleSaveQuickPosition() {
     if (!quickEditEmp) return;
+    if (quickPositionMode === "__other__" && !quickCustomPosition.trim()) {
+      setQuickError("Please specify the designation title.");
+      return;
+    }
+
+    const finalPos =
+      quickPositionMode === "__other__"
+        ? toTitleCase(quickCustomPosition.trim())
+        : quickPositionMode.trim();
+
     setQuickSaving(true);
     setQuickError(null);
     try {
       await updateEmployee(quickEditEmp.id, {
-        position: quickPosition.trim() || undefined,
+        position: finalPos || undefined,
       });
       await queryClient.invalidateQueries({ queryKey: ["employees"] });
       setQuickEditEmp(null);
@@ -151,9 +180,7 @@ export function EmployeeListPage() {
                 title="Quick edit position"
                 onClick={(evt) => {
                   evt.stopPropagation();
-                  setQuickEditEmp(e);
-                  setQuickPosition(e.position ?? "");
-                  setQuickError(null);
+                  handleOpenQuickEdit(e);
                 }}
               >
                 ✎
@@ -286,23 +313,16 @@ export function EmployeeListPage() {
               </div>
               <div className="stack gap-2">
                 <select
-                  value={
-                    getPositionsForDepartment(
-                      departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name
-                    ).includes(quickPosition)
-                      ? quickPosition
-                      : quickPosition
-                      ? "__custom__"
-                      : ""
-                  }
+                  value={quickPositionMode}
                   onChange={(e) => {
                     const val = e.target.value;
-                    if (val !== "__custom__") {
-                      setQuickPosition(val);
+                    setQuickPositionMode(val);
+                    if (val !== "__other__") {
+                      setQuickCustomPosition("");
                     }
                   }}
                 >
-                  <option value="">— Select Standard Position —</option>
+                  <option value="">— Select Designation —</option>
                   {getPositionsForDepartment(
                     departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name
                   ).map((pos) => (
@@ -310,17 +330,29 @@ export function EmployeeListPage() {
                       {pos}
                     </option>
                   ))}
-                  <option value="__custom__">✎ Custom Role / Enter Manually...</option>
+                  <option value="__other__">Other (Specify)...</option>
                 </select>
 
-                <input
-                  value={quickPosition}
-                  onChange={(evt) => setQuickPosition(evt.target.value)}
-                  placeholder="e.g. Developer, Senior Engineer, Sales Executive"
-                  autoFocus
-                />
+                {quickPositionMode === "__other__" && (
+                  <div className="stack gap-1" style={{ animation: "fadeIn 0.2s ease-in-out" }}>
+                    <label style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--color-text, #334155)" }}>
+                      Specify Designation *
+                    </label>
+                    <input
+                      value={quickCustomPosition}
+                      onChange={(evt) => setQuickCustomPosition(evt.target.value)}
+                      onBlur={() => {
+                        setQuickCustomPosition(toTitleCase(quickCustomPosition));
+                      }}
+                      placeholder="e.g. Prompt Engineer, Data Architect"
+                      autoFocus
+                    />
+                    <span className="field-hint" style={{ fontSize: "0.75rem" }}>
+                      Auto-formatted to Title Case upon saving.
+                    </span>
+                  </div>
+                )}
               </div>
-              <span className="field-hint">Select a standard department role or type a custom designation.</span>
             </div>
             <div className="row-end mt-4">
               <button type="button" className="btn" onClick={() => setQuickEditEmp(null)} disabled={quickSaving}>

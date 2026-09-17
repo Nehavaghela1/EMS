@@ -139,6 +139,24 @@ export const DEFAULT_POSITIONS: string[] = [
 ];
 
 /**
+ * Helper to format titles to Title Case (e.g., 'prompt engineer' -> 'Prompt Engineer')
+ */
+export function toTitleCase(str: string): string {
+  if (!str) return "";
+  return str
+    .trim()
+    .split(/\s+/)
+    .map((word) => {
+      // Keep acronyms like QA, UI, UX, IT, VP, HR, SEO, BDM in uppercase if typed
+      if (/^(qa|ui|ux|it|vp|hr|seo|sem|bdm|cto|ceo|cfo|coo|cpo)$/i.test(word)) {
+        return word.toUpperCase();
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+/**
  * Returns the recommended standard positions matching a department name.
  */
 export function getPositionsForDepartment(deptName: string | null | undefined): string[] {
@@ -170,3 +188,5 @@ export function getPositionsForDepartment(deptName: string | null | undefined): 
 
   return DEFAULT_POSITIONS;
 }
+
+

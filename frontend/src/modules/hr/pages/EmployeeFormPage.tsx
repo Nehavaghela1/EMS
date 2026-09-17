@@ -15,7 +15,7 @@ import {
 } from "../api";
 import { listStructures, assignEmployeeSalary } from "../../payroll/api";
 import { employeeFormSchema } from "../schemas";
-import { getPositionsForDepartment } from "../constants/departmentPositions";
+import { getPositionsForDepartment, toTitleCase } from "../constants/departmentPositions";
 
 const EMPLOYMENT_TYPES: EmploymentType[] = ["full_time", "part_time", "contract", "intern"];
 
@@ -88,6 +88,9 @@ export function EmployeeFormPage() {
     enabled: isEdit,
   });
 
+  const [positionMode, setPositionMode] = useState<string>("");
+  const [customPosition, setCustomPosition] = useState<string>("");
+
   useEffect(() => {
     if (existingQuery.data) {
       const e = existingQuery.data;
@@ -105,11 +108,50 @@ export function EmployeeFormPage() {
         probation_end_date: e.probation_end_date ?? "",
         notice_period_days: String(e.notice_period_days),
       });
+
+      // Synchronize position mode with department standard positions
+      const deptName = departmentsQuery.data?.items.find((d) => d.id === e.department_id)?.name;
+      const stdPositions = getPositionsForDepartment(deptName);
+      if (e.position && stdPositions.includes(e.position)) {
+        setPositionMode(e.position);
+        setCustomPosition("");
+      } else if (e.position) {
+        setPositionMode("__other__");
+        setCustomPosition(e.position);
+      } else {
+        setPositionMode("");
+        setCustomPosition("");
+      }
     }
-  }, [existingQuery.data]);
+  }, [existingQuery.data, departmentsQuery.data]);
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  // Handle department change: reset designation so irrelevant titles aren't preserved
+  function handleDepartmentChange(deptId: string) {
+    setField("department_id", deptId);
+    setPositionMode("");
+    setCustomPosition("");
+    setField("position", "");
+  }
+
+  // Handle position select change
+  function handlePositionSelectChange(val: string) {
+    setPositionMode(val);
+    if (val === "__other__") {
+      setField("position", toTitleCase(customPosition));
+    } else {
+      setCustomPosition("");
+      setField("position", val);
+    }
+  }
+
+  // Handle custom position input change
+  function handleCustomPositionChange(rawVal: string) {
+    setCustomPosition(rawVal);
+    setField("position", toTitleCase(rawVal));
   }
 
   async function handleStep1Submit(e: FormEvent) {
@@ -117,8 +159,23 @@ export function EmployeeFormPage() {
     setFormError(null);
     setFieldErrors({});
 
+    // Validate that if "Other (Specify)" is selected, designation is not empty
+    if (positionMode === "__other__" && !customPosition.trim()) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        position: "Please specify the designation title.",
+      }));
+      return;
+    }
+
+    const finalPosition =
+      positionMode === "__other__"
+        ? toTitleCase(customPosition.trim())
+        : positionMode.trim();
+
     const parsed = employeeFormSchema.safeParse({
       ...form,
+      position: finalPosition,
       notice_period_days: form.notice_period_days,
     });
     if (!parsed.success) {
@@ -138,7 +195,7 @@ export function EmployeeFormPage() {
       personal_email: form.personal_email.trim() || undefined,
       phone: form.phone.trim() || undefined,
       department_id: form.department_id, // Strictly required
-      position: form.position.trim() || undefined,
+      position: finalPosition || undefined,
       level: form.level.trim() || undefined,
       employment_type: form.employment_type,
       hire_date: form.hire_date,
@@ -367,7 +424,7 @@ export function EmployeeFormPage() {
               <label>Department *</label>
               <select
                 value={form.department_id}
-                onChange={(e) => setField("department_id", e.target.value)}
+                onChange={(e) => handleDepartmentChange(e.target.value)}
               >
                 <option value="">— Select Department (Mandatory) —</option>
                 {departmentsQuery.data?.items.map((d) => (
@@ -381,8 +438,8 @@ export function EmployeeFormPage() {
               )}
             </div>
 
-            {/* Department-Aware Position / Role Selection */}
-            <div className="field">
+            {/* Department-Aware Position / Designation Selection */}
+            <div className={"field" + (fieldErrors.position ? " has-error" : "")}>
               <div className="row-between align-center mb-1">
                 <label style={{ margin: 0 }}>Position / Role Designation</label>
                 {form.department_id && (
@@ -391,47 +448,53 @@ export function EmployeeFormPage() {
                   </span>
                 )}
               </div>
-              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                <select
-                  style={{ flex: 1 }}
-                  value={
-                    getPositionsForDepartment(
-                      departmentsQuery.data?.items.find((d) => d.id === form.department_id)?.name
-                    ).includes(form.position)
-                      ? form.position
-                      : form.position
-                      ? "__custom__"
-                      : ""
-                  }
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val === "__custom__") {
-                      // Keep current custom or clear
-                    } else {
-                      setField("position", val);
-                    }
-                  }}
-                >
-                  <option value="">— Select Standard Position —</option>
-                  {getPositionsForDepartment(
-                    departmentsQuery.data?.items.find((d) => d.id === form.department_id)?.name
-                  ).map((pos) => (
-                    <option key={pos} value={pos}>
-                      {pos}
-                    </option>
-                  ))}
-                  <option value="__custom__">✎ Custom Role / Enter Manually...</option>
-                </select>
-                <input
-                  style={{ flex: 1 }}
-                  placeholder="Or type custom designation…"
-                  value={form.position}
-                  onChange={(e) => setField("position", e.target.value)}
-                />
-              </div>
-              <span className="field-hint">
-                Choose a standardized title or type a tailored company designation.
-              </span>
+
+              <select
+                value={positionMode}
+                onChange={(e) => handlePositionSelectChange(e.target.value)}
+                disabled={!form.department_id}
+              >
+                <option value="">
+                  {form.department_id ? "— Select Designation —" : "— Select Department First —"}
+                </option>
+                {getPositionsForDepartment(
+                  departmentsQuery.data?.items.find((d) => d.id === form.department_id)?.name
+                ).map((pos) => (
+                  <option key={pos} value={pos}>
+                    {pos}
+                  </option>
+                ))}
+                <option value="__other__">Other (Specify)...</option>
+              </select>
+
+              {/* When "Other (Specify)" is selected, slide down text input */}
+              {positionMode === "__other__" && (
+                <div className="stack gap-1 mt-2" style={{ animation: "fadeIn 0.2s ease-in-out" }}>
+                  <label style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--color-text, #334155)" }}>
+                    Specify Designation *
+                  </label>
+                  <input
+                    type="text"
+                    value={customPosition}
+                    onChange={(e) => handleCustomPositionChange(e.target.value)}
+                    onBlur={() => {
+                      // Auto-trim and format to Title Case on blur
+                      const formatted = toTitleCase(customPosition);
+                      setCustomPosition(formatted);
+                      setField("position", formatted);
+                    }}
+                    placeholder="e.g. Prompt Engineer, Data Architect, Solutions Consultant"
+                    autoFocus
+                  />
+                  <span className="field-hint" style={{ fontSize: "0.75rem" }}>
+                    Auto-formatted to Title Case upon saving.
+                  </span>
+                </div>
+              )}
+
+              {fieldErrors.position && (
+                <span className="field-error">{fieldErrors.position}</span>
+              )}
             </div>
             <div className="field">
               <label>Level (Band)</label>
