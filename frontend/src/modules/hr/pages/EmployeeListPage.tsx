@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
 import { usePagination } from "../../../shared/hooks/usePagination";
 import { useDebounce } from "../../../shared/hooks/useDebounce";
 import { useHasRole } from "../../../shared/hooks/useRole";
-import { listDepartments, listEmployees, type Employee } from "../api";
+import { parseApiError } from "../../../shared/api/errors";
+import { listDepartments, listEmployees, updateEmployee, type Employee } from "../api";
 import { listCompanies } from "../../identity/api";
 import { formatDate } from "../../../shared/utils/date";
 
@@ -55,6 +56,52 @@ export function EmployeeListPage() {
     placeholderData: (prev) => prev,
   });
 
+  const [quickEditEmp, setQuickEditEmp] = useState<Employee | null>(null);
+  const [quickPosition, setQuickPosition] = useState("");
+  const [quickSaving, setQuickSaving] = useState(false);
+  const [quickError, setQuickError] = useState<string | null>(null);
+
+  const queryClient = useQueryClient();
+
+  // Color generator for positions / roles
+  function getPositionBadgeStyle(pos: string | null | undefined) {
+    if (!pos) return { bg: "#f1f5f9", color: "#475569", border: "#cbd5e1" };
+    const p = pos.toLowerCase();
+    if (p.includes("dev") || p.includes("engineer") || p.includes("tech")) {
+      return { bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" };
+    }
+    if (p.includes("sales") || p.includes("marketing") || p.includes("growth")) {
+      return { bg: "#ecfdf5", color: "#047857", border: "#a7f3d0" };
+    }
+    if (p.includes("lead") || p.includes("head") || p.includes("manager") || p.includes("dir")) {
+      return { bg: "#fdf4ff", color: "#86198f", border: "#f5d0fe" };
+    }
+    if (p.includes("hr") || p.includes("admin") || p.includes("people")) {
+      return { bg: "#fff7ed", color: "#c2410c", border: "#fed7aa" };
+    }
+    if (p.includes("design") || p.includes("ui") || p.includes("ux")) {
+      return { bg: "#f5f3ff", color: "#6d28d9", border: "#ddd6fe" };
+    }
+    return { bg: "#f8fafc", color: "#334155", border: "#e2e8f0" };
+  }
+
+  async function handleSaveQuickPosition() {
+    if (!quickEditEmp) return;
+    setQuickSaving(true);
+    setQuickError(null);
+    try {
+      await updateEmployee(quickEditEmp.id, {
+        position: quickPosition.trim() || undefined,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
+      setQuickEditEmp(null);
+    } catch (err) {
+      setQuickError(parseApiError(err).message);
+    } finally {
+      setQuickSaving(false);
+    }
+  }
+
   const columns: DataTableColumn<Employee>[] = [
     { key: "employee_code", label: "Code", render: (e) => e.employee_code },
     {
@@ -77,7 +124,44 @@ export function EmployeeListPage() {
         ]
       : []),
     { key: "email", label: "Email", render: (e) => e.email },
-    { key: "position", label: "Position", render: (e) => e.position ?? "—" },
+    {
+      key: "position",
+      label: "Position",
+      render: (e) => {
+        const style = getPositionBadgeStyle(e.position);
+        return (
+          <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+            <span
+              className="badge"
+              style={{
+                backgroundColor: style.bg,
+                color: style.color,
+                border: `1px solid ${style.border}`,
+                fontWeight: 600,
+                fontSize: "0.75rem",
+              }}
+            >
+              {e.position ?? "Staff"}
+            </span>
+            {canCreate && (
+              <button
+                className="btn btn-ghost btn-xs"
+                style={{ padding: "0 4px", fontSize: "0.7rem", color: "var(--color-muted, #64748b)" }}
+                title="Quick edit position"
+                onClick={(evt) => {
+                  evt.stopPropagation();
+                  setQuickEditEmp(e);
+                  setQuickPosition(e.position ?? "");
+                  setQuickError(null);
+                }}
+              >
+                ✎
+              </button>
+            )}
+          </div>
+        );
+      },
+    },
     {
       key: "hire_date",
       label: "Hire date",
@@ -160,8 +244,6 @@ export function EmployeeListPage() {
         )}
       </div>
 
-
-
       <DataTable
         columns={columns}
         page={employeesQuery.data}
@@ -180,6 +262,44 @@ export function EmployeeListPage() {
         onRowClick={(e) => navigate(`/employees/${e.id}`)}
         onRowDoubleClick={(e) => navigate(`/employees/${e.id}`)}
       />
+
+      {/* Quick Edit Position Modal */}
+      {quickEditEmp && (
+        <div className="modal-backdrop" onClick={() => setQuickEditEmp(null)}>
+          <div className="modal stack" onClick={(evt) => evt.stopPropagation()} style={{ maxWidth: "420px" }}>
+            <div className="modal-header">
+              <h3>Edit Position: {quickEditEmp.first_name} {quickEditEmp.last_name || ""}</h3>
+              <button type="button" className="modal-close-btn" onClick={() => setQuickEditEmp(null)}>
+                ✕
+              </button>
+            </div>
+            {quickError && <div className="alert alert-error">{quickError}</div>}
+            <div className="field">
+              <label>Designation / Position</label>
+              <input
+                value={quickPosition}
+                onChange={(evt) => setQuickPosition(evt.target.value)}
+                placeholder="e.g. Developer, Senior Engineer, Sales Executive"
+                autoFocus
+              />
+              <span className="field-hint">Quickly correct typos or update role titles.</span>
+            </div>
+            <div className="row-end mt-4">
+              <button type="button" className="btn" onClick={() => setQuickEditEmp(null)} disabled={quickSaving}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleSaveQuickPosition}
+                disabled={quickSaving}
+              >
+                {quickSaving ? "Saving…" : "Save Position"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

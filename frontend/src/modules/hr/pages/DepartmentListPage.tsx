@@ -55,18 +55,46 @@ export function DepartmentListPage() {
   const columns: DataTableColumn<Department>[] = [
     { key: "name", label: "Name", sortable: true, render: (d) => d.name },
     { key: "description", label: "Description", render: (d) => d.description ?? "—" },
-    { key: "employee_count", label: "Employees", render: (d) => d.employee_count },
+    {
+      key: "employee_count",
+      label: "Employees",
+      render: (d) => (
+        <span
+          className={"badge " + (d.employee_count > 0 ? "badge-primary" : "badge-muted")}
+          style={{ fontWeight: 600 }}
+        >
+          {d.employee_count} {d.employee_count === 1 ? "staff" : "staff"}
+        </span>
+      ),
+    },
     {
       key: "actions",
       label: "",
       render: (d) => (
-        <div className="row">
+        <div className="row" style={{ alignItems: "center", gap: "6px" }}>
           <button className="btn btn-sm" onClick={() => setEditing(d)}>
             Edit
           </button>
-          <button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget(d)}>
-            Delete
-          </button>
+          {d.employee_count > 0 ? (
+            <button
+              className="btn btn-sm"
+              disabled
+              style={{
+                opacity: 0.5,
+                cursor: "not-allowed",
+                backgroundColor: "var(--color-bg, #f1f5f9)",
+                color: "var(--color-text-muted, #64748b)",
+                border: "1px solid var(--color-border, #cbd5e1)",
+              }}
+              title={`Reassign ${d.employee_count} employee${d.employee_count > 1 ? "s" : ""} before deleting`}
+            >
+              Locked ({d.employee_count})
+            </button>
+          ) : (
+            <button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget(d)}>
+              Delete
+            </button>
+          )}
         </div>
       ),
     },

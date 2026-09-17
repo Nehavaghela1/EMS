@@ -13,7 +13,7 @@ import { formatDate } from "../../../shared/utils/date";
 
 const STATUS_OPTIONS: AttendanceStatus[] = ["present", "absent", "half_day", "wfh", "on_leave"];
 
-function formatHoursWorked(a: Attendance): string {
+function formatHoursWorked(a: Attendance): React.ReactNode {
   if (a.check_in && a.check_out) {
     const diffMs = new Date(a.check_out).getTime() - new Date(a.check_in).getTime();
     if (diffMs > 0) {
@@ -30,6 +30,41 @@ function formatHoursWorked(a: Attendance): string {
       const minutes = Math.round((val - hours) * 60);
       return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
     }
+  }
+  if (a.check_in && !a.check_out) {
+    const elapsedMs = Date.now() - new Date(a.check_in).getTime();
+    if (elapsedMs > 0) {
+      const totalMinutes = Math.floor(elapsedMs / (1000 * 60));
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return (
+        <span
+          className="badge"
+          style={{
+            backgroundColor: "#ecfdf5",
+            color: "#047857",
+            border: "1px solid #a7f3d0",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+          }}
+          title={`Checked in: running elapsed time ${hours}h ${minutes}m`}
+        >
+          <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#10b981", display: "inline-block" }} />
+          {hours > 0 ? `${hours}h ${minutes}m (Active)` : "In Progress"}
+        </span>
+      );
+    }
+    return (
+      <span
+        className="badge badge-warning"
+        style={{ fontSize: "0.75rem", fontWeight: 600 }}
+      >
+        In Progress
+      </span>
+    );
   }
   return "—";
 }

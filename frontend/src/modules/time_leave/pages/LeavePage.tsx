@@ -295,6 +295,7 @@ export function LeavePage() {
         canPickEmployee={canPickEmployee}
         employees={employeesQuery.data?.items ?? []}
         leaveTypes={leaveTypesQuery.data ?? []}
+        currentUser={user}
         onApplied={refreshAll}
       />
 
@@ -425,15 +426,20 @@ function ApplyLeaveForm({
   canPickEmployee,
   employees,
   leaveTypes,
+  currentUser,
   onApplied,
 }: {
   canPickEmployee: boolean;
   employees: { id: string; first_name: string; last_name: string | null }[];
   leaveTypes: { id: string; name: string }[];
+  currentUser?: { email: string; employee?: { id: string } | null } | null;
   onApplied: () => void;
 }) {
   const { notify } = useToast();
-  const [employeeId, setEmployeeId] = useState("");
+  // If user is admin without employee record, default to requiring selecting an employee
+  const hasLinkedEmployee = Boolean(currentUser?.employee?.id);
+  const [targetType, setTargetType] = useState<"myself" | "other">(hasLinkedEmployee ? "myself" : "other");
+  const [employeeId, setEmployeeId] = useState(hasLinkedEmployee ? currentUser!.employee!.id : "");
   const [leaveTypeId, setLeaveTypeId] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -442,6 +448,14 @@ function ApplyLeaveForm({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Sync end date automatically whenever start date changes if end date is empty or was same as previous start date
+  function handleStartDateChange(val: string) {
+    setStartDate(val);
+    if (!endDate || endDate === startDate || endDate < val) {
+      setEndDate(val);
+    }
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -449,10 +463,25 @@ function ApplyLeaveForm({
       setError("Leave type, dates, and a reason are all required.");
       return;
     }
+
+    const effectiveEmployeeId = targetType === "myself"
+      ? (currentUser?.employee?.id || undefined)
+      : (employeeId || undefined);
+
+    if (targetType === "other" && !effectiveEmployeeId) {
+      setError("Please select the employee name when applying on behalf of someone else.");
+      return;
+    }
+
+    if (targetType === "myself" && !hasLinkedEmployee) {
+      setError("Your admin account is not linked to an employee profile. Please select an employee from the directory.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       await applyLeave({
-        employee_id: employeeId || undefined,
+        employee_id: effectiveEmployeeId,
         leave_type_id: leaveTypeId,
         start_date: startDate,
         end_date: endDate,
@@ -464,10 +493,11 @@ function ApplyLeaveForm({
       setEndDate("");
       setIsHalfDay(false);
       setReason("");
+      if (targetType === "other") {
+        setEmployeeId("");
+      }
       onApplied();
     } catch (err) {
-      // Verbatim: the backend's own message for whichever of the eight
-      // Spec 11.3 validations failed — never re-derived here.
       setError(parseApiError(err).message);
     } finally {
       setSubmitting(false);
@@ -481,21 +511,62 @@ function ApplyLeaveForm({
       <div className="form-grid">
         {canPickEmployee && (
           <div className="field">
-            <label>For (leave blank for yourself)</label>
-            <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
-              <option value="">— Myself —</option>
-              {employees.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.first_name}
-                  {e.last_name ? ` ${e.last_name}` : ""}
-                </option>
-              ))}
-            </select>
+            <label>Applicant</label>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "6px" }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${targetType === "myself" ? "btn-primary" : "btn-outline"}`}
+                onClick={() => {
+                  setTargetType("myself");
+                  if (currentUser?.employee?.id) {
+                    setEmployeeId(currentUser.employee.id);
+                  }
+                }}
+                disabled={!hasLinkedEmployee}
+                title={!hasLinkedEmployee ? "Admin account has no linked employee profile" : undefined}
+              >
+                👤 Myself {hasLinkedEmployee ? "(Linked)" : "(No Profile)"}
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${targetType === "other" ? "btn-primary" : "btn-outline"}`}
+                onClick={() => {
+                  setTargetType("other");
+                  if (employeeId === currentUser?.employee?.id) {
+                    setEmployeeId("");
+                  }
+                }}
+              >
+                👥 On Behalf of Employee
+              </button>
+            </div>
+            {targetType === "other" && (
+              <select
+                value={employeeId}
+                onChange={(e) => setEmployeeId(e.target.value)}
+                required
+              >
+                <option value="">— Select Employee * —</option>
+                {employees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.first_name}
+                    {e.last_name ? ` ${e.last_name}` : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+            {targetType === "myself" && (
+              <div className="text-xs text-muted">
+                {hasLinkedEmployee
+                  ? "Automatically locked to your logged-in employee record."
+                  : "No employee record linked to this admin account."}
+              </div>
+            )}
           </div>
         )}
         <div className="field">
-          <label>Leave type</label>
-          <select value={leaveTypeId} onChange={(e) => setLeaveTypeId(e.target.value)}>
+          <label>Leave type *</label>
+          <select value={leaveTypeId} onChange={(e) => setLeaveTypeId(e.target.value)} required>
             <option value="">— Select —</option>
             {leaveTypes.map((lt) => (
               <option key={lt.id} value={lt.id}>
@@ -505,12 +576,23 @@ function ApplyLeaveForm({
           </select>
         </div>
         <div className="field">
-          <label>Start date</label>
-          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          <label>Start date *</label>
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => handleStartDateChange(e.target.value)}
+            required
+          />
         </div>
         <div className="field">
-          <label>End date</label>
-          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          <label>End date *</label>
+          <input
+            type="date"
+            value={endDate}
+            min={startDate || undefined}
+            onChange={(e) => setEndDate(e.target.value)}
+            required
+          />
         </div>
       </div>
       <label className="row text-sm">
@@ -518,8 +600,8 @@ function ApplyLeaveForm({
         Half day
       </label>
       <div className="field">
-        <label>Reason</label>
-        <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+        <label>Reason *</label>
+        <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} required />
       </div>
       <button
         className="btn btn-primary"

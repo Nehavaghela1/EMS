@@ -170,10 +170,20 @@ export function PayrollSetupPage() {
         }
       }
     }
+    const hasBalance = components.some((c) => c.calculation_type === "balance");
     const totalAllocated = directCtcPercent + basicDerivedCtcPercent;
-    if (totalAllocated > 100) {
-      notify(`Total salary allocation is ${totalAllocated.toFixed(1)}% of CTC, which exceeds 100%. Please adjust percentages.`, "error");
-      return;
+    
+    if (hasBalance) {
+      if (totalAllocated > 100) {
+        notify(`Total percentage allocation is ${totalAllocated.toFixed(1)}% of CTC, which exceeds 100%. Please adjust percentages.`, "error");
+        return;
+      }
+    } else {
+      // Custom structure without an auto-balance component must sum to exactly 100%
+      if (Math.abs(totalAllocated - 100) > 0.05) {
+        notify(`Total percentage allocation is ${totalAllocated.toFixed(1)}% of CTC. It must equal exactly 100.0% (or include a Special Allowance 'Balance of CTC' component).`, "error");
+        return;
+      }
     }
 
     try {

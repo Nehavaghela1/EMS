@@ -129,9 +129,34 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
 
       <div className="card">
         {!user?.employee ? (
-          <span className="text-muted">
-            No employee record is linked to this account — attendance check-in/out doesn't apply.
-          </span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <div
+                style={{
+                  width: "36px",
+                  height: "36px",
+                  borderRadius: "8px",
+                  backgroundColor: "#eff6ff",
+                  color: "#2563eb",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1.1rem",
+                }}
+              >
+                🛡️
+              </div>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "0.95rem", color: "var(--color-heading, #1e293b)" }}>
+                  HR Admin Attendance Portal
+                </div>
+                <div className="text-muted text-xs">
+                  Viewing organization-wide attendance & shift records. Check-in/out applies to employee accounts.
+                </div>
+              </div>
+            </div>
+            <span className="badge badge-outline" style={{ fontWeight: 600 }}>Admin View</span>
+          </div>
         ) : todayQuery.isLoading ? (
           <div className="row">
             <div className="spinner" />

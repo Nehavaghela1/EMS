@@ -133,10 +133,30 @@ export function DashboardPage() {
           {data.role === "hr_admin" && (
             <>
               <div className="stat-grid">
-                <Stat label="Headcount" value={data.data.headcount} />
-                <Stat label="Present today" value={data.data.present_today} />
-                <Stat label="On leave today" value={data.data.on_leave_today} />
-                <Stat label="Pending leave requests" value={data.data.pending_leave_requests} />
+                <Stat
+                  label="Headcount"
+                  value={data.data.headcount}
+                  to="/employees"
+                  subtitle="Click to view directory"
+                />
+                <Stat
+                  label="Present today"
+                  value={data.data.present_today}
+                  to="/attendance"
+                  subtitle="Click to view attendance"
+                />
+                <Stat
+                  label="On leave today"
+                  value={data.data.on_leave_today}
+                  to="/leave"
+                  subtitle="Click to view leaves"
+                />
+                <Stat
+                  label="Pending leave requests"
+                  value={data.data.pending_leave_requests}
+                  to="/leave"
+                  subtitle="Click to review requests"
+                />
               </div>
               <div className="card">
                 <h3>Department distribution</h3>
@@ -161,11 +181,11 @@ export function DashboardPage() {
                   <div className="stack-sm">
                     {data.data.recent_hires.map((h) => (
                       <div key={h.id} className="row-between">
-                        <span>
+                        <Link to={`/employees/${h.id}`} style={{ textDecoration: "none", color: "inherit", fontWeight: 500 }}>
                           {h.first_name}
                           {h.last_name ? ` ${h.last_name}` : ""}
-                        </span>
-                        <span className="text-muted">{h.hire_date}</span>
+                        </Link>
+                        <span className="text-muted">{formatDate(h.hire_date)}</span>
                       </div>
                     ))}
                   </div>
