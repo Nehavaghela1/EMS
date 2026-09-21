@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate, resolve_sort
 from app.core.time import utcnow
-from app.modules.identity.models import Company, CompanySettings, CompanyStatus, RefreshToken, User
+from app.modules.identity.models import Company, CompanyLocation, CompanySettings, CompanyStatus, RefreshToken, User
 
 
 class CompanySettingsRepository:
@@ -255,3 +255,37 @@ class RefreshTokenRepository:
         if replaced_by is not None:
             token.replaced_by_id = replaced_by.id
         self.db.flush()
+
+
+class CompanyLocationRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def list_locations(self, company_id: uuid.UUID) -> list[CompanyLocation]:
+        return list(
+            self.db.scalars(
+                select(CompanyLocation)
+                .where(CompanyLocation.company_id == company_id)
+                .order_by(CompanyLocation.name)
+            ).all()
+        )
+
+    def get_by_id(self, location_id: uuid.UUID, company_id: uuid.UUID) -> CompanyLocation | None:
+        return self.db.scalar(
+            select(CompanyLocation).where(
+                CompanyLocation.id == location_id,
+                CompanyLocation.company_id == company_id
+            )
+        )
+
+    def create(self, **kwargs) -> CompanyLocation:
+        location = CompanyLocation(**kwargs)
+        self.db.add(location)
+        self.db.flush()
+        return location
+
+    def update(self, location: CompanyLocation, **kwargs) -> CompanyLocation:
+        for key, value in kwargs.items():
+            setattr(location, key, value)
+        self.db.flush()
+        return location

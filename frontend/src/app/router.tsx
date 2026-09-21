@@ -6,6 +6,7 @@ import { ActivatePage } from "../modules/identity/pages/ActivatePage";
 import { ForgotPasswordPage } from "../modules/identity/pages/ForgotPasswordPage";
 import { AdminDashboardPage } from "../modules/identity/pages/AdminDashboardPage";
 import { SettingsPage } from "../modules/identity/pages/SettingsPage";
+import { CreateWorkspacePage } from "../modules/identity/pages/CreateWorkspacePage";
 import { DashboardPage } from "../modules/platform/pages/DashboardPage";
 import { EmployeeListPage } from "../modules/hr/pages/EmployeeListPage";
 import { EmployeeProfilePage } from "../modules/hr/pages/EmployeeProfilePage";
@@ -24,6 +25,8 @@ import { PerformanceReviewPage } from "../modules/performance/pages/PerformanceR
 import { ProjectsListPage } from "../modules/projects/pages/ProjectsListPage";
 import { ProjectDetailPage } from "../modules/projects/pages/ProjectDetailPage";
 import { TimesheetsPage } from "../modules/projects/pages/TimesheetsPage";
+import { LocationListPage } from "../modules/settings/pages/LocationListPage";
+import { LocationFormPage } from "../modules/settings/pages/LocationFormPage";
 import { RequireAuth } from "../shared/components/RequireAuth";
 import { RoleGuard } from "../shared/components/RoleGuard";
 import { PublicOnly } from "../shared/components/PublicOnly";
@@ -252,6 +255,31 @@ export function AppRouter() {
           <Protected roles={ALL_ROLES}>
             <SettingsPage />
           </Protected>
+        }
+      />
+      <Route
+        path="/settings/locations"
+        element={
+          <Protected roles={["hr_admin", "super_admin"]}>
+            <LocationListPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/settings/locations/new"
+        element={
+          <Protected roles={["hr_admin", "super_admin"]}>
+            <LocationFormPage />
+          </Protected>
+        }
+      />
+
+      <Route
+        path="/workspaces/new"
+        element={
+          <RequireAuth>
+            <CreateWorkspacePage />
+          </RequireAuth>
         }
       />
 

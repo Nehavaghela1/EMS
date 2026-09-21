@@ -30,8 +30,10 @@ from app.modules.identity.schemas import (
     SwitchWorkspaceRequest,
     UserWorkspaceResponse,
     CreateWorkspaceResponse,
+    CompanyLocationCreate,
+    CompanyLocationResponse,
 )
-from app.modules.identity.service import AuthService, CompanyService
+from app.modules.identity.service import AuthService, CompanyService, LocationService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -302,3 +304,21 @@ def reject_company(
     _admin: User = Depends(require_role(UserRole.super_admin)),
 ):
     return CompanyService(db).reject_company(company_id, data.reason)
+
+
+# --- Locations ---
+@companies_router.get("/locations", response_model=list[CompanyLocationResponse])
+def list_locations(
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    return LocationService(db).list_locations(user.company_id)
+
+
+@companies_router.post("/locations", response_model=CompanyLocationResponse, status_code=201)
+def create_location(
+    data: CompanyLocationCreate,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin)),
+):
+    return LocationService(db).create_location(user.company_id, data)

@@ -227,3 +227,39 @@ class CreateWorkspaceResponse(BaseModel):
     company: CompanyResponse
     access_token: str
     token_type: str = "bearer"
+
+
+# Locations
+class CompanyLocationCreate(BaseModel):
+    name: str
+    code: str
+    address_line1: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str = "India"
+    postal_code: str | None = None
+    is_primary: bool = False
+
+class CompanyLocationUpdate(BaseModel):
+    name: str | None = None
+    code: str | None = None
+    address_line1: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    postal_code: str | None = None
+    is_primary: bool | None = None
+
+class CompanyLocationResponse(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    name: str
+    code: str
+    address_line1: str | None
+    city: str | None
+    state: str | None
+    country: str
+    postal_code: str | None
+    is_primary: bool
+    created_at: datetime
+    updated_at: datetime

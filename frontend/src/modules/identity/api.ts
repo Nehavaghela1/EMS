@@ -224,3 +224,49 @@ export interface ChangePasswordInput {
 export async function changePassword(input: ChangePasswordInput): Promise<void> {
   await apiClient.post("/auth/change-password", input);
 }
+
+// --- Locations ---
+
+export interface CompanyLocation {
+  id: string;
+  company_id: string;
+  name: string;
+  code: string;
+  address_line1?: string;
+  city?: string;
+  state?: string;
+  country: string;
+  postal_code?: string;
+  is_primary: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  geofence_radius_meters?: number | null;
+  is_remote_exempt?: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompanyLocationCreate {
+  name: string;
+  code: string;
+  address_line1?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  postal_code?: string;
+  is_primary?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  geofence_radius_meters?: number | null;
+  is_remote_exempt?: boolean;
+}
+
+export async function listLocations(): Promise<CompanyLocation[]> {
+  const { data } = await apiClient.get<CompanyLocation[]>("/companies/locations");
+  return data;
+}
+
+export async function createLocation(input: CompanyLocationCreate): Promise<CompanyLocation> {
+  const { data } = await apiClient.post<CompanyLocation>("/companies/locations", input);
+  return data;
+}

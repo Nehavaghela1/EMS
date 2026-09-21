@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -21,6 +22,30 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import TenantBase, TimeStampedBase
+
+
+class CompanyLocation(TenantBase):
+    __tablename__ = "company_locations"
+    __table_args__ = (
+        Index("uq_company_locations_company_id_name", "company_id", "name", unique=True),
+        Index("uq_company_locations_company_id_code", "company_id", "code", unique=True),
+    )
+
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    code: Mapped[str] = mapped_column(String(20), nullable=False)
+    address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    country: Mapped[str] = mapped_column(String(100), nullable=False, default="India")
+    postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Geofencing — all nullable so existing locations continue to work (no
+    # geofence enforcement when latitude/longitude are NULL).
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    geofence_radius_meters: Mapped[int] = mapped_column(Integer, nullable=False, default=150)
+    is_remote_exempt: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
 
 
 class CompanyStatus(str, enum.Enum):

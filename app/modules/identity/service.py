@@ -28,9 +28,10 @@ from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, InvitationStatus
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
-from app.modules.identity.models import Company, CompanySettings, CompanyStatus, User, UserRole
+from app.modules.identity.models import Company, CompanyLocation, CompanySettings, CompanyStatus, User, UserRole
 from app.modules.identity.repository import (
     CompanyRepository,
+    CompanyLocationRepository,
     RefreshTokenRepository,
     UserRepository,
 )
@@ -38,6 +39,7 @@ from app.modules.identity.schemas import (
     ActivateAccountRequest,
     AdminCompanyUpdateRequest,
     ChangePasswordRequest,
+    CompanyLocationCreate,
     CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
     EmployeeSummary,
@@ -649,6 +651,41 @@ class CompanyService:
             is_active=True,
             must_change_password=must_change,
         )
+
+        from app.modules.hr.repository import EmployeeRepository
+        from app.modules.hr.models import InvitationStatus
+        from datetime import date
+        
+        # Provision Head Office
+        location_repo = CompanyLocationRepository(self.db)
+        head_office = location_repo.create(
+            company_id=company.id,
+            name="Head Office",
+            code=f"{company.code}-HQ",
+            address_line1=company.address,
+            city=company.city,
+            state=company.state,
+            country=company.country,
+            postal_code=company.pincode,
+            is_primary=True,
+        )
+
+        name_parts = company.email.split("@")[0].split(".")
+        emp_repo = EmployeeRepository(self.db)
+        emp_repo.create(
+            company_id=company.id,
+            first_name=name_parts[0].capitalize(),
+            last_name=name_parts[1].capitalize() if len(name_parts) > 1 else None,
+            email=company.email,
+            employee_code="ADMIN-001",
+            position="HR Admin / Org Head",
+            hire_date=date.today(),
+            is_active=True,
+            invitation_status=InvitationStatus.activated,
+            user_id=hr_admin.id,
+            location_id=head_office.id,
+        )
+
         # Never log the password (6.8, rule 10) — it leaves this function in
         # only one place now: the email sent below, never the return value.
         logger.info(
@@ -756,7 +793,7 @@ class CompanyService:
                 end_time=time(18, 0),
             )
 
-        self.user_repo.create(
+        new_admin = self.user_repo.create(
             company_id=company.id,
             email=current_user.email,
             hashed_password=current_user.hashed_password,
@@ -765,6 +802,57 @@ class CompanyService:
             must_change_password=False,
         )
 
+        from app.modules.hr.repository import EmployeeRepository
+        from app.modules.hr.models import InvitationStatus
+        from datetime import date
+
+        # Provision Head Office
+        location_repo = CompanyLocationRepository(self.db)
+        head_office = location_repo.create(
+            company_id=company.id,
+            name="Head Office",
+            code=f"{company.code}-HQ",
+            country=company.country,
+            is_primary=True,
+        )
+
+        name_parts = current_user.email.split("@")[0].split(".")
+        emp_repo = EmployeeRepository(self.db)
+        emp_repo.create(
+            company_id=company.id,
+            first_name=name_parts[0].capitalize(),
+            last_name=name_parts[1].capitalize() if len(name_parts) > 1 else None,
+            email=current_user.email,
+            employee_code="ADMIN-001",
+            position="HR Admin / Org Head",
+            hire_date=date.today(),
+            is_active=True,
+            invitation_status=InvitationStatus.activated,
+            user_id=new_admin.id,
+            location_id=head_office.id,
+        )
+
         self.db.commit()
         return company
+
+class LocationService:
+    def __init__(self, db: Session):
+        self.db = db
+        self.location_repo = CompanyLocationRepository(db)
+
+    def list_locations(self, company_id: uuid.UUID):
+        return self.location_repo.list_locations(company_id)
+
+    def create_location(self, company_id: uuid.UUID, data: CompanyLocationCreate):
+        return self.location_repo.create(
+            company_id=company_id,
+            name=data.name,
+            code=data.code,
+            address_line1=data.address_line1,
+            city=data.city,
+            state=data.state,
+            country=data.country,
+            postal_code=data.postal_code,
+            is_primary=data.is_primary,
+        )
 
