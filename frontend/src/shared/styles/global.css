@@ -1208,52 +1208,64 @@ table.table tbody tr:hover {
 }
 
 
-/* ── Print Styles for Official Documents (e.g. Payslip) ── */
+/* ── Print Styles for Official Documents (e.g. Payslip & FnF Statement) ── */
 @media print {
-  body {
-    background: #ffffff !important;
-    color: #000000 !important;
-  }
-
-  /* Hide app shell chrome: sidebar, topbar, timer bar, action buttons, breadcrumbs */
-  aside,
-  .sidebar,
-  header,
+  /* 1. Hide the Sidebar, Header, Navigation, and Print buttons */
   nav,
-  .page-header,
-  .modal-backdrop,
+  aside,
+  header,
+  .sidebar,
   button,
   .btn,
-  .card:not(.print-section) {
+  .no-print,
+  .page-header,
+  .modal-backdrop,
+  .card:not(.print-section):not([data-print-content="true"]):not(.fnf-statement-card) {
     display: none !important;
   }
 
-  /* Reset shell layouts */
+  /* 2. Reset the root container so it doesn't clip height or hide content */
+  html,
+  body,
+  #root,
   .app-shell,
+  .app-content-wrapper,
+  main,
   .main,
-  .container,
-  .grid {
-    display: block !important;
-    padding: 0 !important;
+  .container {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #000000 !important;
     margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
     width: 100% !important;
     max-width: 100% !important;
-    height: auto !important;
-    overflow: visible !important;
-    background: transparent !important;
   }
 
-  /* Style the payslip printable card */
+  /* 3. Force the statement card to take the full page */
+  .fnf-statement-card,
+  [data-print-content="true"],
   .print-section {
     display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
     box-shadow: none !important;
-    border: 1px solid #d1d5db !important;
+    border: 1px solid #e2e8f0 !important;
     border-radius: 8px !important;
     margin: 0 auto !important;
     padding: 24px !important;
-    width: 100% !important;
-    max-width: 100% !important;
+    background: #ffffff !important;
     page-break-inside: avoid !important;
+  }
+
+  /* Ensure text colors and badges print cleanly */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
 

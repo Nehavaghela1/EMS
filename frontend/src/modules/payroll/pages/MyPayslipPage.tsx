@@ -65,14 +65,14 @@ export function MyPayslipPage() {
 
   return (
     <div className="container">
-      <div className="page-header flex justify-between align-center">
+      <div className="page-header flex justify-between align-center no-print">
         <div>
           <h1>My Payslips & Statements</h1>
           <p className="text-muted">Monthly itemized payslip breakdowns and Full & Final (FnF) statements</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 no-print">
           {(selectedPayslip || fnfData) && (
-            <button className="btn btn-primary" onClick={handlePrint}>
+            <button className="btn btn-primary no-print" onClick={handlePrint}>
               📥 Download Statement (PDF / Print)
             </button>
           )}
@@ -80,7 +80,7 @@ export function MyPayslipPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-4 border-b mb-4" style={{ borderColor: "var(--color-border)" }}>
+      <div className="flex gap-4 border-b mb-4 no-print" style={{ borderColor: "var(--color-border)" }}>
         <button
           type="button"
           className="btn-ghost"
@@ -112,7 +112,11 @@ export function MyPayslipPage() {
       </div>
 
       {activeTab === "fnf" ? (
-        <div className="card p-6 mt-4">
+        <div
+          id="print-section"
+          data-print-content="true"
+          className="card p-6 mt-4 print-section fnf-statement-card"
+        >
           <div className="row-between align-center border-b pb-3 mb-4">
             <div>
               <h3 style={{ margin: 0, fontSize: "1.2rem" }}>📑 Full & Final Settlement (FnF) Statement</h3>
@@ -120,21 +124,32 @@ export function MyPayslipPage() {
                 Official terminal financial settlement following resignation or company separation
               </p>
             </div>
-            {fnfData && (
-              <span
-                className="badge"
-                style={{
-                  backgroundColor: fnfData.fnf_settled_at ? "#dcfce7" : "#fef3c7",
-                  color: fnfData.fnf_settled_at ? "#15803d" : "#b45309",
-                  border: "1px solid currentColor",
-                  fontWeight: 600,
-                  fontSize: "0.85rem",
-                  padding: "4px 10px",
-                }}
-              >
-                {fnfData.fnf_settled_at ? "✅ Settled & Disbursed" : "⏳ Clearance In Progress"}
-              </span>
-            )}
+            {fnfData && (() => {
+              const isFullyCleared = Boolean(fnfData.it_clearance && fnfData.hr_clearance && fnfData.finance_clearance);
+              const isSettled = Boolean(fnfData.fnf_settled_at);
+              const label = isSettled
+                ? "✅ Settled & Disbursed"
+                : isFullyCleared
+                ? "✓ Clearance Completed"
+                : "⏳ Clearance In Progress";
+              const bgColor = isSettled || isFullyCleared ? "#dcfce7" : "#fef3c7";
+              const color = isSettled || isFullyCleared ? "#15803d" : "#b45309";
+              return (
+                <span
+                  className="badge"
+                  style={{
+                    backgroundColor: bgColor,
+                    color: color,
+                    border: "1px solid currentColor",
+                    fontWeight: 600,
+                    fontSize: "0.85rem",
+                    padding: "4px 10px",
+                  }}
+                >
+                  {label}
+                </span>
+              );
+            })()}
           </div>
 
           {!fnfData ? (
@@ -267,23 +282,40 @@ export function MyPayslipPage() {
                   </table>
 
                   {/* Net Payable Settlement Box */}
-                  <div
-                    className="p-4 rounded mt-4"
-                    style={{
-                      background: "linear-gradient(135deg, #eff6ff, #dbeafe)",
-                      border: "1px solid #bfdbfe",
-                    }}
-                  >
-                    <div className="text-xs text-muted font-semibold uppercase">Total Net FnF Payout</div>
-                    <div className="text-2xl font-bold" style={{ color: "#1e40af", marginTop: "4px" }}>
-                      ₹{Number(fnfData.total_settlement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="text-xs text-muted mt-1">
-                      {fnfData.fnf_settled_at
-                        ? `Disbursed on ${formatDate(fnfData.fnf_settled_at)} • Excluded from future pay runs`
-                        : "Payable via direct bank transfer upon complete department clearance"}
-                    </div>
-                  </div>
+                  {(() => {
+                    const netAmount = Number(fnfData.total_settlement_amount || 0);
+                    const isPositive = netAmount >= 0;
+                    return (
+                      <div
+                        className="p-4 rounded mt-4"
+                        style={{
+                          background: isPositive
+                            ? "linear-gradient(135deg, #eff6ff, #dbeafe)"
+                            : "linear-gradient(135deg, #fef2f2, #fee2e2)",
+                          border: `1px solid ${isPositive ? "#bfdbfe" : "#fecaca"}`,
+                        }}
+                      >
+                        <div className="text-xs font-semibold uppercase" style={{ color: isPositive ? "#64748b" : "#991b1b" }}>
+                          {isPositive ? "Total Net FnF Payout (Payable to Employee)" : "Total Net Recovery (Payable by Employee to Company)"}
+                        </div>
+                        <div
+                          className="text-2xl font-bold"
+                          style={{ color: isPositive ? "#1e40af" : "#dc2626", marginTop: "4px" }}
+                        >
+                          {isPositive
+                            ? `₹${netAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`
+                            : `-₹${Math.abs(netAmount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                        </div>
+                        <div className="text-xs text-muted mt-1">
+                          {fnfData.fnf_settled_at
+                            ? `Settled on ${formatDate(fnfData.fnf_settled_at)} • Excluded from future pay runs`
+                            : isPositive
+                            ? "Payable via direct bank transfer upon complete department clearance"
+                            : "Pending collection via invoice/demand note before issuing relieving letter."}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>

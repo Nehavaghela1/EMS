@@ -462,7 +462,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Main Page Content Area */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+      <div className="app-content-wrapper" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
         {/* Enterprise Top Bar: Workspace Switcher & Context */}
         <header
           style={{
