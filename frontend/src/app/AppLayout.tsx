@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth, type UserRole } from "./auth-context";
@@ -139,6 +139,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const role = user?.role ?? "employee";
 
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>(user?.company_id || "");
+  const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
+  const workspaceDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (user?.company_id && !selectedWorkspace) {
@@ -146,11 +148,38 @@ export function AppLayout({ children }: { children: ReactNode }) {
     }
   }, [user?.company_id, selectedWorkspace]);
 
+  // Close workspace dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (workspaceDropdownRef.current && !workspaceDropdownRef.current.contains(event.target as Node)) {
+        setIsWorkspaceDropdownOpen(false);
+      }
+    }
+    if (isWorkspaceDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isWorkspaceDropdownOpen]);
+
   const companiesQuery = useQuery({
     queryKey: ["all-tenant-companies"],
     queryFn: () => listCompanies({ limit: 100 }),
     enabled: user?.role === "super_admin",
   });
+
+  const activeCompanyName =
+    (user?.role === "super_admin" &&
+      companiesQuery.data?.items.find((c) => c.id === selectedWorkspace)?.name) ||
+    user?.company_name ||
+    "EMS Workspace";
+
+  const activeCompanyCode =
+    (user?.role === "super_admin" &&
+      companiesQuery.data?.items.find((c) => c.id === selectedWorkspace)?.code) ||
+    user?.company_code ||
+    "";
 
   // Filter sections visible to current role
   const visibleSections = NAV_SECTIONS.filter((sec) => sec.roles.includes(role))
@@ -177,6 +206,32 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   function toggleSection(id: string) {
     setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  // Derive breadcrumb context for top navbar
+  let currentSectionLabel = "";
+  let currentPageLabel = "";
+
+  for (const sec of visibleSections) {
+    if (sec.to && (location.pathname === sec.to || (sec.to !== "/" && location.pathname.startsWith(sec.to)))) {
+      currentSectionLabel = sec.label;
+      break;
+    }
+    if (sec.children) {
+      const matchChild = sec.children.find((c) =>
+        c.to === location.pathname || (c.to !== "/" && location.pathname.startsWith(c.to))
+      );
+      if (matchChild) {
+        currentSectionLabel = sec.label;
+        currentPageLabel = matchChild.label;
+        break;
+      }
+    }
+  }
+
+  if (!currentSectionLabel && location.pathname.startsWith("/employees/")) {
+    currentSectionLabel = "Employees";
+    currentPageLabel = location.pathname.includes("/edit") ? "Edit Employee" : "Profile Details";
   }
 
   async function handleLogout() {
@@ -240,50 +295,263 @@ export function AppLayout({ children }: { children: ReactNode }) {
         {/* Docked Workspace Switcher (Slack / Linear / Notion style) */}
         {user && (
           <div
+            ref={workspaceDropdownRef}
             style={{
-              padding: "0.65rem 0.85rem",
-              borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
-              background: "rgba(15, 23, 42, 0.4)",
+              padding: "0.55rem 0.75rem",
+              borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+              background: "rgba(15, 23, 42, 0.45)",
+              position: "relative",
             }}
           >
-            <div style={{ fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#94a3b8", fontWeight: 600, marginBottom: "4px" }}>
+            <div style={{ fontSize: "0.62rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "#94a3b8", fontWeight: 700, marginBottom: "5px", paddingLeft: "2px" }}>
               Active Workspace
             </div>
             {user.role !== "employee" ? (
-              <select
-                style={{
-                  width: "100%",
-                  padding: "5px 8px",
-                  fontSize: "0.78rem",
-                  fontWeight: 600,
-                  borderRadius: "6px",
-                  border: "1px solid #334155",
-                  background: "#0f172a",
-                  color: "#e2e8f0",
-                  cursor: "pointer",
-                  outline: "none",
-                }}
-                value={selectedWorkspace}
-                onChange={(e) => {
-                  const nextId = e.target.value;
-                  setSelectedWorkspace(nextId);
-                  const selectedName = e.target.options[e.target.selectedIndex].text;
-                  alert(`Switched active workspace to: ${selectedName}`);
-                }}
-                title="Switch parent/subsidiary organization workspace"
-              >
-                <option value={user.company_id}>
-                  🏢 {user.company_name || "Primary Tenant"} {user.company_code ? `(${user.company_code})` : ""}
-                </option>
-                {user.role === "super_admin" &&
-                  companiesQuery.data?.items
-                    .filter((c) => c.id !== user.company_id)
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        🏢 {c.name} ({c.code})
-                      </option>
-                    ))}
-              </select>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsWorkspaceDropdownOpen((prev) => !prev)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "6px 10px",
+                    background: isWorkspaceDropdownOpen ? "#1e293b" : "rgba(30, 41, 59, 0.7)",
+                    border: `1px solid ${isWorkspaceDropdownOpen ? "#6366f1" : "rgba(255, 255, 255, 0.12)"}`,
+                    borderRadius: "6px",
+                    color: "#f1f5f9",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    transition: "all 0.15s ease",
+                    boxShadow: isWorkspaceDropdownOpen ? "0 0 0 2px rgba(99, 102, 241, 0.25)" : "none",
+                  }}
+                  title="Switch or manage active workspace"
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0, flex: 1 }}>
+                    <div
+                      style={{
+                        width: "22px",
+                        height: "22px",
+                        borderRadius: "5px",
+                        background: "#3b82f6",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "0.75rem",
+                        fontWeight: 700,
+                        color: "#fff",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {activeCompanyName.charAt(0).toUpperCase()}
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "#f8fafc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {activeCompanyName}
+                      </div>
+                      {activeCompanyCode && (
+                        <div style={{ fontSize: "0.65rem", color: "#94a3b8", fontFamily: "monospace" }}>
+                          {activeCompanyCode}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#94a3b8"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{
+                      flexShrink: 0,
+                      marginLeft: "6px",
+                      transform: isWorkspaceDropdownOpen ? "rotate(180deg)" : "rotate(0deg)",
+                      transition: "transform 0.15s ease",
+                    }}
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+
+                {/* Dropdown Menu */}
+                {isWorkspaceDropdownOpen && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 4px)",
+                      left: "0.75rem",
+                      right: "0.75rem",
+                      background: "#0f172a",
+                      border: "1px solid #334155",
+                      borderRadius: "8px",
+                      boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5)",
+                      zIndex: 100,
+                      overflow: "hidden",
+                      animation: "fadeIn 0.12s ease-out",
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: "8px 10px 6px",
+                        fontSize: "0.65rem",
+                        fontWeight: 700,
+                        color: "#64748b",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                        borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+                      }}
+                    >
+                      Organizations & Workspaces
+                    </div>
+
+                    <div style={{ maxHeight: "200px", overflowY: "auto", padding: "4px" }}>
+                      {/* Active / Current Company */}
+                      <div
+                        onClick={() => {
+                          setSelectedWorkspace(user.company_id);
+                          setIsWorkspaceDropdownOpen(false);
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "7px 9px",
+                          borderRadius: "6px",
+                          background: selectedWorkspace === user.company_id ? "rgba(99, 102, 241, 0.15)" : "transparent",
+                          cursor: "pointer",
+                          transition: "background 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => {
+                          if (selectedWorkspace !== user.company_id) {
+                            e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (selectedWorkspace !== user.company_id) {
+                            e.currentTarget.style.background = "transparent";
+                          }
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                          <span style={{ fontSize: "0.85rem" }}>🏢</span>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#f8fafc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {user.company_name || "Primary Tenant"}
+                            </div>
+                            {user.company_code && (
+                              <div style={{ fontSize: "0.64rem", color: "#94a3b8", fontFamily: "monospace" }}>
+                                {user.company_code}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {selectedWorkspace === user.company_id && (
+                          <span style={{ color: "#38bdf8", fontWeight: 700, fontSize: "0.85rem", paddingLeft: "6px" }} title="Currently Active">
+                            ✓
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Other Accessible Companies for Super Admin */}
+                      {user.role === "super_admin" &&
+                        companiesQuery.data?.items
+                          .filter((c) => c.id !== user.company_id)
+                          .map((c) => {
+                            const isCurrent = selectedWorkspace === c.id;
+                            return (
+                              <div
+                                key={c.id}
+                                onClick={() => {
+                                  setSelectedWorkspace(c.id);
+                                  setIsWorkspaceDropdownOpen(false);
+                                  alert(`Switched active workspace view to: ${c.name}`);
+                                }}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  padding: "7px 9px",
+                                  borderRadius: "6px",
+                                  background: isCurrent ? "rgba(99, 102, 241, 0.15)" : "transparent",
+                                  cursor: "pointer",
+                                  transition: "background 0.15s ease",
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (!isCurrent) e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (!isCurrent) e.currentTarget.style.background = "transparent";
+                                }}
+                              >
+                                <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                                  <span style={{ fontSize: "0.85rem" }}>🏢</span>
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontSize: "0.78rem", fontWeight: 500, color: "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                      {c.name}
+                                    </div>
+                                    <div style={{ fontSize: "0.64rem", color: "#64748b", fontFamily: "monospace" }}>
+                                      {c.code}
+                                    </div>
+                                  </div>
+                                </div>
+                                {isCurrent && (
+                                  <span style={{ color: "#38bdf8", fontWeight: 700, fontSize: "0.85rem", paddingLeft: "6px" }} title="Currently Active">
+                                    ✓
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                    </div>
+
+                    {/* Bottom Action: Create New Workspace / Company */}
+                    <div
+                      style={{
+                        borderTop: "1px solid rgba(255, 255, 255, 0.08)",
+                        padding: "6px 4px 4px",
+                        background: "rgba(15, 23, 42, 0.7)",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsWorkspaceDropdownOpen(false);
+                          if (user.role === "super_admin") {
+                            navigate("/admin");
+                          } else {
+                            navigate("/register-company");
+                          }
+                        }}
+                        style={{
+                          width: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "7px",
+                          padding: "6px 8px",
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          color: "#38bdf8",
+                          background: "transparent",
+                          border: "none",
+                          borderRadius: "5px",
+                          cursor: "pointer",
+                          textAlign: "left",
+                          transition: "background 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(56, 189, 248, 0.1)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <span style={{ fontSize: "0.95rem", lineHeight: 1 }}>+</span>
+                        <span>Create New Workspace / Company</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
               <div
                 style={{
@@ -292,13 +560,32 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   color: "#cbd5e1",
                   display: "flex",
                   alignItems: "center",
-                  gap: "6px",
-                  padding: "4px 2px",
+                  gap: "7px",
+                  padding: "6px 8px",
+                  background: "rgba(30, 41, 59, 0.4)",
+                  borderRadius: "6px",
+                  border: "1px solid rgba(255, 255, 255, 0.06)",
                 }}
               >
-                <span>🏢</span>
+                <div
+                  style={{
+                    width: "20px",
+                    height: "20px",
+                    borderRadius: "4px",
+                    background: "#3b82f6",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "0.7rem",
+                    fontWeight: 700,
+                    color: "#fff",
+                    flexShrink: 0,
+                  }}
+                >
+                  {activeCompanyName.charAt(0).toUpperCase()}
+                </div>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {user.company_name || "Workspace"}
+                  {activeCompanyName}
                 </span>
               </div>
             )}
@@ -545,28 +832,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
             zIndex: 40,
           }}
         >
-          {/* Header Organization Brand & Status */}
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "var(--color-heading, #1e293b)" }}>
-              🏢 {user?.company_name || "EMS Workspace"}
+          {/* Breadcrumb Navigation / Current Context */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.85rem" }}>
+            <span style={{ color: "var(--color-muted, #64748b)", fontWeight: 500 }}>
+              {currentSectionLabel || "Portal"}
             </span>
-            {user?.company_code && (
-              <span className="badge badge-outline font-mono text-xs" style={{ padding: "1px 6px" }}>
-                {user.company_code}
-              </span>
+            {currentPageLabel && (
+              <>
+                <span style={{ color: "var(--color-border, #cbd5e1)", fontSize: "0.75rem" }}>/</span>
+                <span style={{ fontWeight: 600, color: "var(--color-heading, #0f172a)" }}>
+                  {currentPageLabel}
+                </span>
+              </>
             )}
-            <span
-              className="badge"
-              style={{
-                background: "#f0fdf4",
-                color: "#166534",
-                border: "1px solid #bbf7d0",
-                fontSize: "0.72rem",
-                fontWeight: 600,
-              }}
-            >
-              ● Active Tenant
-            </span>
           </div>
 
           {/* User Quick Info */}
