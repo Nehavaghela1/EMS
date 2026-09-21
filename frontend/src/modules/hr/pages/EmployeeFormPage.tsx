@@ -13,9 +13,11 @@ import {
   type EmployeeCreateResponse,
   type EmploymentType,
 } from "../api";
+import { listLocations } from "../../identity/api";
 import { listStructures, assignEmployeeSalary } from "../../payroll/api";
 import { employeeFormSchema } from "../schemas";
 import { getPositionsForDepartment, toTitleCase } from "../constants/departmentPositions";
+import { ManagerCombobox } from "../components/ManagerCombobox";
 
 const EMPLOYMENT_TYPES: EmploymentType[] = ["full_time", "part_time", "contract", "intern"];
 
@@ -26,6 +28,8 @@ interface FormState {
   personal_email: string;
   phone: string;
   department_id: string;
+  location_id: string;
+  reporting_manager_id: string;
   position: string;
   level: string;
   employment_type: EmploymentType;
@@ -41,6 +45,8 @@ const EMPTY: FormState = {
   personal_email: "",
   phone: "",
   department_id: "",
+  location_id: "",
+  reporting_manager_id: "",
   position: "",
   level: "L1",
   employment_type: "full_time",
@@ -76,6 +82,11 @@ export function EmployeeFormPage() {
     queryFn: () => listDepartments({ page: 1, limit: 100 }),
   });
 
+  const locationsQuery = useQuery({
+    queryKey: ["locations", "all-for-form"],
+    queryFn: () => listLocations(),
+  });
+
   const structuresQuery = useQuery({
     queryKey: ["salary-structures-for-wizard"],
     queryFn: () => listStructures(1, 100),
@@ -101,8 +112,10 @@ export function EmployeeFormPage() {
         personal_email: e.personal_email ?? "",
         phone: e.phone ?? "",
         department_id: e.department_id ?? "",
+        location_id: e.location_id ?? "",
+        reporting_manager_id: e.reporting_manager_id ?? "",
         position: e.position ?? "",
-        level: e.level || "L1",
+        level: e.level ?? "L1",
         employment_type: e.employment_type,
         hire_date: e.hire_date,
         probation_end_date: e.probation_end_date ?? "",
@@ -174,9 +187,20 @@ export function EmployeeFormPage() {
         : positionMode.trim();
 
     const parsed = employeeFormSchema.safeParse({
-      ...form,
-      position: finalPosition,
-      notice_period_days: form.notice_period_days,
+      first_name: form.first_name,
+      last_name: form.last_name || undefined,
+      email: form.email,
+      personal_email: form.personal_email || undefined,
+      phone: form.phone || undefined,
+      department_id: form.department_id,
+      location_id: form.location_id || undefined,
+      reporting_manager_id: form.reporting_manager_id || undefined,
+      position: finalPosition || undefined,
+      level: form.level || undefined,
+      employment_type: form.employment_type,
+      hire_date: form.hire_date,
+      probation_end_date: form.probation_end_date || undefined,
+      notice_period_days: form.notice_period_days || undefined,
     });
     if (!parsed.success) {
       const errors: Record<string, string> = {};
@@ -195,6 +219,8 @@ export function EmployeeFormPage() {
       personal_email: form.personal_email.trim() || undefined,
       phone: form.phone.trim() || undefined,
       department_id: form.department_id, // Strictly required
+      location_id: form.location_id || undefined,
+      reporting_manager_id: form.reporting_manager_id || undefined,
       position: finalPosition || undefined,
       level: form.level.trim() || undefined,
       employment_type: form.employment_type,
@@ -418,6 +444,25 @@ export function EmployeeFormPage() {
               <label>Phone</label>
               <input value={form.phone} onChange={(e) => setField("phone", e.target.value)} />
             </div>
+
+            {/* Work Location / Branch Selection */}
+            <div className={"field" + (fieldErrors.location_id ? " has-error" : "")}>
+              <label>Work Location / Branch</label>
+              <select
+                value={form.location_id}
+                onChange={(e) => setField("location_id", e.target.value)}
+              >
+                <option value="">— Unassigned (Remote/Corporate) —</option>
+                {locationsQuery.data?.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name} {loc.is_primary ? "(Head Office)" : ""}
+                  </option>
+                ))}
+              </select>
+              {fieldErrors.location_id && (
+                <span className="field-error">{fieldErrors.location_id}</span>
+              )}
+            </div>
             
             {/* Mandatory Department Selection */}
             <div className={"field" + (fieldErrors.department_id ? " has-error" : "")}>
@@ -496,6 +541,25 @@ export function EmployeeFormPage() {
                 <span className="field-error">{fieldErrors.position}</span>
               )}
             </div>
+
+            {/* Reporting Manager Combobox */}
+            <div className={"field" + (fieldErrors.reporting_manager_id ? " has-error" : "")}>
+              <label>Reporting Manager</label>
+              <ManagerCombobox
+                value={form.reporting_manager_id}
+                onChange={(mgrId) => setField("reporting_manager_id", mgrId)}
+                excludeId={id}
+                initialManagerName={existingQuery.data?.manager_name ?? undefined}
+                initialManagerPosition={existingQuery.data?.manager_position ?? undefined}
+              />
+              {fieldErrors.reporting_manager_id && (
+                <span className="field-error">{fieldErrors.reporting_manager_id}</span>
+              )}
+              <span className="field-hint">
+                Direct supervisor who approves leaves and attendance regularizations.
+              </span>
+            </div>
+
             <div className="field">
               <label>Level (Band)</label>
               <select

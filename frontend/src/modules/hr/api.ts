@@ -34,6 +34,8 @@ export interface Employee {
   personal_email: string | null;
   phone: string | null;
   department_id: string | null;
+  location_id: string | null;
+  department_name: string | null;
   position: string | null;
   level: string | null;
   reporting_manager_id: string | null;
@@ -73,6 +75,7 @@ export interface EmployeeCreateInput {
   personal_email?: string | null;
   phone?: string | null;
   department_id?: string | null;
+  location_id?: string | null;
   position?: string | null;
   level?: string | null;
   reporting_manager_id?: string | null;
@@ -84,10 +87,13 @@ export interface EmployeeCreateInput {
 }
 
 export interface EmployeeUpdateInput {
+  first_name?: string | null;
   last_name?: string | null;
+  email?: string | null;
   personal_email?: string | null;
   phone?: string | null;
   department_id?: string | null;
+  location_id?: string | null;
   position?: string | null;
   level?: string | null;
   reporting_manager_id?: string | null;
@@ -135,6 +141,23 @@ export async function createEmployee(input: EmployeeCreateInput): Promise<Employ
 
 export async function updateEmployee(id: string, input: EmployeeUpdateInput): Promise<Employee> {
   const { data } = await apiClient.put<Employee>(`/employees/${id}`, input);
+  return data;
+}
+
+export interface ManagerSearchResult {
+  id: string;
+  employee_code: string;
+  first_name: string;
+  last_name: string | null;
+  email: string;
+  position?: string | null;
+  department_name?: string | null;
+}
+
+export async function searchManagers(q?: string, excludeId?: string): Promise<ManagerSearchResult[]> {
+  const { data } = await apiClient.get<ManagerSearchResult[]>("/employees/managers/search", {
+    params: { q, exclude_id: excludeId },
+  });
   return data;
 }
 

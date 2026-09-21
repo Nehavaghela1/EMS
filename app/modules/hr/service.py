@@ -2,7 +2,7 @@ import uuid
 from datetime import timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -190,11 +190,73 @@ class EmployeeService:
                 "An employee cannot be their own reporting manager.",
                 details={"field": "reporting_manager_id"},
             )
-        if self.repo.get_by_id_any_status(manager_id, company_id) is None:
+        mgr = self.repo.get_by_id_any_status(manager_id, company_id)
+        if mgr is None:
             raise InvalidReferenceError(
                 "The specified reporting manager does not exist.",
                 details={"field": "reporting_manager_id"},
             )
+        # Anti-cycle check: traverse candidate manager's reporting hierarchy upwards
+        if self_id is not None:
+            curr = mgr
+            visited = {self_id}
+            while curr and curr.reporting_manager_id:
+                if curr.reporting_manager_id in visited:
+                    raise InvalidReferenceError(
+                        "Setting this manager would create a circular reporting hierarchy.",
+                        details={"field": "reporting_manager_id"},
+                    )
+                visited.add(curr.reporting_manager_id)
+                curr = self.repo.get_by_id_any_status(curr.reporting_manager_id, company_id)
+
+    def search_managers(
+        self,
+        company_id: uuid.UUID,
+        *,
+        q: str | None = None,
+        exclude_id: uuid.UUID | None = None,
+        limit: int = 15,
+    ) -> list[dict]:
+        from sqlalchemy import or_, select
+        from app.modules.hr.models import Department
+
+        stmt = select(Employee, Department.name.label("dept_name")).outerjoin(
+            Department, Department.id == Employee.department_id
+        ).where(
+            Employee.company_id == company_id,
+            Employee.deleted_at.is_(None),
+            Employee.is_active.is_(True),
+        )
+
+        if exclude_id is not None:
+            stmt = stmt.where(Employee.id != exclude_id)
+
+        if q:
+            term = f"%{q.strip().lower()}%"
+            stmt = stmt.where(
+                or_(
+                    func.lower(Employee.first_name).like(term),
+                    func.lower(Employee.last_name).like(term),
+                    func.lower(Employee.employee_code).like(term),
+                    func.lower(Employee.email).like(term),
+                )
+            )
+
+        stmt = stmt.order_by(Employee.first_name, Employee.last_name).limit(limit)
+        results = self.db.execute(stmt).all()
+
+        out = []
+        for emp, dept_name in results:
+            out.append({
+                "id": emp.id,
+                "employee_code": emp.employee_code,
+                "first_name": emp.first_name,
+                "last_name": emp.last_name,
+                "email": emp.email,
+                "position": emp.position,
+                "department_name": dept_name,
+            })
+        return out
 
     def list_employees(
         self,

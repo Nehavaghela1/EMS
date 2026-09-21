@@ -40,6 +40,7 @@ class EmployeeCreateRequest(BaseModel):
     personal_email: EmailStr | None = None
     phone: str | None = None
     department_id: uuid.UUID | None = None
+    location_id: uuid.UUID | None = None
     position: str | None = None
     level: str | None = None
     reporting_manager_id: uuid.UUID | None = None
@@ -62,6 +63,7 @@ class EmployeeUpdateRequest(BaseModel):
     personal_email: EmailStr | None = None
     phone: str | None = None
     department_id: uuid.UUID | None = None
+    location_id: uuid.UUID | None = None
     position: str | None = None
     level: str | None = None
     reporting_manager_id: uuid.UUID | None = None
@@ -81,6 +83,8 @@ class EmployeeResponse(BaseModel):
     personal_email: str | None
     phone: str | None
     department_id: uuid.UUID | None
+    location_id: uuid.UUID | None
+    department: DepartmentResponse | None = None
     position: str | None
     level: str | None
     reporting_manager_id: uuid.UUID | None
@@ -128,6 +132,18 @@ class EmployeeInviteInfo(BaseModel):
 
 class EmployeeCreateResponse(EmployeeResponse):
     invite: EmployeeInviteInfo
+
+
+class ManagerSearchResponse(BaseModel):
+    id: uuid.UUID
+    employee_code: str
+    first_name: str
+    last_name: str | None
+    email: str
+    position: str | None = None
+    department_name: str | None = None
+
+    model_config = {"from_attributes": True}
 
 
 # Resignation & FnF (Routes 27-30)

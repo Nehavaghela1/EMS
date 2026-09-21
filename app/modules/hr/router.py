@@ -16,6 +16,7 @@ from app.modules.hr.schemas import (
     EmployeeInviteInfo,
     EmployeeResponse,
     EmployeeUpdateRequest,
+    ManagerSearchResponse,
 )
 from app.modules.hr.service import DepartmentService, EmployeeService
 from app.modules.identity.models import User, UserRole
@@ -123,6 +124,23 @@ def _to_employee_create_response(employee: Employee, sent_to: str) -> EmployeeCr
     return EmployeeCreateResponse(
         **EmployeeResponse.model_validate(employee).model_dump(),
         invite=EmployeeInviteInfo(sent_to=sent_to, expires_at=employee.activation_expires_at),
+    )
+
+
+@employees_router.get("/managers/search", response_model=list[ManagerSearchResponse])
+def search_managers(
+    q: str | None = None,
+    exclude_id: uuid.UUID | None = None,
+    limit: int = 15,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
+):
+    """Debounced search for candidate reporting managers."""
+    return EmployeeService(db).search_managers(
+        user.company_id,
+        q=q,
+        exclude_id=exclude_id,
+        limit=min(limit, 50),
     )
 
 

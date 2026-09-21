@@ -10,6 +10,8 @@ export const employeeFormSchema = z.object({
   personal_email: z.union([z.email("Enter a valid email address"), z.literal("")]).optional(),
   phone: z.string().trim().optional(),
   department_id: z.string().trim().min(1, "Department is required"),
+  location_id: z.string().trim().optional(),
+  reporting_manager_id: z.string().trim().optional(),
   position: z.string().trim().optional(),
   level: z.string().trim().optional(),
   employment_type: z.enum(["full_time", "part_time", "contract", "intern"]),
