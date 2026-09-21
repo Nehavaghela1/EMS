@@ -117,3 +117,42 @@ export async function attachEmployeeDocument(payload: { employee_id: string; fil
   const { data } = await apiClient.post<EmployeeDocument>("/documents", payload);
   return data;
 }
+
+export interface NotificationItem {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  action_url: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface NotificationListResponse {
+  items: NotificationItem[];
+  page: number;
+  limit: number;
+  total: number;
+  pages: number;
+  has_next: boolean;
+  unread_count: number;
+}
+
+export async function fetchNotifications(unreadOnly = false, limit = 15): Promise<NotificationListResponse> {
+  const { data } = await apiClient.get<NotificationListResponse>("/notifications", {
+    params: { unread_only: unreadOnly, limit },
+  });
+  return data;
+}
+
+export async function markNotificationRead(id: string): Promise<NotificationItem> {
+  const { data } = await apiClient.put<NotificationItem>(`/notifications/${id}/read`);
+  return data;
+}
+
+export async function markAllNotificationsRead(): Promise<{ marked_read: number }> {
+  const { data } = await apiClient.put<{ marked_read: number }>("/notifications/read-all");
+  return data;
+}

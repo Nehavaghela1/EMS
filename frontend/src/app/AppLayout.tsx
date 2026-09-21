@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth, type UserRole } from "./auth-context";
 import { useTimer } from "./timer-context";
 import { getUserWorkspaces, switchWorkspace } from "../modules/identity/api";
-import { CreateWorkspaceModal } from "../shared/components/CreateWorkspaceModal";
+import { NotificationBell } from "../shared/components/NotificationBell";
 
 interface SubItem {
   to: string;
@@ -141,7 +141,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>(user?.company_id || "");
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const workspaceDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -524,28 +523,30 @@ export function AppLayout({ children }: { children: ReactNode }) {
                     >
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setIsWorkspaceDropdownOpen(false);
-                          setIsCreateModalOpen(true);
+                          navigate("/workspaces/new");
                         }}
                         style={{
                           width: "100%",
                           display: "flex",
                           alignItems: "center",
-                          gap: "7px",
-                          padding: "6px 8px",
-                          fontSize: "0.75rem",
+                          justifyContent: "center",
+                          gap: "8px",
+                          padding: "8px 10px",
+                          fontSize: "0.78rem",
                           fontWeight: 600,
-                          color: "#38bdf8",
-                          background: "transparent",
-                          border: "none",
-                          borderRadius: "5px",
+                          color: "#4f46e5",
+                          background: "#e0e7ff",
+                          border: "1px solid #c7d2fe",
+                          borderRadius: "6px",
                           cursor: "pointer",
-                          textAlign: "left",
+                          textAlign: "center",
                           transition: "background 0.15s ease",
                         }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(56, 189, 248, 0.1)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#c7d2fe")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "#e0e7ff")}
                       >
                         <span style={{ fontSize: "0.95rem", lineHeight: 1 }}>+</span>
                         <span>Create New Workspace / Company</span>
@@ -849,8 +850,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
             )}
           </div>
 
-          {/* User Quick Info */}
+          {/* User Quick Info & Notification Bell */}
           <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+            <NotificationBell />
             <span
               style={{
                 fontSize: "0.8rem",
@@ -978,8 +980,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
         </main>
       </div>
-
-      <CreateWorkspaceModal isOpen={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)} />
     </div>
   );
 }
