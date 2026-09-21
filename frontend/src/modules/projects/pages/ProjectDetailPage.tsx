@@ -78,6 +78,7 @@ export function ProjectDetailPage() {
   const [submittingTime, setSubmittingTime] = useState(false);
 
   // Task Modal (Create & Edit)
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [taskTitle, setTaskTitle] = useState("");
@@ -569,6 +570,64 @@ export function ProjectDetailPage() {
           <button className="btn btn-primary" onClick={openNewTaskModal}>
             + Add Task
           </button>
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className="btn btn-outline"
+              style={{ padding: "0.4rem 0.65rem", fontWeight: 700 }}
+              onClick={() => setMoreActionsOpen(!moreActionsOpen)}
+              title="More actions"
+            >
+              •••
+            </button>
+            {moreActionsOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: "115%",
+                  background: "#ffffff",
+                  border: "1px solid var(--color-border, #e2e8f0)",
+                  borderRadius: "8px",
+                  boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
+                  zIndex: 50,
+                  minWidth: "220px",
+                  padding: "6px 0",
+                }}
+                onMouseLeave={() => setMoreActionsOpen(false)}
+              >
+                <button
+                  type="button"
+                  style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                  onClick={() => { setMoreActionsOpen(false); notify("Project report exported"); }}
+                >
+                  <span>📊</span> <span>Export Project Report (CSV / PDF)</span>
+                </button>
+                <button
+                  type="button"
+                  style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                  onClick={() => { setMoreActionsOpen(false); setActiveTab("team"); }}
+                >
+                  <span>👥</span> <span>Manage Project Team</span>
+                </button>
+                <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                <button
+                  type="button"
+                  style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                  onClick={() => { setMoreActionsOpen(false); notify("Project closed/archived"); }}
+                >
+                  <span>🔒</span> <span>Close / Archive Project</span>
+                </button>
+                <button
+                  type="button"
+                  style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#dc2626", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                  onClick={() => { setMoreActionsOpen(false); notify("Delete project triggered"); }}
+                >
+                  <span>🗑️</span> <span>Delete Project</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
