@@ -131,6 +131,8 @@ class TimeEntryCreate(BaseModel):
     hours: Decimal = Field(..., gt=0, le=24)
     description: Optional[str] = None
     is_billable: bool = True
+    is_overtime: bool = False
+    overtime_multiplier: Optional[Decimal] = None
 
 class TimeEntryUpdate(BaseModel):
     task_id: Optional[UUID] = None
@@ -139,6 +141,8 @@ class TimeEntryUpdate(BaseModel):
     description: Optional[str] = None
     is_billable: Optional[bool] = None
     status: Optional[str] = Field(None, pattern="^(draft|submitted|approved|rejected)$")
+    is_overtime: Optional[bool] = None
+    overtime_multiplier: Optional[Decimal] = None
 
 class TimeEntryResponse(BaseModel):
     id: UUID
@@ -151,6 +155,9 @@ class TimeEntryResponse(BaseModel):
     description: Optional[str] = None
     is_billable: bool
     status: str
+    is_overtime: bool
+    overtime_multiplier: Optional[Decimal] = None
+    overtime_amount: Optional[Decimal] = None
     approved_by: Optional[UUID] = None
     approved_at: Optional[datetime] = None
     created_at: datetime

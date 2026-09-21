@@ -96,6 +96,12 @@ class TimeEntry(Base):
     approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_at = Column(DateTime, nullable=True)
     rejection_reason = Column(Text, nullable=True)
+    
+    # Overtime & Billing
+    is_overtime = Column(Boolean, default=False, nullable=False)
+    overtime_multiplier = Column(Numeric(3, 2), nullable=True)
+    overtime_amount = Column(Numeric(12, 2), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

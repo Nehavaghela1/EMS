@@ -17,6 +17,7 @@ from app.modules.projects.schemas import (
     MilestoneCreate, MilestoneUpdate, MilestoneResponse,
     ProjectDocumentCreate, ProjectDocumentResponse
 )
+from app.modules.payroll.models import EmployeeSalary
 
 class ProjectService:
     def __init__(self, db: Session):
@@ -419,6 +420,19 @@ class ProjectService:
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
             raise NotFoundError("Time entry not found.")
+            
+        if status == "approved" and entry.is_overtime:
+            # Calculate overtime amount
+            salary = self.repo.db.query(EmployeeSalary).filter(
+                EmployeeSalary.employee_id == entry.employee_id,
+                EmployeeSalary.company_id == company_id,
+                EmployeeSalary.deleted_at.is_(None)
+            ).order_by(EmployeeSalary.effective_from.desc()).first()
+            
+            if salary and salary.hourly_rate:
+                multiplier = entry.overtime_multiplier or Decimal("1.00")
+                entry.overtime_amount = entry.hours * salary.hourly_rate * multiplier
+
         updated = self.repo.approve_reject_time_entry(
             entry, status, approver_user_id, rejection_reason=rejection_reason.strip() if rejection_reason else None
         )
