@@ -178,3 +178,17 @@ export async function deleteProjectDocument(projectId: string, documentId: strin
   await apiClient.delete<void>(`/projects/${projectId}/documents/${documentId}`);
 }
 
+export async function downloadProjectDocument(projectId: string, documentId: string, filename: string): Promise<void> {
+  const response = await apiClient.get<Blob>(`/projects/${projectId}/documents/${documentId}/download`, {
+    responseType: "blob",
+  });
+  const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(blobUrl);
+}
+

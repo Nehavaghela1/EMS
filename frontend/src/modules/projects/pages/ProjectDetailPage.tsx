@@ -6,7 +6,7 @@ import {
   fetchMilestones, createMilestone, updateMilestone, updateProject,
   fetchTaskComments, addTaskComment,
   fetchTimeEntries, createTimeEntry,
-  fetchProjectDocuments, uploadProjectDocument, deleteProjectDocument
+  fetchProjectDocuments, uploadProjectDocument, deleteProjectDocument, downloadProjectDocument
 } from "../api";
 import type {
   ProjectSummary, ProjectStatus, Task, TaskStatus, TaskPriority,
@@ -239,6 +239,21 @@ export function ProjectDetailPage() {
       notify(errorMsg, "error");
     } finally {
       setUploadingDoc(false);
+    }
+  }
+
+  const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null);
+
+  async function handleDownloadDocument(doc: ProjectDocument) {
+    if (!id) return;
+    try {
+      setDownloadingDocId(doc.id);
+      await downloadProjectDocument(id, doc.id, doc.name);
+      notify("Download started", "success");
+    } catch (err: any) {
+      notify(err?.response?.data?.error?.message || err?.message || "Failed to download document", "error");
+    } finally {
+      setDownloadingDocId(null);
     }
   }
 
@@ -1455,17 +1470,15 @@ export function ProjectDetailPage() {
                       <td>{formatDate(doc.created_at)}</td>
                       <td style={{ textAlign: "right" }}>
                         <div className="flex gap-2 justify-end">
-                          {doc.download_url && (
-                            <a
-                              href={doc.download_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="btn btn-outline btn-sm"
-                              style={{ textDecoration: "none" }}
-                            >
-                              Download ↓
-                            </a>
-                          )}
+                          <button
+                            type="button"
+                            className="btn btn-outline btn-sm"
+                            onClick={() => handleDownloadDocument(doc)}
+                            disabled={downloadingDocId === doc.id}
+                            title="Download document directly"
+                          >
+                            {downloadingDocId === doc.id ? "Downloading…" : "Download ↓"}
+                          </button>
                           {canManage && (
                             <button
                               type="button"

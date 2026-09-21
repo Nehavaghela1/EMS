@@ -446,3 +446,35 @@ def delete_project_document(
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
     service.delete_document(cid, project_id, document_id)
 
+
+@router.get("/{project_id}/documents/{document_id}/download")
+def download_project_document(
+    project_id: UUID,
+    document_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user)
+):
+    import os
+    from fastapi.responses import FileResponse
+    from app.modules.platform.models import FileObject
+
+    service = ProjectService(db)
+    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    project = service.repo.get_project_by_id(cid, project_id)
+    if not project:
+        raise NotFoundError("Project not found.")
+
+    doc = service.repo.get_project_document(project.company_id, document_id)
+    if not doc:
+        raise NotFoundError("Document not found.")
+
+    file_obj = db.query(FileObject).filter(FileObject.id == doc.file_id).first()
+    if not file_obj or not os.path.exists(file_obj.storage_path):
+        raise NotFoundError("File not found on disk.")
+
+    return FileResponse(
+        path=file_obj.storage_path,
+        filename=doc.name or file_obj.file_name,
+        media_type=doc.file_type or file_obj.file_type or "application/octet-stream",
+    )
+
