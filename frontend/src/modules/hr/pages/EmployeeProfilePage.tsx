@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation, useNavigate, useParams, Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
@@ -249,8 +249,8 @@ export function EmployeeProfilePage() {
               <Field label="Full Name" value={`${e.first_name} ${e.last_name || ""}`} isLocked={true} />
               <Field label="Employee Code" value={e.employee_code} isLocked={true} />
               <Field label="Work Email" value={e.email} isLocked={true} />
-              <Field label="Personal Email" value={e.personal_email ?? "—"} isLocked={false} />
-              <Field label="Phone" value={e.phone ?? "—"} isLocked={false} />
+              <Field label="Personal Email" value={e.personal_email ?? "—"} editable={true} />
+              <Field label="Phone" value={e.phone ?? "—"} editable={true} />
               <Field label="Invitation Status" value={e.invitation_status.replace("_", " ")} isLocked={true} />
             </div>
           </div>
@@ -318,10 +318,12 @@ function Field({
   label,
   value,
   isLocked,
+  editable,
 }: {
   label: string;
   value: React.ReactNode;
   isLocked?: boolean;
+  editable?: boolean;
 }) {
   return (
     <div className="field">
@@ -345,7 +347,7 @@ function Field({
           >
             🔒 HR Managed
           </span>
-        ) : (
+        ) : editable ? (
           <span
             style={{
               fontSize: "0.68rem",
@@ -360,7 +362,7 @@ function Field({
           >
             ✎ Self Editable
           </span>
-        )}
+        ) : null}
       </div>
       <div style={{ fontWeight: 600, color: "var(--color-heading, #1e293b)", fontSize: "0.92rem" }}>
         {value}
@@ -384,12 +386,78 @@ function ResignationAndFnFCard({
   const [terminating, setTerminating] = useState(false);
   const [updatingClearance, setUpdatingClearance] = useState(false);
 
+  const noticeRequired = employee.notice_period_days || 30;
+
+  function calculateExpectedLwd(resDateStr: string, days: number): string {
+    if (!resDateStr) return "";
+    const [y, m, d] = resDateStr.split("-").map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    dateObj.setDate(dateObj.getDate() + days);
+    return dateObj.toISOString().split("T")[0];
+  }
+
+  function computeShortfallDays(resDateStr?: string | null, lwdStr?: string | null, reqDays: number = 30): { servedDays: number; shortfallDays: number } {
+    if (!resDateStr || !lwdStr) return { servedDays: 0, shortfallDays: 0 };
+    const rDate = new Date(resDateStr);
+    const lDate = new Date(lwdStr);
+    const diffTime = lDate.getTime() - rDate.getTime();
+    const servedDays = Math.max(0, Math.round(diffTime / (1000 * 60 * 60 * 24)));
+    const shortfallDays = Math.max(0, reqDays - servedDays);
+    return { servedDays, shortfallDays };
+  }
+
   // Resignation state (Track A)
   const [resignationDate, setResignationDate] = useState("");
   const [lastWorkingDate, setLastWorkingDate] = useState("");
   const [reason, setReason] = useState("");
-  const [noticeWaived, setNoticeWaived] = useState(false);
-  const [recoveryDays, setRecoveryDays] = useState(0);
+  const [noticeWaived, setNoticeWaived] = useState(Boolean(employee.notice_waived));
+
+  // Initialize review Last Working Date & Recovery Days
+  const initialLwd = employee.last_working_date || "";
+  const [reviewLwd, setReviewLwd] = useState(initialLwd);
+
+  const initialShortfall = computeShortfallDays(
+    employee.resignation_date,
+    initialLwd,
+    noticeRequired
+  ).shortfallDays;
+
+  const [recoveryDays, setRecoveryDays] = useState<number>(() => {
+    if (employee.notice_waived) return 0;
+    const recDays = employee.notice_recovery_days ?? 0;
+    if (recDays > 0) return recDays;
+    return initialShortfall;
+  });
+
+  // Sync recovery days if employee record updates
+  useEffect(() => {
+    if (employee.resignation_status === "submitted") {
+      setNoticeWaived(Boolean(employee.notice_waived));
+      const currentLwd = employee.last_working_date || "";
+      setReviewLwd(currentLwd);
+      const sf = computeShortfallDays(employee.resignation_date, currentLwd, noticeRequired).shortfallDays;
+      const recDays = employee.notice_recovery_days ?? 0;
+      setRecoveryDays(employee.notice_waived ? 0 : (recDays > 0 ? recDays : sf));
+    }
+  }, [employee.id, employee.resignation_status, employee.last_working_date, employee.resignation_date, employee.notice_recovery_days, employee.notice_waived, noticeRequired]);
+
+  function handleReviewLwdChange(newLwd: string) {
+    setReviewLwd(newLwd);
+    if (!noticeWaived) {
+      const sf = computeShortfallDays(employee.resignation_date, newLwd, noticeRequired).shortfallDays;
+      setRecoveryDays(sf);
+    }
+  }
+
+  function handleWaiveNoticeToggle(waived: boolean) {
+    setNoticeWaived(waived);
+    if (waived) {
+      setRecoveryDays(0);
+    } else {
+      const sf = computeShortfallDays(employee.resignation_date, reviewLwd || employee.last_working_date, noticeRequired).shortfallDays;
+      setRecoveryDays(sf);
+    }
+  }
 
   // Termination state (Track B)
   const [showTerminateModal, setShowTerminateModal] = useState(false);
@@ -436,7 +504,7 @@ function ResignationAndFnFCard({
     try {
       await approveResignation(employee.id, {
         approved,
-        last_working_date: lastWorkingDate || undefined,
+        last_working_date: reviewLwd || undefined,
         notice_waived: noticeWaived,
         notice_recovery_days: recoveryDays,
       });
@@ -581,7 +649,13 @@ function ResignationAndFnFCard({
                 <input
                   type="date"
                   value={resignationDate}
-                  onChange={(e) => setResignationDate(e.target.value)}
+                  onChange={(e) => {
+                    const newResDate = e.target.value;
+                    setResignationDate(newResDate);
+                    if (!lastWorkingDate || lastWorkingDate === calculateExpectedLwd(resignationDate, noticeRequired)) {
+                      setLastWorkingDate(calculateExpectedLwd(newResDate, noticeRequired));
+                    }
+                  }}
                   required
                 />
               </div>
@@ -595,6 +669,32 @@ function ResignationAndFnFCard({
                 />
               </div>
             </div>
+
+            {/* Amber Warning on Notice Shortfall for Track A */}
+            {(() => {
+              const { servedDays, shortfallDays } = computeShortfallDays(resignationDate, lastWorkingDate, noticeRequired);
+              const expectedLwd = calculateExpectedLwd(resignationDate, noticeRequired);
+              if (shortfallDays > 0) {
+                return (
+                  <div
+                    style={{
+                      backgroundColor: "#fffbeb",
+                      border: "1px solid #fde68a",
+                      borderLeft: "4px solid #f59e0b",
+                      borderRadius: "6px",
+                      padding: "8px 12px",
+                      color: "#92400e",
+                      fontSize: "0.82rem",
+                      marginTop: "10px",
+                    }}
+                  >
+                    ⚠️ <strong>Notice Shortfall Warning:</strong> Your contractual notice period is <b>{noticeRequired} days</b> (Expected LWD: <b>{expectedLwd}</b>). Requesting <b>{lastWorkingDate}</b> ({servedDays} days served) creates a <b>{shortfallDays}-day notice shortfall</b> that may be deducted from Full & Final settlement unless approved by HR.
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
             <div className="field mt-2">
               <label>Reason for Resignation</label>
               <select
@@ -628,14 +728,14 @@ function ResignationAndFnFCard({
               <h3 style={{ margin: 0, color: "#dc2626" }}>⚠️ Initiate Involuntary Termination</h3>
               <button type="button" className="modal-close-btn" onClick={() => setShowTerminateModal(false)}>✕</button>
             </div>
-            <form onSubmit={handleTerminate} className="stack gap-3 mt-3">
-              <div className="alert alert-error text-xs" style={{ margin: 0 }}>
-                This action initiates company-directed separation for <b>{employee.first_name} {employee.last_name}</b>. It schedules account deactivation and activates the Full & Final settlement pipeline.
-              </div>
+            <form onSubmit={handleTerminate} className="stack gap-3 mt-2">
+              <p className="text-xs text-muted" style={{ margin: 0 }}>
+                Initiates official involuntary termination. The employee account will be severed on the termination date with recorded severance and notice pay in lieu.
+              </p>
 
               <div className="form-grid">
                 <div className="field">
-                  <label>Termination Date (LWD) <span style={{ color: "#dc2626" }}>*</span></label>
+                  <label>Effective Termination Date *</label>
                   <input
                     type="date"
                     value={termDate}
@@ -644,13 +744,16 @@ function ResignationAndFnFCard({
                   />
                 </div>
                 <div className="field">
-                  <label>Primary Reason <span style={{ color: "#dc2626" }}>*</span></label>
-                  <select value={termReason} onChange={(e) => setTermReason(e.target.value)}>
-                    <option value="Involuntary - Misconduct">Involuntary - Misconduct / Code of Conduct</option>
-                    <option value="Involuntary - Restructuring / Redundancy">Involuntary - Restructuring / Redundancy</option>
-                    <option value="Involuntary - Failed Probation">Involuntary - Failed Probation Period</option>
-                    <option value="Involuntary - Failed Performance PIP">Involuntary - Failed Performance PIP</option>
-                    <option value="Mutual Separation">Mutual Separation Agreement</option>
+                  <label>Termination Reason *</label>
+                  <select
+                    value={termReason}
+                    onChange={(e) => setTermReason(e.target.value)}
+                    required
+                  >
+                    <option value="Involuntary - Misconduct">Involuntary - Misconduct / Policy Violation</option>
+                    <option value="Involuntary - Performance">Involuntary - Underperformance / Failed PIP</option>
+                    <option value="Involuntary - Redundancy">Involuntary - Role Redundancy / Restructuring</option>
+                    <option value="Involuntary - Contract End">Involuntary - Mutual Separation / Contract End</option>
                   </select>
                 </div>
               </div>
@@ -713,13 +816,51 @@ function ResignationAndFnFCard({
           {isHr ? (
             <div className="card" style={{ background: "var(--color-bg)" }}>
               <h4 className="mt-0 mb-2">HR Approval & Notice Terms (Track A Review)</h4>
+              
+              {/* Shortfall & Notice Breakdown Banner */}
+              {(() => {
+                const { servedDays, shortfallDays } = computeShortfallDays(
+                  employee.resignation_date,
+                  reviewLwd || employee.last_working_date,
+                  noticeRequired
+                );
+                return (
+                  <div
+                    className="p-2 mb-3 rounded"
+                    style={{
+                      backgroundColor: shortfallDays > 0 && !noticeWaived ? "#fffbeb" : "#f1f5f9",
+                      border: `1px solid ${shortfallDays > 0 && !noticeWaived ? "#fde68a" : "#cbd5e1"}`,
+                      fontSize: "0.82rem",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      gap: "8px",
+                    }}
+                  >
+                    <div>
+                      <span>Contractual Notice: <b>{noticeRequired} days</b></span>
+                      <span className="mx-2">•</span>
+                      <span>Served Notice: <b>{servedDays} days</b></span>
+                      <span className="mx-2">•</span>
+                      <span>
+                        Shortfall: <b style={{ color: shortfallDays > 0 ? "#b45309" : "#15803d" }}>{shortfallDays} days</b>
+                      </span>
+                    </div>
+                    {noticeWaived && (
+                      <span className="badge badge-success">✓ Notice Waived by HR</span>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div className="form-grid mb-3">
                 <div className="field">
                   <label>Confirmed Last Working Day (LWD)</label>
                   <input
                     type="date"
-                    defaultValue={employee.last_working_date ?? ""}
-                    onChange={(e) => setLastWorkingDate(e.target.value)}
+                    value={reviewLwd}
+                    onChange={(e) => handleReviewLwdChange(e.target.value)}
                   />
                 </div>
                 <div className="field">
@@ -729,7 +870,14 @@ function ResignationAndFnFCard({
                     min="0"
                     value={recoveryDays}
                     onChange={(e) => setRecoveryDays(Number(e.target.value))}
+                    disabled={noticeWaived}
+                    title={noticeWaived ? "Notice period is waived" : "Number of unserved days to deduct in FnF"}
                   />
+                  <span className="field-hint" style={{ fontSize: "0.75rem" }}>
+                    {noticeWaived
+                      ? "Automatically set to 0 because notice is waived."
+                      : "Deducted in Full & Final settlement (Recovery = Days × Per-day Salary)."}
+                  </span>
                 </div>
               </div>
               <div className="row mb-3">
@@ -737,9 +885,9 @@ function ResignationAndFnFCard({
                   type="checkbox"
                   id="noticeWaived"
                   checked={noticeWaived}
-                  onChange={(e) => setNoticeWaived(e.target.checked)}
+                  onChange={(e) => handleWaiveNoticeToggle(e.target.checked)}
                 />
-                <label htmlFor="noticeWaived" className="text-sm font-medium">
+                <label htmlFor="noticeWaived" className="text-sm font-medium" style={{ cursor: "pointer" }}>
                   Waive notice period (exempt employee from notice shortfall deduction)
                 </label>
               </div>
@@ -882,6 +1030,14 @@ function ResignationAndFnFCard({
                 {/* Financial Component Grid */}
                 <div className="form-grid mb-3">
                   <Field
+                    label="Total Monthly Gross"
+                    value={`₹${Number(fnfQuery.data.monthly_gross_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                  />
+                  <Field
+                    label="Effective Per-Day Salary (30d base)"
+                    value={`₹${Number(fnfQuery.data.per_day_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })} / day`}
+                  />
+                  <Field
                     label="Unpaid Salary Days"
                     value={`${fnfQuery.data.unpaid_salary_days} days`}
                   />
@@ -966,25 +1122,37 @@ function ResignationAndFnFCard({
                 )}
 
                 {/* Net Payout Summary Bar */}
-                <div
-                  className="row-between align-center mt-3"
-                  style={{
-                    borderTop: "2px solid var(--color-border)",
-                    paddingTop: "var(--space-3)",
-                  }}
-                >
-                  <div>
-                    <div className="font-semibold text-base">FnF Net Payout</div>
-                    <div className="text-xs text-muted">
-                      (Salary + Leaves + Reimbursements + Gratuity + Severance) - (Notice Shortfall + Deductions)
+                {(() => {
+                  const netAmount = Number(fnfQuery.data.total_settlement_amount || 0);
+                  const isPositive = netAmount >= 0;
+                  return (
+                    <div
+                      className="row-between align-center mt-3"
+                      style={{
+                        borderTop: "2px solid var(--color-border)",
+                        paddingTop: "var(--space-3)",
+                      }}
+                    >
+                      <div>
+                        <div className="font-semibold text-base" style={{ color: isPositive ? "var(--color-heading, #1e293b)" : "#b91c1c" }}>
+                          {isPositive ? "Total Net FnF Payout (Payable to Employee)" : "Total Net Recovery (Payable by Employee to Company)"}
+                        </div>
+                        <div className="text-xs text-muted">
+                          {isPositive
+                            ? "(Salary + Leaves + Reimbursements + Gratuity + Severance) - (Notice Shortfall + Deductions)"
+                            : "Pending collection via invoice/demand note before issuing relieving letter."}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xl font-bold" style={{ color: isPositive ? "var(--color-primary)" : "#b91c1c" }}>
+                          {isPositive
+                            ? `₹${netAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`
+                            : `-₹${Math.abs(netAmount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xl font-bold" style={{ color: "var(--color-primary)" }}>
-                      ₹{Number(fnfQuery.data.total_settlement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Final Settlement Release Action */}
                 {isHr && !employee.fnf_settled_at && (

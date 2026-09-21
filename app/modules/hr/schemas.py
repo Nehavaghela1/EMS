@@ -175,6 +175,8 @@ class FnFSettlementResponse(BaseModel):
     leave_encashment_amount: Decimal
     unpaid_salary_days: int
     unpaid_salary_amount: Decimal
+    monthly_gross_salary: Decimal = Decimal("0.00")
+    per_day_salary: Decimal = Decimal("0.00")
     severance_pay: Decimal = Decimal("0.00")
     pending_reimbursements: Decimal = Decimal("0.00")
     gratuity_bonus: Decimal = Decimal("0.00")

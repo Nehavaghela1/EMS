@@ -124,6 +124,27 @@ class DepartmentService:
 CONTACT_FIELDS = {"last_name", "personal_email", "phone"}
 
 
+def get_policy_notice_days(level: str | None, is_probation: bool = False, custom_days: int | None = None) -> int:
+    """Calculate contractual notice period by level/band or probation according to policy:
+    - Probation: 15 days
+    - L1: 30 days
+    - L2: 60 days
+    - L3+: 90 days
+    - Default: 30 days
+    If custom_days is explicitly non-standard (>0 and != 30), respect it."""
+    if custom_days and custom_days not in (0, 30):
+        return custom_days
+    if is_probation:
+        return 15
+    if level == "L3":
+        return 90
+    if level == "L2":
+        return 60
+    if level == "L1":
+        return 30
+    return custom_days if custom_days else 30
+
+
 class EmployeeService:
     """Routes 19-26 (10.3), employee_code generation (11.2)."""
 
@@ -267,7 +288,11 @@ class EmployeeService:
             employment_type=data.employment_type,
             hire_date=data.hire_date,
             probation_end_date=data.probation_end_date,
-            notice_period_days=data.notice_period_days,
+            notice_period_days=get_policy_notice_days(
+                level=data.level,
+                is_probation=bool(data.probation_end_date and data.probation_end_date > data.hire_date),
+                custom_days=data.notice_period_days,
+            ),
             invitation_status=InvitationStatus.sent,
             activation_token_hash=hash_token(raw_token),
             activation_expires_at=utcnow() + timedelta(days=settings.INVITE_TOKEN_EXPIRE_DAYS),
@@ -430,12 +455,20 @@ class EmployeeService:
         employee = self._get_or_404(company_id, employee_id)
         if employee.resignation_status == ResignationStatus.submitted:
             raise ConflictError("Resignation is already submitted.")
+
+        # Calculate served days and notice recovery shortfall
+        served_days = max(0, (data.last_working_date - data.resignation_date).days)
+        notice_required = employee.notice_period_days or 30
+        shortfall_days = max(0, notice_required - served_days)
+
         self.repo.update(
             employee,
             resignation_status=ResignationStatus.submitted,
             resignation_date=data.resignation_date,
             last_working_date=data.last_working_date,
             separation_type="voluntary",
+            notice_recovery_days=shortfall_days,
+            notice_waived=False,
         )
         self.db.commit()
         return employee
@@ -497,25 +530,93 @@ class EmployeeService:
         notice_served = (last_working - (employee.resignation_date or last_working)).days if employee.resignation_date else notice_required
         notice_recovery_days = employee.notice_recovery_days if not employee.notice_waived else 0
 
-        # Calculate salary and daily rate from in-force salary assignment
-        from app.modules.payroll.repository import EmployeeSalaryRepository, SalaryStructureRepository
-        from app.modules.payroll.service import resolve_earning_breakdown
+        # Calculate salary and daily rate from in-force salary assignment or latest payslip
+        from app.modules.payroll.repository import EmployeeSalaryRepository, SalaryStructureRepository, PayrollItemRepository, StatutoryConfigRepository
+        from app.modules.payroll.payslip_engine import PayslipInput, StatutoryConfigSpec, ComponentSpec, calculate_payslip
         salary_repo = EmployeeSalaryRepository(self.db)
-        active_sal = salary_repo.get_in_force(employee.id, company_id, last_working)
+        payroll_item_repo = PayrollItemRepository(self.db)
+
+        # 1. Try in-force salary on last_working date, then open-ended, then latest recorded salary
+        active_sal = (
+            salary_repo.get_in_force(employee.id, company_id, last_working)
+            or salary_repo.get_open_ended(employee.id, company_id)
+            or salary_repo.get_latest(employee.id, company_id)
+        )
         
-        monthly_gross = Decimal("50000.00")
-        per_day_basic = Decimal("1000.00")
-        per_day_gross = Decimal("1666.67")
+        monthly_gross = Decimal("0.00")
+        monthly_basic = Decimal("0.00")
+        per_day_basic = Decimal("0.00")
+        per_day_gross = Decimal("0.00")
 
         if active_sal:
             struct = SalaryStructureRepository(self.db).get_by_id(active_sal.structure_id, company_id)
             if struct:
-                earnings, _, resolved_gross = resolve_earning_breakdown(struct.components, active_sal.ctc)
-                monthly_gross = resolved_gross
-                basic_comp = next((e for e in earnings if e.code == "BASIC" and e.amount is not None), None)
+                stat_row = StatutoryConfigRepository(self.db).get_by_company(company_id)
+                stat_spec = StatutoryConfigSpec(
+                    pf_enabled=stat_row.pf_enabled if stat_row else True,
+                    pf_employee_rate=stat_row.pf_employee_rate if stat_row else Decimal("12.000"),
+                    pf_employer_rate=stat_row.pf_employer_rate if stat_row else Decimal("12.000"),
+                    pf_wage_ceiling=stat_row.pf_wage_ceiling if stat_row else Decimal("15000.00"),
+                    pf_restrict_to_ceiling=stat_row.pf_restrict_to_ceiling if stat_row else True,
+                    esi_enabled=stat_row.esi_enabled if stat_row else True,
+                    esi_employee_rate=stat_row.esi_employee_rate if stat_row else Decimal("0.750"),
+                    esi_employer_rate=stat_row.esi_employer_rate if stat_row else Decimal("3.250"),
+                    esi_wage_ceiling=stat_row.esi_wage_ceiling if stat_row else Decimal("21000.00"),
+                    pt_enabled=stat_row.pt_enabled if stat_row else True,
+                    pt_state=stat_row.pt_state if stat_row else "Gujarat",
+                    tds_enabled=stat_row.tds_enabled if stat_row else True,
+                    default_tax_regime=stat_row.default_tax_regime if stat_row else "new",
+                )
+                comp_specs = [
+                    ComponentSpec(
+                        code=c.code,
+                        name=c.name,
+                        type=c.type.value if hasattr(c.type, "value") else c.type,
+                        calculation_type=c.calculation_type.value if hasattr(c.calculation_type, "value") else c.calculation_type,
+                        value=c.value,
+                        percentage_of=c.percentage_of.value if hasattr(c.percentage_of, "value") and c.percentage_of else c.percentage_of,
+                        is_taxable=c.is_taxable,
+                        is_statutory=c.is_statutory,
+                        display_order=c.display_order,
+                    )
+                    for c in struct.components
+                ]
+                p_in = PayslipInput(
+                    ctc_annual=active_sal.ctc,
+                    components=comp_specs,
+                    statutory=stat_spec,
+                    pt_slabs=[],
+                    tax_slabs=[],
+                    month=last_working.month,
+                    year=last_working.year,
+                    financial_year=f"{last_working.year}-{last_working.year+1}",
+                    working_days=Decimal("30"),
+                    present_days=Decimal("30"),
+                    paid_leave_days=Decimal("0"),
+                    lop_days=Decimal("0"),
+                )
+                p_out = calculate_payslip(p_in)
+                monthly_gross = p_out.gross_salary
+                basic_comp = next((e for e in p_out.earnings if e.code == "BASIC"), None)
                 monthly_basic = basic_comp.amount if basic_comp else monthly_gross * Decimal("0.40")
-                per_day_gross = (monthly_gross / Decimal("30")).quantize(Decimal("0.01"))
-                per_day_basic = (monthly_basic / Decimal("30")).quantize(Decimal("0.01"))
+
+        # 2. If no salary structure or gross resolved to 0, check latest payslip snapshot
+        if monthly_gross <= Decimal("0.00"):
+            recent_payslips = payroll_item_repo.list_by_employee_id(company_id, employee.id)
+            if recent_payslips:
+                latest_slip = recent_payslips[0]
+                monthly_gross = latest_slip.gross_salary
+                # Find basic from earnings_json if available
+                basic_in_slip = next(
+                    (Decimal(str(e.get("amount", 0))) for e in (latest_slip.earnings_json or []) if e.get("code") == "BASIC"),
+                    None,
+                )
+                monthly_basic = basic_in_slip if basic_in_slip is not None else monthly_gross * Decimal("0.40")
+
+        # Daily rate calculation: monthly / 30
+        if monthly_gross > Decimal("0.00"):
+            per_day_gross = (monthly_gross / Decimal("30")).quantize(Decimal("0.01"))
+            per_day_basic = (monthly_basic / Decimal("30")).quantize(Decimal("0.01"))
 
         notice_recovery_amount = (Decimal(str(notice_recovery_days)) * per_day_gross).quantize(Decimal("0.01"))
 
@@ -565,6 +666,8 @@ class EmployeeService:
             leave_encashment_amount=leave_encashment_amount,
             unpaid_salary_days=unpaid_salary_days,
             unpaid_salary_amount=unpaid_salary_amount,
+            monthly_gross_salary=monthly_gross,
+            per_day_salary=per_day_gross,
             severance_pay=severance_pay,
             pending_reimbursements=pending_reimbursements,
             gratuity_bonus=gratuity_bonus,
