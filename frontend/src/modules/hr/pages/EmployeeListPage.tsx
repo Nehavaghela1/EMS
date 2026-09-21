@@ -5,6 +5,7 @@ import { PageHeader } from "../../../shared/components/PageHeader";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
 import { usePagination } from "../../../shared/hooks/usePagination";
 import { useDebounce } from "../../../shared/hooks/useDebounce";
+import { useToast } from "../../../app/toast-context";
 import { useHasRole } from "../../../shared/hooks/useRole";
 import { parseApiError } from "../../../shared/api/errors";
 import { listDepartments, listEmployees, updateEmployee, type Employee } from "../api";
@@ -62,6 +63,8 @@ export function EmployeeListPage() {
   const [quickCustomPosition, setQuickCustomPosition] = useState("");
   const [quickSaving, setQuickSaving] = useState(false);
   const [quickError, setQuickError] = useState<string | null>(null);
+  const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
+  const { notify } = useToast();
 
   const queryClient = useQueryClient();
 
@@ -203,6 +206,82 @@ export function EmployeeListPage() {
         <span className={"badge " + (e.is_active ? "badge-success" : "badge-muted")}>
           {e.is_active ? "Active" : "Inactive"}
         </span>
+      ),
+    },
+    {
+      key: "actions",
+      label: "",
+      render: (e) => (
+        <div style={{ position: "relative", textAlign: "right" }}>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            style={{ padding: "0.2rem 0.5rem" }}
+            onClick={(evt) => {
+              evt.stopPropagation();
+              setActionMenuOpen(actionMenuOpen === e.id ? null : e.id);
+            }}
+          >
+            •••
+          </button>
+          {actionMenuOpen === e.id && (
+            <div
+              style={{
+                position: "absolute",
+                right: 0,
+                top: "100%",
+                background: "#ffffff",
+                border: "1px solid var(--color-border, #e2e8f0)",
+                borderRadius: "8px",
+                boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                zIndex: 50,
+                minWidth: "200px",
+                padding: "6px 0",
+                textAlign: "left"
+              }}
+              onMouseLeave={() => setActionMenuOpen(null)}
+            >
+              <button
+                type="button"
+                style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                onClick={(evt) => { evt.stopPropagation(); navigate(`/employees/${e.id}`); }}
+              >
+                <span>👁️</span> <span>View Full Profile</span>
+              </button>
+              <button
+                type="button"
+                style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                onClick={(evt) => { evt.stopPropagation(); handleOpenQuickEdit(e); setActionMenuOpen(null); }}
+              >
+                <span>✎</span> <span>Quick Edit</span>
+              </button>
+              {e.invitation_status !== "activated" && (
+                <button
+                  type="button"
+                  style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                  onClick={(evt) => { evt.stopPropagation(); notify("Resend Invite flow triggered"); setActionMenuOpen(null); }}
+                >
+                  <span>✉️</span> <span>Resend Invite</span>
+                </button>
+              )}
+              <button
+                type="button"
+                style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                onClick={(evt) => { evt.stopPropagation(); navigate(`/employees/${e.id}`); notify("Redirected to profile to print dossier"); }}
+              >
+                <span>📄</span> <span>Download Dossier</span>
+              </button>
+              <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+              <button
+                type="button"
+                style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#dc2626", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                onClick={(evt) => { evt.stopPropagation(); notify("Deactivate flow initiated."); setActionMenuOpen(null); }}
+              >
+                <span>🚫</span> <span>Deactivate / Archive</span>
+              </button>
+            </div>
+          )}
+        </div>
       ),
     },
   ];

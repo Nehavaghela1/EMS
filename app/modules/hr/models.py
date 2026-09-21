@@ -111,6 +111,9 @@ class Employee(TenantBase):
     department_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("departments.id"), nullable=True
     )
+    location_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("company_locations.id"), nullable=True
+    )
     position: Mapped[str | None] = mapped_column(String(150), nullable=True)
     level: Mapped[str | None] = mapped_column(String(10), nullable=True)
     reporting_manager_id: Mapped[uuid.UUID | None] = mapped_column(

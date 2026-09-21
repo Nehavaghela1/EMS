@@ -1288,3 +1288,59 @@ table.table tbody tr:hover {
 .text-2xl {
   font-size: var(--text-2xl);
 }
+
+@media screen {
+  .print-only {
+    display: none !important;
+  }
+}
+
+@media print {
+  /* Hide navigation, sidebar, and buttons */
+  nav, aside, header, button, .no-print, .screen-only {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* Dossier Print Styles */
+  #printable-employee-dossier {
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    color: #000000 !important;
+    background: #ffffff !important;
+    font-size: 12px;
+  }
+  
+  #printable-employee-dossier .dossier-section {
+    break-inside: avoid;
+    border: 1px solid #e2e8f0;
+    margin-bottom: 1rem;
+    padding: 1rem;
+    border-radius: 6px;
+  }
+
+  #printable-employee-dossier table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  #printable-employee-dossier td {
+    padding: 6px 0;
+    vertical-align: top;
+  }
+
+  #printable-employee-dossier .td-label {
+    width: 35%;
+    color: #64748b;
+    font-weight: 500;
+  }
+
+  #printable-employee-dossier .td-value {
+    width: 65%;
+    font-weight: 600;
+  }
+}

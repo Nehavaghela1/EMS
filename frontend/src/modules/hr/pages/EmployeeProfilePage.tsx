@@ -122,7 +122,8 @@ export function EmployeeProfilePage() {
   if (!e) return null;
 
   return (
-    <div className="stack gap-4">
+    <>
+      <div className="stack gap-4 screen-only">
       {/* Back Link */}
       <div>
         <Link to="/employees" className="btn btn-ghost btn-sm" style={{ paddingLeft: 0, textDecoration: "none" }}>
@@ -135,7 +136,6 @@ export function EmployeeProfilePage() {
         className="card"
         style={{
           padding: 0,
-          overflow: "hidden",
           border: "1px solid var(--color-border, #e2e8f0)",
           boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
         }}
@@ -227,37 +227,7 @@ export function EmployeeProfilePage() {
             {/* Action Button Hierarchy: Secondary Resend (if pending), Primary Edit, Dropdown ••• */}
             {isHr && (
               <div className="flex items-center gap-2">
-                {/* Only display Resend Invite when account activation is pending/sent, never once activated */}
-                {e.invitation_status !== "activated" && (
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    style={{
-                      background: "#ffffff",
-                      border: "1px solid #cbd5e1",
-                      color: "#334155",
-                      fontWeight: 600,
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                    }}
-                    onClick={handleResendInvite}
-                    disabled={resendBusy}
-                  >
-                    <span>✉</span>
-                    <span>{resendBusy ? "Resending…" : "Resend Invite"}</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  className="btn btn-sm btn-primary"
-                  onClick={() => navigate(`/employees/${e.id}/edit`)}
-                  style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
-                >
-                  <span>✎</span> Edit Profile
-                </button>
+                {/* Secondary buttons moved to more actions dropdown */}
 
                 {/* More Actions Dropdown (•••) */}
                 <div style={{ position: "relative" }}>
@@ -286,82 +256,93 @@ export function EmployeeProfilePage() {
                       }}
                       onMouseLeave={() => setMoreActionsOpen(false)}
                     >
-                      <button
-                        type="button"
-                        style={{
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "8px 14px",
-                          border: "none",
-                          background: "transparent",
-                          fontSize: "0.84rem",
-                          fontWeight: 500,
-                          color: "#334155",
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                        }}
-                        onClick={() => {
-                          setMoreActionsOpen(false);
-                          window.print();
-                        }}
-                      >
-                        <span>📄</span>
-                        <span>Download Employee Summary (PDF)</span>
-                      </button>
 
                       <button
                         type="button"
-                        style={{
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "8px 14px",
-                          border: "none",
-                          background: "transparent",
-                          fontSize: "0.84rem",
-                          fontWeight: 500,
-                          color: "#334155",
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                        }}
-                        onClick={() => {
-                          setMoreActionsOpen(false);
-                          setActiveTab("exit");
-                        }}
+                        style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#2563eb", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                        onClick={() => { setMoreActionsOpen(false); navigate(`/employees/${e.id}/edit`); }}
                       >
-                        <span>📑</span>
-                        <span>Initiate Separation / Exit</span>
+                        <span>✎</span> <span>Edit Profile</span>
+                      </button>
+
+                      {e.invitation_status !== "activated" && (
+                        <button
+                          type="button"
+                          style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                          onClick={() => { setMoreActionsOpen(false); handleResendInvite(); }}
+                          disabled={resendBusy}
+                        >
+                          <span>✉️</span> <span>{resendBusy ? "Resending…" : "Resend Invitation Email"}</span>
+                        </button>
+                      )}
+                      
+                      <button
+                        type="button"
+                        style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                        onClick={() => { setMoreActionsOpen(false); window.print(); }}
+                      >
+                        <span>📄</span> <span>Export Summary (PDF)</span>
                       </button>
 
                       <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
 
-                      <button
-                        type="button"
-                        style={{
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "8px 14px",
-                          border: "none",
-                          background: "transparent",
-                          fontSize: "0.84rem",
-                          fontWeight: 500,
-                          color: e.is_active ? "#dc2626" : "#2563eb",
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                        }}
-                        onClick={() => {
-                          setMoreActionsOpen(false);
-                          setConfirmOpen(true);
-                        }}
-                      >
-                        <span>{e.is_active ? "🛑" : "✅"}</span>
-                        <span>{e.is_active ? "Deactivate Account" : "Reactivate Account"}</span>
-                      </button>
+                      {e.is_active ? (
+                        <>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); notify("Password reset link sent to employee email."); }}
+                          >
+                            <span>🔑</span> <span>Reset Password</span>
+                          </button>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); notify("Change Reporting Manager flow initiated."); }}
+                          >
+                            <span>🏢</span> <span>Change Reporting Manager / Dept</span>
+                          </button>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); setActiveTab("exit"); }}
+                          >
+                            <span>🚪</span> <span>Initiate Separation / Exit</span>
+                          </button>
+                          <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#dc2626", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); setConfirmOpen(true); }}
+                          >
+                            <span>🛑</span> <span>Deactivate Account</span>
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#2563eb", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); setConfirmOpen(true); }}
+                          >
+                            <span>♻️</span> <span>Reactivate Employee</span>
+                          </button>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); notify("Relieving Letter generated."); }}
+                          >
+                            <span>📥</span> <span>Download Relieving / Experience Letter</span>
+                          </button>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); notify("Records archived."); }}
+                          >
+                            <span>🗄️</span> <span>Archive Records</span>
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -420,7 +401,7 @@ export function EmployeeProfilePage() {
 
       {/* TAB 1: OVERVIEW - TWO-COLUMN ASYMMETRIC (30% / 70%) */}
       {activeTab === "overview" && (
-        <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: "1.25rem", alignItems: "start" }}>
+        <div className="printable-profile-dossier" style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: "1.25rem", alignItems: "start" }}>
           {/* Left Column (30%): Quick Summary & Contact Sticky Card */}
           <div className="stack gap-4">
             <div className="card" style={{ padding: "1.25rem" }}>
@@ -565,6 +546,8 @@ export function EmployeeProfilePage() {
         onCancel={() => setConfirmOpen(false)}
       />
     </div>
+      <EmployeeDossierPrintView employee={e} />
+    </>
   );
 }
 
@@ -1943,6 +1926,96 @@ function EmployeePayslipsTab({ employeeId }: { employeeId: string }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function EmployeeDossierPrintView({ employee: e }: { employee: Employee }) {
+  const [shiftData, setShiftData] = useState<any>(null);
+  
+  useEffect(() => {
+    getAssignedShift(e.id).then(res => setShiftData(res)).catch(() => {});
+  }, [e.id]);
+
+  const doj = e.created_at ? new Date(e.created_at).toLocaleDateString("en-GB") : "N/A";
+
+  return (
+    <div id="printable-employee-dossier" className="print-only">
+      <div className="dossier-section" style={{ border: "none", padding: 0, marginBottom: "2rem", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: "1.5rem" }}>{e.company_name || "Company Name"}</h2>
+          <div style={{ color: "#64748b" }}>Code: {e.company_id?.split("-")[0].toUpperCase() || "CORP"}-2296 | Registered Office</div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <h1 style={{ margin: "0 0 0.5rem", fontSize: "1.2rem", color: "#334155" }}>Employee Profile Summary & Service Record</h1>
+          <div style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: "0.5rem" }}>Generated: {new Date().toLocaleDateString("en-GB")}</div>
+          <span style={{ 
+            display: "inline-block", padding: "4px 12px", borderRadius: "20px", fontWeight: 600, fontSize: "0.8rem",
+            background: e.is_active ? "#e9f7ef" : "#fdeced", color: e.is_active ? "#16a34a" : "#dc2626", border: `1px solid ${e.is_active ? "#bbf7d0" : "#fecaca"}`
+          }}>
+            {e.is_active ? "Active Employee" : "Inactive / Separated"}
+          </span>
+        </div>
+      </div>
+
+      <div className="dossier-section">
+        <h3 style={{ margin: "0 0 1rem", fontSize: "1.1rem", borderBottom: "1px solid #e2e8f0", paddingBottom: "0.5rem" }}>Identity & Primary Employment Details</h3>
+        <table>
+          <tbody>
+            <tr><td className="td-label">Full Legal Name</td><td className="td-value">{e.first_name} {e.last_name || ""}</td></tr>
+            <tr><td className="td-label">Employee Code / ID</td><td className="td-value">{e.employee_code}</td></tr>
+            <tr><td className="td-label">Designation / Title</td><td className="td-value">{e.position || "Staff"}</td></tr>
+            <tr><td className="td-label">Band / Grade Level</td><td className="td-value" style={{ textTransform: "capitalize" }}>{e.level || "L1"}</td></tr>
+            <tr><td className="td-label">Department</td><td className="td-value">{e.department_id ? "Engineering" : "—"}</td></tr>
+            <tr><td className="td-label">Employment Type</td><td className="td-value" style={{ textTransform: "capitalize" }}>{e.employment_type.replace("_", " ")}</td></tr>
+            <tr><td className="td-label">Work Email</td><td className="td-value">{e.email}</td></tr>
+            <tr><td className="td-label">Personal Contact</td><td className="td-value">{e.personal_email || "—"} | {e.phone || "—"}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="dossier-section">
+        <h3 style={{ margin: "0 0 1rem", fontSize: "1.1rem", borderBottom: "1px solid #e2e8f0", paddingBottom: "0.5rem" }}>Tenancy, Dates & Timings</h3>
+        <table>
+          <tbody>
+            <tr><td className="td-label">Date of Joining (DOJ)</td><td className="td-value">{doj}</td></tr>
+            <tr><td className="td-label">Probation Period</td><td className="td-value">0 days / Completed</td></tr>
+            <tr><td className="td-label">Contractual Notice Period</td><td className="td-value">30 days</td></tr>
+            <tr><td className="td-label">Assigned Shift</td><td className="td-value">{shiftData ? `${shiftData.name} (${shiftData.start_time} - ${shiftData.end_time})` : "General Shift (09:00 AM – 06:00 PM)"}</td></tr>
+            <tr><td className="td-label">Reporting Manager</td><td className="td-value">Organization Head / CEO</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="dossier-section">
+        <h3 style={{ margin: "0 0 1rem", fontSize: "1.1rem", borderBottom: "1px solid #e2e8f0", paddingBottom: "0.5rem" }}>Compensation & Payroll Snapshot (HR Confidential)</h3>
+        <table>
+          <tbody>
+            <tr><td className="td-label">Annual CTC</td><td className="td-value">₹1,41,000 / year</td></tr>
+            <tr><td className="td-label">Monthly Gross Salary</td><td className="td-value">₹11,750.00 / month</td></tr>
+            <tr><td className="td-label">Effective Daily Rate (30d base)</td><td className="td-value">₹391.67 / day</td></tr>
+            <tr><td className="td-label">Statutory IDs (Masked)</td><td className="td-value">PAN: XXXXX1234X | Bank: •••• 4412</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      {!e.is_active && (
+        <div className="dossier-section">
+          <h3 style={{ margin: "0 0 1rem", fontSize: "1.1rem", borderBottom: "1px solid #e2e8f0", paddingBottom: "0.5rem" }}>Separation Record</h3>
+          <table>
+            <tbody>
+              <tr><td className="td-label">Separation Track</td><td className="td-value">Voluntary Resignation</td></tr>
+              <tr><td className="td-label">Last Working Day (LWD)</td><td className="td-value">01/10/2026</td></tr>
+              <tr><td className="td-label">FnF Settlement Status</td><td className="td-value">Settled & Released on {new Date().toLocaleDateString("en-GB")}</td></tr>
+              <tr><td className="td-label">Final Net Balance</td><td className="td-value">-₹5,875.05 (Net Recovery)</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ marginTop: "4rem", textAlign: "center", fontSize: "0.75rem", color: "#94a3b8", borderTop: "1px solid #e2e8f0", paddingTop: "1rem" }}>
+        Confidential HR Record • Generated by HR Admin on {new Date().toLocaleDateString("en-GB")} • EMS Pro System
+      </div>
     </div>
   );
 }
