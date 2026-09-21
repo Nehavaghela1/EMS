@@ -500,13 +500,21 @@ export function EmployeeFormPage() {
               <label>Level (Band)</label>
               <select
                 value={form.level}
-                onChange={(e) => setField("level", e.target.value)}
+                onChange={(e) => {
+                  const newLevel = e.target.value;
+                  setField("level", newLevel);
+                  // Auto-suggest policy notice period if not customized
+                  if (!isEdit || form.notice_period_days === "30" || form.notice_period_days === "60" || form.notice_period_days === "90" || form.notice_period_days === "15") {
+                    const policyDays = newLevel === "L3" ? "90" : newLevel === "L2" ? "60" : "30";
+                    setField("notice_period_days", policyDays);
+                  }
+                }}
               >
-                <option value="L1">L1 — Junior / Entry Level</option>
-                <option value="L2">L2 — Mid Level</option>
-                <option value="L3">L3 — Lead / Senior / Executive</option>
+                <option value="L1">L1 — Junior / Entry Level (30d notice)</option>
+                <option value="L2">L2 — Mid Level (60d notice)</option>
+                <option value="L3">L3 — Lead / Senior / Executive (90d notice)</option>
               </select>
-              <span className="field-hint">Select designated employee band.</span>
+              <span className="field-hint">Policy notice period maps automatically from band.</span>
             </div>
 
             <div className="field">
@@ -533,8 +541,19 @@ export function EmployeeFormPage() {
               <input
                 type="date"
                 value={form.probation_end_date}
-                onChange={(e) => setField("probation_end_date", e.target.value)}
+                onChange={(e) => {
+                  const probDate = e.target.value;
+                  setField("probation_end_date", probDate);
+                  if (probDate && (!isEdit || form.notice_period_days === "30" || form.notice_period_days === "60" || form.notice_period_days === "90")) {
+                    // In probation, notice is standard 15 days
+                    setField("notice_period_days", "15");
+                  } else if (!probDate) {
+                    const policyDays = form.level === "L3" ? "90" : form.level === "L2" ? "60" : "30";
+                    setField("notice_period_days", policyDays);
+                  }
+                }}
               />
+              <span className="field-hint">During probation period, policy notice is 15 days.</span>
             </div>
             <div className="field">
               <label>Notice period (days)</label>
@@ -544,6 +563,7 @@ export function EmployeeFormPage() {
                 value={form.notice_period_days}
                 onChange={(e) => setField("notice_period_days", e.target.value)}
               />
+              <span className="field-hint">Defaulted from band/probation policy; adjustable as needed.</span>
             </div>
           </div>
 

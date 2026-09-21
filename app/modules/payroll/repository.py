@@ -126,6 +126,17 @@ class EmployeeSalaryRepository:
             )
         )
 
+    def get_latest(
+        self, employee_id: uuid.UUID, company_id: uuid.UUID
+    ) -> EmployeeSalary | None:
+        return self.db.scalar(
+            select(EmployeeSalary).where(
+                EmployeeSalary.employee_id == employee_id,
+                EmployeeSalary.company_id == company_id,
+                EmployeeSalary.deleted_at.is_(None),
+            ).order_by(EmployeeSalary.effective_from.desc())
+        )
+
     def get_overlapping(
         self,
         employee_id: uuid.UUID,

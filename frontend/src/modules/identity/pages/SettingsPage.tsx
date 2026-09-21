@@ -448,6 +448,44 @@ function EmployeeResignationSection({
 
   const status = employee.resignation_status ?? "none";
 
+  const noticeDays = employee.notice_period_days || 30;
+
+  function calculateExpectedLwd(resDateStr: string, days: number): string {
+    if (!resDateStr) return "";
+    const [y, m, d] = resDateStr.split("-").map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    dateObj.setDate(dateObj.getDate() + days);
+    return dateObj.toISOString().split("T")[0];
+  }
+
+  function formatDisplayDate(dateStr: string): string {
+    if (!dateStr) return "—";
+    const [y, m, d] = dateStr.split("-");
+    if (!y || !m || !d) return dateStr;
+    return `${d}/${m}/${y}`;
+  }
+
+  // Calculate served days and shortfall dynamically
+  let servedDays = 0;
+  let shortfallDays = 0;
+  const expectedLwd = calculateExpectedLwd(resignationDate, noticeDays);
+
+  if (resignationDate && lastWorkingDate) {
+    const rDate = new Date(resignationDate);
+    const lDate = new Date(lastWorkingDate);
+    servedDays = Math.max(0, Math.round((lDate.getTime() - rDate.getTime()) / (1000 * 60 * 60 * 24)));
+    shortfallDays = Math.max(0, noticeDays - servedDays);
+  }
+
+  function handleResignationDateChange(newDate: string) {
+    setResignationDate(newDate);
+    // If lastWorkingDate was matching old default, update it to the new expected LWD
+    const oldExpected = calculateExpectedLwd(resignationDate, noticeDays);
+    if (!lastWorkingDate || lastWorkingDate === oldExpected) {
+      setLastWorkingDate(calculateExpectedLwd(newDate, noticeDays));
+    }
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!lastWorkingDate) {
@@ -517,7 +555,12 @@ function EmployeeResignationSection({
             type="button"
             className="btn btn-outline"
             style={{ color: "#b45309", borderColor: "#f59e0b" }}
-            onClick={() => setShowModal(true)}
+            onClick={() => {
+              const today = new Date().toISOString().split("T")[0];
+              setResignationDate(today);
+              setLastWorkingDate(calculateExpectedLwd(today, noticeDays));
+              setShowModal(true);
+            }}
           >
             + Request Resignation
           </button>
@@ -527,8 +570,15 @@ function EmployeeResignationSection({
       {status === "submitted" && (
         <div className="alert alert-warning mt-2">
           <strong>⏳ Resignation Under Review:</strong> You submitted a resignation on{" "}
-          <b>{employee.resignation_date || "—"}</b> with proposed Last Working Day (LWD) of{" "}
-          <b>{employee.last_working_date || "—"}</b>. HR and your manager are currently reviewing notice requirements and handover plans.
+          <b>{employee.resignation_date ? formatDisplayDate(employee.resignation_date) : "—"}</b> with proposed Last Working Day (LWD) of{" "}
+          <b>{employee.last_working_date ? formatDisplayDate(employee.last_working_date) : "—"}</b>.
+          {(employee.notice_recovery_days ?? 0) > 0 ? (
+            <span style={{ display: "block", marginTop: "4px" }}>
+              ⚠️ Early release requested with <b>{employee.notice_recovery_days} unserved notice days</b> shortfall. HR and your manager are currently reviewing notice requirements and buyout terms.
+            </span>
+          ) : (
+            <span> HR and your manager are currently reviewing notice requirements and handover plans.</span>
+          )}
         </div>
       )}
 
@@ -541,7 +591,7 @@ function EmployeeResignationSection({
             </div>
             <div>
               <span className="text-xs text-muted block">Confirmed Last Working Day (LWD)</span>
-              <strong className="text-primary">{employee.last_working_date || "—"}</strong>
+              <strong className="text-primary">{employee.last_working_date ? formatDisplayDate(employee.last_working_date) : "—"}</strong>
             </div>
             <div>
               <span className="text-xs text-muted block">Notice Status</span>
@@ -564,7 +614,7 @@ function EmployeeResignationSection({
             </div>
             <form onSubmit={handleSubmit} className="stack gap-3 mt-2">
               <p className="text-xs text-muted" style={{ margin: 0 }}>
-                Please specify your intended departure timeline. Notice period policy requires <b>{employee.notice_period_days || 30} days</b> of service unless officially waived.
+                Please specify your intended departure timeline. Your contractual notice period is <b>{noticeDays} days</b> (Expected LWD: <b>{formatDisplayDate(expectedLwd)}</b>).
               </p>
 
               <div className="form-grid">
@@ -573,7 +623,7 @@ function EmployeeResignationSection({
                   <input
                     type="date"
                     value={resignationDate}
-                    onChange={(e) => setResignationDate(e.target.value)}
+                    onChange={(e) => handleResignationDateChange(e.target.value)}
                     required
                   />
                 </div>
@@ -587,6 +637,32 @@ function EmployeeResignationSection({
                   />
                 </div>
               </div>
+
+              {/* Amber Warning Banner on Notice Shortfall */}
+              {shortfallDays > 0 && (
+                <div
+                  style={{
+                    backgroundColor: "#fffbeb",
+                    border: "1px solid #fde68a",
+                    borderLeft: "4px solid #f59e0b",
+                    borderRadius: "6px",
+                    padding: "10px 12px",
+                    color: "#92400e",
+                    fontSize: "0.82rem",
+                    lineHeight: 1.45,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                    <span style={{ fontSize: "1rem" }}>⚠️</span>
+                    <div>
+                      <strong>Notice Shortfall Warning:</strong> Your contractual notice period is{" "}
+                      <b>{noticeDays} days</b> (Expected LWD: <b>{formatDisplayDate(expectedLwd)}</b>). Requesting{" "}
+                      <b>{formatDisplayDate(lastWorkingDate)}</b> ({servedDays} days served) creates a{" "}
+                      <b>{shortfallDays}-day notice shortfall</b> that may be deducted from your Full & Final settlement unless approved or waived by HR.
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="field">
                 <label>Departure Reason *</label>

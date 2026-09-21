@@ -230,6 +230,8 @@ export interface FnFSettlement {
   leave_encashment_amount: string | number;
   unpaid_salary_days: number;
   unpaid_salary_amount: string | number;
+  monthly_gross_salary?: string | number;
+  per_day_salary?: string | number;
   severance_pay: string | number;
   pending_reimbursements: string | number;
   gratuity_bonus: string | number;
