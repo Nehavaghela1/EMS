@@ -1,5 +1,6 @@
 import uuid
 from datetime import date
+from typing import Optional
 
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import Session
@@ -190,7 +191,7 @@ class AttendanceRepository:
         self.db.flush()
         return request
 
-    def get_regularization_by_id(self, regularization_id: uuid.UUID, company_id: uuid.UUID) -> "AttendanceRegularizationRequest" | None:
+    def get_regularization_by_id(self, regularization_id: uuid.UUID, company_id: uuid.UUID) -> Optional["AttendanceRegularizationRequest"]:
         from app.modules.time_leave.models import AttendanceRegularizationRequest
         return self.db.scalar(
             select(AttendanceRegularizationRequest).where(
