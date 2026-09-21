@@ -83,8 +83,31 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
   async function handleCheckIn() {
     setCheckBusy(true);
     setCheckError(null);
+
+    let coords: { latitude: number; longitude: number; device_accuracy: number } | undefined = undefined;
+
+    if (navigator.geolocation) {
+      try {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            timeout: 8000,
+            enableHighAccuracy: true,
+            maximumAge: 30000,
+          });
+        });
+        coords = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          device_accuracy: pos.coords.accuracy,
+        };
+      } catch (geoErr) {
+        // Geolocation denied or timed out; continue without coords
+        // The backend will check if a geofence is mandatory for this employee's branch
+      }
+    }
+
     try {
-      await checkIn();
+      await checkIn(coords);
       notify("Checked in.");
       await refreshAll();
     } catch (err) {
