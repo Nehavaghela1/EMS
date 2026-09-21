@@ -583,12 +583,16 @@ export function ProjectDetailPage() {
           <div className={`stat-value ${summary.overdue_tasks > 0 ? "text-danger" : "text-success"}`} style={{ margin: 0, fontSize: "1.75rem" }}>
             {summary.overdue_tasks}
           </div>
-          <div className="text-muted text-xs mt-2">
-            {summary.overdue_tasks > 0
-              ? "⚠️ Needs Attention"
-              : summary.total_tasks === 0 && summary.members_count === 0
-              ? "⚪ Not Started"
-              : "✓ On Track"}
+          <div className="text-muted text-xs mt-2" style={{ fontWeight: 500 }}>
+            {summary.delivery_health === "Needs Attention" || summary.overdue_tasks > 0 ? (
+              <span className="text-danger">⚠️ Needs Attention</span>
+            ) : summary.delivery_health === "In Progress" || (Number(summary.completion_percentage) === 0 && Number(summary.total_logged_hours) > 0) ? (
+              <span style={{ color: "var(--color-primary, #2563eb)" }}>🔵 In Progress</span>
+            ) : summary.delivery_health === "On Schedule" || Number(summary.completion_percentage) > 0 ? (
+              <span className="text-success">✓ On Track</span>
+            ) : (
+              <span style={{ color: "#64748b" }}>⚪ Not Started</span>
+            )}
           </div>
         </div>
 
@@ -1526,43 +1530,90 @@ export function ProjectDetailPage() {
             </div>
 
             <div className="card">
-              <h3 style={{ fontSize: "1rem", marginBottom: "0.75rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.4rem" }}>
-                Financial & Budget Summary
-              </h3>
-              <div className="form-grid">
+              <div className="row-between align-center" style={{ borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem", marginBottom: "1rem" }}>
+                <h3 style={{ fontSize: "1rem", margin: 0, fontWeight: 600 }}>
+                  Financial & Budget Summary
+                </h3>
+                <span className="badge badge-outline text-xs font-mono" style={{ padding: "2px 8px" }}>
+                  Timesheet Costed
+                </span>
+              </div>
+              <div className="form-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "1.25rem" }}>
                 <div className="field">
-                  <label>Total Budget</label>
-                  <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--color-primary)" }}>
-                    ₹{project.budget ? Number(project.budget).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "Not defined"}
+                  <label style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)" }}>Total Budget</label>
+                  <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--color-primary)" }}>
+                    ₹{project.budget ? Number(project.budget).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}
                   </div>
+                  <span className="text-muted text-xs">Fixed Project Budget</span>
                 </div>
+
                 <div className="field">
-                  <label>Billable Hours</label>
-                  <div style={{ fontWeight: 600 }}>{summary.total_billable_hours} hrs</div>
+                  <label style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)" }}>Budget Spent</label>
+                  <div style={{ fontSize: "1.35rem", fontWeight: 700, color: Number(summary.budget_spent || 0) > 0 ? "#b45309" : "var(--color-text-default)" }}>
+                    ₹{Number(summary.budget_spent || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <span className="text-muted text-xs">Approved Billable × Hourly Cost</span>
                 </div>
+
                 <div className="field">
-                  <label>Total Logged Hours</label>
-                  <div style={{ fontWeight: 600 }}>{summary.total_logged_hours} hrs</div>
-                </div>
-                <div className="field">
-                  <label>Delivery Health</label>
+                  <label style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)" }}>Remaining Budget</label>
                   <div
                     style={{
-                      fontWeight: 600,
+                      fontSize: "1.35rem",
+                      fontWeight: 700,
                       color:
-                        summary.overdue_tasks > 0
-                          ? "#dc2626"
-                          : summary.members_count === 0 && Number(summary.total_logged_hours) === 0 && Number(summary.completion_percentage) === 0
-                          ? "#64748b"
-                          : "#16a34a",
+                        summary.budget_remaining !== undefined && summary.budget_remaining !== null
+                          ? Number(summary.budget_remaining) < 0
+                            ? "#dc2626"
+                            : "#16a34a"
+                          : "var(--color-text-default)",
                     }}
                   >
-                    {summary.overdue_tasks > 0
-                      ? `⚠️ ${summary.overdue_tasks} Overdue Task(s)`
-                      : summary.members_count === 0 && Number(summary.total_logged_hours) === 0 && Number(summary.completion_percentage) === 0
-                      ? "⚪ Not Started"
-                      : "✓ On Schedule"}
+                    ₹
+                    {summary.budget_remaining !== undefined && summary.budget_remaining !== null
+                      ? Number(summary.budget_remaining).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : project.budget
+                      ? Number(project.budget).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : "0.00"}
                   </div>
+                  <span className="text-muted text-xs">Total Budget − Budget Spent</span>
+                </div>
+
+                <div className="field">
+                  <label style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)" }}>Logged vs. Billable</label>
+                  <div style={{ fontSize: "1.15rem", fontWeight: 600 }}>
+                    {Number(summary.approved_logged_hours !== undefined ? summary.approved_logged_hours : summary.total_logged_hours).toFixed(2)} hrs /{" "}
+                    <span style={{ color: "var(--color-primary)" }}>
+                      {Number(summary.approved_billable_hours !== undefined ? summary.approved_billable_hours : summary.total_billable_hours).toFixed(2)} hrs
+                    </span>
+                  </div>
+                  <span className="text-muted text-xs">Filtered by approved timesheets</span>
+                </div>
+
+                <div className="field">
+                  <label style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)" }}>Delivery Health</label>
+                  <div style={{ marginTop: "4px" }}>
+                    {summary.delivery_health === "Needs Attention" || summary.overdue_tasks > 0 ? (
+                      <span className="badge badge-danger" style={{ fontSize: "12px", padding: "4px 10px", fontWeight: 600 }}>
+                        ⚠️ Needs Attention ({summary.overdue_tasks} Overdue)
+                      </span>
+                    ) : summary.delivery_health === "In Progress" || (Number(summary.completion_percentage) === 0 && Number(summary.total_logged_hours) > 0) ? (
+                      <span className="badge badge-primary" style={{ fontSize: "12px", padding: "4px 10px", fontWeight: 600, background: "rgba(37, 99, 235, 0.12)", color: "#2563eb", border: "1px solid rgba(37, 99, 235, 0.3)" }}>
+                        🔵 In Progress
+                      </span>
+                    ) : summary.delivery_health === "On Schedule" || Number(summary.completion_percentage) > 0 ? (
+                      <span className="badge badge-success" style={{ fontSize: "12px", padding: "4px 10px", fontWeight: 600 }}>
+                        ✓ On Schedule
+                      </span>
+                    ) : (
+                      <span className="badge badge-muted" style={{ fontSize: "12px", padding: "4px 10px", fontWeight: 600 }}>
+                        ⚪ Not Started
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-muted text-xs" style={{ display: "block", marginTop: "4px" }}>
+                    {Number(summary.completion_percentage)}% completed ({summary.completed_tasks}/{summary.total_tasks} tasks)
+                  </span>
                 </div>
               </div>
             </div>

@@ -185,4 +185,10 @@ export interface ProjectSummary {
   members_count: number;
   milestones_count: number;
   completed_milestones_count: number;
+  budget_spent?: number;
+  budget_remaining?: number | null;
+  delivery_health?: string;
+  approved_billable_hours?: number;
+  approved_logged_hours?: number;
 }
+

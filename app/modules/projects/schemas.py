@@ -251,3 +251,9 @@ class ProjectSummaryResponse(BaseModel):
     members_count: int
     milestones_count: int
     completed_milestones_count: int
+    budget_spent: Decimal = Decimal("0.00")
+    budget_remaining: Optional[Decimal] = None
+    delivery_health: str = "Not Started"
+    approved_billable_hours: Decimal = Decimal("0.00")
+    approved_logged_hours: Decimal = Decimal("0.00")
+

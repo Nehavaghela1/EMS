@@ -95,6 +95,60 @@ class ProjectService:
         total_logged_hours = sum((e.hours for e in entries), Decimal("0.00"))
         total_billable_hours = sum((e.hours for e in entries if e.is_billable), Decimal("0.00"))
 
+        # Filter approved entries for financial budget burn calculations
+        approved_entries = [e for e in entries if e.status == "approved"]
+        approved_logged_hours = sum((e.hours for e in approved_entries), Decimal("0.00"))
+        approved_billable_entries = [e for e in approved_entries if e.is_billable]
+        approved_billable_hours = sum((e.hours for e in approved_billable_entries), Decimal("0.00"))
+
+        # Calculate Budget Spent = sum(approved billable hours * employee hourly cost)
+        budget_spent = Decimal("0.00")
+        if approved_billable_entries:
+            from app.modules.payroll.models import EmployeeSalary
+            # Fetch salaries for all relevant employees
+            emp_ids = list({e.employee_id for e in approved_billable_entries})
+            salaries = (
+                self.repo.db.query(EmployeeSalary)
+                .filter(
+                    EmployeeSalary.company_id == p_cid,
+                    EmployeeSalary.employee_id.in_(emp_ids),
+                    EmployeeSalary.deleted_at.is_(None)
+                )
+                .order_by(EmployeeSalary.effective_from.desc())
+                .all()
+            )
+            # Map employee_id -> hourly rate
+            emp_rates = {}
+            for s in salaries:
+                if s.employee_id not in emp_rates:
+                    if s.hourly_rate is not None and s.hourly_rate > 0:
+                        emp_rates[s.employee_id] = s.hourly_rate
+                    elif s.ctc and s.ctc > 0:
+                        # Monthly CTC / 160 standard Indian convention
+                        emp_rates[s.employee_id] = (s.ctc / Decimal("12") / Decimal("160.00")).quantize(Decimal("0.01"))
+
+            for e in approved_billable_entries:
+                rate = emp_rates.get(e.employee_id, Decimal("500.00"))  # Default fallback rate ₹500/hr
+                budget_spent += (Decimal(str(e.hours)) * rate)
+            budget_spent = budget_spent.quantize(Decimal("0.01"))
+
+        budget_remaining = None
+        if project.budget is not None:
+            budget_remaining = (project.budget - budget_spent).quantize(Decimal("0.01"))
+
+        # Delivery Health progression: Not Started -> In Progress -> On Schedule (or Needs Attention)
+        has_in_progress_tasks = any(t.status == "in_progress" for t in tasks)
+        if overdue_tasks > 0:
+            delivery_health = "Needs Attention"
+        elif total_tasks == 0 and total_logged_hours == 0:
+            delivery_health = "Not Started"
+        elif completion_pct == 0 and (total_logged_hours > 0 or has_in_progress_tasks):
+            delivery_health = "In Progress"
+        elif completion_pct == 0:
+            delivery_health = "Not Started"
+        else:
+            delivery_health = "On Schedule"
+
         milestones_count = len(milestones)
         completed_milestones = sum(1 for m in milestones if m.status == "completed")
 
@@ -108,7 +162,12 @@ class ProjectService:
             total_billable_hours=total_billable_hours,
             members_count=len(members),
             milestones_count=milestones_count,
-            completed_milestones_count=completed_milestones
+            completed_milestones_count=completed_milestones,
+            budget_spent=budget_spent,
+            budget_remaining=budget_remaining,
+            delivery_health=delivery_health,
+            approved_billable_hours=approved_billable_hours,
+            approved_logged_hours=approved_logged_hours
         )
 
     # --- Project Members ---

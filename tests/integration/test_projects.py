@@ -157,6 +157,11 @@ def test_project_lifecycle_and_analytics(client: TestClient, db: Session, compan
     assert summary_data["completed_tasks"] == 1
     assert summary_data["completion_percentage"] == "100.00"
     assert summary_data["total_logged_hours"] == "6.50"
+    assert summary_data["approved_billable_hours"] == "6.50"
+    assert summary_data["approved_logged_hours"] == "6.50"
+    assert "budget_spent" in summary_data
+    assert summary_data["delivery_health"] == "On Schedule"
+
 
 def test_daily_time_entry_hour_limit(client: TestClient, db: Session, company_a: TenantContext):
     employee, headers = _create_employee_with_user(db, company_a.company_id, UserRole.super_admin)
@@ -169,27 +174,29 @@ def test_daily_time_entry_hour_limit(client: TestClient, db: Session, company_a:
     )
     project_id = res.json()["id"]
 
-    # Log 16 hours
-    client.post(
-        "/api/v1/projects/time-entries",
-        json={
-            "project_id": project_id,
-            "date": str(date.today()),
-            "hours": "16.00",
-            "description": "Shift 1"
-        },
-        headers=headers
-    )
-
-    # Attempting to log 10 more hours (total 26 > 24) must fail
-    res_fail = client.post(
+    # Log 10 hours
+    res1 = client.post(
         "/api/v1/projects/time-entries",
         json={
             "project_id": project_id,
             "date": str(date.today()),
             "hours": "10.00",
+            "description": "Shift 1"
+        },
+        headers=headers
+    )
+    assert res1.status_code == 201
+
+    # Attempting to log 5 more hours (total 15 > 14 max) must fail with 400
+    res_fail = client.post(
+        "/api/v1/projects/time-entries",
+        json={
+            "project_id": project_id,
+            "date": str(date.today()),
+            "hours": "5.00",
             "description": "Shift 2"
         },
         headers=headers
     )
     assert res_fail.status_code == 400
+
