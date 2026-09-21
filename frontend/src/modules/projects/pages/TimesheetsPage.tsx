@@ -241,12 +241,69 @@ export function TimesheetsPage() {
   const billableHours = entries.filter(e => e.is_billable).reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
   const approvedHours = entries.filter(e => e.status === "approved").reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
 
+  // Log Time Modal state
+  const [showLogModal, setShowLogModal] = useState(false);
+
+  // Weekly calendar bar helper (Monday to Sunday of the current week)
+  const currentWeekDays = useMemo(() => {
+    const now = new Date();
+    const currentDay = now.getDay(); // 0 is Sunday, 1 is Monday...
+    const diffToMon = currentDay === 0 ? -6 : 1 - currentDay;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMon);
+
+    const days = [];
+    const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      const isToday = iso === now.toISOString().slice(0, 10);
+      days.push({
+        name: dayNames[i],
+        iso,
+        dayNum: d.getDate(),
+        month: d.toLocaleString("default", { month: "short" }),
+        isToday,
+      });
+    }
+    return days;
+  }, []);
+
+  // Compute daily hours mapped to dates
+  const dailyHoursMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const e of entries) {
+      if (e.date) {
+        map[e.date] = (map[e.date] || 0) + (Number(e.hours) || 0);
+      }
+    }
+    return map;
+  }, [entries]);
+
+  const thisWeekTotalHours = useMemo(() => {
+    return currentWeekDays.reduce((acc, d) => acc + (dailyHoursMap[d.iso] || 0), 0);
+  }, [currentWeekDays, dailyHoursMap]);
+
   return (
     <div>
-      <PageHeader
-        title="Timesheets"
-        breadcrumb="Projects & Work"
-      />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "var(--space-4)" }}>
+        <PageHeader
+          title="Timesheets"
+          breadcrumb="Projects & Work"
+        />
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setShowLogModal(true)}
+            style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}
+          >
+            <span>+</span>
+            <span>Log Time Worked</span>
+          </button>
+        </div>
+      </div>
 
       {/* KPI Stats Overview */}
       <div className="stat-grid mb-6">
@@ -293,367 +350,100 @@ export function TimesheetsPage() {
         </div>
       )}
 
-      {/* TAB 1: TIME LOG FORM + HISTORY */}
+      {/* TAB 1: TIME LOG HISTORY & WEEKLY BAR */}
       {activeTab === "log" && (
-        <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: "var(--space-5)", alignItems: "start" }}>
-          {/* Time Entry Form */}
-          <div className="card">
-            <h3>Log Time Worked</h3>
-            <p className="text-muted text-xs mb-4">Record hours spent on assigned projects and tasks</p>
-
-            {/* Quick Actions & 3 Modes Switcher */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
-              <button
-                type="button"
-                className="btn btn-xs btn-outline"
-                style={{ fontSize: "0.75rem", padding: "3px 8px" }}
-                onClick={() => {
-                  if (entries.length > 0) {
-                    const last = entries[0];
-                    setSelectedProjectId(last.project_id);
-                    setSelectedTaskId(last.task_id || "");
-                    setHours(last.hours ? String(last.hours) : "4");
-                    setDescription(last.description || "Recurring project sprint work");
-                    setIsBillable(last.is_billable);
-                    notify("Copied previous time entry details!", "info");
-                  } else {
-                    notify("No previous entries found to copy.", "warning");
-                  }
-                }}
-                title="Copy details from your recent timesheet entry"
-              >
-                📋 Copy Recent Entry
-              </button>
+        <div className="stack" style={{ gap: "20px" }}>
+          {/* Weekly Calendar Strip (Zoho Projects / Harvest style) */}
+          <div className="card" style={{ padding: "16px 20px", background: "#ffffff", border: "1px solid var(--color-border)", borderRadius: "10px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <span style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                📅 Current Week Hours ({thisWeekTotalHours.toFixed(1)} hrs logged)
+              </span>
+              <span style={{ fontSize: "12px", color: "#64748b" }}>
+                Target: 40h standard workweek
+              </span>
             </div>
 
-            {/* 3 Modes Switcher (Zoho Projects / ClickUp style) */}
-            <div style={{ display: "flex", gap: "6px", background: "#f1f5f9", padding: "4px", borderRadius: "6px", marginBottom: "1rem" }}>
-              <button
-                type="button"
-                style={{
-                  flex: 1,
-                  padding: "6px 4px",
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  background: timeInputMode === "duration" ? "#fff" : "transparent",
-                  color: timeInputMode === "duration" ? "#2563eb" : "#64748b",
-                  boxShadow: timeInputMode === "duration" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
-                }}
-                onClick={() => setTimeInputMode("duration")}
-              >
-                🔢 Duration
-              </button>
-              <button
-                type="button"
-                style={{
-                  flex: 1,
-                  padding: "6px 4px",
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  background: timeInputMode === "range" ? "#fff" : "transparent",
-                  color: timeInputMode === "range" ? "#2563eb" : "#64748b",
-                  boxShadow: timeInputMode === "range" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
-                }}
-                onClick={() => {
-                  setTimeInputMode("range");
-                  setHours("7.00");
-                }}
-              >
-                🕒 Start / End
-              </button>
-              <button
-                type="button"
-                style={{
-                  flex: 1,
-                  padding: "6px 4px",
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  background: timeInputMode === "stopwatch" ? "#fff" : "transparent",
-                  color: timeInputMode === "stopwatch" ? "#2563eb" : "#64748b",
-                  boxShadow: timeInputMode === "stopwatch" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
-                }}
-                onClick={() => setTimeInputMode("stopwatch")}
-              >
-                ⏱️ Stopwatch
-              </button>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "10px" }}>
+              {currentWeekDays.map((d) => {
+                const dayHours = dailyHoursMap[d.iso] || 0;
+                const hasHours = dayHours > 0;
+                return (
+                  <div
+                    key={d.iso}
+                    style={{
+                      padding: "10px 8px",
+                      borderRadius: "8px",
+                      border: d.isToday ? "2px solid #3b82f6" : "1px solid #e2e8f0",
+                      background: d.isToday ? "#eff6ff" : hasHours ? "#f8fafc" : "#ffffff",
+                      textAlign: "center",
+                    }}
+                  >
+                    <div style={{ fontSize: "11px", fontWeight: 600, color: d.isToday ? "#2563eb" : "#64748b" }}>
+                      {d.name}
+                    </div>
+                    <div style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a", margin: "2px 0" }}>
+                      {d.dayNum}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        color: hasHours ? "#16a34a" : "#94a3b8",
+                        background: hasHours ? "#dcfce7" : "transparent",
+                        borderRadius: "4px",
+                        padding: "2px 4px",
+                        display: "inline-block",
+                      }}
+                    >
+                      {hasHours ? `${dayHours.toFixed(1)}h` : "—"}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-
-            <form onSubmit={handleLogTime} className="stack">
-              <div className="field">
-                <label>Select Project *</label>
-                <select
-                  value={selectedProjectId}
-                  onChange={(e) => setSelectedProjectId(e.target.value)}
-                  required
-                >
-                  <option value="">-- Choose Project --</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="field">
-                <label>Select Task (Optional)</label>
-                <select
-                  value={selectedTaskId}
-                  onChange={(e) => setSelectedTaskId(e.target.value)}
-                  disabled={!selectedProjectId}
-                >
-                  <option value="">-- No specific task (General work / Meeting) --</option>
-                  {isManagerOrAdmin ? (
-                    <>
-                      {/* For managers/admins: Group by My Tasks vs Team Tasks */}
-                      <optgroup label="My Tasks">
-                        {tasks
-                          .filter((t) => user?.employee?.id && t.assigned_to === user.employee.id)
-                          .map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.title} ({t.status.toUpperCase()})
-                            </option>
-                          ))}
-                      </optgroup>
-                      <optgroup label="Team Member Tasks">
-                        {tasks
-                          .filter((t) => !user?.employee?.id || t.assigned_to !== user.employee.id)
-                          .map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.title} — {t.assigned_to_name || "Unassigned"} ({t.status.toUpperCase()})
-                            </option>
-                          ))}
-                      </optgroup>
-                    </>
-                  ) : (
-                    /* For regular employees: Strictly filter to their own assigned tasks */
-                    tasks
-                      .filter((t) => user?.employee?.id && t.assigned_to === user.employee.id)
-                      .map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.title} ({t.status.toUpperCase()})
-                        </option>
-                      ))
-                  )}
-                </select>
-                {!isManagerOrAdmin && tasks.length > 0 && tasks.every((t) => !user?.employee?.id || t.assigned_to !== user.employee.id) && (
-                  <span className="field-hint text-warning" style={{ fontSize: "0.75rem", display: "block", marginTop: "3px" }}>
-                    ℹ️ You have no assigned tasks in this project yet. You can log time as general project work.
-                  </span>
-                )}
-              </div>
-
-              <div className="field">
-                <label>Date *</label>
-                <input
-                  type="date"
-                  value={logDate}
-                  onChange={(e) => setLogDate(e.target.value)}
-                  required
-                />
-              </div>
-
-              {/* Mode 1: Duration */}
-              {timeInputMode === "duration" && (
-                <div className="field">
-                  <label>Hours * (e.g. 7 or 7.5)</label>
-                  <input
-                    type="number"
-                    step="any"
-                    min="0.1"
-                    max="24"
-                    value={hours}
-                    onChange={(e) => setHours(e.target.value)}
-                    placeholder="e.g. 7 or 7.5"
-                    required
-                  />
-                </div>
-              )}
-
-              {/* Mode 2: Range */}
-              {timeInputMode === "range" && (
-                <div className="stack gap-2" style={{ background: "#f8fafc", padding: "10px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-                  <div className="form-grid">
-                    <div className="field">
-                      <label style={{ fontSize: "11px" }}>Start Time</label>
-                      <input
-                        type="time"
-                        value={startTime}
-                        onChange={(e) => {
-                          setStartTime(e.target.value);
-                          const [sh, sm] = e.target.value.split(":").map(Number);
-                          const [eh, em] = endTime.split(":").map(Number);
-                          const startM = sh * 60 + sm;
-                          const endM = eh * 60 + em;
-                          const breakM = parseInt(breakMinutes) || 0;
-                          const diff = Math.max(0, (endM - startM - breakM) / 60);
-                          setHours(diff.toFixed(2));
-                        }}
-                      />
-                    </div>
-                    <div className="field">
-                      <label style={{ fontSize: "11px" }}>End Time</label>
-                      <input
-                        type="time"
-                        value={endTime}
-                        onChange={(e) => {
-                          setEndTime(e.target.value);
-                          const [sh, sm] = startTime.split(":").map(Number);
-                          const [eh, em] = e.target.value.split(":").map(Number);
-                          const startM = sh * 60 + sm;
-                          const endM = eh * 60 + em;
-                          const breakM = parseInt(breakMinutes) || 0;
-                          const diff = Math.max(0, (endM - startM - breakM) / 60);
-                          setHours(diff.toFixed(2));
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div className="form-grid">
-                    <div className="field">
-                      <label style={{ fontSize: "11px" }}>Break (mins)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="240"
-                        value={breakMinutes}
-                        onChange={(e) => {
-                          setBreakMinutes(e.target.value);
-                          const [sh, sm] = startTime.split(":").map(Number);
-                          const [eh, em] = endTime.split(":").map(Number);
-                          const startM = sh * 60 + sm;
-                          const endM = eh * 60 + em;
-                          const breakM = parseInt(e.target.value) || 0;
-                          const diff = Math.max(0, (endM - startM - breakM) / 60);
-                          setHours(diff.toFixed(2));
-                        }}
-                      />
-                    </div>
-                    <div className="field">
-                      <label style={{ fontSize: "11px", fontWeight: 700 }}>Total</label>
-                      <input
-                        type="text"
-                        readOnly
-                        value={`${hours || "0.00"} hrs`}
-                        style={{ background: "#e2e8f0", fontWeight: 700 }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Mode 3: Stopwatch */}
-              {timeInputMode === "stopwatch" && (
-                <div className="stack gap-2 text-center" style={{ background: "#0f172a", color: "#fff", padding: "12px", borderRadius: "6px" }}>
-                  <div style={{ fontSize: "1.5rem", fontFamily: "monospace", fontWeight: 800, color: "#34d399" }}>
-                    ⏱️ {formatTime(elapsedSeconds)}
-                  </div>
-                  <div>
-                    {activeTimer ? (
-                      <button
-                        type="button"
-                        style={{ background: "#ef4444", color: "#fff", border: "none", padding: "6px 12px", borderRadius: "4px", fontWeight: 700, cursor: "pointer", fontSize: "12px" }}
-                        onClick={() => {
-                          const stopped = stopTimer();
-                          if (stopped) {
-                            const hrs = Math.max(0.1, +(elapsedSeconds / 3600).toFixed(2));
-                            setHours(hrs.toString());
-                            setTimeInputMode("duration");
-                          }
-                        }}
-                      >
-                        ⏹ Stop & Use {Math.max(0.1, +(elapsedSeconds / 3600).toFixed(2))}h
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        style={{ background: "#10b981", color: "#fff", border: "none", padding: "6px 12px", borderRadius: "4px", fontWeight: 700, cursor: "pointer", fontSize: "12px" }}
-                        onClick={() => {
-                          if (!selectedProjectId) {
-                            notify("Please choose a project first", "error");
-                            return;
-                          }
-                          const proj = projects.find(p => p.id === selectedProjectId);
-                          const task = tasks.find(t => t.id === selectedTaskId);
-                          startTimer({
-                            id: selectedTaskId || "general",
-                            title: task ? task.title : (proj ? `${proj.name} Work` : "Work"),
-                            projectId: selectedProjectId,
-                            projectName: proj?.name,
-                          });
-                        }}
-                      >
-                        ▶ Start Timer Now
-                      </button>
-                    )}
-                  </div>
-                  <div style={{ fontSize: "11px", color: "#94a3b8" }}>
-                    Hours: <b>{hours || "0.00"} hrs</b>
-                  </div>
-                </div>
-              )}
-
-              <div className="row" style={{ gap: "var(--space-2)", margin: "var(--space-1) 0" }}>
-                <input
-                  type="checkbox"
-                  id="billable"
-                  checked={isBillable}
-                  onChange={(e) => setIsBillable(e.target.checked)}
-                  style={{ width: "16px", height: "16px", cursor: "pointer" }}
-                />
-                <label htmlFor="billable" style={{ cursor: "pointer", fontSize: "var(--text-sm)", userSelect: "none" }}>
-                  Billable Hours
-                </label>
-              </div>
-
-              <div className="field">
-                <label>Work Description</label>
-                <textarea
-                  rows={3}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Summary of deliverables, tasks, or meetings performed..."
-                />
-              </div>
-
-              <button type="submit" className="btn btn-primary" style={{ width: "100%", marginTop: "var(--space-2)" }} disabled={submitting}>
-                {submitting ? "Submitting..." : "Submit Time Entry"}
-              </button>
-            </form>
           </div>
 
-          {/* Log History */}
-          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <div className="p-4 border-b row-between align-center" style={{ background: "var(--color-bg)" }}>
+          {/* Full-width Log History Table */}
+          <div className="card" style={{ padding: 0, overflow: "hidden", borderRadius: "10px", border: "1px solid var(--color-border)" }}>
+            <div className="p-4 border-b row-between align-center" style={{ background: "#f8fafc" }}>
               <div>
-                <h3 className="mb-0" style={{ fontSize: "1rem" }}>My Submitted Logs</h3>
-                <span className="text-xs text-muted">Your recorded and approved time entries (click row to inspect)</span>
+                <h3 className="mb-0" style={{ fontSize: "1rem", color: "#0f172a" }}>My Submitted Time Logs</h3>
+                <span className="text-xs text-muted">Complete audit of recorded and approved hours across projects (click row to inspect)</span>
               </div>
-              <span className="badge badge-muted">{entries.length} records</span>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <span className="badge badge-muted">{entries.length} entries</span>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  onClick={() => setShowLogModal(true)}
+                  style={{ fontSize: "12px" }}
+                >
+                  + Log Time
+                </button>
+              </div>
             </div>
 
             <div className="table-wrap">
               {loading ? (
                 <div className="empty-state">Loading logs...</div>
               ) : entries.length === 0 ? (
-                <div className="empty-state">No time entries recorded yet. Use the form on the left to submit hours.</div>
+                <div className="empty-state">
+                  <p>No time entries recorded yet.</p>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => setShowLogModal(true)}>
+                    Log your first time entry
+                  </button>
+                </div>
               ) : (
-                <table className="data-table">
+                <table className="data-table" style={{ width: "100%" }}>
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Hours</th>
-                      <th>Billable</th>
-                      <th>Project / Task</th>
-                      <th>Description</th>
-                      <th>Status</th>
+                      <th style={{ width: "120px" }}>Date</th>
+                      <th style={{ width: "120px" }}>Hours</th>
+                      <th style={{ width: "130px" }}>Billing</th>
+                      <th style={{ width: "240px" }}>Project & Task</th>
+                      <th>Work Deliverable & Notes</th>
+                      <th style={{ width: "120px" }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -670,9 +460,9 @@ export function TimesheetsPage() {
                           }}
                           title="Click to inspect time entry details"
                         >
-                          <td className="font-medium">{formatDate(entry.date)}</td>
+                          <td className="font-medium" style={{ color: "#334155" }}>{formatDate(entry.date)}</td>
                           <td>
-                            <span className="font-semibold">{entry.hours} hrs</span>
+                            <span className="font-semibold" style={{ fontSize: "14px", color: "#0f172a" }}>{entry.hours} hrs</span>
                             {isOT && (
                               <span
                                 className="badge"
@@ -685,18 +475,22 @@ export function TimesheetsPage() {
                           </td>
                           <td>
                             {entry.is_billable ? (
-                              <span className="badge badge-success">Billable</span>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 8px", background: "#dcfce7", color: "#15803d", borderRadius: "12px", fontSize: "11px", fontWeight: 600 }}>
+                                ● Billable
+                              </span>
                             ) : (
-                              <span className="badge badge-muted">Non-billable</span>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", padding: "2px 8px", background: "#f1f5f9", color: "#64748b", borderRadius: "12px", fontSize: "11px", fontWeight: 600 }}>
+                                ○ Non-billable
+                              </span>
                             )}
                           </td>
                           <td>
-                            <div className="font-medium" style={{ fontSize: "0.85rem" }}>{projName}</div>
+                            <div className="font-medium" style={{ fontSize: "0.88rem", color: "#1e293b" }}>{projName}</div>
                             {entry.task_title && (
                               <div className="text-xs text-muted">{entry.task_title}</div>
                             )}
                           </td>
-                          <td style={{ maxWidth: "240px", whiteSpace: "normal", wordBreak: "break-word" }}>
+                          <td style={{ maxWidth: "300px", whiteSpace: "normal", wordBreak: "break-word", color: "#475569" }}>
                             {entry.description || <span className="text-faint">—</span>}
                           </td>
                           <td>
@@ -712,6 +506,384 @@ export function TimesheetsPage() {
               )}
             </div>
           </div>
+
+          {/* Time Entry Form Modal */}
+          {showLogModal && (
+            <div
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(15, 23, 42, 0.6)",
+                backdropFilter: "blur(4px)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 1050,
+              }}
+            >
+              <div
+                className="card"
+                style={{
+                  width: "100%",
+                  maxWidth: "520px",
+                  padding: "24px",
+                  background: "#ffffff",
+                  borderRadius: "14px",
+                  boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+                  maxHeight: "90vh",
+                  overflowY: "auto",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: "17px", color: "#0f172a" }}>Log Time Worked</h3>
+                    <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "#64748b" }}>Record hours spent on assigned projects and tasks</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowLogModal(false)}
+                    style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: "#94a3b8" }}
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {/* Quick Actions & 3 Modes Switcher */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
+                  <button
+                    type="button"
+                    className="btn btn-xs btn-outline"
+                    style={{ fontSize: "0.75rem", padding: "3px 8px" }}
+                    onClick={() => {
+                      if (entries.length > 0) {
+                        const last = entries[0];
+                        setSelectedProjectId(last.project_id);
+                        setSelectedTaskId(last.task_id || "");
+                        setHours(last.hours ? String(last.hours) : "4");
+                        setDescription(last.description || "Recurring project sprint work");
+                        setIsBillable(last.is_billable);
+                        notify("Copied previous time entry details!", "info");
+                      } else {
+                        notify("No previous entries found to copy.", "warning");
+                      }
+                    }}
+                    title="Copy details from your recent timesheet entry"
+                  >
+                    📋 Copy Recent Entry
+                  </button>
+                </div>
+
+                {/* 3 Modes Switcher (Zoho Projects / ClickUp style) */}
+                <div style={{ display: "flex", gap: "6px", background: "#f1f5f9", padding: "4px", borderRadius: "6px", marginBottom: "1rem" }}>
+                  <button
+                    type="button"
+                    style={{
+                      flex: 1,
+                      padding: "6px 4px",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      background: timeInputMode === "duration" ? "#fff" : "transparent",
+                      color: timeInputMode === "duration" ? "#2563eb" : "#64748b",
+                      boxShadow: timeInputMode === "duration" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                    }}
+                    onClick={() => setTimeInputMode("duration")}
+                  >
+                    🔢 Duration
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      flex: 1,
+                      padding: "6px 4px",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      background: timeInputMode === "range" ? "#fff" : "transparent",
+                      color: timeInputMode === "range" ? "#2563eb" : "#64748b",
+                      boxShadow: timeInputMode === "range" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                    }}
+                    onClick={() => {
+                      setTimeInputMode("range");
+                      setHours("7.00");
+                    }}
+                  >
+                    🕒 Start / End
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      flex: 1,
+                      padding: "6px 4px",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      background: timeInputMode === "stopwatch" ? "#fff" : "transparent",
+                      color: timeInputMode === "stopwatch" ? "#2563eb" : "#64748b",
+                      boxShadow: timeInputMode === "stopwatch" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                    }}
+                    onClick={() => {
+                      setTimeInputMode("stopwatch");
+                      if (activeTimer) {
+                        setHours((elapsedSeconds / 3600).toFixed(2));
+                      }
+                    }}
+                  >
+                    ⏱️ Live Stopwatch
+                  </button>
+                </div>
+
+                <form onSubmit={async (e) => {
+                  await handleLogTime(e);
+                  setShowLogModal(false);
+                }} className="stack" style={{ gap: "var(--space-3)" }}>
+                  <div className="field">
+                    <label>Select Project *</label>
+                    <select
+                      value={selectedProjectId}
+                      onChange={(e) => setSelectedProjectId(e.target.value)}
+                      required
+                    >
+                      <option value="">-- Choose Project --</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label>Select Task (Optional)</label>
+                    <select
+                      value={selectedTaskId}
+                      onChange={(e) => setSelectedTaskId(e.target.value)}
+                      disabled={!selectedProjectId}
+                    >
+                      <option value="">-- No specific task (General work / Meeting) --</option>
+                      {isManagerOrAdmin ? (
+                        <>
+                          <optgroup label="My Tasks">
+                            {tasks
+                              .filter((t) => user?.employee?.id && t.assigned_to === user.employee.id)
+                              .map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.title} ({t.status.toUpperCase()})
+                                </option>
+                              ))}
+                          </optgroup>
+                          <optgroup label="Team Member Tasks">
+                            {tasks
+                              .filter((t) => !user?.employee?.id || t.assigned_to !== user.employee.id)
+                              .map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.title} — {t.assigned_to_name || "Unassigned"} ({t.status.toUpperCase()})
+                                </option>
+                              ))}
+                          </optgroup>
+                        </>
+                      ) : (
+                        tasks
+                          .filter((t) => user?.employee?.id && t.assigned_to === user.employee.id)
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.title} ({t.status.toUpperCase()})
+                            </option>
+                          ))
+                      )}
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label>Date *</label>
+                    <input
+                      type="date"
+                      value={logDate}
+                      onChange={(e) => setLogDate(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  {/* Mode 1: Duration input */}
+                  {timeInputMode === "duration" && (
+                    <div className="field">
+                      <label>Hours Worked *</label>
+                      <input
+                        type="number"
+                        step="0.25"
+                        min="0.1"
+                        max="24"
+                        placeholder="e.g. 7.5"
+                        value={hours}
+                        onChange={(e) => setHours(e.target.value)}
+                        required
+                      />
+                    </div>
+                  )}
+
+                  {/* Mode 2: Start / End Range */}
+                  {timeInputMode === "range" && (
+                    <div className="card" style={{ background: "#f8fafc", padding: "10px", border: "1px dashed #cbd5e1" }}>
+                      <div className="row" style={{ gap: "8px" }}>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label style={{ fontSize: "11px" }}>Start Time</label>
+                          <input
+                            type="time"
+                            value={startTime}
+                            onChange={(e) => {
+                              setStartTime(e.target.value);
+                              const [sh, sm] = e.target.value.split(":").map(Number);
+                              const [eh, em] = endTime.split(":").map(Number);
+                              const startM = sh * 60 + sm;
+                              const endM = eh * 60 + em;
+                              const breakM = parseInt(breakMinutes) || 0;
+                              const diff = Math.max(0, (endM - startM - breakM) / 60);
+                              setHours(diff.toFixed(2));
+                            }}
+                          />
+                        </div>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label style={{ fontSize: "11px" }}>End Time</label>
+                          <input
+                            type="time"
+                            value={endTime}
+                            onChange={(e) => {
+                              setEndTime(e.target.value);
+                              const [sh, sm] = startTime.split(":").map(Number);
+                              const [eh, em] = e.target.value.split(":").map(Number);
+                              const startM = sh * 60 + sm;
+                              const endM = eh * 60 + em;
+                              const breakM = parseInt(breakMinutes) || 0;
+                              const diff = Math.max(0, (endM - startM - breakM) / 60);
+                              setHours(diff.toFixed(2));
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="row mt-2" style={{ gap: "8px", alignItems: "center" }}>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label style={{ fontSize: "11px" }}>Unpaid Break (mins)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="5"
+                            value={breakMinutes}
+                            onChange={(e) => {
+                              setBreakMinutes(e.target.value);
+                              const [sh, sm] = startTime.split(":").map(Number);
+                              const [eh, em] = endTime.split(":").map(Number);
+                              const startM = sh * 60 + sm;
+                              const endM = eh * 60 + em;
+                              const breakM = parseInt(e.target.value) || 0;
+                              const diff = Math.max(0, (endM - startM - breakM) / 60);
+                              setHours(diff.toFixed(2));
+                            }}
+                          />
+                        </div>
+                        <div style={{ flex: 1, textAlign: "right", alignSelf: "flex-end", paddingBottom: "8px" }}>
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>Calculated: </span>
+                          <strong style={{ fontSize: "14px", color: "#2563eb" }}>{hours || "0.00"} hrs</strong>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Mode 3: Live Stopwatch */}
+                  {timeInputMode === "stopwatch" && (
+                    <div className="card" style={{ background: "#0f172a", color: "#fff", padding: "14px", border: "1px solid #1e293b", textAlign: "center", borderRadius: "8px" }}>
+                      <div style={{ fontSize: "22px", fontWeight: "bold", fontFamily: "monospace", color: "#34d399", marginBottom: "8px" }}>
+                        ⏱️ {formatTime(elapsedSeconds)}
+                      </div>
+                      <div style={{ display: "flex", gap: "8px", justifyContent: "center", marginBottom: "8px" }}>
+                        {activeTimer ? (
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-danger"
+                            onClick={() => {
+                              const stopped = stopTimer();
+                              if (stopped) {
+                                const hrs = Math.max(0.1, +(elapsedSeconds / 3600).toFixed(2));
+                                setHours(hrs.toString());
+                                setTimeInputMode("duration");
+                              }
+                            }}
+                          >
+                            ⏹ Stop & Use {Math.max(0.1, +(elapsedSeconds / 3600).toFixed(2))}h
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-primary"
+                            disabled={!selectedProjectId}
+                            onClick={() => {
+                              if (!selectedProjectId) {
+                                notify("Select a project first before starting timer", "warning");
+                                return;
+                              }
+                              const proj = projects.find(p => p.id === selectedProjectId);
+                              const task = tasks.find(t => t.id === selectedTaskId);
+                              startTimer({
+                                id: selectedTaskId || "general",
+                                title: task ? task.title : (proj ? `${proj.name} Work` : "Work"),
+                                projectId: selectedProjectId,
+                                projectName: proj?.name,
+                              });
+                            }}
+                          >
+                            ▶ Start Timer Now
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+                        Hours: <b>{hours || "0.00"} hrs</b>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="row" style={{ gap: "var(--space-2)", margin: "var(--space-1) 0" }}>
+                    <input
+                      type="checkbox"
+                      id="billable"
+                      checked={isBillable}
+                      onChange={(e) => setIsBillable(e.target.checked)}
+                      style={{ width: "16px", height: "16px", cursor: "pointer" }}
+                    />
+                    <label htmlFor="billable" style={{ cursor: "pointer", fontSize: "var(--text-sm)", userSelect: "none" }}>
+                      Billable Hours
+                    </label>
+                  </div>
+
+                  <div className="field">
+                    <label>Work Description</label>
+                    <textarea
+                      rows={3}
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder="Summary of deliverables, tasks, or meetings performed..."
+                    />
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "12px" }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => setShowLogModal(false)}
+                      disabled={submitting}
+                    >
+                      Cancel
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={submitting}>
+                      {submitting ? "Submitting..." : "Submit Time Entry"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

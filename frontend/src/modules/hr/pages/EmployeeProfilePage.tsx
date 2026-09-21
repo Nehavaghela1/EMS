@@ -54,6 +54,8 @@ export function EmployeeProfilePage() {
   const [resendBusy, setResendBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "salary" | "payslips" | "exit">("overview");
 
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+
   const employeeQuery = useQuery({
     queryKey: ["employee", id],
     queryFn: () => getEmployee(id as string),
@@ -65,7 +67,6 @@ export function EmployeeProfilePage() {
     queryFn: () => getAssignedShift(id as string),
     enabled: Boolean(id),
   });
-
 
   const invite = resent ?? (location.state as InviteState | null)?.invite;
   const isHr = user?.role === "hr_admin";
@@ -129,85 +130,175 @@ export function EmployeeProfilePage() {
         </Link>
       </div>
 
-      {/* Zoho / Enterprise Style Header Card */}
-      <div className="card" style={{ padding: "1.25rem", borderLeft: "4px solid var(--color-primary, #2563eb)" }}>
-        <div className="flex justify-between items-center" style={{ flexWrap: "wrap", gap: "1rem" }}>
-          <div className="flex items-center gap-3">
-            <div
-              style={{
-                width: "56px",
-                height: "56px",
-                borderRadius: "50%",
-                background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
-                color: "#ffffff",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "1.3rem",
-                fontWeight: 700,
-                boxShadow: "0 2px 8px rgba(37, 99, 235, 0.25)",
-              }}
-            >
-              {e.first_name.charAt(0).toUpperCase()}
-              {(e.last_name || "").charAt(0).toUpperCase()}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-muted" style={{ fontSize: "0.88rem", fontWeight: 600 }}>
-                  {e.employee_code}
-                </span>
-                <h2 style={{ margin: 0, fontSize: "1.35rem" }}>
-                  {e.first_name} {e.last_name || ""}
-                </h2>
-                <span className={"badge " + (e.is_active ? "badge-success" : "badge-muted")}>
-                  {e.is_active ? "Active" : "Inactive"}
-                </span>
-              </div>
-              <div className="text-muted" style={{ fontSize: "0.85rem", marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}>
-                <span>{e.position || "Staff"} • {e.level || "L1"} • {e.employment_type.replace("_", " ")}</span>
-                {e.company_name && (
-                  <span className="badge badge-outline" style={{ fontSize: "0.75rem", padding: "1px 6px" }}>
-                    🏢 {e.company_name}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {isHr && (
-            <div className="flex items-center gap-2">
-              {e.invitation_status !== "activated" && (
-                <button className="btn btn-sm btn-ghost" onClick={handleResendInvite} disabled={resendBusy}>
-                  {resendBusy ? "Resending…" : "Resend Invite"}
-                </button>
-              )}
-              <button className="btn btn-sm" onClick={() => navigate(`/employees/${e.id}/edit`)}>
-                Edit Profile
-              </button>
-              <button
-                className={e.is_active ? "btn btn-sm btn-danger" : "btn btn-sm btn-primary"}
-                onClick={() => setConfirmOpen(true)}
+      {/* Unified Zoho-grade Profile Hero Banner */}
+      <div
+        className="card"
+        style={{
+          padding: 0,
+          overflow: "hidden",
+          border: "1px solid var(--color-border, #e2e8f0)",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+        }}
+      >
+        {/* Banner Top Area */}
+        <div
+          style={{
+            background: "linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)",
+            padding: "1.5rem 1.75rem 1.25rem",
+            borderBottom: "1px solid var(--color-border, #e2e8f0)",
+          }}
+        >
+          <div className="flex justify-between items-start" style={{ flexWrap: "wrap", gap: "1.25rem" }}>
+            <div className="flex items-center gap-4">
+              <div
+                style={{
+                  width: "68px",
+                  height: "68px",
+                  borderRadius: "14px",
+                  background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                  color: "#ffffff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1.5rem",
+                  fontWeight: 700,
+                  boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)",
+                  flexShrink: 0,
+                }}
               >
-                {e.is_active ? "Deactivate" : "Reactivate"}
-              </button>
+                {e.first_name.charAt(0).toUpperCase()}
+                {(e.last_name || "").charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                  <h1 style={{ margin: 0, fontSize: "1.45rem", fontWeight: 700, color: "var(--color-heading, #0f172a)" }}>
+                    {e.first_name} {e.last_name || ""}
+                  </h1>
+                  <span
+                    className="font-mono"
+                    style={{
+                      fontSize: "0.82rem",
+                      fontWeight: 600,
+                      background: "#f1f5f9",
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      color: "#475569",
+                      border: "1px solid #e2e8f0",
+                    }}
+                  >
+                    {e.employee_code}
+                  </span>
+                  <span className={"badge " + (e.is_active ? "badge-success" : "badge-muted")}>
+                    {e.is_active ? "● Active" : "Inactive"}
+                  </span>
+                </div>
+                {/* Metadata Badges Row */}
+                <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap", fontSize: "0.82rem", color: "#64748b" }}>
+                  <span style={{ fontWeight: 500 }}>{e.position || "Staff"}</span>
+                  <span>•</span>
+                  <span className="badge badge-outline" style={{ textTransform: "capitalize" }}>{e.level || "L1"}</span>
+                  <span>•</span>
+                  <span style={{ textTransform: "capitalize" }}>{e.employment_type.replace("_", " ")}</span>
+                  {e.company_name && (
+                    <>
+                      <span>•</span>
+                      <span>🏢 {e.company_name}</span>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
-          )}
+
+            {/* Action Buttons: Primary + Tucked Ellipsis */}
+            {isHr && (
+              <div className="flex items-center gap-2">
+                {e.invitation_status !== "activated" && (
+                  <button className="btn btn-sm btn-ghost" onClick={handleResendInvite} disabled={resendBusy}>
+                    {resendBusy ? "Resending…" : "Resend Invite"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={() => navigate(`/employees/${e.id}/edit`)}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                >
+                  <span>✏️</span> Edit Profile
+                </button>
+
+                {/* More Actions Dropdown (Tucking Deactivate safely) */}
+                <div style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline"
+                    style={{ padding: "0.4rem 0.65rem", fontWeight: 700 }}
+                    onClick={() => setMoreActionsOpen(!moreActionsOpen)}
+                    title="More actions"
+                  >
+                    •••
+                  </button>
+                  {moreActionsOpen && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        right: 0,
+                        top: "115%",
+                        background: "#ffffff",
+                        border: "1px solid var(--color-border, #e2e8f0)",
+                        borderRadius: "8px",
+                        boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
+                        zIndex: 50,
+                        minWidth: "180px",
+                        padding: "6px 0",
+                      }}
+                      onMouseLeave={() => setMoreActionsOpen(false)}
+                    >
+                      <button
+                        type="button"
+                        style={{
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "8px 14px",
+                          border: "none",
+                          background: "transparent",
+                          fontSize: "0.84rem",
+                          fontWeight: 500,
+                          color: e.is_active ? "#dc2626" : "#2563eb",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                        }}
+                        onClick={() => {
+                          setMoreActionsOpen(false);
+                          setConfirmOpen(true);
+                        }}
+                      >
+                        <span>{e.is_active ? "🛑" : "✅"}</span>
+                        <span>{e.is_active ? "Deactivate Employee" : "Reactivate Employee"}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Tab Navigation */}
+        {/* Segmented Tabs Anchored to Hero Bottom */}
         <div
-          className="flex gap-4 border-b mt-4"
+          className="flex gap-2"
           style={{
-            borderColor: "var(--color-border)",
+            background: "#ffffff",
+            padding: "0 1.5rem",
             overflowX: "auto",
-            paddingBottom: "1px",
           }}
         >
           {[
-            { id: "overview", label: "Overview" },
-            { id: "salary", label: "Salary Details" },
-            { id: "payslips", label: "Payslips" },
-            { id: "exit", label: "Resignation & FnF" },
+            { id: "overview", label: "Overview", icon: "👤" },
+            { id: "salary", label: "Salary Details", icon: "💳" },
+            { id: "payslips", label: "Payslips", icon: "📄" },
+            { id: "exit", label: "Resignation & FnF", icon: "📑" },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -216,67 +307,137 @@ export function EmployeeProfilePage() {
               style={{
                 border: "none",
                 background: "transparent",
-                padding: "0.5rem 0.75rem",
-                fontSize: "0.9rem",
-                fontWeight: activeTab === tab.id ? 600 : 400,
-                color: activeTab === tab.id ? "var(--color-primary, #2563eb)" : "var(--color-text-muted)",
-                borderBottom: activeTab === tab.id ? "2px solid var(--color-primary, #2563eb)" : "2px solid transparent",
+                padding: "0.75rem 1rem",
+                fontSize: "0.88rem",
+                fontWeight: activeTab === tab.id ? 600 : 500,
+                color: activeTab === tab.id ? "var(--color-primary, #2563eb)" : "var(--color-text-muted, #64748b)",
+                borderBottom: activeTab === tab.id ? "2.5px solid var(--color-primary, #2563eb)" : "2.5px solid transparent",
                 borderRadius: 0,
                 cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
               }}
               onClick={() => setActiveTab(tab.id as typeof activeTab)}
             >
-              {tab.label}
+              <span>{tab.icon}</span>
+              <span>{tab.label}</span>
             </button>
           ))}
         </div>
       </div>
 
       {invite && (
-        <div className="alert alert-success mb-4">
+        <div className="alert alert-success">
           Invitation sent to <strong>{invite.sent_to}</strong>, expires {formatDateTime(invite.expires_at)}.
         </div>
       )}
 
-      {/* TAB 1: OVERVIEW */}
+      {/* TAB 1: OVERVIEW - TWO-COLUMN ASYMMETRIC (30% / 70%) */}
       {activeTab === "overview" && (
-        <div className="stack gap-4">
-          <div className="card">
-            <h3 style={{ fontSize: "1rem", marginBottom: "1rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}>
-              Basic Information
-            </h3>
-            <div className="form-grid">
-              <Field label="Full Name" value={`${e.first_name} ${e.last_name || ""}`} isLocked={true} />
-              <Field label="Employee Code" value={e.employee_code} isLocked={true} />
-              <Field label="Work Email" value={e.email} isLocked={true} />
-              <Field label="Personal Email" value={e.personal_email ?? "—"} editable={true} />
-              <Field label="Phone" value={e.phone ?? "—"} editable={true} />
-              <Field label="Invitation Status" value={e.invitation_status.replace("_", " ")} isLocked={true} />
+        <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: "1.25rem", alignItems: "start" }}>
+          {/* Left Column (30%): Quick Summary & Contact Sticky Card */}
+          <div className="stack gap-4">
+            <div className="card" style={{ padding: "1.25rem" }}>
+              <div className="text-xs font-semibold uppercase text-muted mb-3" style={{ letterSpacing: "0.05em" }}>
+                Contact Details
+              </div>
+              <div className="stack gap-3">
+                <div>
+                  <label className="text-xs text-muted block mb-1">Work Email</label>
+                  <div className="text-sm font-semibold text-primary" style={{ wordBreak: "break-all" }}>
+                    <a href={`mailto:${e.email}`} style={{ textDecoration: "none" }}>{e.email}</a>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-muted block mb-1">Personal Email</label>
+                  <div className="text-sm font-medium" style={{ wordBreak: "break-all" }}>
+                    {e.personal_email || "—"}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-muted block mb-1">Phone Number</label>
+                  <div className="text-sm font-medium">
+                    {e.phone ? <a href={`tel:${e.phone}`} style={{ textDecoration: "none" }}>{e.phone}</a> : "—"}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-muted block mb-1">Account Activation</label>
+                  <span className="badge badge-outline text-xs">
+                    {e.invitation_status.replace("_", " ")}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Direct Reporting Manager Card */}
+            <div className="card" style={{ padding: "1.25rem" }}>
+              <div className="text-xs font-semibold uppercase text-muted mb-3" style={{ letterSpacing: "0.05em" }}>
+                Reporting Hierarchy
+              </div>
+              <div className="flex items-center gap-3">
+                <div
+                  style={{
+                    width: "40px",
+                    height: "40px",
+                    borderRadius: "50%",
+                    background: "#e2e8f0",
+                    color: "#475569",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontWeight: 700,
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  👔
+                </div>
+                <div>
+                  <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "var(--color-heading, #1e293b)" }}>
+                    Direct Manager
+                  </div>
+                  <div className="text-xs text-muted">
+                    {e.reporting_manager_id ? "Assigned in Team Hierarchy" : "Reports to Organization Head"}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="card">
-            <h3 style={{ fontSize: "1rem", marginBottom: "1rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}>
-              Employment & Designation
-            </h3>
-            <div className="form-grid">
-              <Field label="Position / Role" value={e.position ?? "—"} isLocked={true} />
-              <Field label="Level" value={e.level ?? "—"} isLocked={true} />
-              <Field label="Employment Type" value={e.employment_type.replace("_", " ")} isLocked={true} />
-              <Field
-                label="Assigned Shift"
-                value={
-                  assignedShiftQuery.data?.shift
-                    ? `${assignedShiftQuery.data.shift.name} (${assignedShiftQuery.data.shift.start_time.slice(0, 5)} - ${assignedShiftQuery.data.shift.end_time.slice(0, 5)})`
-                    : "General Shift (09:00 - 18:00)"
-                }
-                isLocked={true}
-              />
-              <Field label="Hire Date" value={formatDate(e.hire_date)} isLocked={true} />
-              <Field label="Probation End Date" value={e.probation_end_date ? formatDate(e.probation_end_date) : "—"} isLocked={true} />
-              <Field label="Notice Period" value={`${e.notice_period_days ?? 30} days`} isLocked={true} />
+          {/* Right Column (70%): Clean Grouped Sections */}
+          <div className="stack gap-4">
+            <div className="card" style={{ padding: "1.25rem" }}>
+              <h3 style={{ fontSize: "0.95rem", fontWeight: 700, marginBottom: "1rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}>
+                Job & Organization Information
+              </h3>
+              <div className="form-grid">
+                <Field label="Full Name" value={`${e.first_name} ${e.last_name || ""}`} />
+                <Field label="Employee Code" value={e.employee_code} />
+                <Field label="Designation / Position" value={e.position ?? "—"} />
+                <Field label="Band / Grade Level" value={e.level ?? "—"} />
+                <Field label="Employment Type" value={e.employment_type.replace("_", " ")} />
+                <Field label="Primary Department" value={e.department_id ? "Assigned Department" : "General Organization"} />
+              </div>
             </div>
 
+            <div className="card" style={{ padding: "1.25rem" }}>
+              <h3 style={{ fontSize: "0.95rem", fontWeight: 700, marginBottom: "1rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}>
+                Work Timings & Shift Schedule
+              </h3>
+              <div className="form-grid">
+                <Field
+                  label="Assigned Shift Schedule"
+                  value={
+                    assignedShiftQuery.data?.shift
+                      ? `${assignedShiftQuery.data.shift.name} (${assignedShiftQuery.data.shift.start_time.slice(0, 5)} - ${assignedShiftQuery.data.shift.end_time.slice(0, 5)})`
+                      : "General Shift (09:00 - 18:00)"
+                  }
+                />
+                <Field label="Official Joining Date" value={formatDate(e.hire_date)} />
+                <Field label="Probation End Date" value={e.probation_end_date ? formatDate(e.probation_end_date) : "Completed / None"} />
+                <Field label="Contractual Notice Period" value={`${e.notice_period_days ?? 30} days`} />
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -317,7 +478,6 @@ export function EmployeeProfilePage() {
 function Field({
   label,
   value,
-  isLocked,
   editable,
 }: {
   label: string;
@@ -326,45 +486,50 @@ function Field({
   editable?: boolean;
 }) {
   return (
-    <div className="field">
+    <div className="field" style={{ marginBottom: "0.85rem" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
-        <label style={{ margin: 0, fontSize: "0.8rem", color: "var(--color-muted, #64748b)" }}>{label}</label>
-        {isLocked ? (
+        <label
+          style={{
+            margin: 0,
+            fontSize: "0.72rem",
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+            color: "var(--color-text-muted, #64748b)",
+          }}
+        >
+          {label}
+        </label>
+        {editable && (
           <span
             style={{
-              fontSize: "0.68rem",
-              padding: "1px 6px",
-              borderRadius: "4px",
-              background: "#f1f5f9",
-              color: "#64748b",
-              border: "1px solid #e2e8f0",
-              fontWeight: 500,
+              fontSize: "0.72rem",
+              color: "#3b82f6",
+              cursor: "pointer",
               display: "inline-flex",
               alignItems: "center",
-              gap: "3px",
+              gap: "2px",
             }}
-            title="Managed strictly by HR Admin"
+            title="Field editable by employee"
           >
-            🔒 HR Managed
+            ✏️
           </span>
-        ) : editable ? (
-          <span
-            style={{
-              fontSize: "0.68rem",
-              padding: "1px 6px",
-              borderRadius: "4px",
-              background: "#ecfdf5",
-              color: "#059669",
-              border: "1px solid #a7f3d0",
-              fontWeight: 500,
-            }}
-            title="User editable"
-          >
-            ✎ Self Editable
-          </span>
-        ) : null}
+        )}
       </div>
-      <div style={{ fontWeight: 600, color: "var(--color-heading, #1e293b)", fontSize: "0.92rem" }}>
+      <div
+        style={{
+          fontWeight: 600,
+          color: "var(--color-heading, #1e293b)",
+          fontSize: "0.92rem",
+          background: "var(--color-bg, #f8fafc)",
+          border: "1px solid var(--color-border, #e2e8f0)",
+          borderRadius: "6px",
+          padding: "6px 10px",
+          minHeight: "34px",
+          display: "flex",
+          alignItems: "center",
+        }}
+      >
         {value}
       </div>
     </div>
@@ -471,6 +636,8 @@ function ResignationAndFnFCard({
   const [editReimbursements, setEditReimbursements] = useState(String(employee.pending_reimbursements || 0));
   const [editGratuity, setEditGratuity] = useState(String(employee.gratuity_bonus || 0));
   const [editDeductions, setEditDeductions] = useState(String(employee.asset_deductions || 0));
+  const [showReleaseModal, setShowReleaseModal] = useState(false);
+  const [releaseConfirmInput, setReleaseConfirmInput] = useState("");
 
   const status = employee.resignation_status ?? "none";
   const isSeparated = status === "approved" || !employee.is_active;
@@ -569,20 +736,18 @@ function ResignationAndFnFCard({
     }
   }
 
-  async function handleFinalSettlementRelease() {
-    if (!fnfQuery.data?.can_release_settlement) {
-      notify("All department clearances (IT, HR, Finance) must be signed off before release.", "error");
+  async function executeReleaseSettlement() {
+    if (releaseConfirmInput.trim().toUpperCase() !== "CONFIRM") {
+      notify('Please type "CONFIRM" to release the settlement.', "error");
       return;
     }
-    const confirmed = window.confirm(
-      `Confirm final settlement release of ₹${Number(fnfQuery.data.total_settlement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}? This locks the settlement and excludes employee from future recurring monthly pay runs.`
-    );
-    if (!confirmed) return;
 
     setUpdatingClearance(true);
     try {
       await updateFnFClearance(employee.id, { mark_settled: true });
       notify("FnF Settlement released successfully! Employee account finalized.", "success");
+      setShowReleaseModal(false);
+      setReleaseConfirmInput("");
       fnfQuery.refetch();
       onRefresh();
     } catch (err) {
@@ -1026,62 +1191,123 @@ function ResignationAndFnFCard({
             )}
 
             {fnfQuery.data && (
-              <div className="card" style={{ background: "var(--color-bg)" }}>
-                {/* Financial Component Grid */}
-                <div className="form-grid mb-3">
-                  <Field
-                    label="Total Monthly Gross"
-                    value={`₹${Number(fnfQuery.data.monthly_gross_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                  />
-                  <Field
-                    label="Effective Per-Day Salary (30d base)"
-                    value={`₹${Number(fnfQuery.data.per_day_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })} / day`}
-                  />
-                  <Field
-                    label="Unpaid Salary Days"
-                    value={`${fnfQuery.data.unpaid_salary_days} days`}
-                  />
-                  <Field
-                    label="Prorated Unpaid Salary"
-                    value={`₹${Number(fnfQuery.data.unpaid_salary_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                  />
-                  <Field
-                    label="Encashable Leave Days"
-                    value={`${fnfQuery.data.encashable_leave_days} days`}
-                  />
-                  <Field
-                    label="Leave Encashment (Add)"
-                    value={`+ ₹${Number(fnfQuery.data.leave_encashment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                  />
-                  <Field
-                    label="Severance / Notice In Lieu"
-                    value={`+ ₹${Number(fnfQuery.data.severance_pay).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                  />
-                  <Field
-                    label="Pending Reimbursements"
-                    value={`+ ₹${Number(fnfQuery.data.pending_reimbursements).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                  />
-                  <Field
-                    label="Gratuity / Special Bonus"
-                    value={`+ ₹${Number(fnfQuery.data.gratuity_bonus).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                  />
-                  <Field
-                    label="Notice Shortfall Deduction"
-                    value={`- ₹${Number(fnfQuery.data.notice_recovery_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })} (${fnfQuery.data.notice_recovery_days} days)`}
-                  />
-                  <Field
-                    label="Asset Damage / Deductions"
-                    value={`- ₹${Number(fnfQuery.data.asset_deductions).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                  />
+              <div className="card" style={{ background: "#ffffff", border: "1px solid var(--color-border)", borderRadius: "12px", padding: "20px" }}>
+                {/* Meta stats bar */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "16px", padding: "12px 16px", background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "20px" }}>
+                  <div>
+                    <span style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: 600, display: "block" }}>Monthly Gross Pay</span>
+                    <strong style={{ fontSize: "14px", color: "#1e293b" }}>₹{Number(fnfQuery.data.monthly_gross_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                  </div>
+                  <div style={{ width: "1px", background: "#cbd5e1" }} />
+                  <div>
+                    <span style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: 600, display: "block" }}>Per-Day Rate (30d Base)</span>
+                    <strong style={{ fontSize: "14px", color: "#1e293b" }}>₹{Number(fnfQuery.data.per_day_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })} / day</strong>
+                  </div>
+                  <div style={{ width: "1px", background: "#cbd5e1" }} />
+                  <div>
+                    <span style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: 600, display: "block" }}>Unpaid Salary Days</span>
+                    <strong style={{ fontSize: "14px", color: "#1e293b" }}>{fnfQuery.data.unpaid_salary_days} days</strong>
+                  </div>
+                  <div style={{ width: "1px", background: "#cbd5e1" }} />
+                  <div>
+                    <span style={{ fontSize: "11px", color: "#64748b", textTransform: "uppercase", fontWeight: 600, display: "block" }}>Notice Shortfall</span>
+                    <strong style={{ fontSize: "14px", color: "#1e293b" }}>{fnfQuery.data.notice_recovery_days} days</strong>
+                  </div>
+                </div>
+
+                {/* Two-Sided Audited Ledger Card */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "20px" }}>
+                  {/* Left Column: Credits / Additions */}
+                  <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "16px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #bbf7d0", paddingBottom: "10px", marginBottom: "12px" }}>
+                      <span style={{ fontWeight: 700, fontSize: "13px", color: "#15803d", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                        ➕ Payable Credits (Additions)
+                      </span>
+                      <span style={{ fontSize: "11px", color: "#166534", fontWeight: 600 }}>Earnings & Accruals</span>
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                        <span style={{ color: "#334155" }}>Prorated Unpaid Salary ({fnfQuery.data.unpaid_salary_days}d)</span>
+                        <strong style={{ color: "#166534" }}>+ ₹{Number(fnfQuery.data.unpaid_salary_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                        <span style={{ color: "#334155" }}>Leave Encashment ({fnfQuery.data.encashable_leave_days}d)</span>
+                        <strong style={{ color: "#166534" }}>+ ₹{Number(fnfQuery.data.leave_encashment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                        <span style={{ color: "#334155" }}>Severance / Notice in Lieu</span>
+                        <strong style={{ color: "#166534" }}>+ ₹{Number(fnfQuery.data.severance_pay).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                        <span style={{ color: "#334155" }}>Pending Approved Reimbursements</span>
+                        <strong style={{ color: "#166534" }}>+ ₹{Number(fnfQuery.data.pending_reimbursements).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                        <span style={{ color: "#334155" }}>Gratuity / Performance Bonus</span>
+                        <strong style={{ color: "#166534" }}>+ ₹{Number(fnfQuery.data.gratuity_bonus).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: "14px", paddingTop: "10px", borderTop: "1px dashed #86efac", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: "13px", color: "#14532d" }}>
+                      <span>Total Gross Credits</span>
+                      <span>
+                        ₹{(
+                          Number(fnfQuery.data.unpaid_salary_amount) +
+                          Number(fnfQuery.data.leave_encashment_amount) +
+                          Number(fnfQuery.data.severance_pay) +
+                          Number(fnfQuery.data.pending_reimbursements) +
+                          Number(fnfQuery.data.gratuity_bonus)
+                        ).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Debits / Deductions */}
+                  <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "16px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #fecaca", paddingBottom: "10px", marginBottom: "12px" }}>
+                      <span style={{ fontWeight: 700, fontSize: "13px", color: "#b91c1c", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                        ➖ Deductions & Recoveries
+                      </span>
+                      <span style={{ fontSize: "11px", color: "#991b1b", fontWeight: 600 }}>Payable by Employee</span>
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                        <div>
+                          <span style={{ color: "#334155", display: "block" }}>Notice Shortfall Deduction</span>
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>({fnfQuery.data.notice_recovery_days} days shortfall)</span>
+                        </div>
+                        <strong style={{ color: "#b91c1c" }}>- ₹{Number(fnfQuery.data.notice_recovery_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
+                        <span style={{ color: "#334155" }}>Asset Damage / Penalty Deductions</span>
+                        <strong style={{ color: "#b91c1c" }}>- ₹{Number(fnfQuery.data.asset_deductions).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: "38px", paddingTop: "10px", borderTop: "1px dashed #fca5a5", display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: "13px", color: "#7f1d1d" }}>
+                      <span>Total Recoveries / Deductions</span>
+                      <span>
+                        - ₹{(
+                          Number(fnfQuery.data.notice_recovery_amount) +
+                          Number(fnfQuery.data.asset_deductions)
+                        ).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* HR Adjustment inputs if not settled */}
                 {isHr && !employee.fnf_settled_at && (
-                  <div className="p-3 bg-white rounded border mb-3">
-                    <strong style={{ fontSize: "0.85rem", display: "block", marginBottom: "8px" }}>Adjust Financial Items</strong>
+                  <div style={{ background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", padding: "14px", marginBottom: "16px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                      <strong style={{ fontSize: "12px", color: "#475569", textTransform: "uppercase", letterSpacing: "0.03em" }}>⚙️ Adjust Clearance Ledger Line Items</strong>
+                      <span style={{ fontSize: "11px", color: "#64748b" }}>Update manually approved exceptions</span>
+                    </div>
                     <div className="grid grid-3 gap-3">
                       <div className="field">
-                        <label style={{ fontSize: "11px" }}>Pending Reimbursements (₹)</label>
+                        <label style={{ fontSize: "11px", fontWeight: 600 }}>Pending Reimbursements (₹)</label>
                         <input
                           type="number"
                           step="0.01"
@@ -1090,7 +1316,7 @@ function ResignationAndFnFCard({
                         />
                       </div>
                       <div className="field">
-                        <label style={{ fontSize: "11px" }}>Gratuity / Bonus (₹)</label>
+                        <label style={{ fontSize: "11px", fontWeight: 600 }}>Gratuity / Bonus (₹)</label>
                         <input
                           type="number"
                           step="0.01"
@@ -1099,7 +1325,7 @@ function ResignationAndFnFCard({
                         />
                       </div>
                       <div className="field">
-                        <label style={{ fontSize: "11px" }}>Asset Damage / Deductions (₹)</label>
+                        <label style={{ fontSize: "11px", fontWeight: 600 }}>Asset Damage / Deductions (₹)</label>
                         <input
                           type="number"
                           step="0.01"
@@ -1127,28 +1353,34 @@ function ResignationAndFnFCard({
                   const isPositive = netAmount >= 0;
                   return (
                     <div
-                      className="row-between align-center mt-3"
                       style={{
-                        borderTop: "2px solid var(--color-border)",
-                        paddingTop: "var(--space-3)",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "16px 20px",
+                        background: isPositive ? "#f0fdf4" : "#fef2f2",
+                        borderRadius: "10px",
+                        border: isPositive ? "1px solid #86efac" : "1px solid #fca5a5",
+                        marginTop: "16px",
                       }}
                     >
                       <div>
-                        <div className="font-semibold text-base" style={{ color: isPositive ? "var(--color-heading, #1e293b)" : "#b91c1c" }}>
+                        <div style={{ fontWeight: 700, fontSize: "15px", color: isPositive ? "#15803d" : "#b91c1c" }}>
                           {isPositive ? "Total Net FnF Payout (Payable to Employee)" : "Total Net Recovery (Payable by Employee to Company)"}
                         </div>
-                        <div className="text-xs text-muted">
+                        <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
                           {isPositive
-                            ? "(Salary + Leaves + Reimbursements + Gratuity + Severance) - (Notice Shortfall + Deductions)"
-                            : "Pending collection via invoice/demand note before issuing relieving letter."}
+                            ? "Gross Credits minus Total Deductions & Recoveries. Processed via Bank Transfer."
+                            : "Notice shortfall & damages exceed earnings. To be collected before Relieving Letter."}
                         </div>
                       </div>
-                      <div className="text-right">
-                        <span className="text-xl font-bold" style={{ color: isPositive ? "var(--color-primary)" : "#b91c1c" }}>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: "11px", textTransform: "uppercase", color: "#64748b", fontWeight: 600 }}>Final Net Settlement</div>
+                        <div style={{ fontSize: "24px", fontWeight: 800, color: isPositive ? "#166534" : "#b91c1c", letterSpacing: "-0.02em" }}>
                           {isPositive
                             ? `₹${netAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`
                             : `-₹${Math.abs(netAmount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                        </span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1161,21 +1393,111 @@ function ResignationAndFnFCard({
                       type="button"
                       className="btn btn-success"
                       disabled={!fnfQuery.data.can_release_settlement || updatingClearance}
-                      onClick={handleFinalSettlementRelease}
+                      onClick={() => {
+                        if (!fnfQuery.data.can_release_settlement) {
+                          notify("All department clearances (IT, HR, Finance) must be signed off before release.", "error");
+                          return;
+                        }
+                        setReleaseConfirmInput("");
+                        setShowReleaseModal(true);
+                      }}
                       title={
                         fnfQuery.data.can_release_settlement
                           ? "Release and lock FnF Settlement"
                           : "Requires IT, HR, and Finance clearance sign-off"
                       }
+                      style={{ padding: "9px 20px", fontWeight: 600 }}
                     >
                       {fnfQuery.data.can_release_settlement
-                        ? "🚀 Generate & Release FnF Settlement"
-                        : "🔒 Sign-off Required for Release"}
+                        ? "🚀 Release Full & Final Settlement"
+                        : "🔒 Clearance Sign-off Required"}
                     </button>
                   </div>
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM CONFIRMATION MODAL FOR FNF RELEASE */}
+      {showReleaseModal && fnfQuery.data && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15, 23, 42, 0.6)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1050,
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              width: "100%",
+              maxWidth: "480px",
+              padding: "24px",
+              background: "#ffffff",
+              borderRadius: "14px",
+              boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+              <span style={{ fontSize: "24px" }}>⚠️</span>
+              <h3 style={{ margin: 0, fontSize: "17px", color: "#0f172a" }}>Confirm FnF Final Settlement Release</h3>
+            </div>
+
+            <p style={{ fontSize: "13px", color: "#475569", lineHeight: 1.5, margin: "0 0 16px 0" }}>
+              You are about to finalize and lock the settlement of{" "}
+              <strong style={{ color: "#0f172a" }}>
+                ₹{Number(fnfQuery.data.total_settlement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              </strong>{" "}
+              for <strong style={{ color: "#0f172a" }}>{`${employee.first_name} ${employee.last_name || ""}`.trim()}</strong>.
+            </p>
+
+            <div style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: "8px", padding: "12px", marginBottom: "18px", fontSize: "12px", color: "#92400e", lineHeight: 1.4 }}>
+              <strong>Important:</strong> This action permanently locks the settlement ledger and removes this employee from all recurring monthly payroll runs.
+            </div>
+
+            <div className="field mb-4">
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "#334155", marginBottom: "6px", display: "block" }}>
+                Type <span style={{ color: "#dc2626", fontFamily: "monospace", fontWeight: 700 }}>CONFIRM</span> to proceed:
+              </label>
+              <input
+                type="text"
+                value={releaseConfirmInput}
+                onChange={(e) => setReleaseConfirmInput(e.target.value)}
+                placeholder="Type CONFIRM here"
+                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "14px" }}
+                autoFocus
+              />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setShowReleaseModal(false)}
+                disabled={updatingClearance}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={executeReleaseSettlement}
+                disabled={updatingClearance || releaseConfirmInput.trim().toUpperCase() !== "CONFIRM"}
+                style={{
+                  background: releaseConfirmInput.trim().toUpperCase() === "CONFIRM" ? "#16a34a" : undefined,
+                  borderColor: releaseConfirmInput.trim().toUpperCase() === "CONFIRM" ? "#16a34a" : undefined,
+                }}
+              >
+                {updatingClearance ? "Releasing…" : "Authorize & Release"}
+              </button>
+            </div>
           </div>
         </div>
       )}

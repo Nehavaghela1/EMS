@@ -540,26 +540,29 @@ textarea:focus {
 
 table.data-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: var(--text-sm);
 }
 
 .data-table th,
 .data-table td {
-  padding: var(--space-3);
+  padding: 13px 16px;
   text-align: left;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid #f1f5f9;
   white-space: nowrap;
 }
 
 .data-table th {
-  color: var(--color-text-muted);
+  background: #f8fafc;
+  color: #475569;
   font-weight: 600;
-  font-size: var(--text-xs);
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
   cursor: pointer;
   user-select: none;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .data-table th.sortable:hover {
@@ -567,11 +570,11 @@ table.data-table {
 }
 
 .data-table tbody tr {
-  transition: background-color var(--transition);
+  transition: background-color 0.15s ease;
 }
 
 .data-table tbody tr:hover {
-  background: var(--color-bg);
+  background: #f8fafc;
 }
 
 .data-table tbody tr:last-child td {

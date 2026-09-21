@@ -1531,13 +1531,59 @@ export function ProjectDetailPage() {
 
             <div className="card">
               <div className="row-between align-center" style={{ borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem", marginBottom: "1rem" }}>
-                <h3 style={{ fontSize: "1rem", margin: 0, fontWeight: 600 }}>
-                  Financial & Budget Summary
-                </h3>
+                <div>
+                  <h3 style={{ fontSize: "1rem", margin: 0, fontWeight: 600 }}>
+                    Financial & Budget Summary
+                  </h3>
+                  <span className="text-xs text-muted">Burn rate and time tracking costs calculated from approved timesheets</span>
+                </div>
                 <span className="badge badge-outline text-xs font-mono" style={{ padding: "2px 8px" }}>
                   Timesheet Costed
                 </span>
               </div>
+
+              {/* Linear-style Budget Burn Progress Bar */}
+              {project.budget && Number(project.budget) > 0 && (() => {
+                const totalB = Number(project.budget);
+                const spent = Math.max(0, Number(summary.budget_spent || 0));
+                const remaining = Math.max(0, Number(summary.budget_remaining ?? (totalB - spent)));
+                const spentPct = Math.min(100, Math.round((spent / totalB) * 100));
+                const isOverBudget = spent > totalB;
+
+                return (
+                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "14px 16px", marginBottom: "20px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                      <span style={{ fontSize: "12px", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                        Budget Burn Rate
+                      </span>
+                      <div style={{ fontSize: "12px", fontWeight: 600, color: isOverBudget ? "#dc2626" : "#2563eb" }}>
+                        {spentPct}% utilized {isOverBudget && "⚠️ Over Budget"}
+                      </div>
+                    </div>
+
+                    {/* Progress Track */}
+                    <div style={{ width: "100%", height: "8px", background: "#e2e8f0", borderRadius: "4px", overflow: "hidden", display: "flex" }}>
+                      <div
+                        style={{
+                          width: `${spentPct}%`,
+                          height: "100%",
+                          background: isOverBudget ? "#dc2626" : "#2563eb",
+                          borderRadius: "4px",
+                          transition: "width 0.3s ease",
+                        }}
+                        title={`Spent: ₹${spent.toLocaleString("en-IN")}`}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: "8px", fontSize: "11px", color: "#64748b" }}>
+                      <span>Spent: <strong style={{ color: isOverBudget ? "#dc2626" : "#0f172a" }}>₹{spent.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong></span>
+                      <span>Remaining: <strong style={{ color: remaining > 0 ? "#16a34a" : "#dc2626" }}>₹{remaining.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong></span>
+                      <span>Cap: <strong>₹{totalB.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong></span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="form-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "1.25rem" }}>
                 <div className="field">
                   <label style={{ fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-text-muted)" }}>Total Budget</label>

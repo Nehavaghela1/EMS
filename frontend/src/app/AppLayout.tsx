@@ -236,6 +236,74 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
 
+        {/* Docked Workspace Switcher (Slack / Linear / Notion style) */}
+        {user && (
+          <div
+            style={{
+              padding: "0.65rem 0.85rem",
+              borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+              background: "rgba(15, 23, 42, 0.4)",
+            }}
+          >
+            <div style={{ fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#94a3b8", fontWeight: 600, marginBottom: "4px" }}>
+              Active Workspace
+            </div>
+            {user.role !== "employee" ? (
+              <select
+                style={{
+                  width: "100%",
+                  padding: "5px 8px",
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                  borderRadius: "6px",
+                  border: "1px solid #334155",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                  cursor: "pointer",
+                  outline: "none",
+                }}
+                value={selectedWorkspace}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setSelectedWorkspace(nextId);
+                  const selectedName = e.target.options[e.target.selectedIndex].text;
+                  alert(`Switched active workspace to: ${selectedName}`);
+                }}
+                title="Switch parent/subsidiary organization workspace"
+              >
+                <option value={user.company_id}>
+                  🏢 {user.company_name || "Primary Tenant"} {user.company_code ? `(${user.company_code})` : ""}
+                </option>
+                {user.role === "super_admin" &&
+                  companiesQuery.data?.items
+                    .filter((c) => c.id !== user.company_id)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        🏢 {c.name} ({c.code})
+                      </option>
+                    ))}
+              </select>
+            ) : (
+              <div
+                style={{
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                  color: "#cbd5e1",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "4px 2px",
+                }}
+              >
+                <span>🏢</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {user.company_name || "Workspace"}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Search */}
         {user && (user.role === "hr_admin" || user.role === "super_admin" || user.role === "manager") && (
           <div style={{ padding: "0.6rem 0.85rem 0.4rem" }}>
@@ -476,85 +544,29 @@ export function AppLayout({ children }: { children: ReactNode }) {
             zIndex: 40,
           }}
         >
-          {/* Tenant Organization Switcher - Role-based (Hidden for standard employees like Niku) */}
-          {user && user.role !== "employee" ? (
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <span style={{ fontSize: "0.8rem", color: "var(--color-muted, #64748b)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                Active Workspace:
+          {/* Header Organization Brand & Status */}
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "var(--color-heading, #1e293b)" }}>
+              🏢 {user?.company_name || "EMS Workspace"}
+            </span>
+            {user?.company_code && (
+              <span className="badge badge-outline font-mono text-xs" style={{ padding: "1px 6px" }}>
+                {user.company_code}
               </span>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <span
-                  style={{
-                    width: "24px",
-                    height: "24px",
-                    borderRadius: "6px",
-                    background: "linear-gradient(135deg, #2563eb, #3b82f6)",
-                    color: "#fff",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "12px",
-                    fontWeight: 700,
-                  }}
-                >
-                  🏢
-                </span>
-                <select
-                  style={{
-                    padding: "4px 10px",
-                    fontSize: "0.85rem",
-                    fontWeight: 600,
-                    borderRadius: "6px",
-                    border: "1px solid var(--color-border, #cbd5e1)",
-                    background: "var(--color-surface, #f8fafc)",
-                    color: "var(--color-heading, #1e293b)",
-                    cursor: "pointer",
-                  }}
-                  value={selectedWorkspace}
-                  onChange={(e) => {
-                    const nextId = e.target.value;
-                    setSelectedWorkspace(nextId);
-                    const selectedName = e.target.options[e.target.selectedIndex].text;
-                    alert(`Switched active workspace to: ${selectedName}`);
-                  }}
-                  title="Switch parent/subsidiary organization workspace"
-                >
-                  {/* Primary authenticated workspace */}
-                  <option value={user.company_id}>
-                    🏢 {user.company_name || "Primary Tenant"} {user.company_code ? `(${user.company_code})` : ""}
-                  </option>
-                  {/* Super admin multi-entity options fetched dynamically */}
-                  {user.role === "super_admin" &&
-                    companiesQuery.data?.items
-                      .filter((c) => c.id !== user.company_id)
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          🏢 {c.name} ({c.code})
-                        </option>
-                      ))}
-                </select>
-                <span
-                  className="badge"
-                  style={{
-                    background: "#f0fdf4",
-                    color: "#166534",
-                    border: "1px solid #bbf7d0",
-                    fontSize: "0.72rem",
-                    fontWeight: 600,
-                  }}
-                >
-                  ● Active Tenant
-                </span>
-              </div>
-            </div>
-          ) : (
-            /* Clean header title for regular employees */
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-heading, #1e293b)" }}>
-                🏢 {user?.company_name || "Workspace"}
-              </span>
-            </div>
-          )}
+            )}
+            <span
+              className="badge"
+              style={{
+                background: "#f0fdf4",
+                color: "#166534",
+                border: "1px solid #bbf7d0",
+                fontSize: "0.72rem",
+                fontWeight: 600,
+              }}
+            >
+              ● Active Tenant
+            </span>
+          </div>
 
           {/* User Quick Info */}
           <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
