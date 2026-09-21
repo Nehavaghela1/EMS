@@ -276,3 +276,47 @@ def test_hr_delete_soft_deletes_the_record(client, company_a, db):
     row = db.get(Attendance, uuid.UUID(created["id"]))
     assert row is not None
     assert row.deleted_at is not None
+
+
+def test_short_punch_marks_absent_never_half_day(client, company_a, db):
+    """Rule B: Total worked time < 1.0 hr (e.g. 4 seconds) must be marked absent, not half_day."""
+    employee = _create_employee(client, company_a.hr_headers)
+    own_headers = _link_user_to_employee(
+        db, company_a.company_id, employee["id"], UserRole.employee
+    )
+    client.post("/api/v1/attendance/check-in", headers=own_headers)
+
+    # Check out immediately (within seconds)
+    resp = client.post("/api/v1/attendance/check-out", headers=own_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "absent"
+    assert float(body["hours_worked"]) < 1.0
+
+
+def test_regularize_with_timestamps_recomputes_hours_and_status(client, company_a, db):
+    """Regularizing check-in and check-out recomputes hours_worked and assigns proper status."""
+    employee = _create_employee(client, company_a.hr_headers)
+    own_headers = _link_user_to_employee(
+        db, company_a.company_id, employee["id"], UserRole.employee
+    )
+    created = client.post("/api/v1/attendance/check-in", headers=own_headers).json()
+
+    # Regularize with 8 hours worked
+    in_time = (utcnow() - timedelta(hours=8)).isoformat()
+    out_time = utcnow().isoformat()
+    resp = client.put(
+        f"/api/v1/attendance/{created['id']}",
+        headers=company_a.hr_headers,
+        json={
+            "check_in": in_time,
+            "check_out": out_time,
+            "reason": "Correcting missing checkout time",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert float(body["hours_worked"]) >= 7.9
+    assert body["status"] == "present"
+    assert "Regularized by" in (body["notes"] or "")
+

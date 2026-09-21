@@ -187,8 +187,16 @@ class AttendanceService:
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
         settings_row = self.settings_repo.get_by_company(company_id)
-        threshold = settings_row.half_day_hours_threshold if settings_row else Decimal("4")
-        status = AttendanceStatus.half_day if hours < threshold else AttendanceStatus.present
+        half_thresh = settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+        # Rule B: Status thresholds. Total worked time < 1.0 hr (or very short punches like 4 seconds)
+        # must never be marked as half day — it is absent / invalid punch.
+        # 1.0 <= hours < half_thresh is half_day, and hours >= half_thresh is present.
+        if hours < Decimal("1.0"):
+            status = AttendanceStatus.absent
+        elif hours < half_thresh:
+            status = AttendanceStatus.half_day
+        else:
+            status = AttendanceStatus.present
 
         self.repo.update(record, check_out=now, hours_worked=hours, status=status)
         self.db.commit()
@@ -260,10 +268,7 @@ class AttendanceService:
         workflow for attendance regularization in this codebase — this
         direct HR correction IS the decision, audited as
         ATTENDANCE_REGULARIZED (the WP-11 task's "regularisation approved"
-        deliverable). There is no "regularisation rejected" notification for
-        the same reason: HR either corrects the record (this) or removes it
-        (`delete_attendance`) — there is no third "reject and leave as-is"
-        action to notify about."""
+        deliverable)."""
         record = self.repo.get_by_id(attendance_id, company_id)
         if record is None:
             raise NotFoundError("Attendance record not found.")
@@ -275,6 +280,30 @@ class AttendanceService:
             "notes": record.notes,
         }
         updates = data.model_dump(exclude={"reason"}, exclude_unset=True)
+
+        eff_check_in = updates.get("check_in", record.check_in)
+        eff_check_out = updates.get("check_out", record.check_out)
+
+        if eff_check_in and eff_check_out and eff_check_out > eff_check_in:
+            calc_hours = (Decimal((eff_check_out - eff_check_in).total_seconds()) / Decimal(3600)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            updates["hours_worked"] = calc_hours
+            if "status" not in updates or updates["status"] is None:
+                settings_row = self.settings_repo.get_by_company(company_id)
+                half_thresh = settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+                if calc_hours < Decimal("1.0"):
+                    updates["status"] = AttendanceStatus.absent
+                elif calc_hours < half_thresh:
+                    updates["status"] = AttendanceStatus.half_day
+                else:
+                    updates["status"] = AttendanceStatus.present
+
+        note_suffix = f" [Regularized by {actor.email}]"
+        existing_notes = updates.get("notes") or record.notes or ""
+        if note_suffix.strip() not in existing_notes:
+            updates["notes"] = (existing_notes + note_suffix).strip()
+
         self.repo.update(record, **updates)
         self.audit.record(
             company_id=company_id,

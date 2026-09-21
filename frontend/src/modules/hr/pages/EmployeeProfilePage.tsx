@@ -188,9 +188,24 @@ export function EmployeeProfilePage() {
                   >
                     {e.employee_code}
                   </span>
-                  <span className={"badge " + (e.is_active ? "badge-success" : "badge-muted")}>
-                    {e.is_active ? "● Active" : "Inactive"}
-                  </span>
+                  {/* Enterprise Status Badge: If account invitation is pending/sent, show Pending Activation */}
+                  {e.invitation_status === "sent" ? (
+                    <span
+                      className="badge"
+                      style={{
+                        backgroundColor: "#fffbeb",
+                        color: "#b45309",
+                        border: "1px solid #fde68a",
+                        fontWeight: 600,
+                      }}
+                    >
+                      ● Pending Activation
+                    </span>
+                  ) : (
+                    <span className={"badge " + (e.is_active ? "badge-success" : "badge-muted")}>
+                      {e.is_active ? "● Active" : "Inactive"}
+                    </span>
+                  )}
                 </div>
                 {/* Metadata Badges Row */}
                 <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap", fontSize: "0.82rem", color: "#64748b" }}>
@@ -209,24 +224,42 @@ export function EmployeeProfilePage() {
               </div>
             </div>
 
-            {/* Action Buttons: Primary + Tucked Ellipsis */}
+            {/* Action Button Hierarchy: Secondary Resend (if pending), Primary Edit, Dropdown ••• */}
             {isHr && (
               <div className="flex items-center gap-2">
+                {/* Only display Resend Invite when account activation is pending/sent, never once activated */}
                 {e.invitation_status !== "activated" && (
-                  <button className="btn btn-sm btn-ghost" onClick={handleResendInvite} disabled={resendBusy}>
-                    {resendBusy ? "Resending…" : "Resend Invite"}
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{
+                      background: "#ffffff",
+                      border: "1px solid #cbd5e1",
+                      color: "#334155",
+                      fontWeight: 600,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                    }}
+                    onClick={handleResendInvite}
+                    disabled={resendBusy}
+                  >
+                    <span>✉</span>
+                    <span>{resendBusy ? "Resending…" : "Resend Invite"}</span>
                   </button>
                 )}
+
                 <button
                   type="button"
                   className="btn btn-sm btn-primary"
                   onClick={() => navigate(`/employees/${e.id}/edit`)}
                   style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
                 >
-                  <span>✏️</span> Edit Profile
+                  <span>✎</span> Edit Profile
                 </button>
 
-                {/* More Actions Dropdown (Tucking Deactivate safely) */}
+                {/* More Actions Dropdown (•••) */}
                 <div style={{ position: "relative" }}>
                   <button
                     type="button"
@@ -248,11 +281,63 @@ export function EmployeeProfilePage() {
                         borderRadius: "8px",
                         boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
                         zIndex: 50,
-                        minWidth: "180px",
+                        minWidth: "220px",
                         padding: "6px 0",
                       }}
                       onMouseLeave={() => setMoreActionsOpen(false)}
                     >
+                      <button
+                        type="button"
+                        style={{
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "8px 14px",
+                          border: "none",
+                          background: "transparent",
+                          fontSize: "0.84rem",
+                          fontWeight: 500,
+                          color: "#334155",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                        }}
+                        onClick={() => {
+                          setMoreActionsOpen(false);
+                          window.print();
+                        }}
+                      >
+                        <span>📄</span>
+                        <span>Download Employee Summary (PDF)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        style={{
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "8px 14px",
+                          border: "none",
+                          background: "transparent",
+                          fontSize: "0.84rem",
+                          fontWeight: 500,
+                          color: "#334155",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                        }}
+                        onClick={() => {
+                          setMoreActionsOpen(false);
+                          setActiveTab("exit");
+                        }}
+                      >
+                        <span>📑</span>
+                        <span>Initiate Separation / Exit</span>
+                      </button>
+
+                      <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+
                       <button
                         type="button"
                         style={{
@@ -275,7 +360,7 @@ export function EmployeeProfilePage() {
                         }}
                       >
                         <span>{e.is_active ? "🛑" : "✅"}</span>
-                        <span>{e.is_active ? "Deactivate Employee" : "Reactivate Employee"}</span>
+                        <span>{e.is_active ? "Deactivate Account" : "Reactivate Account"}</span>
                       </button>
                     </div>
                   )}
@@ -378,27 +463,35 @@ export function EmployeeProfilePage() {
               <div className="flex items-center gap-3">
                 <div
                   style={{
-                    width: "40px",
-                    height: "40px",
-                    borderRadius: "50%",
-                    background: "#e2e8f0",
-                    color: "#475569",
+                    width: "44px",
+                    height: "44px",
+                    borderRadius: "10px",
+                    background: "linear-gradient(135deg, #475569, #334155)",
+                    color: "#ffffff",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     fontWeight: 700,
-                    fontSize: "0.9rem",
+                    fontSize: "0.95rem",
+                    flexShrink: 0,
                   }}
                 >
-                  👔
+                  {e.manager_name ? e.manager_name.charAt(0).toUpperCase() : "👔"}
                 </div>
-                <div>
-                  <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "var(--color-heading, #1e293b)" }}>
-                    Direct Manager
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {e.manager_name || (e.reporting_manager_id ? "Direct Manager" : "Organization Head / CEO")}
                   </div>
-                  <div className="text-xs text-muted">
-                    {e.reporting_manager_id ? "Assigned in Team Hierarchy" : "Reports to Organization Head"}
+                  <div className="text-xs text-muted" style={{ marginTop: "1px" }}>
+                    {e.manager_position || (e.reporting_manager_id ? "Assigned Manager" : "Executive Leadership")}
                   </div>
+                  {e.manager_email && (
+                    <div style={{ fontSize: "0.76rem", marginTop: "3px" }}>
+                      <a href={`mailto:${e.manager_email}`} style={{ color: "#2563eb", textDecoration: "none" }}>
+                        {e.manager_email}
+                      </a>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -486,8 +579,16 @@ function Field({
   editable?: boolean;
 }) {
   return (
-    <div className="field" style={{ marginBottom: "0.85rem" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
+    <div
+      style={{
+        padding: "0.65rem 0",
+        borderBottom: "1px solid #f1f5f9",
+        display: "flex",
+        flexDirection: "column",
+        gap: "4px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <label
           style={{
             margin: 0,
@@ -495,7 +596,7 @@ function Field({
             fontWeight: 600,
             textTransform: "uppercase",
             letterSpacing: "0.04em",
-            color: "var(--color-text-muted, #64748b)",
+            color: "#64748b",
           }}
         >
           {label}
@@ -519,13 +620,9 @@ function Field({
       <div
         style={{
           fontWeight: 600,
-          color: "var(--color-heading, #1e293b)",
-          fontSize: "0.92rem",
-          background: "var(--color-bg, #f8fafc)",
-          border: "1px solid var(--color-border, #e2e8f0)",
-          borderRadius: "6px",
-          padding: "6px 10px",
-          minHeight: "34px",
+          color: "#0f172a",
+          fontSize: "0.9rem",
+          minHeight: "22px",
           display: "flex",
           alignItems: "center",
         }}

@@ -9,11 +9,13 @@ import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { TodayAttendanceCard } from "../components/TodayAttendanceCard";
 import { listAttendance, regularizeAttendance, type Attendance, type AttendanceStatus } from "../api";
-import { formatDate } from "../../../shared/utils/date";
+import { formatDate, todayIso } from "../../../shared/utils/date";
 
 const STATUS_OPTIONS: AttendanceStatus[] = ["present", "absent", "half_day", "wfh", "on_leave"];
 
 function formatHoursWorked(a: Attendance): React.ReactNode {
+  const isPastDate = a.date < todayIso();
+
   if (a.check_in && a.check_out) {
     const diffMs = new Date(a.check_out).getTime() - new Date(a.check_in).getTime();
     if (diffMs > 0) {
@@ -32,6 +34,28 @@ function formatHoursWorked(a: Attendance): React.ReactNode {
     }
   }
   if (a.check_in && !a.check_out) {
+    // Enterprise Rule A: Unclosed sessions on PAST calendar dates MUST NOT run live timers (+95h)
+    if (isPastDate) {
+      return (
+        <span
+          className="badge"
+          style={{
+            backgroundColor: "#fffbeb",
+            color: "#b45309",
+            border: "1px solid #fde68a",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "5px",
+          }}
+          title={`Shift not closed on ${formatDate(a.date)}. Requires Attendance Regularization.`}
+        >
+          <span>⚠️</span> Missing Out-Punch
+        </span>
+      );
+    }
+
     const elapsedMs = Date.now() - new Date(a.check_in).getTime();
     if (elapsedMs > 0) {
       const totalMinutes = Math.floor(elapsedMs / (1000 * 60));
@@ -50,7 +74,7 @@ function formatHoursWorked(a: Attendance): React.ReactNode {
             alignItems: "center",
             gap: "4px",
           }}
-          title={`Checked in: running elapsed time ${hours}h ${minutes}m`}
+          title={`Checked in today: running elapsed time ${hours}h ${minutes}m`}
         >
           <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#10b981", display: "inline-block" }} />
           {hours > 0 ? `${hours}h ${minutes}m (Active)` : "In Progress"}
@@ -218,7 +242,39 @@ export function AttendancePage() {
     {
       key: "status",
       label: "Status",
-      render: (a) => <span className="badge badge-muted">{a.status.replace("_", " ")}</span>,
+      render: (a) => {
+        const isRegularized = a.notes && a.notes.includes("[Regularized");
+        const statusClass =
+          a.status === "present"
+            ? "badge-success"
+            : a.status === "half_day"
+            ? "badge-warning"
+            : a.status === "absent"
+            ? "badge-danger"
+            : "badge-muted";
+
+        return (
+          <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+            <span className={`badge ${statusClass}`}>{a.status.replace("_", " ")}</span>
+            {isRegularized && (
+              <span
+                style={{
+                  fontSize: "0.68rem",
+                  fontWeight: 600,
+                  padding: "1px 5px",
+                  borderRadius: "4px",
+                  backgroundColor: "#f5f3ff",
+                  color: "#7c3aed",
+                  border: "1px solid #ddd6fe",
+                }}
+                title={a.notes || "Regularized"}
+              >
+                Regularized
+              </span>
+            )}
+          </div>
+        );
+      },
     },
     { key: "source", label: "Source", render: (a) => a.source },
     ...(isHr
@@ -341,22 +397,71 @@ function RegularizeDialog({
   onDone: () => void;
 }) {
   const { notify } = useToast();
-  const [status, setStatus] = useState<AttendanceStatus>(record.status);
+
+  // Helper to format ISO to datetime-local value (YYYY-MM-DDTHH:mm)
+  function toDateTimeLocalValue(isoStr: string | null | undefined, fallbackDate: string, defaultHour: string): string {
+    if (isoStr) {
+      try {
+        const d = new Date(isoStr);
+        const pad = (n: number) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      } catch {
+        // fallback
+      }
+    }
+    return `${fallbackDate}T${defaultHour}`;
+  }
+
+  const [checkInTime, setCheckInTime] = useState(
+    toDateTimeLocalValue(record.check_in, record.date, "09:00")
+  );
+  const [checkOutTime, setCheckOutTime] = useState(
+    record.check_out
+      ? toDateTimeLocalValue(record.check_out, record.date, "18:00")
+      : `${record.date}T18:00`
+  );
+  const [status, setStatus] = useState<AttendanceStatus>(
+    record.status === "absent" && !record.check_out ? "present" : record.status
+  );
   const [notes, setNotes] = useState(record.notes ?? "");
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Live computed hours difference
+  let computedHours = 0;
+  if (checkInTime && checkOutTime) {
+    const tIn = new Date(checkInTime).getTime();
+    const tOut = new Date(checkOutTime).getTime();
+    if (tOut > tIn) {
+      computedHours = Math.round(((tOut - tIn) / (1000 * 3600)) * 100) / 100;
+    }
+  }
+
   async function handleSubmit() {
     if (!reason.trim()) {
-      setError("A reason is required.");
+      setError("A reason is required for attendance regularization.");
       return;
     }
+    if (checkInTime && checkOutTime && new Date(checkOutTime) <= new Date(checkInTime)) {
+      setError("Check-out time must be strictly after Check-in time.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
-      await regularizeAttendance(record.id, { status, notes: notes || undefined, reason: reason.trim() });
-      notify("Attendance regularized.");
+      const inIso = checkInTime ? new Date(checkInTime).toISOString() : undefined;
+      const outIso = checkOutTime ? new Date(checkOutTime).toISOString() : undefined;
+
+      await regularizeAttendance(record.id, {
+        check_in: inIso,
+        check_out: outIso,
+        status,
+        notes: notes || undefined,
+        reason: reason.trim(),
+      });
+      notify("Attendance regularized successfully.");
       onDone();
     } catch (err) {
       setError(parseApiError(err).message);
@@ -367,9 +472,17 @@ function RegularizeDialog({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal stack" onClick={(e) => e.stopPropagation()}>
+      <div className="modal stack" style={{ maxWidth: "520px" }} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-          <h3>Regularize attendance — {formatDate(record.date)}</h3>
+          <div>
+            <h3 style={{ margin: 0, fontSize: "1.1rem" }}>
+              Regularize Attendance — {record.employee_name || "Employee"}
+            </h3>
+            <div className="text-xs text-muted mt-1">
+              Date: <strong>{formatDate(record.date)}</strong> • Current Status:{" "}
+              <span className="badge badge-outline text-xs">{record.status.replace("_", " ")}</span>
+            </div>
+          </div>
           <button
             type="button"
             className="modal-close-btn"
@@ -380,31 +493,78 @@ function RegularizeDialog({
             ✕
           </button>
         </div>
+
         {error && <div className="alert alert-error">{error}</div>}
+
+        <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <div className="field">
+              <label style={{ fontSize: "0.78rem", fontWeight: 600 }}>Actual Check-In Time</label>
+              <input
+                type="datetime-local"
+                value={checkInTime}
+                onChange={(e) => setCheckInTime(e.target.value)}
+                style={{ fontSize: "0.85rem" }}
+              />
+            </div>
+            <div className="field">
+              <label style={{ fontSize: "0.78rem", fontWeight: 600 }}>Actual Check-Out Time</label>
+              <input
+                type="datetime-local"
+                value={checkOutTime}
+                onChange={(e) => setCheckOutTime(e.target.value)}
+                style={{ fontSize: "0.85rem" }}
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center mt-2 pt-2" style={{ borderTop: "1px dashed #cbd5e1", fontSize: "0.82rem" }}>
+            <span className="text-muted">Calculated Work Duration:</span>
+            <span style={{ fontWeight: 700, color: computedHours >= 7.5 ? "#047857" : computedHours >= 4.0 ? "#b45309" : "#dc2626" }}>
+              {computedHours > 0 ? `${computedHours} hours` : "0.00 hours"}
+              {computedHours >= 7.5 ? " (Full Day)" : computedHours >= 4.0 ? " (Half Day)" : computedHours > 0 ? " (Under Minimum)" : ""}
+            </span>
+          </div>
+        </div>
+
         <div className="field">
-          <label>Status</label>
+          <label style={{ fontSize: "0.82rem", fontWeight: 600 }}>Corrected Attendance Status</label>
           <select value={status} onChange={(e) => setStatus(e.target.value as AttendanceStatus)}>
             {STATUS_OPTIONS.map((s) => (
               <option key={s} value={s}>
-                {s.replace("_", " ")}
+                {s.replace("_", " ").toUpperCase()}
               </option>
             ))}
           </select>
         </div>
+
         <div className="field">
-          <label>Notes</label>
-          <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <label style={{ fontSize: "0.82rem", fontWeight: 600 }}>HR Admin Notes (Optional)</label>
+          <input
+            type="text"
+            placeholder="e.g., Client site visit confirmed by manager"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
         </div>
+
         <div className="field">
-          <label>Reason (required)</label>
-          <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+          <label style={{ fontSize: "0.82rem", fontWeight: 600 }}>Reason for Regularization (Mandatory Audit Trail) *</label>
+          <textarea
+            rows={2}
+            placeholder="e.g., Laptop battery died before out-punch, or biometric device malfunction"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            autoFocus
+          />
         </div>
-        <div className="row-end">
+
+        <div className="row-end" style={{ gap: "10px", marginTop: "0.5rem" }}>
           <button className="btn" onClick={onClose} disabled={busy}>
             Cancel
           </button>
           <button className="btn btn-primary" onClick={handleSubmit} disabled={busy}>
-            {busy ? "Saving…" : "Save"}
+            {busy ? "Applying Correction…" : "Approve & Regularize"}
           </button>
         </div>
       </div>

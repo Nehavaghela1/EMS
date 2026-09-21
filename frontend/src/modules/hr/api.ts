@@ -60,6 +60,9 @@ export interface Employee {
   fnf_settled_at?: string | null;
   company_id?: string | null;
   company_name?: string | null;
+  manager_name?: string | null;
+  manager_email?: string | null;
+  manager_position?: string | null;
   created_at: string;
 }
 

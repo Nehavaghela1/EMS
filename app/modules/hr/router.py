@@ -100,11 +100,19 @@ def delete_department(
 
 from app.modules.identity.models import Company
 
-def _to_employee_response(employee: Employee, company_map: dict[uuid.UUID, str] | None = None) -> EmployeeResponse:
+def _to_employee_response(
+    employee: Employee,
+    company_map: dict[uuid.UUID, str] | None = None,
+    manager: Employee | None = None,
+) -> EmployeeResponse:
     resp = EmployeeResponse.model_validate(employee)
     resp.company_id = employee.company_id
     if company_map and employee.company_id in company_map:
         resp.company_name = company_map[employee.company_id]
+    if manager:
+        resp.manager_name = f"{manager.first_name} {manager.last_name or ''}".strip()
+        resp.manager_email = manager.email
+        resp.manager_position = manager.position
     return resp
 
 
@@ -215,7 +223,12 @@ def get_employee(
         company = db.scalar(select(Company).where(Company.id == employee.company_id))
         if company:
             company_map[company.id] = company.name
-    return _to_employee_response(employee, company_map)
+    manager = None
+    if employee.reporting_manager_id:
+        manager = db.scalar(
+            select(Employee).where(Employee.id == employee.reporting_manager_id, Employee.deleted_at.is_(None))
+        )
+    return _to_employee_response(employee, company_map, manager)
 
 
 @employees_router.put("/{employee_id}", response_model=EmployeeResponse)

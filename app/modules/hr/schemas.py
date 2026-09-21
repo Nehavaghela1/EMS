@@ -107,6 +107,9 @@ class EmployeeResponse(BaseModel):
     fnf_settled_at: datetime | None = None
     company_id: uuid.UUID | None = None
     company_name: str | None = None
+    manager_name: str | None = None
+    manager_email: str | None = None
+    manager_position: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

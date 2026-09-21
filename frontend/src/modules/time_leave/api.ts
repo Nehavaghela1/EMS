@@ -45,6 +45,8 @@ export async function listAttendance(params: ListAttendanceParams): Promise<Page
 }
 
 export interface RegularizeAttendanceInput {
+  check_in?: string;
+  check_out?: string;
   status?: AttendanceStatus;
   notes?: string;
   reason: string;

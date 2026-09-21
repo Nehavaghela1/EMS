@@ -48,6 +48,22 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
     enabled: Boolean(user?.employee),
   });
 
+  // Check if employee has an open attendance session from past days (Rule A/C: missing punch)
+  const recentHistoryQuery = useQuery({
+    queryKey: ["attendance", "recent_unclosed", user?.employee?.id],
+    queryFn: () =>
+      listAttendance({
+        employee_id: user!.employee!.id,
+        page: 1,
+        limit: 5,
+      }),
+    enabled: Boolean(user?.employee),
+  });
+
+  const unclosedPastRecord = recentHistoryQuery.data?.items.find(
+    (item) => item.date < today && item.check_in && !item.check_out
+  );
+
   const assignedShiftQuery = useQuery({
     queryKey: ["shift", "assigned", user?.employee?.id],
     queryFn: () => getAssignedShift(user!.employee!.id),
@@ -124,6 +140,48 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
           </svg>
           <span>{assignedShiftLabel}</span>
+        </div>
+      )}
+
+      {unclosedPastRecord && (
+        <div
+          className="alert"
+          style={{
+            backgroundColor: "#fffbeb",
+            border: "1px solid #fde68a",
+            color: "#92400e",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "10px 16px",
+            borderRadius: "8px",
+            marginBottom: "1rem",
+            fontSize: "0.88rem",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "1.1rem" }}>⚠️</span>
+            <span>
+              <strong>Missing Check-Out:</strong> You have an open attendance punch from{" "}
+              <strong>{unclosedPastRecord.date}</strong>. Live clock is closed. Please apply for attendance regularization.
+            </span>
+          </div>
+          <a
+            href="/attendance"
+            className="btn btn-sm"
+            style={{
+              backgroundColor: "#f59e0b",
+              color: "#ffffff",
+              border: "none",
+              fontWeight: 600,
+              textDecoration: "none",
+              padding: "4px 12px",
+              borderRadius: "6px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Regularize Now
+          </a>
         </div>
       )}
 
