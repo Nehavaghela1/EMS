@@ -649,23 +649,6 @@ export function ProjectDetailPage() {
             Overview & Budget
           </button>
         </div>
-
-        <div className="flex gap-2">
-          <button
-            type="button"
-            className="btn btn-sm btn-outline"
-            onClick={() => setShowTimeModal(true)}
-          >
-            ⏱️ Log Time
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-primary"
-            onClick={openNewTaskModal}
-          >
-            + Add Task
-          </button>
-        </div>
       </div>
 
       {/* TAB 1: KANBAN BOARD */}
@@ -791,18 +774,28 @@ export function ProjectDetailPage() {
                   <span className="kanban-col-count">{colTasks.length}</span>
                 </div>
 
-                <div className="stack gap-3" style={{ flex: 1, overflowY: "auto", minHeight: "120px" }}>
+                <div className="stack gap-3" style={{ flex: 1, overflowY: "auto", minHeight: "120px", display: "flex", flexDirection: "column" }}>
                   {colTasks.length === 0 ? (
                     <div
-                      className="text-center text-muted text-xs p-4"
                       style={{
-                        border: isOver ? "2px dashed #6366f1" : "1px dashed #cbd5e1",
-                        borderRadius: "var(--radius-sm)",
-                        background: isOver ? "rgba(238, 242, 255, 0.8)" : "rgba(255, 255, 255, 0.6)",
+                        flex: 1,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        border: isOver ? "2px dashed #6366f1" : "2px dashed #cbd5e1",
+                        borderRadius: "8px",
+                        margin: "8px",
+                        padding: "24px 16px",
+                        color: "#94a3b8",
+                        fontSize: "0.75rem",
+                        fontWeight: 500,
+                        background: isOver ? "rgba(238, 242, 255, 0.8)" : "transparent",
+                        textAlign: "center",
                         transition: "all 0.2s ease",
                       }}
                     >
-                      {isOver ? "Drop card here" : "No tasks"}
+                      <span>{isOver ? "📥 Drop task here" : "No tasks in this stage"}</span>
                     </div>
                   ) : (
                     colTasks.map((task) => {
@@ -1497,34 +1490,65 @@ export function ProjectDetailPage() {
       {activeTab === "settings" && (
         <div className="stack gap-4">
           <div className="grid-2" style={{ gap: "1rem" }}>
-            <div className="card">
-              <h3 style={{ fontSize: "1rem", marginBottom: "0.75rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.4rem" }}>
+            <div className="card" style={{ padding: "1.25rem" }}>
+              <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 1rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}>
                 Project Metadata
               </h3>
-              <div className="form-grid">
-                <div className="field">
-                  <label>Project Code</label>
-                  <div style={{ fontWeight: 600 }}>{project.code}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 1.5rem" }}>
+                <div style={{ padding: "0.6rem 0", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "#64748b", display: "block", marginBottom: "3px" }}>
+                    Project Code
+                  </span>
+                  <span className="font-mono" style={{ fontWeight: 700, color: "#0f172a", fontSize: "0.92rem" }}>
+                    {project.code}
+                  </span>
                 </div>
-                <div className="field">
-                  <label>Client</label>
-                  <div>{project.client_name || "Internal Project"}</div>
+
+                <div style={{ padding: "0.6rem 0", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "#64748b", display: "block", marginBottom: "3px" }}>
+                    Client
+                  </span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "0.92rem" }}>
+                    {project.client_name || "Internal Project"}
+                  </span>
                 </div>
-                <div className="field">
-                  <label>Start Date</label>
-                  <div>{project.start_date ? formatDate(project.start_date) : "Not set"}</div>
+
+                <div style={{ padding: "0.6rem 0", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "#64748b", display: "block", marginBottom: "3px" }}>
+                    Start Date
+                  </span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "0.92rem" }}>
+                    {project.start_date ? formatDate(project.start_date) : "Not set"}
+                  </span>
                 </div>
-                <div className="field">
-                  <label>Target Deadline</label>
-                  <div>{project.deadline ? formatDate(project.deadline) : "Flexible"}</div>
+
+                <div style={{ padding: "0.6rem 0", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "#64748b", display: "block", marginBottom: "3px" }}>
+                    Target Deadline
+                  </span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "0.92rem" }}>
+                    {project.deadline ? formatDate(project.deadline) : "Flexible"}
+                  </span>
                 </div>
-                <div className="field">
-                  <label>Status</label>
+
+                <div style={{ padding: "0.6rem 0", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "#64748b", display: "block", marginBottom: "3px" }}>
+                    Project Status
+                  </span>
                   <div>
-                    <span className={`badge ${project.status === "active" ? "badge-success" : "badge-muted"}`}>
-                      {project.status.toUpperCase()}
+                    <span className={`badge ${project.status === "active" ? "badge-success" : "badge-muted"}`} style={{ fontWeight: 600 }}>
+                      ● {project.status.toUpperCase()}
                     </span>
                   </div>
+                </div>
+
+                <div style={{ padding: "0.6rem 0", borderBottom: "1px solid #f1f5f9" }}>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "#64748b", display: "block", marginBottom: "3px" }}>
+                    Created Date
+                  </span>
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: "0.92rem" }}>
+                    {formatDate(project.created_at)}
+                  </span>
                 </div>
               </div>
             </div>

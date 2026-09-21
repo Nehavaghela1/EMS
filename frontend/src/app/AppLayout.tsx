@@ -185,12 +185,13 @@ export function AppLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="app-shell" style={{ display: "flex", minHeight: "100vh" }}>
-      {/* Zoho HRMS Style Dark Sidebar */}
+    <div className="app-shell" style={{ display: "flex", height: "100vh", width: "100vw", overflow: "hidden" }}>
+      {/* Zoho HRMS Style Dark Sidebar - fixed height 100% */}
       <aside
         className="sidebar"
         style={{
           width: "235px",
+          height: "100%",
           background: "#1e293b",
           color: "#f8fafc",
           display: "flex",
@@ -692,7 +693,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
         )}
 
         <main className="main" style={{ flex: 1, minWidth: 0, padding: "1.5rem 2rem", background: "var(--color-bg)", overflowY: "auto" }}>
-          {children}
+          <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
+            {children}
+          </div>
         </main>
       </div>
     </div>

@@ -97,7 +97,10 @@ code {
 
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--color-bg);
 }
 
 .sidebar {
@@ -158,6 +161,8 @@ code {
 .main {
   flex: 1;
   min-width: 0;
+  height: 100%;
+  overflow-y: auto;
   padding: var(--space-6) var(--space-8);
   max-width: 1440px;
 }
@@ -899,8 +904,8 @@ table.data-table {
   padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  min-height: 420px;
-  height: 100%;
+  height: calc(100vh - 260px);
+  min-height: 550px;
 }
 
 .kanban-col-header {
