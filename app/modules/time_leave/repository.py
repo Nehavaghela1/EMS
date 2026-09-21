@@ -185,7 +185,26 @@ class AttendanceRepository:
         )
         self.db.execute(stmt)
 
+    def create_regularization_request(self, request: "AttendanceRegularizationRequest") -> "AttendanceRegularizationRequest":
+        self.db.add(request)
+        self.db.flush()
+        return request
 
+    def get_regularization_by_id(self, regularization_id: uuid.UUID, company_id: uuid.UUID) -> "AttendanceRegularizationRequest" | None:
+        from app.modules.time_leave.models import AttendanceRegularizationRequest
+        return self.db.scalar(
+            select(AttendanceRegularizationRequest).where(
+                AttendanceRegularizationRequest.id == regularization_id,
+                AttendanceRegularizationRequest.company_id == company_id,
+                AttendanceRegularizationRequest.deleted_at.is_(None)
+            )
+        )
+
+    def update_regularization_request(self, request: "AttendanceRegularizationRequest", **kwargs) -> "AttendanceRegularizationRequest":
+        for key, value in kwargs.items():
+            setattr(request, key, value)
+        self.db.flush()
+        return request
 class ShiftRepository:
     def __init__(self, db: Session):
         self.db = db

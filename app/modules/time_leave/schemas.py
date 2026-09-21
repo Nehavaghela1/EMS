@@ -38,6 +38,30 @@ class AttendanceRegularizeRequest(BaseModel):
     notes: str | None = None
     reason: str
 
+class AttendanceRegularizationCreate(BaseModel):
+    requested_check_in: datetime | None = None
+    requested_check_out: datetime | None = None
+    reason: str
+
+class AttendanceRegularizationApprove(BaseModel):
+    status: str # "approved" or "rejected"
+    rejection_reason: str | None = None
+
+class AttendanceRegularizationResponse(BaseModel):
+    id: uuid.UUID
+    attendance_id: uuid.UUID
+    employee_id: uuid.UUID
+    manager_id: uuid.UUID | None
+    requested_check_in: datetime | None
+    requested_check_out: datetime | None
+    reason: str
+    status: str
+    approved_by: uuid.UUID | None
+    approved_at: datetime | None
+    rejection_reason: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 class AttendanceExportRequest(BaseModel):
     employee_id: uuid.UUID | None = None

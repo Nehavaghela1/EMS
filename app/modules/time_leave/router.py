@@ -24,6 +24,9 @@ from app.modules.time_leave.schemas import (
     AssignedShiftDetailResponse,
     AttendanceExportRequest,
     AttendanceRegularizeRequest,
+    AttendanceRegularizationCreate,
+    AttendanceRegularizationApprove,
+    AttendanceRegularizationResponse,
     AttendanceResponse,
     EmployeeShiftResponse,
     HolidayCreateRequest,
@@ -166,6 +169,25 @@ def regularize_attendance(
     record = AttendanceService(db).regularize(user.company_id, attendance_id, data, user)
     return _to_attendance_response(record, db)
 
+@attendance_router.post("/{attendance_id}/regularize", response_model=AttendanceRegularizationResponse)
+def request_regularization(
+    attendance_id: uuid.UUID,
+    data: AttendanceRegularizationCreate,
+    db=Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    record = AttendanceService(db).request_regularization(user.company_id, attendance_id, data, user)
+    return record
+
+@attendance_router.put("/regularizations/{regularization_id}/approve", response_model=AttendanceRegularizationResponse)
+def approve_regularization(
+    regularization_id: uuid.UUID,
+    data: AttendanceRegularizationApprove,
+    db=Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    record = AttendanceService(db).approve_regularization(user.company_id, regularization_id, data, user)
+    return record
 
 @attendance_router.delete("/{attendance_id}", status_code=204)
 def delete_attendance(

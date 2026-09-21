@@ -29,6 +29,8 @@ from app.modules.time_leave.models import (
     LeaveStatus,
     LeaveType,
     Shift,
+    AttendanceRegularizationRequest,
+    RegularizationStatus,
 )
 from app.modules.time_leave.repository import (
     AttendanceRepository,
@@ -42,6 +44,8 @@ from app.modules.time_leave.repository import (
 from app.modules.time_leave.schemas import (
     AttendanceExportRequest,
     AttendanceRegularizeRequest,
+    AttendanceRegularizationCreate,
+    AttendanceRegularizationApprove,
     HolidayCreateRequest,
     LeaveApplyRequest,
     LeaveDecisionRequest,
@@ -155,6 +159,20 @@ class AttendanceService:
         today = utcnow().date()
         if self.repo.get_by_employee_and_date(company_id, employee.id, today):
             raise AlreadyCheckedInError()
+            
+        # Auto-flag past unclosed shifts as mispunch
+        past_open = self.repo.db.query(Attendance).filter(
+            Attendance.company_id == company_id,
+            Attendance.employee_id == employee.id,
+            Attendance.date < today,
+            Attendance.check_in.is_not(None),
+            Attendance.check_out.is_(None),
+            Attendance.deleted_at.is_(None),
+            Attendance.status != AttendanceStatus.mispunch,
+            Attendance.status != AttendanceStatus.pending_regularization
+        ).all()
+        for po in past_open:
+            po.status = AttendanceStatus.mispunch
         record = self.repo.create(
             company_id=company_id,
             employee_id=employee.id,
@@ -332,6 +350,88 @@ class AttendanceService:
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
         return record
+
+    def request_regularization(
+        self, company_id: uuid.UUID, attendance_id: uuid.UUID, data: AttendanceRegularizationCreate, current_user: User
+    ) -> AttendanceRegularizationRequest:
+        record = self.repo.get_by_id(attendance_id, company_id)
+        if record is None:
+            raise NotFoundError("Attendance record not found.")
+        self._assert_can_view(company_id, record, current_user)
+        
+        # Determine manager
+        employee = self.employee_repo.get_by_id_any_status(record.employee_id, company_id)
+        manager_id = employee.reporting_manager_id if employee else None
+        
+        req = AttendanceRegularizationRequest(
+            attendance_id=attendance_id,
+            employee_id=record.employee_id,
+            manager_id=manager_id,
+            requested_check_in=data.requested_check_in,
+            requested_check_out=data.requested_check_out,
+            reason=data.reason,
+            status=RegularizationStatus.pending,
+            company_id=company_id
+        )
+        self.repo.create_regularization_request(req)
+        
+        record.status = AttendanceStatus.pending_regularization
+        self.db.commit()
+        return req
+
+    def approve_regularization(
+        self, company_id: uuid.UUID, regularization_id: uuid.UUID, data: AttendanceRegularizationApprove, current_user: User
+    ) -> AttendanceRegularizationRequest:
+        req = self.repo.get_regularization_by_id(regularization_id, company_id)
+        if req is None:
+            raise NotFoundError("Regularization request not found.")
+            
+        if current_user.role not in (UserRole.hr_admin, UserRole.super_admin):
+            # Manager role check
+            caller_employee = self.employee_repo.get_by_user_id(company_id, current_user.id)
+            if not caller_employee or req.manager_id != caller_employee.id:
+                raise ForbiddenError("Not authorized to approve this request.")
+                
+        if data.status not in ("approved", "rejected"):
+            raise AppError("Status must be approved or rejected")
+            
+        req.status = RegularizationStatus(data.status)
+        req.approved_by = current_user.id
+        req.approved_at = utcnow()
+        req.rejection_reason = data.rejection_reason
+        
+        record = self.repo.get_by_id(req.attendance_id, company_id)
+        
+        if req.status == RegularizationStatus.approved and record:
+            if req.requested_check_in:
+                record.check_in = req.requested_check_in
+            if req.requested_check_out:
+                record.check_out = req.requested_check_out
+                
+            if record.check_in and record.check_out and record.check_out > record.check_in:
+                from decimal import ROUND_HALF_UP
+                calc_hours = (Decimal((record.check_out - record.check_in).total_seconds()) / Decimal(3600)).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                record.hours_worked = calc_hours
+                
+                settings_row = self.settings_repo.get_by_company(company_id)
+                half_thresh = settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+                if calc_hours < Decimal("1.0"):
+                    record.status = AttendanceStatus.absent
+                elif calc_hours < half_thresh:
+                    record.status = AttendanceStatus.half_day
+                else:
+                    record.status = AttendanceStatus.present
+            else:
+                record.status = AttendanceStatus.absent
+
+        elif req.status == RegularizationStatus.rejected and record:
+            record.status = AttendanceStatus.mispunch
+            
+        self.db.commit()
+        DashboardService.invalidate_company_dashboards(company_id)
+        return req
 
     def delete_attendance(
         self, company_id: uuid.UUID, attendance_id: uuid.UUID, actor: User

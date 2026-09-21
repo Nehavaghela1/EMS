@@ -32,6 +32,8 @@ class AttendanceStatus(str, enum.Enum):
     on_leave = "on_leave"
     holiday = "holiday"
     weekend = "weekend"
+    mispunch = "mispunch"
+    pending_regularization = "pending_regularization"
 
 
 class AttendanceSource(str, enum.Enum):
@@ -226,3 +228,38 @@ class LeaveBalance(TenantBase):
     allocated: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False)
     used: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False, default=Decimal("0"))
     encashed: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False, default=Decimal("0"))
+
+class RegularizationStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+class AttendanceRegularizationRequest(TenantBase):
+    """RLS: Yes. Request by employee to fix mispunches (Missing Check-out)"""
+
+    __tablename__ = "attendance_regularizations"
+    __table_args__ = (
+        Index("ix_attendance_regularizations_company_attendance", "company_id", "attendance_id"),
+        Index("ix_attendance_regularizations_company_manager", "company_id", "manager_id"),
+    )
+
+    attendance_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("attendance.id", ondelete="CASCADE"), nullable=False
+    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    manager_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True
+    )
+    requested_check_in: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requested_check_out: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[RegularizationStatus] = mapped_column(
+        Enum(RegularizationStatus, name="regularization_status"), nullable=False, default=RegularizationStatus.pending
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
