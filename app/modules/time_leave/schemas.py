@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.modules.time_leave.models import AttendanceStatus, LeaveStatus
 
 
+
 # Attendance (routes 43-49)
 class AttendanceResponse(BaseModel):
     id: uuid.UUID
@@ -232,3 +233,41 @@ class LeaveBalanceResponse(BaseModel):
     used: Decimal
     encashed: Decimal
     available: Decimal
+
+
+class CheckInRequest(BaseModel):
+    """Optional body for POST /attendance/check-in.  When the frontend
+    captures GPS coordinates they are forwarded here; when the browser
+    denies access the client may omit them (the backend will check whether
+    the employee's assigned location has a geofence configured and raise
+    GeolocationPermissionError if it does)."""
+
+    latitude: float | None = None
+    longitude: float | None = None
+    # `accuracy` is meters of GPS uncertainty reported by the browser;
+    # logged to notes for audit, not used in the fence calculation.
+    device_accuracy: float | None = None
+
+
+class CalendarDayResponse(BaseModel):
+    """A single day cell in the attendance calendar matrix."""
+
+    date: date
+    day_of_week: int  # 0 = Monday … 6 = Sunday (Python isoweekday - 1)
+    status: str  # AttendanceStatus value, or "no_record"
+    work_duration_hours: Decimal | None = None
+    check_in: datetime | None = None
+    check_out: datetime | None = None
+    badge_label: str | None = None   # "On Leave", "Diwali", etc.
+    holiday_name: str | None = None
+    leave_type_name: str | None = None
+    is_today: bool = False
+    is_future: bool = False
+
+
+class CalendarResponse(BaseModel):
+    employee_id: uuid.UUID
+    month: int
+    year: int
+    days: list[CalendarDayResponse]
+    summary: dict[str, int]  # {"present": 18, "absent": 2, …}

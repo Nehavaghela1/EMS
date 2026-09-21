@@ -8,6 +8,7 @@ import { parseApiError } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { TodayAttendanceCard } from "../components/TodayAttendanceCard";
+import { AttendanceCalendar } from "../components/AttendanceCalendar";
 import { listAttendance, regularizeAttendance, type Attendance, type AttendanceStatus } from "../api";
 import { formatDate, todayIso } from "../../../shared/utils/date";
 
@@ -104,6 +105,7 @@ function formatHoursWorked(a: Attendance): React.ReactNode {
  */
 export function AttendancePage() {
   const { user } = useAuth();
+  const { notify } = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isHr = user?.role === "hr_admin" || user?.role === "super_admin";
@@ -131,6 +133,8 @@ export function AttendancePage() {
   });
 
   const [regularizing, setRegularizing] = useState<Attendance | null>(null);
+  const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
 
   function handleSelectEmployee(empId: string, empName: string) {
     setFilterEmployee({ id: empId, name: empName });
@@ -283,9 +287,60 @@ export function AttendancePage() {
             key: "actions",
             label: "",
             render: (a: Attendance) => (
-              <button className="btn btn-sm" onClick={() => setRegularizing(a)}>
-                Regularize
-              </button>
+              <div style={{ position: "relative", textAlign: "right" }}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost"
+                  style={{ padding: "0.2rem 0.5rem" }}
+                  onClick={(evt) => {
+                    evt.stopPropagation();
+                    setActionMenuOpen(actionMenuOpen === a.id ? null : a.id);
+                  }}
+                >
+                  •••
+                </button>
+                {actionMenuOpen === a.id && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      right: 0,
+                      top: "100%",
+                      background: "#ffffff",
+                      border: "1px solid var(--color-border, #e2e8f0)",
+                      borderRadius: "8px",
+                      boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                      zIndex: 50,
+                      minWidth: "200px",
+                      padding: "6px 0",
+                      textAlign: "left"
+                    }}
+                    onMouseLeave={() => setActionMenuOpen(null)}
+                  >
+                    <button
+                      type="button"
+                      style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                      onClick={(evt) => { evt.stopPropagation(); notify("Audit history logic placeholder"); setActionMenuOpen(null); }}
+                    >
+                      <span>🔍</span> <span>View Audit History</span>
+                    </button>
+                    <button
+                      type="button"
+                      style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                      onClick={(evt) => { evt.stopPropagation(); setRegularizing(a); setActionMenuOpen(null); }}
+                    >
+                      <span>✏️</span> <span>Admin Override (Regularize)</span>
+                    </button>
+                    <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                    <button
+                      type="button"
+                      style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#dc2626", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                      onClick={(evt) => { evt.stopPropagation(); notify("Reject action triggered."); setActionMenuOpen(null); }}
+                    >
+                      <span>❌</span> <span>Reject with Note</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             ),
           } satisfies DataTableColumn<Attendance>,
         ]
@@ -309,15 +364,64 @@ export function AttendancePage() {
           marginBottom: "0.75rem",
         }}
       >
-        <h2 style={{ fontSize: "1.25rem", margin: 0 }}>
-          {filterEmployee
-            ? `Attendance: ${filterEmployee.name}`
-            : isHr || user?.role === "super_admin"
-            ? "All Company Attendance"
-            : user?.role === "manager"
-            ? "Team Attendance"
-            : "My Attendance"}
-        </h2>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <h2 style={{ fontSize: "1.25rem", margin: 0 }}>
+            {filterEmployee
+              ? `Attendance: ${filterEmployee.name}`
+              : isHr || user?.role === "super_admin"
+              ? "All Company Attendance"
+              : user?.role === "manager"
+              ? "Team Attendance"
+              : "My Attendance"}
+          </h2>
+
+          {/* View Toggle */}
+          <div
+            style={{
+              display: "inline-flex",
+              backgroundColor: "var(--color-surface, #f1f5f9)",
+              borderRadius: "8px",
+              padding: "2px",
+              border: "1px solid var(--color-border, #e2e8f0)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              style={{
+                padding: "4px 10px",
+                fontSize: "0.8rem",
+                fontWeight: 600,
+                borderRadius: "6px",
+                border: "none",
+                cursor: "pointer",
+                backgroundColor: viewMode === "list" ? "#ffffff" : "transparent",
+                color: viewMode === "list" ? "var(--color-primary, #2563eb)" : "var(--color-muted, #64748b)",
+                boxShadow: viewMode === "list" ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
+              }}
+            >
+              ☰ List View
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("calendar")}
+              style={{
+                padding: "4px 10px",
+                fontSize: "0.8rem",
+                fontWeight: 600,
+                borderRadius: "6px",
+                border: "none",
+                cursor: "pointer",
+                backgroundColor: viewMode === "calendar" ? "#ffffff" : "transparent",
+                color: viewMode === "calendar" ? "var(--color-primary, #2563eb)" : "var(--color-muted, #64748b)",
+                boxShadow: viewMode === "calendar" ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
+              }}
+            >
+              📅 Monthly Calendar
+            </button>
+          </div>
+        </div>
+
         {filterEmployee && (
           <div
             style={{
@@ -345,33 +449,40 @@ export function AttendancePage() {
         )}
       </div>
 
-      <DataTable
-        columns={columns}
-        page={historyQuery.data}
-        isLoading={historyQuery.isLoading}
-        isError={historyQuery.isError}
-        error={historyQuery.error}
-        currentPage={page}
-        onPageChange={setPage}
-        sort={null}
-        onSortChange={() => {}}
-        emptyMessage={filterEmployee ? `No attendance records found for ${filterEmployee.name}.` : "No attendance records."}
-        rowKey={(a) => a.id}
-        onRowClick={(a) => {
-          if (a.employee_id && (isHr || user?.role === "manager")) {
-            const empName = a.employee_name ?? a.employee_code ?? "Employee";
-            handleSelectEmployee(a.employee_id, empName);
-          }
-        }}
-        onRowDoubleClick={(a) => {
-          if (isHr) {
-            setRegularizing(a);
-          } else if (a.employee_id && user?.role === "manager") {
-            const empName = a.employee_name ?? a.employee_code ?? "Employee";
-            handleSelectEmployee(a.employee_id, empName);
-          }
-        }}
-      />
+      {viewMode === "calendar" ? (
+        <AttendanceCalendar
+          employeeId={filterEmployee?.id || (user?.employee?.id ?? undefined)}
+          employeeName={filterEmployee?.name || (user?.employee ? `${user.employee.first_name} ${user.employee.last_name || ""}`.trim() : undefined)}
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          page={historyQuery.data}
+          isLoading={historyQuery.isLoading}
+          isError={historyQuery.isError}
+          error={historyQuery.error}
+          currentPage={page}
+          onPageChange={setPage}
+          sort={null}
+          onSortChange={() => {}}
+          emptyMessage={filterEmployee ? `No attendance records found for ${filterEmployee.name}.` : "No attendance records."}
+          rowKey={(a) => a.id}
+          onRowClick={(a) => {
+            if (a.employee_id && (isHr || user?.role === "manager")) {
+              const empName = a.employee_name ?? a.employee_code ?? "Employee";
+              handleSelectEmployee(a.employee_id, empName);
+            }
+          }}
+          onRowDoubleClick={(a) => {
+            if (isHr) {
+              setRegularizing(a);
+            } else if (a.employee_id && user?.role === "manager") {
+              const empName = a.employee_name ?? a.employee_code ?? "Employee";
+              handleSelectEmployee(a.employee_id, empName);
+            }
+          }}
+        />
+      )}
 
       {regularizing && (
         <RegularizeDialog

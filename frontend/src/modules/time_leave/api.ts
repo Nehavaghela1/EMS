@@ -21,13 +21,50 @@ export interface Attendance {
   created_at: string;
 }
 
-export async function checkIn(): Promise<Attendance> {
-  const { data } = await apiClient.post<Attendance>("/attendance/check-in");
+export interface CheckInCoords {
+  latitude?: number | null;
+  longitude?: number | null;
+  device_accuracy?: number | null;
+}
+
+export async function checkIn(coords?: CheckInCoords): Promise<Attendance> {
+  const { data } = await apiClient.post<Attendance>("/attendance/check-in", coords ?? null);
   return data;
 }
 
 export async function checkOut(): Promise<Attendance> {
   const { data } = await apiClient.post<Attendance>("/attendance/check-out");
+  return data;
+}
+
+export interface CalendarDay {
+  date: string;
+  day_of_week: number;
+  status: string;
+  work_duration_hours: string | number | null;
+  check_in: string | null;
+  check_out: string | null;
+  badge_label: string | null;
+  holiday_name: string | null;
+  leave_type_name: string | null;
+  is_today: boolean;
+  is_future: boolean;
+}
+
+export interface AttendanceCalendarData {
+  employee_id: string;
+  month: number;
+  year: number;
+  days: CalendarDay[];
+  summary: Record<string, number>;
+}
+
+export async function getAttendanceCalendar(params: {
+  month: number;
+  year: number;
+  employee_id?: string;
+}): Promise<AttendanceCalendarData> {
+  const { data } = await apiClient.get<AttendanceCalendarData>("/attendance/calendar", { params });
   return data;
 }
 

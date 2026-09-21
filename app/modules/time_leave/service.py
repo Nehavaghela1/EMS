@@ -18,6 +18,7 @@ from app.modules.platform.service import (
     NotificationService,
     jsonable,
 )
+from app.modules.time_leave.geofence import verify_employee_geofence
 from app.modules.time_leave.models import (
     Attendance,
     AttendanceSource,
@@ -46,6 +47,7 @@ from app.modules.time_leave.schemas import (
     AttendanceRegularizeRequest,
     AttendanceRegularizationCreate,
     AttendanceRegularizationApprove,
+    CheckInRequest,
     HolidayCreateRequest,
     LeaveApplyRequest,
     LeaveDecisionRequest,
@@ -136,6 +138,9 @@ class AttendanceService:
         self.settings_repo = CompanySettingsRepository(db)
         self.audit = AuditService(db)
         self.notify = NotificationService(db)
+        # Imported lazily to avoid circular imports at module level
+        from app.modules.identity.repository import CompanyLocationRepository
+        self.location_repo = CompanyLocationRepository(db)
 
     def _resolve_scope(self, company_id: uuid.UUID, current_user: User) -> list[uuid.UUID] | None:
         """None = unrestricted (HR/SA). A list = restricted to exactly these
@@ -149,17 +154,44 @@ class AttendanceService:
             return self.employee_repo.list_direct_report_ids(company_id, caller_employee.id)
         return [caller_employee.id]
 
-    def check_in(self, company_id: uuid.UUID, current_user: User) -> Attendance:
+    def check_in(self, company_id: uuid.UUID, current_user: User, body: CheckInRequest | None = None) -> Attendance:
         """Route 43. 409 if a record already exists for today — the
         database's `uq_attendance_employee_id_date` is the real backstop
-        (11.5); this proactive check just gives a friendlier message."""
+        (11.5); this proactive check just gives a friendlier message.
+
+        When `body` carries GPS coordinates the employee's assigned
+        CompanyLocation is fetched and the Haversine formula validates
+        the distance against its geofence_radius_meters.  If no
+        geofence is configured the check is silently skipped."""
         employee = self.employee_repo.get_by_user_id(company_id, current_user.id)
         if employee is None:
             raise NotFoundError("You do not have an employee record.")
         today = utcnow().date()
         if self.repo.get_by_employee_and_date(company_id, employee.id, today):
             raise AlreadyCheckedInError()
-            
+
+        # ── Geofence validation ──────────────────────────────────────────────
+        fence_notes: str | None = None
+        if employee.location_id is not None:
+            location = self.location_repo.get_by_id(employee.location_id, company_id)
+            if location is not None:
+                emp_lat = body.latitude if body else None
+                emp_lon = body.longitude if body else None
+                distance = verify_employee_geofence(
+                    emp_lat=emp_lat,
+                    emp_lon=emp_lon,
+                    office_lat=float(location.latitude) if location.latitude is not None else None,
+                    office_lon=float(location.longitude) if location.longitude is not None else None,
+                    radius_m=location.geofence_radius_meters,
+                    is_remote_exempt=location.is_remote_exempt,
+                )
+                if distance is not None and body is not None:
+                    accuracy_str = f", accuracy={body.device_accuracy:.0f}m" if body.device_accuracy else ""
+                    fence_notes = (
+                        f"GPS check-in: {emp_lat:.6f},{emp_lon:.6f} — "
+                        f"{distance:.0f}m from office (limit {location.geofence_radius_meters}m{accuracy_str})"
+                    )
+
         # Auto-flag past unclosed shifts as mispunch
         past_open = self.repo.db.query(Attendance).filter(
             Attendance.company_id == company_id,
@@ -180,6 +212,7 @@ class AttendanceService:
             check_in=utcnow(),
             status=AttendanceStatus.present,
             source=AttendanceSource.web,
+            notes=fence_notes,
         )
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
@@ -376,6 +409,23 @@ class AttendanceService:
         self.repo.create_regularization_request(req)
         
         record.status = AttendanceStatus.pending_regularization
+
+        # Notify manager if present
+        if manager_id:
+            mgr_employee = self.employee_repo.get_by_id_any_status(manager_id, company_id)
+            if mgr_employee and mgr_employee.user_id:
+                emp_name = f"{employee.first_name} {employee.last_name or ''}".strip() if employee else "An employee"
+                self.notify.notify(
+                    company_id=company_id,
+                    user_id=mgr_employee.user_id,
+                    type="regularization_requested",
+                    title="Attendance Regularization Request",
+                    message=f"{emp_name} requested attendance regularization for {record.date}.",
+                    action_url="/attendance",
+                    entity_type="attendance",
+                    entity_id=record.id,
+                )
+
         self.db.commit()
         return req
 
@@ -428,6 +478,21 @@ class AttendanceService:
 
         elif req.status == RegularizationStatus.rejected and record:
             record.status = AttendanceStatus.mispunch
+
+        # Notify employee of decision
+        emp = self.employee_repo.get_by_id_any_status(req.employee_id, company_id)
+        if emp and emp.user_id:
+            status_text = "approved" if req.status == RegularizationStatus.approved else "rejected"
+            self.notify.notify(
+                company_id=company_id,
+                user_id=emp.user_id,
+                type=f"regularization_{status_text}",
+                title=f"Attendance Regularization {status_text.capitalize()}",
+                message=f"Your attendance regularization request for {record.date if record else 'your shift'} has been {status_text}.",
+                action_url="/attendance",
+                entity_type="attendance",
+                entity_id=record.id if record else None,
+            )
             
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
@@ -452,6 +517,174 @@ class AttendanceService:
         self.repo.soft_delete(record)
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
+
+    def get_calendar(
+        self,
+        company_id: uuid.UUID,
+        current_user: User,
+        *,
+        employee_id: uuid.UUID | None,
+        month: int,
+        year: int,
+    ) -> dict:
+        """Returns a normalized month-view for the attendance calendar matrix.
+
+        Single pass over attendance, leave, and holiday rows for the period —
+        never one query per day.  The caller's role gates which employee_id is
+        permitted (own for employee, team for manager, anyone for HR)."""
+        import calendar as _cal
+        from decimal import Decimal
+
+        # Resolve target employee
+        if employee_id is None:
+            emp = self.employee_repo.get_by_user_id(company_id, current_user.id)
+            if emp is None:
+                raise NotFoundError("You do not have an employee record.")
+            employee_id = emp.id
+        else:
+            # Scope guard
+            allowed = self._resolve_scope(company_id, current_user)
+            if allowed is not None and employee_id not in allowed:
+                raise ForbiddenError("You do not have permission to view this employee's calendar.")
+            emp = self.employee_repo.get_by_id(employee_id, company_id)
+            if emp is None:
+                raise NotFoundError("Employee not found.")
+
+        # Build the set of dates in the requested month
+        days_in_month = _cal.monthrange(year, month)[1]
+        start = date(year, month, 1)
+        end = date(year, month, days_in_month)
+        today = utcnow().date()
+
+        # Index attendance rows by date
+        att_rows = self.repo.db.query(Attendance).filter(
+            Attendance.company_id == company_id,
+            Attendance.employee_id == employee_id,
+            Attendance.date >= start,
+            Attendance.date <= end,
+            Attendance.deleted_at.is_(None),
+        ).all()
+        att_by_date: dict[date, Attendance] = {r.date: r for r in att_rows}
+
+        # Index holidays by date (dept-specific or company-wide)
+        holiday_rows = self.repo.db.query(Holiday).filter(
+            Holiday.company_id == company_id,
+            Holiday.date >= start,
+            Holiday.date <= end,
+            Holiday.deleted_at.is_(None),
+        ).all()
+        hol_by_date: dict[date, Holiday] = {}
+        for h in holiday_rows:
+            if h.applies_to_department_id is None or h.applies_to_department_id == (emp.department_id if emp else None):
+                hol_by_date[h.date] = h
+
+        # Index approved/pending leaves by their date range
+        leave_rows = self.repo.db.query(Leave).filter(
+            Leave.company_id == company_id,
+            Leave.employee_id == employee_id,
+            Leave.start_date <= end,
+            Leave.end_date >= start,
+            Leave.status.in_([LeaveStatus.approved, LeaveStatus.pending]),
+            Leave.deleted_at.is_(None),
+        ).all()
+        # Build leave_type names cache
+        leave_type_ids = {lv.leave_type_id for lv in leave_rows}
+        lt_map: dict[uuid.UUID, str] = {}
+        if leave_type_ids:
+            from app.modules.time_leave.models import LeaveType as _LT
+            lt_rows = self.repo.db.query(_LT).filter(_LT.id.in_(leave_type_ids)).all()
+            lt_map = {r.id: r.name for r in lt_rows}
+        leave_by_date: dict[date, Leave] = {}
+        for lv in leave_rows:
+            d = lv.start_date
+            while d <= lv.end_date:
+                if start <= d <= end:
+                    leave_by_date[d] = lv
+                d += timedelta(days=1)
+
+        # Build day cells
+        days = []
+        summary: dict[str, int] = {}
+        for day_num in range(1, days_in_month + 1):
+            d = date(year, month, day_num)
+            dow = d.isoweekday() - 1  # 0=Mon…6=Sun
+            is_today = d == today
+            is_future = d > today
+            att = att_by_date.get(d)
+            hol = hol_by_date.get(d)
+            leave = leave_by_date.get(d)
+
+            if att is not None:
+                status = att.status.value
+                work_hours = att.hours_worked
+                check_in_val = att.check_in
+                check_out_val = att.check_out
+                badge = hol.name if hol else (lt_map.get(leave.leave_type_id) if leave else None)
+                holiday_name = hol.name if hol else None
+                leave_type_name = lt_map.get(leave.leave_type_id) if leave else None
+            elif hol is not None:
+                status = "holiday"
+                work_hours = None
+                check_in_val = None
+                check_out_val = None
+                badge = hol.name
+                holiday_name = hol.name
+                leave_type_name = None
+            elif leave is not None:
+                status = "on_leave"
+                work_hours = None
+                check_in_val = None
+                check_out_val = None
+                badge = lt_map.get(leave.leave_type_id, "Leave")
+                holiday_name = None
+                leave_type_name = lt_map.get(leave.leave_type_id)
+            elif dow >= 5:  # Sat/Sun
+                status = "weekend"
+                work_hours = None
+                check_in_val = None
+                check_out_val = None
+                badge = None
+                holiday_name = None
+                leave_type_name = None
+            elif is_future:
+                status = "no_record"
+                work_hours = None
+                check_in_val = None
+                check_out_val = None
+                badge = None
+                holiday_name = None
+                leave_type_name = None
+            else:
+                status = "absent"
+                work_hours = None
+                check_in_val = None
+                check_out_val = None
+                badge = None
+                holiday_name = None
+                leave_type_name = None
+
+            summary[status] = summary.get(status, 0) + 1
+            days.append({
+                "date": d,
+                "day_of_week": dow,
+                "status": status,
+                "work_duration_hours": work_hours,
+                "check_in": check_in_val,
+                "check_out": check_out_val,
+                "badge_label": badge,
+                "holiday_name": holiday_name,
+                "leave_type_name": leave_type_name,
+                "is_today": is_today,
+                "is_future": is_future,
+            })
+
+        return {
+            "employee_id": employee_id,
+            "month": month,
+            "year": year,
+            "days": days,
+            "summary": summary,
+        }
 
     def queue_export(self, company_id: uuid.UUID, data: AttendanceExportRequest) -> str:
         """Route 49: queues the real Celery job (13.1), returns its id."""
@@ -822,6 +1055,24 @@ class LeaveService:
             reason=data.reason,
             status=LeaveStatus.pending,
         )
+
+        # Notify manager if present
+        if employee.reporting_manager_id:
+            mgr = self.employee_repo.get_by_id_any_status(employee.reporting_manager_id, company_id)
+            if mgr and mgr.user_id:
+                emp_name = f"{employee.first_name} {employee.last_name or ''}".strip()
+                lt_name = leave_type.name if leave_type else "Leave"
+                self.notify.notify(
+                    company_id=company_id,
+                    user_id=mgr.user_id,
+                    type="leave_requested",
+                    title="New Leave Request",
+                    message=f"{emp_name} requested {total_days} day(s) {lt_name} from {data.start_date} to {data.end_date}.",
+                    action_url="/leave",
+                    entity_type="leave",
+                    entity_id=leave.id,
+                )
+
         self.db.commit()
         return leave
 

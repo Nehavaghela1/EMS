@@ -28,6 +28,8 @@ from app.modules.time_leave.schemas import (
     AttendanceRegularizationApprove,
     AttendanceRegularizationResponse,
     AttendanceResponse,
+    CalendarResponse,
+    CheckInRequest,
     EmployeeShiftResponse,
     HolidayCreateRequest,
     HolidayResponse,
@@ -86,10 +88,11 @@ def _to_employee_shift_response(assignment: EmployeeShift) -> EmployeeShiftRespo
 
 @attendance_router.post("/check-in", response_model=AttendanceResponse, status_code=201)
 def check_in(
+    body: CheckInRequest | None = None,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    record = AttendanceService(db).check_in(user.company_id, user)
+    record = AttendanceService(db).check_in(user.company_id, user, body)
     return _to_attendance_response(record, db)
 
 
@@ -110,6 +113,24 @@ def export_attendance(
 ):
     job_id = AttendanceService(db).queue_export(_user.company_id, data)
     return JobQueuedResponse(job_id=job_id)
+
+
+@attendance_router.get("/calendar", response_model=CalendarResponse)
+def get_attendance_calendar(
+    month: int,
+    year: int,
+    employee_id: uuid.UUID | None = None,
+    db=Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    """Normalized month-grid matrix of attendance, holidays, and leaves."""
+    return AttendanceService(db).get_calendar(
+        user.company_id,
+        user,
+        employee_id=employee_id,
+        month=month,
+        year=year,
+    )
 
 
 @attendance_router.get("", response_model=Page[AttendanceResponse])
