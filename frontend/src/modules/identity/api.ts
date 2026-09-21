@@ -47,6 +47,46 @@ export async function registerCompany(input: RegisterCompanyInput): Promise<Comp
   return data;
 }
 
+export interface CreateWorkspaceInput {
+  company_name: string;
+  company_email?: string;
+  subdomain?: string;
+  country?: string;
+  currency?: string;
+  timezone?: string;
+  seed_departments?: boolean;
+  seed_shift?: boolean;
+}
+
+export interface UserWorkspaceResponse {
+  id: string;
+  name: string;
+  code: string;
+  role: string;
+  is_active: boolean;
+}
+
+export interface CreateWorkspaceResponse {
+  company: CompanyResponse;
+  access_token: string;
+  token_type: string;
+}
+
+export async function createWorkspace(input: CreateWorkspaceInput): Promise<CreateWorkspaceResponse> {
+  const { data } = await apiClient.post<CreateWorkspaceResponse>("/companies/workspaces", input);
+  return data;
+}
+
+export async function getUserWorkspaces(): Promise<UserWorkspaceResponse[]> {
+  const { data } = await apiClient.get<UserWorkspaceResponse[]>("/auth/workspaces");
+  return data;
+}
+
+export async function switchWorkspace(companyId: string): Promise<TokenResponse> {
+  const { data } = await apiClient.post<TokenResponse>("/auth/switch-workspace", { company_id: companyId });
+  return data;
+}
+
 /** GET /industry-presets (WP-14, no route number assigned in Section 10 —
  * see RECONCILIATION.md). Public, names only. */
 export async function listIndustryPresets(): Promise<string[]> {

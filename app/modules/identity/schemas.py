@@ -197,3 +197,33 @@ class ActivateAccountRequest(BaseModel):
     token: str
     username: str
     password: PasswordStr
+
+
+# Workspaces
+class CreateWorkspaceRequest(BaseModel):
+    company_name: str
+    company_email: EmailStr | None = None
+    subdomain: str | None = None
+    country: str = "IN"
+    currency: str = "INR"
+    timezone: str = "Asia/Kolkata"
+    seed_departments: bool = True
+    seed_shift: bool = True
+
+
+class SwitchWorkspaceRequest(BaseModel):
+    company_id: uuid.UUID
+
+
+class UserWorkspaceResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    code: str
+    role: UserRole
+    is_active: bool
+
+
+class CreateWorkspaceResponse(BaseModel):
+    company: CompanyResponse
+    access_token: str
+    token_type: str = "bearer"

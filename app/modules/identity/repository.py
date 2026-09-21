@@ -120,6 +120,32 @@ class UserRepository:
             )
         return list(self.db.scalars(stmt).all())
 
+    def get_workspaces_by_email(self, email: str) -> list[dict]:
+        """Fetch all workspaces associated with an email for the multi-tenant switcher."""
+        stmt = (
+            select(
+                Company.id,
+                Company.name,
+                Company.code,
+                User.role,
+                User.is_active,
+            )
+            .select_from(User)
+            .join(Company, Company.id == User.company_id)
+            .where(func.lower(User.email) == email.lower())
+        )
+        rows = self.db.execute(stmt).all()
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "code": r.code,
+                "role": r.role,
+                "is_active": r.is_active,
+            }
+            for r in rows
+        ]
+
     def get_by_id_for_token_refresh(self, user_id: uuid.UUID) -> User | None:
         """The other pre-authentication-shaped lookup this module needs: reachable
         only after the caller has already verified a hashed, unexpired refresh

@@ -3,7 +3,8 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth, type UserRole } from "./auth-context";
 import { useTimer } from "./timer-context";
-import { listCompanies } from "../modules/identity/api";
+import { getUserWorkspaces, switchWorkspace } from "../modules/identity/api";
+import { CreateWorkspaceModal } from "../shared/components/CreateWorkspaceModal";
 
 interface SubItem {
   to: string;
@@ -131,7 +132,7 @@ const NAV_SECTIONS: NavSection[] = [
 ];
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const { user, logout } = useAuth();
+  const { user, logout, establishSession } = useAuth();
   const { activeTimer, elapsedSeconds, formatTime, stopTimer } = useTimer();
   const navigate = useNavigate();
   const location = useLocation();
@@ -140,6 +141,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>(user?.company_id || "");
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const workspaceDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -163,21 +165,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
     };
   }, [isWorkspaceDropdownOpen]);
 
-  const companiesQuery = useQuery({
-    queryKey: ["all-tenant-companies"],
-    queryFn: () => listCompanies({ limit: 100 }),
-    enabled: user?.role === "super_admin",
+  const workspacesQuery = useQuery({
+    queryKey: ["user-workspaces"],
+    queryFn: () => getUserWorkspaces(),
+    enabled: !!user,
   });
 
   const activeCompanyName =
-    (user?.role === "super_admin" &&
-      companiesQuery.data?.items.find((c) => c.id === selectedWorkspace)?.name) ||
+    workspacesQuery.data?.find((c) => c.id === selectedWorkspace)?.name ||
     user?.company_name ||
     "EMS Workspace";
 
   const activeCompanyCode =
-    (user?.role === "super_admin" &&
-      companiesQuery.data?.items.find((c) => c.id === selectedWorkspace)?.code) ||
+    workspacesQuery.data?.find((c) => c.id === selectedWorkspace)?.code ||
     user?.company_code ||
     "";
 
@@ -456,56 +456,62 @@ export function AppLayout({ children }: { children: ReactNode }) {
                         )}
                       </div>
 
-                      {/* Other Accessible Companies for Super Admin */}
-                      {user.role === "super_admin" &&
-                        companiesQuery.data?.items
-                          .filter((c) => c.id !== user.company_id)
-                          .map((c) => {
-                            const isCurrent = selectedWorkspace === c.id;
-                            return (
-                              <div
-                                key={c.id}
-                                onClick={() => {
-                                  setSelectedWorkspace(c.id);
-                                  setIsWorkspaceDropdownOpen(false);
-                                  alert(`Switched active workspace view to: ${c.name}`);
-                                }}
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "space-between",
-                                  padding: "7px 9px",
-                                  borderRadius: "6px",
-                                  background: isCurrent ? "rgba(99, 102, 241, 0.15)" : "transparent",
-                                  cursor: "pointer",
-                                  transition: "background 0.15s ease",
-                                }}
-                                onMouseEnter={(e) => {
-                                  if (!isCurrent) e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
-                                }}
-                                onMouseLeave={(e) => {
-                                  if (!isCurrent) e.currentTarget.style.background = "transparent";
-                                }}
-                              >
-                                <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
-                                  <span style={{ fontSize: "0.85rem" }}>🏢</span>
-                                  <div style={{ minWidth: 0 }}>
-                                    <div style={{ fontSize: "0.78rem", fontWeight: 500, color: "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                      {c.name}
-                                    </div>
-                                    <div style={{ fontSize: "0.64rem", color: "#64748b", fontFamily: "monospace" }}>
-                                      {c.code}
-                                    </div>
+                      {/* Other Accessible Companies */}
+                      {workspacesQuery.data
+                        ?.filter((c) => c.id !== user.company_id)
+                        .map((c) => {
+                          const isCurrent = selectedWorkspace === c.id;
+                          return (
+                            <div
+                              key={c.id}
+                              onClick={async () => {
+                                setSelectedWorkspace(c.id);
+                                setIsWorkspaceDropdownOpen(false);
+                                try {
+                                  const tokenData = await switchWorkspace(c.id);
+                                  await establishSession(tokenData.access_token);
+                                  navigate("/dashboard");
+                                } catch (e) {
+                                  console.error(e);
+                                  alert("Failed to switch workspace.");
+                                }
+                              }}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "7px 9px",
+                                borderRadius: "6px",
+                                background: isCurrent ? "rgba(99, 102, 241, 0.15)" : "transparent",
+                                cursor: "pointer",
+                                transition: "background 0.15s ease",
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!isCurrent) e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!isCurrent) e.currentTarget.style.background = "transparent";
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                                <span style={{ fontSize: "0.85rem" }}>🏢</span>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: "0.78rem", fontWeight: 500, color: "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {c.name}
+                                  </div>
+                                  <div style={{ fontSize: "0.64rem", color: "#64748b", fontFamily: "monospace" }}>
+                                    {c.code}
                                   </div>
                                 </div>
-                                {isCurrent && (
-                                  <span style={{ color: "#38bdf8", fontWeight: 700, fontSize: "0.85rem", paddingLeft: "6px" }} title="Currently Active">
-                                    ✓
-                                  </span>
-                                )}
                               </div>
-                            );
-                          })}
+                              {isCurrent && (
+                                <span style={{ color: "#38bdf8", fontWeight: 700, fontSize: "0.85rem", paddingLeft: "6px" }} title="Currently Active">
+                                  ✓
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                     </div>
 
                     {/* Bottom Action: Create New Workspace / Company */}
@@ -520,11 +526,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                         type="button"
                         onClick={() => {
                           setIsWorkspaceDropdownOpen(false);
-                          if (user.role === "super_admin") {
-                            navigate("/admin");
-                          } else {
-                            navigate("/register-company");
-                          }
+                          setIsCreateModalOpen(true);
                         }}
                         style={{
                           width: "100%",
@@ -976,6 +978,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
         </main>
       </div>
+
+      <CreateWorkspaceModal isOpen={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)} />
     </div>
   );
 }

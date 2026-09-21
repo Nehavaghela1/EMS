@@ -26,6 +26,10 @@ from app.modules.identity.schemas import (
     ResetPasswordRequest,
     TokenResponse,
     UsernameAvailabilityResponse,
+    CreateWorkspaceRequest,
+    SwitchWorkspaceRequest,
+    UserWorkspaceResponse,
+    CreateWorkspaceResponse,
 )
 from app.modules.identity.service import AuthService, CompanyService
 
@@ -109,6 +113,29 @@ def get_me(
     return AuthService(db).get_me(user)
 
 
+@router.get("/workspaces", response_model=list[UserWorkspaceResponse])
+def get_user_workspaces(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return AuthService(db).get_user_workspaces(user.email)
+
+
+@router.post("/switch-workspace", response_model=TokenResponse)
+def switch_workspace(
+    data: SwitchWorkspaceRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result, raw_refresh = AuthService(db).switch_workspace(
+        user.email, data.company_id, device_info=request.headers.get("user-agent")
+    )
+    _set_refresh_cookie(response, raw_refresh)
+    return result
+
+
 @router.post("/change-password", status_code=204)
 def change_password(
     data: ChangePasswordRequest,
@@ -169,6 +196,22 @@ companies_router = APIRouter(prefix="/companies", tags=["Companies"])
 @companies_router.post("/register", response_model=CompanyResponse, status_code=201)
 def register_company(data: CompanyRegisterRequest, db: Session = Depends(get_db)):
     return CompanyService(db).register_company(data)
+
+
+@companies_router.post("/workspaces", response_model=CreateWorkspaceResponse, status_code=201)
+def create_workspace(
+    data: CreateWorkspaceRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    company = CompanyService(db).create_workspace(user, data)
+    token_response, raw_refresh = AuthService(db).switch_workspace(
+        user.email, company.id, device_info=request.headers.get("user-agent")
+    )
+    _set_refresh_cookie(response, raw_refresh)
+    return CreateWorkspaceResponse(company=CompanyResponse.model_validate(company), access_token=token_response.access_token, token_type=token_response.token_type)
 
 
 @companies_router.get("", response_model=Page[CompanyResponse])

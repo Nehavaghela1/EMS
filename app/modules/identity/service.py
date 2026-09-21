@@ -340,6 +340,40 @@ class AuthService:
             self.token_repo.revoke(token)
         self.db.commit()
 
+    def get_user_workspaces(self, email: str) -> list[dict]:
+        """Fetch all workspaces associated with the user's email."""
+        return self.user_repo.get_workspaces_by_email(email)
+
+    def switch_workspace(
+        self, email: str, target_company_id: uuid.UUID, device_info: str | None = None
+    ) -> tuple[TokenResponse, str]:
+        """Switch context to another workspace associated with the same email."""
+        users = self.user_repo.find_by_email(email)
+        target_user = next((u for u in users if u.company_id == target_company_id), None)
+        if not target_user or not target_user.is_active:
+            raise InvalidCredentialsError()
+
+        access_token = create_access_token(
+            sub=str(target_user.id),
+            company_id=str(target_user.company_id),
+            role=target_user.role.value,
+        )
+        refresh_token_str = self._create_refresh_token(target_user.id, device_info)
+        return TokenResponse(
+            access_token=access_token, token_type="bearer", refresh_token=refresh_token_str
+        ), device_info or "unknown"
+
+    def _create_refresh_token(self, user_id: uuid.UUID, device_info: str | None) -> str:
+        raw_refresh = generate_refresh_token()
+        self.token_repo.create(
+            user_id=user_id,
+            token_hash=hash_token(raw_refresh),
+            expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+            device_info=device_info,
+        )
+        self.db.commit()
+        return raw_refresh
+
     def get_me(self, user: User) -> MeResponse:
         """Route 5: current user, linked employee summary (None if the
         caller has no Employee row — e.g. an HR admin created directly at
@@ -678,6 +712,59 @@ class CompanyService:
             raise NotFoundError("Company not found.")
         updates = data.model_dump(exclude_unset=True)
         self.company_repo.update(company, **updates)
+        self.db.commit()
+        return company
+
+    def create_workspace(
+        self, current_user: User, data: "CreateWorkspaceRequest"
+    ) -> Company:
+        """Create a new workspace, seed defaults, and make the current user the owner."""
+        email = data.company_email or current_user.email
+        if self.company_repo.get_by_email(email):
+            raise ConflictError("A company with this email already exists.")
+
+        company = self.company_repo.create(
+            name=data.company_name,
+            code=_generate_company_code(data.company_name),
+            email=email,
+            phone=None,
+            industry=None,
+            country=data.country,
+            subdomain=data.subdomain.strip().lower() if data.subdomain else None,
+            company_size=None,
+            admin_password_hash=current_user.hashed_password,
+            status=CompanyStatus.active,
+        )
+        self.db.flush()
+
+        bind_tenant_to_session(self.db, company_id=company.id, is_platform_admin=True)
+
+        self.db.add(CompanySettings(company_id=company.id))
+
+        if data.seed_departments:
+            for dept_name in ["Engineering", "Sales", "Human Resources", "Finance"]:
+                self.department_repo.create(company_id=company.id, name=dept_name)
+
+        if data.seed_shift:
+            from app.modules.time_leave.repository import ShiftRepository
+            from datetime import time
+            shift_repo = ShiftRepository(self.db)
+            shift_repo.create(
+                company_id=company.id,
+                name="General Shift",
+                start_time=time(9, 0),
+                end_time=time(18, 0),
+            )
+
+        self.user_repo.create(
+            company_id=company.id,
+            email=current_user.email,
+            hashed_password=current_user.hashed_password,
+            role=UserRole.hr_admin,
+            is_active=True,
+            must_change_password=False,
+        )
+
         self.db.commit()
         return company
 
