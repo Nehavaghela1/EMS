@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getAttendanceCalendar, type CalendarDay } from "../api";
+import { getAttendanceCalendar, listHolidays, type CalendarDay, type Holiday } from "../api";
 import { formatDate } from "../../../shared/utils/date";
 
 interface AttendanceCalendarProps {
@@ -103,6 +103,12 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
   const [currentMonth, setCurrentMonth] = useState<number>(now.getMonth() + 1);
   const [currentYear, setCurrentYear] = useState<number>(now.getFullYear());
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
+  const [showHolidaysModal, setShowHolidaysModal] = useState<boolean>(false);
+
+  const holidaysQuery = useQuery({
+    queryKey: ["holidays", currentYear],
+    queryFn: () => listHolidays(currentYear),
+  });
 
   const calendarQuery = useQuery({
     queryKey: ["attendance-calendar", employeeId, currentMonth, currentYear],
@@ -162,33 +168,60 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          {/* Quick Holidays Button for Employees & Admins */}
           <button
             type="button"
-            className="btn btn-sm btn-secondary"
-            onClick={handlePrevMonth}
-            title="Previous Month"
-          >
-            ← Prev
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => {
-              setCurrentMonth(now.getMonth() + 1);
-              setCurrentYear(now.getFullYear());
+            onClick={() => setShowHolidaysModal(true)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "6px 12px",
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              borderRadius: "8px",
+              backgroundColor: "#f0fdfa",
+              color: "#0f766e",
+              border: "1px solid #99f6e4",
+              cursor: "pointer",
+              transition: "all 0.15s ease",
             }}
+            title="View company gazetted holidays and office closures"
           >
-            Today
+            <span>🏖️</span>
+            <span>Holidays ({holidaysQuery.data?.length ?? 0})</span>
           </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-secondary"
-            onClick={handleNextMonth}
-            title="Next Month"
-          >
-            Next →
-          </button>
+
+          {/* Month Navigation */}
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={handlePrevMonth}
+              title="Previous Month"
+            >
+              ← Prev
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                setCurrentMonth(now.getMonth() + 1);
+                setCurrentYear(now.getFullYear());
+              }}
+            >
+              Today
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={handleNextMonth}
+              title="Next Month"
+            >
+              Next →
+            </button>
+          </div>
         </div>
       </div>
 
@@ -496,6 +529,143 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
           >
             Close ✕
           </button>
+        </div>
+      )}
+
+      {/* In-Page Holiday Viewer Modal for Employees & Admins */}
+      {showHolidaysModal && (
+        <div className="modal-backdrop">
+          <div className="modal-card" style={{ maxWidth: "680px", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+            {/* Modal Header */}
+            <div className="modal-header">
+              <div>
+                <h3 style={{ margin: 0, fontSize: "1.1rem", display: "flex", alignItems: "center", gap: "8px" }}>
+                  🏖️ Company Holiday Schedule ({currentYear})
+                </h3>
+                <p style={{ margin: "2px 0 0 0", fontSize: "0.8rem", color: "#64748b" }}>
+                  Official paid days off and gazetted holidays for your assigned worksite
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => setShowHolidaysModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body: Read-Only Cards */}
+            <div className="modal-body" style={{ overflowY: "auto", flex: 1, padding: "16px 20px" }}>
+              {holidaysQuery.isLoading ? (
+                <div style={{ textAlign: "center", padding: "30px", color: "#64748b" }}>
+                  Loading company holidays...
+                </div>
+              ) : (holidaysQuery.data || []).length === 0 ? (
+                <div style={{ textAlign: "center", padding: "40px 20px", color: "#64748b" }}>
+                  <div style={{ fontSize: "2rem", marginBottom: "8px" }}>📅</div>
+                  <p style={{ margin: 0, fontWeight: 600 }}>No holidays configured for {currentYear}</p>
+                  <p style={{ margin: "4px 0 0 0", fontSize: "0.8rem" }}>
+                    Please check back later or contact your HR administrator.
+                  </p>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                    gap: "12px",
+                  }}
+                >
+                  {(holidaysQuery.data || [])
+                    .slice()
+                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                    .map((h: Holiday) => {
+                      const dateObj = new Date(h.date + "T00:00:00");
+                      const dayName = dateObj.toLocaleDateString("en-US", { weekday: "long" });
+                      const formatted = formatDate(h.date);
+                      const isPast = h.date < new Date().toISOString().split("T")[0];
+
+                      return (
+                        <div
+                          key={h.id}
+                          style={{
+                            padding: "14px",
+                            borderRadius: "10px",
+                            border: "1px solid #e2e8f0",
+                            backgroundColor: isPast ? "#f8fafc" : "#ffffff",
+                            opacity: isPast ? 0.75 : 1,
+                            display: "flex",
+                            flexDirection: "column",
+                            justifyContent: "space-between",
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+                          }}
+                        >
+                          <div>
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                marginBottom: "6px",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: "0.75rem",
+                                  fontWeight: 700,
+                                  color: "#0f766e",
+                                  backgroundColor: "#f0fdfa",
+                                  border: "1px solid #99f6e4",
+                                  padding: "2px 8px",
+                                  borderRadius: "4px",
+                                }}
+                              >
+                                {formatted}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: "0.7rem",
+                                  fontWeight: 600,
+                                  color: h.is_optional ? "#d97706" : "#6b21a8",
+                                  backgroundColor: h.is_optional ? "#fffbeb" : "#faf5ff",
+                                  border: `1px solid ${h.is_optional ? "#fde68a" : "#d8b4fe"}`,
+                                  padding: "2px 6px",
+                                  borderRadius: "4px",
+                                }}
+                              >
+                                {h.is_optional ? "Optional" : "Gazetted Off"}
+                              </span>
+                            </div>
+
+                            <h4 style={{ margin: "4px 0 2px 0", fontSize: "0.95rem", fontWeight: 700, color: "#1e293b" }}>
+                              {h.name}
+                            </h4>
+                            <p style={{ margin: 0, fontSize: "0.78rem", color: "#64748b" }}>
+                              {dayName} • Office Closed • Paid Off
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="modal-footer" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
+                Total: <strong>{holidaysQuery.data?.length ?? 0} holidays</strong> in {currentYear}
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowHolidaysModal(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
