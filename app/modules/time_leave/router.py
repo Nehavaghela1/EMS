@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -63,18 +63,26 @@ leaves_router = APIRouter(prefix="/leaves", tags=["Leaves"])
 
 def _to_attendance_response(record: Attendance, db: Session | None = None) -> AttendanceResponse:
     res = AttendanceResponse.model_validate(record)
-    if db is not None and record.employee_id:
-        emp = db.query(Employee).filter(Employee.id == record.employee_id).first()
-        if emp:
-            name_parts = [emp.first_name]
-            if emp.last_name:
-                name_parts.append(emp.last_name)
-            res.employee_name = " ".join(name_parts)
-            res.employee_code = emp.employee_code
-            if emp.department_id:
-                dept = db.query(Department).filter(Department.id == emp.department_id).first()
-                if dept:
-                    res.department_name = dept.name
+    if db is not None:
+        if record.employee_id:
+            emp = db.query(Employee).filter(Employee.id == record.employee_id).first()
+            if emp:
+                name_parts = [emp.first_name]
+                if emp.last_name:
+                    name_parts.append(emp.last_name)
+                res.employee_name = " ".join(name_parts)
+                res.employee_code = emp.employee_code
+                if emp.department_id:
+                    dept = db.query(Department).filter(Department.id == emp.department_id).first()
+                    if dept:
+                        res.department_name = dept.name
+
+        # Include latest regularization if pending or recently regularized
+        from app.modules.time_leave.repository import AttendanceRepository
+        latest_reg = AttendanceRepository(db).get_latest_regularization_for_attendance(record.id, record.company_id)
+        if latest_reg:
+            res.active_regularization = AttendanceRegularizationResponse.model_validate(latest_reg)
+
     return res
 
 
@@ -190,15 +198,77 @@ def regularize_attendance(
     record = AttendanceService(db).regularize(user.company_id, attendance_id, data, user)
     return _to_attendance_response(record, db)
 
-@attendance_router.post("/{attendance_id}/regularize", response_model=AttendanceRegularizationResponse)
-def request_regularization(
+@attendance_router.get("/{attendance_id}/regularization", response_model=AttendanceRegularizationResponse | None)
+def get_attendance_regularization(
     attendance_id: uuid.UUID,
-    data: AttendanceRegularizationCreate,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
+    from app.modules.time_leave.repository import AttendanceRepository
+    reg = AttendanceRepository(db).get_latest_regularization_for_attendance(attendance_id, user.company_id)
+    return reg
+
+@attendance_router.post("/{attendance_id}/regularize", response_model=AttendanceRegularizationResponse)
+async def request_regularization(
+    attendance_id: uuid.UUID,
+    request: Request,
+    db=Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        check_in_str = form.get("check_in") or form.get("requested_check_in")
+        check_out_str = form.get("check_out") or form.get("requested_check_out")
+        reason = form.get("reason") or ""
+        attachment = form.get("attachment")
+
+        from datetime import datetime
+        def parse_dt(dt_str):
+            if not dt_str:
+                return None
+            try:
+                # Support ISO strings and datetime-local
+                return datetime.fromisoformat(str(dt_str))
+            except Exception:
+                return None
+
+        file_url = None
+        if attachment and hasattr(attachment, "filename") and attachment.filename:
+            import os, uuid as sys_uuid
+            upload_dir = os.path.join(os.getcwd(), "uploads", "regularizations")
+            os.makedirs(upload_dir, exist_ok=True)
+            safe_name = f"{sys_uuid.uuid4()}_{attachment.filename}"
+            storage_path = os.path.join(upload_dir, safe_name)
+            content = await attachment.read()
+            with open(storage_path, "wb") as f:
+                f.write(content)
+            # URL accessible via static /files download
+            file_url = f"/api/v1/attendance/regularizations/attachments/{safe_name}"
+
+        data = AttendanceRegularizationCreate(
+            requested_check_in=parse_dt(check_in_str),
+            requested_check_out=parse_dt(check_out_str),
+            reason=str(reason),
+            attachment_url=file_url,
+        )
+    else:
+        json_body = await request.json()
+        data = AttendanceRegularizationCreate.model_validate(json_body)
+
     record = AttendanceService(db).request_regularization(user.company_id, attendance_id, data, user)
     return record
+
+@attendance_router.get("/regularizations/attachments/{filename}")
+def download_regularization_attachment(filename: str):
+    import os
+    from fastapi.responses import FileResponse
+    upload_dir = os.path.join(os.getcwd(), "uploads", "regularizations")
+    file_path = os.path.join(upload_dir, filename)
+    if not os.path.exists(file_path):
+        from app.core.exceptions import NotFoundError
+        raise NotFoundError("Attachment not found.")
+    return FileResponse(file_path)
 
 @attendance_router.put("/regularizations/{regularization_id}/approve", response_model=AttendanceRegularizationResponse)
 def approve_regularization(

@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     SmallInteger,
+    String,
     Text,
     UniqueConstraint,
 )
@@ -263,3 +264,5 @@ class AttendanceRegularizationRequest(TenantBase):
     )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attachment_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    admin_notes: Mapped[str | None] = mapped_column(Text, nullable=True)

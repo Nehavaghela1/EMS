@@ -403,6 +403,7 @@ class AttendanceService:
             requested_check_in=data.requested_check_in,
             requested_check_out=data.requested_check_out,
             reason=data.reason,
+            attachment_url=data.attachment_url,
             status=RegularizationStatus.pending,
             company_id=company_id
         )
@@ -444,19 +445,27 @@ class AttendanceService:
                 
         if data.status not in ("approved", "rejected"):
             raise AppError("Status must be approved or rejected")
+
+        if data.status == "rejected" and not (data.rejection_reason and data.rejection_reason.strip()):
+            raise AppError("Rejection reason is mandatory when rejecting a regularization request.")
             
         req.status = RegularizationStatus(data.status)
         req.approved_by = current_user.id
         req.approved_at = utcnow()
-        req.rejection_reason = data.rejection_reason
+        req.rejection_reason = data.rejection_reason.strip() if data.rejection_reason else None
+        if data.admin_notes is not None:
+            req.admin_notes = data.admin_notes.strip() or None
         
         record = self.repo.get_by_id(req.attendance_id, company_id)
         
         if req.status == RegularizationStatus.approved and record:
-            if req.requested_check_in:
-                record.check_in = req.requested_check_in
-            if req.requested_check_out:
-                record.check_out = req.requested_check_out
+            eff_check_in = data.adjusted_check_in if data.adjusted_check_in is not None else req.requested_check_in
+            eff_check_out = data.adjusted_check_out if data.adjusted_check_out is not None else req.requested_check_out
+
+            if eff_check_in:
+                record.check_in = eff_check_in
+            if eff_check_out:
+                record.check_out = eff_check_out
                 
             if record.check_in and record.check_out and record.check_out > record.check_in:
                 from decimal import ROUND_HALF_UP
@@ -475,6 +484,11 @@ class AttendanceService:
                     record.status = AttendanceStatus.present
             else:
                 record.status = AttendanceStatus.absent
+
+            # Append admin notes to attendance record notes if provided
+            if req.admin_notes:
+                note_line = f" [HR: {req.admin_notes}]"
+                record.notes = ((record.notes or "") + note_line).strip()
 
         elif req.status == RegularizationStatus.rejected and record:
             record.status = AttendanceStatus.mispunch

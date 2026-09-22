@@ -201,6 +201,16 @@ class AttendanceRepository:
             )
         )
 
+    def get_latest_regularization_for_attendance(self, attendance_id: uuid.UUID, company_id: uuid.UUID) -> Optional["AttendanceRegularizationRequest"]:
+        from app.modules.time_leave.models import AttendanceRegularizationRequest
+        return self.db.scalar(
+            select(AttendanceRegularizationRequest).where(
+                AttendanceRegularizationRequest.attendance_id == attendance_id,
+                AttendanceRegularizationRequest.company_id == company_id,
+                AttendanceRegularizationRequest.deleted_at.is_(None)
+            ).order_by(AttendanceRegularizationRequest.created_at.desc()).limit(1)
+        )
+
     def update_regularization_request(self, request: "AttendanceRegularizationRequest", **kwargs) -> "AttendanceRegularizationRequest":
         for key, value in kwargs.items():
             setattr(request, key, value)

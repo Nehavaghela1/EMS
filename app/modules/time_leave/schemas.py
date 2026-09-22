@@ -9,6 +9,25 @@ from app.modules.time_leave.models import AttendanceStatus, LeaveStatus
 
 
 
+class AttendanceRegularizationResponse(BaseModel):
+    id: uuid.UUID
+    attendance_id: uuid.UUID
+    employee_id: uuid.UUID
+    manager_id: uuid.UUID | None = None
+    requested_check_in: datetime | None = None
+    requested_check_out: datetime | None = None
+    reason: str
+    attachment_url: str | None = None
+    admin_notes: str | None = None
+    status: str
+    approved_by: uuid.UUID | None = None
+    approved_at: datetime | None = None
+    rejection_reason: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # Attendance (routes 43-49)
 class AttendanceResponse(BaseModel):
     id: uuid.UUID
@@ -23,6 +42,7 @@ class AttendanceResponse(BaseModel):
     hours_worked: Decimal | None
     source: str
     notes: str | None
+    active_regularization: AttendanceRegularizationResponse | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -43,26 +63,14 @@ class AttendanceRegularizationCreate(BaseModel):
     requested_check_in: datetime | None = None
     requested_check_out: datetime | None = None
     reason: str
+    attachment_url: str | None = None
 
 class AttendanceRegularizationApprove(BaseModel):
     status: str # "approved" or "rejected"
+    adjusted_check_in: datetime | None = None
+    adjusted_check_out: datetime | None = None
+    admin_notes: str | None = None
     rejection_reason: str | None = None
-
-class AttendanceRegularizationResponse(BaseModel):
-    id: uuid.UUID
-    attendance_id: uuid.UUID
-    employee_id: uuid.UUID
-    manager_id: uuid.UUID | None
-    requested_check_in: datetime | None
-    requested_check_out: datetime | None
-    reason: str
-    status: str
-    approved_by: uuid.UUID | None
-    approved_at: datetime | None
-    rejection_reason: str | None
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
 
 class AttendanceExportRequest(BaseModel):
     employee_id: uuid.UUID | None = None
