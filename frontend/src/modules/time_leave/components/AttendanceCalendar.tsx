@@ -12,6 +12,13 @@ const STATUS_CONFIG: Record<
   string,
   { label: string; bg: string; border: string; text: string; dot: string }
 > = {
+  in_progress: {
+    label: "In Progress",
+    bg: "#eff6ff",
+    border: "#93c5fd",
+    text: "#1d4ed8",
+    dot: "#2563eb",
+  },
   present: {
     label: "Present",
     bg: "#ecfdf5",
@@ -194,39 +201,60 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
           alignItems: "center",
         }}
       >
-        {Object.entries(summary).map(([statusKey, count]) => {
-          const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.no_record;
-          return (
-            <div
-              key={statusKey}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
-                padding: "4px 10px",
-                borderRadius: "9999px",
-                fontSize: "0.78rem",
-                fontWeight: 600,
-                backgroundColor: cfg.bg,
-                border: `1px solid ${cfg.border}`,
-                color: cfg.text,
-              }}
-            >
-              <span
-                style={{
-                  width: "7px",
-                  height: "7px",
-                  borderRadius: "50%",
-                  backgroundColor: cfg.dot,
-                  display: "inline-block",
-                }}
-              />
-              <span>
-                {cfg.label}: {count}
-              </span>
-            </div>
-          );
-        })}
+        {(() => {
+          // Curated enterprise order of status keys to display
+          const displayOrder = [
+            "present",
+            "in_progress",
+            "half_day",
+            "on_leave",
+            "holiday",
+            "weekend",
+            "absent",
+            "mispunch",
+            "pending_regularization",
+            "no_record",
+          ];
+
+          return displayOrder
+            .filter((key) => summary[key] !== undefined || ["present", "in_progress", "half_day", "on_leave", "holiday", "absent"].includes(key))
+            .map((statusKey) => {
+              const count = summary[statusKey] || 0;
+              const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.no_record;
+              return (
+                <div
+                  key={statusKey}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "4px 10px",
+                    borderRadius: "9999px",
+                    fontSize: "0.78rem",
+                    fontWeight: 600,
+                    backgroundColor: cfg.bg,
+                    border: `1px solid ${cfg.border}`,
+                    color: cfg.text,
+                    opacity: count === 0 ? 0.65 : 1,
+                  }}
+                  title={`${cfg.label}: ${count} day(s)`}
+                >
+                  <span
+                    style={{
+                      width: "7px",
+                      height: "7px",
+                      borderRadius: "50%",
+                      backgroundColor: cfg.dot,
+                      display: "inline-block",
+                    }}
+                  />
+                  <span>
+                    {cfg.label}: {count}
+                  </span>
+                </div>
+              );
+            });
+        })()}
       </div>
 
       {/* 7-Column Calendar Grid */}

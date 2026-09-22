@@ -437,9 +437,16 @@ class AttendanceService:
         if req is None:
             raise NotFoundError("Regularization request not found.")
             
+        # Self-approval ban: An employee (even HR Admin) cannot approve their own regularization request
+        caller_employee = self.employee_repo.get_by_user_id(company_id, current_user.id)
+        if caller_employee is not None and req.employee_id == caller_employee.id:
+            raise ForbiddenError(
+                "You cannot approve your own regularization request. "
+                "This request must be approved by your manager or company director."
+            )
+
         if current_user.role not in (UserRole.hr_admin, UserRole.super_admin):
             # Manager role check
-            caller_employee = self.employee_repo.get_by_user_id(company_id, current_user.id)
             if not caller_employee or req.manager_id != caller_employee.id:
                 raise ForbiddenError("Not authorized to approve this request.")
                 
@@ -628,38 +635,81 @@ class AttendanceService:
             hol = hol_by_date.get(d)
             leave = leave_by_date.get(d)
 
-            if att is not None:
-                status = att.status.value
-                work_hours = att.hours_worked
-                check_in_val = att.check_in
-                check_out_val = att.check_out
-                badge = hol.name if hol else (lt_map.get(leave.leave_type_id) if leave else None)
-                holiday_name = hol.name if hol else None
-                leave_type_name = lt_map.get(leave.leave_type_id) if leave else None
+            # Enterprise Priority Hierarchy (Zoho / Keka):
+            # Priority 1: Approved / Pending Leave
+            if leave is not None:
+                status = "on_leave"
+                work_hours = att.hours_worked if att else None
+                check_in_val = att.check_in if att else None
+                check_out_val = att.check_out if att else None
+                badge = lt_map.get(leave.leave_type_id, "On Leave")
+                holiday_name = None
+                leave_type_name = lt_map.get(leave.leave_type_id)
+
+            # Priority 2: Gazetted Public Holiday
             elif hol is not None:
                 status = "holiday"
-                work_hours = None
-                check_in_val = None
-                check_out_val = None
+                work_hours = att.hours_worked if att else None
+                check_in_val = att.check_in if att else None
+                check_out_val = att.check_out if att else None
                 badge = hol.name
                 holiday_name = hol.name
                 leave_type_name = None
-            elif leave is not None:
-                status = "on_leave"
-                work_hours = None
-                check_in_val = None
-                check_out_val = None
-                badge = lt_map.get(leave.leave_type_id, "Leave")
-                holiday_name = None
-                leave_type_name = lt_map.get(leave.leave_type_id)
-            elif dow >= 5:  # Sat/Sun
+
+            # Priority 3: Weekly Off / Weekend (Sat/Sun)
+            elif dow >= 5:
                 status = "weekend"
-                work_hours = None
-                check_in_val = None
-                check_out_val = None
-                badge = None
+                work_hours = att.hours_worked if att else None
+                check_in_val = att.check_in if att else None
+                check_out_val = att.check_out if att else None
+                badge = "Weekend"
                 holiday_name = None
                 leave_type_name = None
+
+            # Priority 4: Attendance Punches
+            elif att is not None:
+                check_in_val = att.check_in
+                check_out_val = att.check_out
+                work_hours = att.hours_worked
+                holiday_name = None
+                leave_type_name = None
+
+                # Rule: Today and currently clocked in without check-out
+                if is_today and check_in_val and not check_out_val:
+                    status = "in_progress"
+                    badge = "Clocked In"
+                elif att.status == AttendanceStatus.pending_regularization:
+                    status = "pending_regularization"
+                    badge = "Regularizing"
+                elif att.status == AttendanceStatus.mispunch:
+                    status = "mispunch"
+                    badge = "Missing Punch"
+                elif work_hours is not None:
+                    hours_dec = Decimal(str(work_hours))
+                    if hours_dec >= Decimal("7.5"):
+                        status = "present"
+                        badge = None
+                    elif hours_dec >= Decimal("4.0"):
+                        status = "half_day"
+                        badge = "Half Day"
+                    elif is_today and check_in_val and not check_out_val:
+                        status = "in_progress"
+                        badge = "Clocked In"
+                    else:
+                        status = att.status.value
+                        badge = "Under Min" if status == "absent" else None
+                else:
+                    if is_today and check_in_val and not check_out_val:
+                        status = "in_progress"
+                        badge = "Clocked In"
+                    elif d < today and check_in_val and not check_out_val:
+                        status = "mispunch"
+                        badge = "Missing Punch"
+                    else:
+                        status = att.status.value
+                        badge = None
+
+            # Priority 5: Future Work Days
             elif is_future:
                 status = "no_record"
                 work_hours = None
@@ -668,6 +718,8 @@ class AttendanceService:
                 badge = None
                 holiday_name = None
                 leave_type_name = None
+
+            # Priority 6: Past or Today Unpunched Working Day -> Absent
             else:
                 status = "absent"
                 work_hours = None

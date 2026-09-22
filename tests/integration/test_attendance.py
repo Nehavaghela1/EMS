@@ -391,3 +391,55 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     assert float(updated_rec["hours_worked"]) >= 7.9
     assert "HR: Adjusted to 5:00 PM per security gate slip" in (updated_rec["notes"] or "")
 
+
+def test_calendar_shows_in_progress_for_today_active_clock_in(client, company_a, db):
+    """Verifies that an active check-in today shows 'in_progress' rather than 'absent'."""
+    employee = _create_employee(client, company_a.hr_headers)
+    own_headers = _link_user_to_employee(
+        db, company_a.company_id, employee["id"], UserRole.employee
+    )
+    # Check in today
+    client.post("/api/v1/attendance/check-in", headers=own_headers)
+
+    today = utcnow().date()
+    cal_resp = client.get(
+        f"/api/v1/attendance/calendar?employee_id={employee['id']}&month={today.month}&year={today.year}",
+        headers=company_a.hr_headers,
+    )
+    assert cal_resp.status_code == 200, cal_resp.text
+    cal_data = cal_resp.json()
+    today_cell = next(d for d in cal_data["days"] if d["date"] == today.isoformat())
+    assert today_cell["status"] == "in_progress"
+    assert today_cell["badge_label"] == "Clocked In"
+    assert cal_data["summary"].get("in_progress", 0) >= 1
+
+
+def test_self_approval_ban_prevents_user_from_approving_own_regularization(client, company_a, db):
+    """Verifies that even an HR admin cannot approve their own regularization request."""
+    hr_emp = _create_employee(client, company_a.hr_headers)
+    hr_user_headers = _link_user_to_employee(
+        db, company_a.company_id, hr_emp["id"], UserRole.hr_admin
+    )
+    # HR marks check-in
+    created = client.post("/api/v1/attendance/check-in", headers=hr_user_headers).json()
+
+    # HR applies for regularization
+    req_resp = client.post(
+        f"/api/v1/attendance/{created['id']}/regularize",
+        headers=hr_user_headers,
+        json={"reason": "Forgot out punch"},
+    )
+    assert req_resp.status_code == 200
+    req_id = req_resp.json()["id"]
+
+    # HR attempts to self-approve
+    approve_resp = client.put(
+        f"/api/v1/attendance/regularizations/{req_id}/approve",
+        headers=hr_user_headers,
+        json={"status": "approved"},
+    )
+    assert approve_resp.status_code == 403
+    err_body = approve_resp.json()
+    err_msg = err_body.get("error", {}).get("message") or err_body.get("detail", "")
+    assert "cannot approve your own" in err_msg.lower()
+
