@@ -15,6 +15,7 @@ import { DepartmentListPage } from "../modules/hr/pages/DepartmentListPage";
 import { AttendancePage } from "../modules/time_leave/pages/AttendancePage";
 import { LeavePage } from "../modules/time_leave/pages/LeavePage";
 import { ShiftsPage } from "../modules/time_leave/pages/ShiftsPage";
+import { HolidaysPage } from "../modules/time_leave/pages/HolidaysPage";
 import { PayrollSetupPage } from "../modules/payroll/pages/PayrollSetupPage";
 import { PayrollRunPage } from "../modules/payroll/pages/PayrollRunPage";
 import { MyPayslipPage } from "../modules/payroll/pages/MyPayslipPage";
@@ -120,6 +121,14 @@ export function AppRouter() {
         element={
           <Protected roles={["employee", "manager", "hr_admin", "super_admin"]}>
             <ShiftsPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/holidays"
+        element={
+          <Protected roles={ALL_ROLES}>
+            <HolidaysPage />
           </Protected>
         }
       />

@@ -258,6 +258,22 @@ export async function listHolidays(year?: number): Promise<Holiday[]> {
   return data;
 }
 
+export interface HolidayCreateInput {
+  name: string;
+  date: string;
+  is_optional?: boolean;
+  applies_to_department_id?: string | null;
+}
+
+export async function createHoliday(input: HolidayCreateInput): Promise<Holiday> {
+  const { data } = await apiClient.post<Holiday>("/holidays", input);
+  return data;
+}
+
+export async function deleteHoliday(id: string): Promise<void> {
+  await apiClient.delete(`/holidays/${id}`);
+}
+
 export async function importRegionalHolidays(params?: {
   state?: string;
   year?: number;

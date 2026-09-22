@@ -13,7 +13,6 @@ import {
   listAttendance,
   submitRegularizationRequest,
   approveRegularizationRequest,
-  importRegionalHolidays,
   type Attendance,
 } from "../api";
 import { formatDate, todayIso } from "../../../shared/utils/date";
@@ -114,25 +113,6 @@ export function AttendancePage() {
   const [regularizing, setRegularizing] = useState<Attendance | null>(null);
   const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
-  const [importingHolidays, setImportingHolidays] = useState(false);
-
-  async function handleImportHolidays() {
-    if (importingHolidays) return;
-    setImportingHolidays(true);
-    try {
-      const res = await importRegionalHolidays({ state: "Gujarat", year: 2026 });
-      notify(res.message, "success");
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["attendance-calendar"] }),
-        queryClient.invalidateQueries({ queryKey: ["attendance"] }),
-        queryClient.invalidateQueries({ queryKey: ["holidays"] }),
-      ]);
-    } catch (err: any) {
-      notify(err?.response?.data?.detail || "Failed to import statutory holidays.", "error");
-    } finally {
-      setImportingHolidays(false);
-    }
-  }
 
   function handleSelectEmployee(empId: string, empName: string) {
     setFilterEmployee({ id: empId, name: empName });
@@ -422,79 +402,50 @@ export function AttendancePage() {
               : "My Attendance"}
           </h2>
 
-          {/* Controls: View Toggle + Admin Holiday Import */}
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-            {isHr && (
-              <button
-                type="button"
-                onClick={handleImportHolidays}
-                disabled={importingHolidays}
-                title="Import pre-seeded statutory public holidays for Gujarat 2026"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "5px 12px",
-                  fontSize: "0.8rem",
-                  fontWeight: 600,
-                  borderRadius: "6px",
-                  border: "1px solid #d8b4fe",
-                  backgroundColor: "#faf5ff",
-                  color: "#6b21a8",
-                  cursor: importingHolidays ? "not-allowed" : "pointer",
-                  opacity: importingHolidays ? 0.7 : 1,
-                  transition: "all 0.15s ease",
-                }}
-              >
-                <span>📅</span>
-                <span>{importingHolidays ? "Importing Holidays..." : "Import 2026 Public Holidays"}</span>
-              </button>
-            )}
-
-            <div
+          {/* View Toggle */}
+          <div
+            style={{
+              display: "inline-flex",
+              backgroundColor: "var(--color-surface, #f1f5f9)",
+              borderRadius: "8px",
+              padding: "2px",
+              border: "1px solid var(--color-border, #e2e8f0)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
               style={{
-                display: "inline-flex",
-                backgroundColor: "var(--color-surface, #f1f5f9)",
-                borderRadius: "8px",
-                padding: "2px",
-                border: "1px solid var(--color-border, #e2e8f0)",
+                padding: "4px 10px",
+                fontSize: "0.8rem",
+                fontWeight: 600,
+                borderRadius: "6px",
+                border: "none",
+                cursor: "pointer",
+                backgroundColor: viewMode === "list" ? "#ffffff" : "transparent",
+                color: viewMode === "list" ? "var(--color-primary, #2563eb)" : "var(--color-muted, #64748b)",
+                boxShadow: viewMode === "list" ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
               }}
             >
-              <button
-                type="button"
-                onClick={() => setViewMode("list")}
-                style={{
-                  padding: "4px 10px",
-                  fontSize: "0.8rem",
-                  fontWeight: 600,
-                  borderRadius: "6px",
-                  border: "none",
-                  cursor: "pointer",
-                  backgroundColor: viewMode === "list" ? "#ffffff" : "transparent",
-                  color: viewMode === "list" ? "var(--color-primary, #2563eb)" : "var(--color-muted, #64748b)",
-                  boxShadow: viewMode === "list" ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
-                }}
-              >
-                ☰ List View
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("calendar")}
-                style={{
-                  padding: "4px 10px",
-                  fontSize: "0.8rem",
-                  fontWeight: 600,
-                  borderRadius: "6px",
-                  border: "none",
-                  cursor: "pointer",
-                  backgroundColor: viewMode === "calendar" ? "#ffffff" : "transparent",
-                  color: viewMode === "calendar" ? "var(--color-primary, #2563eb)" : "var(--color-muted, #64748b)",
-                  boxShadow: viewMode === "calendar" ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
-                }}
-              >
-                📅 Monthly Calendar
-              </button>
-            </div>
+              ☰ List View
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("calendar")}
+              style={{
+                padding: "4px 10px",
+                fontSize: "0.8rem",
+                fontWeight: 600,
+                borderRadius: "6px",
+                border: "none",
+                cursor: "pointer",
+                backgroundColor: viewMode === "calendar" ? "#ffffff" : "transparent",
+                color: viewMode === "calendar" ? "var(--color-primary, #2563eb)" : "var(--color-muted, #64748b)",
+                boxShadow: viewMode === "calendar" ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
+              }}
+            >
+              📅 Monthly Calendar
+            </button>
           </div>
         </div>
 

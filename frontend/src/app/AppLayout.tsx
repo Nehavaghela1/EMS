@@ -67,6 +67,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: "/attendance", label: "Attendance", roles: ["employee", "manager", "hr_admin", "super_admin"] },
       { to: "/leaves", label: "Leave Requests", roles: ["employee", "manager", "hr_admin", "super_admin"] },
       { to: "/shifts", label: "Shift Schedule", roles: ["employee", "manager", "hr_admin", "super_admin"] },
+      { to: "/holidays", label: "Holidays", roles: ["employee", "manager", "hr_admin", "super_admin"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

@@ -468,8 +468,17 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
                 </span>
               )}
               {selectedDay.holiday_name && (
-                <span>
-                  <strong>Holiday:</strong> {selectedDay.holiday_name}
+                <span
+                  style={{
+                    backgroundColor: "#faf5ff",
+                    border: "1px solid #d8b4fe",
+                    color: "#6b21a8",
+                    padding: "2px 8px",
+                    borderRadius: "6px",
+                    fontWeight: 600,
+                  }}
+                >
+                  🎉 {selectedDay.holiday_name} • Mandatory Public Holiday • Office Closed
                 </span>
               )}
               {selectedDay.leave_type_name && (
