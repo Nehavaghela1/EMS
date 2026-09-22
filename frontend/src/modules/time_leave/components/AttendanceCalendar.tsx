@@ -63,10 +63,10 @@ const STATUS_CONFIG: Record<
   },
   holiday: {
     label: "Holiday",
-    bg: "#f0fdfa",
-    border: "#99f6e4",
-    text: "#115e59",
-    dot: "#14b8a6",
+    bg: "#faf5ff",
+    border: "#d8b4fe",
+    text: "#6b21a8",
+    dot: "#9333ea",
   },
   weekend: {
     label: "Weekend",
