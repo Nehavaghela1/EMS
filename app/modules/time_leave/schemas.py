@@ -157,6 +157,18 @@ class HolidayResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class HolidayImportRegionalRequest(BaseModel):
+    state: str = "Gujarat"
+    year: int = 2026
+
+
+class HolidayImportResponse(BaseModel):
+    message: str
+    imported_count: int
+    total_holidays: int
+    holidays: list[HolidayResponse]
+
+
 # Leave types (routes 58-60)
 class LeaveTypeCreateRequest(BaseModel):
     name: str

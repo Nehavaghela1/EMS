@@ -234,6 +234,38 @@ export async function getAssignedShift(employeeId: string): Promise<AssignedShif
 }
 
 
+// --- Holidays (routes 55-57) ------------------------------------------------
+
+export interface Holiday {
+  id: string;
+  name: string;
+  date: string;
+  is_optional: boolean;
+  applies_to_department_id: string | null;
+}
+
+export interface HolidayImportResponse {
+  message: string;
+  imported_count: number;
+  total_holidays: number;
+  holidays: Holiday[];
+}
+
+export async function listHolidays(year?: number): Promise<Holiday[]> {
+  const { data } = await apiClient.get<Holiday[]>("/holidays", {
+    params: year ? { year } : undefined,
+  });
+  return data;
+}
+
+export async function importRegionalHolidays(params?: {
+  state?: string;
+  year?: number;
+}): Promise<HolidayImportResponse> {
+  const { data } = await apiClient.post<HolidayImportResponse>("/holidays/import-regional", params || {});
+  return data;
+}
+
 // --- Leave types (read-only here — routes 58-60 are page 26's job) --------
 
 export interface LeaveType {

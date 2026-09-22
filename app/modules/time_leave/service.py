@@ -892,6 +892,44 @@ class HolidayService:
         self.repo.soft_delete(holiday)
         self.db.commit()
 
+    def import_regional_holidays(
+        self, company_id: uuid.UUID, state: str = "Gujarat", year: int = 2026
+    ) -> tuple[int, list[Holiday]]:
+        from app.modules.time_leave.constants import STATUTORY_HOLIDAYS_INDIA
+        from datetime import date as dt_date
+
+        state_data = STATUTORY_HOLIDAYS_INDIA.get(state, {})
+        holidays_data = state_data.get(year, [])
+        if not holidays_data:
+            raise NotFoundError(f"No pre-seeded statutory holidays found for state '{state}' in year {year}.")
+
+        # Fetch existing active holidays for this company and year to avoid duplicates
+        existing_holidays = self.repo.list_by_year(company_id, year)
+        existing_company_wide_dates = {
+            h.date for h in existing_holidays if h.applies_to_department_id is None
+        }
+
+        imported_count = 0
+        for item in holidays_data:
+            d = dt_date.fromisoformat(item["date"])
+            if d in existing_company_wide_dates:
+                continue
+
+            self.repo.create(
+                company_id=company_id,
+                name=item["name"],
+                date=d,
+                is_optional=item.get("is_optional", False),
+                applies_to_department_id=None,
+            )
+            existing_company_wide_dates.add(d)
+            imported_count += 1
+
+        self.db.commit()
+        all_year_holidays = self.repo.list_by_year(company_id, year)
+        return imported_count, all_year_holidays
+
+
 
 class LeaveTypeService:
     """Routes 58-60 (10.4)."""

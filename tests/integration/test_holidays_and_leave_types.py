@@ -121,3 +121,28 @@ def test_duplicate_company_wide_holiday_on_the_same_date_is_rejected(client, com
         json={"name": "Independence Day (duplicate)", "date": "2030-08-15"},
     )
     assert second.status_code == 409
+
+
+def test_import_regional_holidays_seeds_and_skips_duplicates(client, company_a):
+    # First import: imports statutory holidays for Gujarat 2026
+    resp = client.post(
+        "/api/v1/holidays/import-regional",
+        headers=company_a.hr_headers,
+        json={"state": "Gujarat", "year": 2026},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["imported_count"] == 15
+    assert data["total_holidays"] == 15
+
+    # Second import should skip existing duplicates without 409 error
+    resp2 = client.post(
+        "/api/v1/holidays/import-regional",
+        headers=company_a.hr_headers,
+        json={"state": "Gujarat", "year": 2026},
+    )
+    assert resp2.status_code == 200, resp2.text
+    data2 = resp2.json()
+    assert data2["imported_count"] == 0
+    assert data2["total_holidays"] == 15
+

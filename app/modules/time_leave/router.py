@@ -32,6 +32,8 @@ from app.modules.time_leave.schemas import (
     CheckInRequest,
     EmployeeShiftResponse,
     HolidayCreateRequest,
+    HolidayImportRegionalRequest,
+    HolidayImportResponse,
     HolidayResponse,
     JobQueuedResponse,
     LeaveApplyRequest,
@@ -400,6 +402,26 @@ def delete_holiday(
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
     HolidayService(db).delete_holiday(user.company_id, holiday_id)
+
+
+@holidays_router.post("/import-regional", response_model=HolidayImportResponse)
+def import_regional_holidays(
+    data: HolidayImportRegionalRequest | None = None,
+    db=Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin)),
+):
+    req_data = data or HolidayImportRegionalRequest()
+    imported_count, all_holidays = HolidayService(db).import_regional_holidays(
+        company_id=user.company_id,
+        state=req_data.state,
+        year=req_data.year,
+    )
+    return HolidayImportResponse(
+        message=f"Successfully imported {imported_count} statutory holidays for {req_data.state} ({req_data.year}).",
+        imported_count=imported_count,
+        total_holidays=len(all_holidays),
+        holidays=[_to_holiday_response(h) for h in all_holidays],
+    )
 
 
 # --- Leave types (routes 58-60) ---------------------------------------------
