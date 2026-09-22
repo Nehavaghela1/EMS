@@ -534,12 +534,55 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
 
       {/* In-Page Holiday Viewer Modal for Employees & Admins */}
       {showHolidaysModal && (
-        <div className="modal-backdrop">
-          <div className="modal-card" style={{ maxWidth: "680px", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+        <div
+          className="modal-backdrop"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            backgroundColor: "rgba(15, 23, 42, 0.65)",
+            backdropFilter: "blur(4px)",
+            WebkitBackdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+            overflowY: "auto",
+          }}
+          onClick={() => setShowHolidaysModal(false)}
+        >
+          <div
+            className="modal-card"
+            style={{
+              position: "relative",
+              width: "100%",
+              maxWidth: "680px",
+              maxHeight: "85vh",
+              backgroundColor: "#ffffff",
+              borderRadius: "16px",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
+              border: "1px solid #e2e8f0",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              zIndex: 10000,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Header */}
-            <div className="modal-header">
+            <div
+              className="modal-header"
+              style={{
+                backgroundColor: "#ffffff",
+                padding: "16px 20px",
+                borderBottom: "1px solid #f1f5f9",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
               <div>
-                <h3 style={{ margin: 0, fontSize: "1.1rem", display: "flex", alignItems: "center", gap: "8px" }}>
+                <h3 style={{ margin: 0, fontSize: "1.1rem", display: "flex", alignItems: "center", gap: "8px", color: "#0f172a" }}>
                   🏖️ Company Holiday Schedule ({currentYear})
                 </h3>
                 <p style={{ margin: "2px 0 0 0", fontSize: "0.8rem", color: "#64748b" }}>

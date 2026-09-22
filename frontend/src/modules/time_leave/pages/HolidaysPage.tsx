@@ -504,10 +504,50 @@ export function HolidaysPage() {
 
       {/* MODAL: ADD CUSTOM HOLIDAY */}
       {isAddModalOpen && (
-        <div className="modal-backdrop">
-          <div className="modal-card" style={{ maxWidth: "460px" }}>
-            <div className="modal-header">
-              <h3 style={{ margin: 0, fontSize: "1.1rem" }}>Add Custom Holiday</h3>
+        <div
+          className="modal-backdrop"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            backgroundColor: "rgba(15, 23, 42, 0.65)",
+            backdropFilter: "blur(4px)",
+            WebkitBackdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+            overflowY: "auto",
+          }}
+          onClick={() => setIsAddModalOpen(false)}
+        >
+          <div
+            className="modal-card"
+            style={{
+              position: "relative",
+              width: "100%",
+              maxWidth: "480px",
+              backgroundColor: "#ffffff",
+              borderRadius: "16px",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
+              border: "1px solid #e2e8f0",
+              overflow: "hidden",
+              zIndex: 10000,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="modal-header"
+              style={{
+                backgroundColor: "#ffffff",
+                padding: "16px 20px",
+                borderBottom: "1px solid #f1f5f9",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: "1.1rem", color: "#0f172a", fontWeight: 700 }}>Add Custom Holiday</h3>
               <button
                 type="button"
                 className="btn btn-sm btn-ghost"
@@ -517,9 +557,18 @@ export function HolidaysPage() {
               </button>
             </div>
             <form onSubmit={handleAddHoliday}>
-              <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <div
+                className="modal-body"
+                style={{
+                  backgroundColor: "#ffffff",
+                  padding: "20px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "14px",
+                }}
+              >
                 <div>
-                  <label className="form-label">Holiday Name *</label>
+                  <label className="form-label" style={{ fontWeight: 600, color: "#334155" }}>Holiday Name *</label>
                   <input
                     type="text"
                     required
@@ -531,7 +580,7 @@ export function HolidaysPage() {
                 </div>
 
                 <div>
-                  <label className="form-label">Date *</label>
+                  <label className="form-label" style={{ fontWeight: 600, color: "#334155" }}>Date *</label>
                   <input
                     type="date"
                     required
@@ -554,7 +603,18 @@ export function HolidaysPage() {
                 </div>
               </div>
 
-              <div className="modal-footer">
+              <div
+                className="modal-footer"
+                style={{
+                  backgroundColor: "#f8fafc",
+                  padding: "14px 20px",
+                  borderTop: "1px solid #f1f5f9",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  gap: "10px",
+                }}
+              >
                 <button
                   type="button"
                   className="btn btn-ghost"
@@ -577,10 +637,50 @@ export function HolidaysPage() {
 
       {/* MODAL: IMPORT STATUTORY HOLIDAYS (ZOHO GALLERY) */}
       {isImportModalOpen && (
-        <div className="modal-backdrop">
-          <div className="modal-card" style={{ maxWidth: "520px" }}>
-            <div className="modal-header">
-              <h3 style={{ margin: 0, fontSize: "1.1rem" }}>📥 Holidays Gallery (Regional Import)</h3>
+        <div
+          className="modal-backdrop"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            backgroundColor: "rgba(15, 23, 42, 0.65)",
+            backdropFilter: "blur(4px)",
+            WebkitBackdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+            overflowY: "auto",
+          }}
+          onClick={() => setIsImportModalOpen(false)}
+        >
+          <div
+            className="modal-card"
+            style={{
+              position: "relative",
+              width: "100%",
+              maxWidth: "540px",
+              backgroundColor: "#ffffff",
+              borderRadius: "16px",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
+              border: "1px solid #e2e8f0",
+              overflow: "hidden",
+              zIndex: 10000,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="modal-header"
+              style={{
+                backgroundColor: "#ffffff",
+                padding: "16px 20px",
+                borderBottom: "1px solid #f1f5f9",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: "1.1rem", color: "#0f172a", fontWeight: 700 }}>📥 Holidays Gallery (Regional Import)</h3>
               <button
                 type="button"
                 className="btn btn-sm btn-ghost"
@@ -590,14 +690,23 @@ export function HolidaysPage() {
               </button>
             </div>
 
-            <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <div
+              className="modal-body"
+              style={{
+                backgroundColor: "#ffffff",
+                padding: "20px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "16px",
+              }}
+            >
               <p style={{ margin: 0, fontSize: "0.85rem", color: "#475569" }}>
                 Import standard gazetted statutory public holidays for your regional branch directly into your calendar. The system skips any dates already configured.
               </p>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                 <div>
-                  <label className="form-label">State / Region</label>
+                  <label className="form-label" style={{ fontWeight: 600, color: "#334155" }}>State / Region</label>
                   <select
                     value={importState}
                     onChange={(e) => setImportState(e.target.value)}
@@ -608,7 +717,7 @@ export function HolidaysPage() {
                 </div>
 
                 <div>
-                  <label className="form-label">Calendar Year</label>
+                  <label className="form-label" style={{ fontWeight: 600, color: "#334155" }}>Calendar Year</label>
                   <select
                     value={importYear}
                     onChange={(e) => setImportYear(Number(e.target.value))}
@@ -641,7 +750,18 @@ export function HolidaysPage() {
               </div>
             </div>
 
-            <div className="modal-footer">
+            <div
+              className="modal-footer"
+              style={{
+                backgroundColor: "#f8fafc",
+                padding: "14px 20px",
+                borderTop: "1px solid #f1f5f9",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "flex-end",
+                gap: "10px",
+              }}
+            >
               <button
                 type="button"
                 className="btn btn-ghost"
