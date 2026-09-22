@@ -4,15 +4,18 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
 import { usePagination } from "../../../shared/hooks/usePagination";
-import { parseApiError } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { TodayAttendanceCard } from "../components/TodayAttendanceCard";
 import { AttendanceCalendar } from "../components/AttendanceCalendar";
-import { listAttendance, regularizeAttendance, type Attendance, type AttendanceStatus } from "../api";
+import { RegularizeAttendanceModal } from "../components/RegularizeAttendanceModal";
+import {
+  listAttendance,
+  submitRegularizationRequest,
+  approveRegularizationRequest,
+  type Attendance,
+} from "../api";
 import { formatDate, todayIso } from "../../../shared/utils/date";
-
-const STATUS_OPTIONS: AttendanceStatus[] = ["present", "absent", "half_day", "wfh", "on_leave"];
 
 function formatHoursWorked(a: Attendance): React.ReactNode {
   const isPastDate = a.date < todayIso();
@@ -58,36 +61,11 @@ function formatHoursWorked(a: Attendance): React.ReactNode {
     }
 
     const elapsedMs = Date.now() - new Date(a.check_in).getTime();
-    if (elapsedMs > 0) {
-      const totalMinutes = Math.floor(elapsedMs / (1000 * 60));
-      const hours = Math.floor(totalMinutes / 60);
-      const minutes = totalMinutes % 60;
-      return (
-        <span
-          className="badge"
-          style={{
-            backgroundColor: "#ecfdf5",
-            color: "#047857",
-            border: "1px solid #a7f3d0",
-            fontSize: "0.75rem",
-            fontWeight: 600,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "4px",
-          }}
-          title={`Checked in today: running elapsed time ${hours}h ${minutes}m`}
-        >
-          <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#10b981", display: "inline-block" }} />
-          {hours > 0 ? `${hours}h ${minutes}m (Active)` : "In Progress"}
-        </span>
-      );
-    }
+    const hours = Math.floor(elapsedMs / (1000 * 60 * 60));
+    const minutes = Math.floor((elapsedMs % (1000 * 60 * 60)) / (1000 * 60));
     return (
-      <span
-        className="badge badge-warning"
-        style={{ fontSize: "0.75rem", fontWeight: 600 }}
-      >
-        In Progress
+      <span className="badge badge-outline" title="Session currently ongoing">
+        Live: {String(hours).padStart(2, "0")}:{String(minutes).padStart(2, "0")}
       </span>
     );
   }
@@ -167,16 +145,10 @@ export function AttendancePage() {
             key: "employee",
             label: "Employee",
             render: (a: Attendance) => {
-              const empName = a.employee_name ?? a.employee_code ?? "Employee";
+              const empName = a.employee_name ?? a.employee_code ?? "—";
               const isSelected = filterEmployee?.id === a.employee_id;
               return (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                  }}
-                >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <div
                     style={{
                       cursor: a.employee_id && (isHr || user?.role === "manager") ? "pointer" : "default",
@@ -248,6 +220,7 @@ export function AttendancePage() {
       label: "Status",
       render: (a) => {
         const isRegularized = a.notes && a.notes.includes("[Regularized");
+        const isPendingReg = a.status === "pending_regularization" || a.active_regularization?.status === "pending";
         const statusClass =
           a.status === "present"
             ? "badge-success"
@@ -255,11 +228,29 @@ export function AttendancePage() {
             ? "badge-warning"
             : a.status === "absent"
             ? "badge-danger"
+            : a.status === "pending_regularization"
+            ? "badge-warning"
             : "badge-muted";
 
         return (
           <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
             <span className={`badge ${statusClass}`}>{a.status.replace("_", " ")}</span>
+            {isPendingReg && (
+              <span
+                style={{
+                  fontSize: "0.68rem",
+                  fontWeight: 600,
+                  padding: "1px 5px",
+                  borderRadius: "4px",
+                  backgroundColor: "#fef3c7",
+                  color: "#b45309",
+                  border: "1px solid #fde68a",
+                }}
+                title="Regularization awaiting manager/admin approval"
+              >
+                ⏳ Pending Approval
+              </span>
+            )}
             {isRegularized && (
               <span
                 style={{
@@ -281,13 +272,42 @@ export function AttendancePage() {
       },
     },
     { key: "source", label: "Source", render: (a) => a.source },
-    ...(isHr
-      ? [
-          {
-            key: "actions",
-            label: "",
-            render: (a: Attendance) => (
-              <div style={{ position: "relative", textAlign: "right" }}>
+    {
+      key: "actions",
+      label: "",
+      render: (a: Attendance) => {
+        const isOwnRecord = Boolean(user?.employee?.id && a.employee_id === user.employee.id);
+        const canReview = (isHr || user?.role === "manager") && !isOwnRecord;
+        const canApply = isOwnRecord && (a.status === "absent" || a.status === "mispunch" || (!a.check_out && a.date < todayIso()));
+
+        return (
+          <div style={{ position: "relative", textAlign: "right" }}>
+            {canReview && a.status === "pending_regularization" ? (
+              <button
+                type="button"
+                className="btn btn-xs btn-primary"
+                style={{ fontSize: "0.75rem", padding: "2px 8px" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRegularizing(a);
+                }}
+              >
+                Review Request ↗
+              </button>
+            ) : canApply ? (
+              <button
+                type="button"
+                className="btn btn-xs"
+                style={{ fontSize: "0.75rem", padding: "2px 8px", color: "#2563eb", borderColor: "#bfdbfe" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRegularizing(a);
+                }}
+              >
+                Regularize
+              </button>
+            ) : isHr ? (
+              <>
                 <button
                   type="button"
                   className="btn btn-sm btn-ghost"
@@ -310,42 +330,49 @@ export function AttendancePage() {
                       borderRadius: "8px",
                       boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
                       zIndex: 50,
-                      minWidth: "200px",
+                      minWidth: "210px",
                       padding: "6px 0",
-                      textAlign: "left"
+                      textAlign: "left",
                     }}
                     onMouseLeave={() => setActionMenuOpen(null)}
                   >
                     <button
                       type="button"
-                      style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                      onClick={(evt) => { evt.stopPropagation(); notify("Audit history logic placeholder"); setActionMenuOpen(null); }}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "8px 14px",
+                        border: "none",
+                        background: "transparent",
+                        fontSize: "0.84rem",
+                        fontWeight: 500,
+                        color: "#334155",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                      }}
+                      onClick={(evt) => {
+                        evt.stopPropagation();
+                        setRegularizing(a);
+                        setActionMenuOpen(null);
+                      }}
                     >
-                      <span>🔍</span> <span>View Audit History</span>
-                    </button>
-                    <button
-                      type="button"
-                      style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                      onClick={(evt) => { evt.stopPropagation(); setRegularizing(a); setActionMenuOpen(null); }}
-                    >
-                      <span>✏️</span> <span>Admin Override (Regularize)</span>
-                    </button>
-                    <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
-                    <button
-                      type="button"
-                      style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#dc2626", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                      onClick={(evt) => { evt.stopPropagation(); notify("Reject action triggered."); setActionMenuOpen(null); }}
-                    >
-                      <span>❌</span> <span>Reject with Note</span>
+                      <span>🛡️</span> <span>Review / Regularize</span>
                     </button>
                   </div>
                 )}
-              </div>
-            ),
-          } satisfies DataTableColumn<Attendance>,
-        ]
-      : []),
+              </>
+            ) : null}
+          </div>
+        );
+      },
+    } satisfies DataTableColumn<Attendance>,
   ];
+
+  // Determine whether current user opens modal in Admin Review mode vs Employee Application mode
+  const isTargetOwnRecord = Boolean(user?.employee?.id && regularizing?.employee_id === user.employee.id);
+  const isModalAdminMode = (isHr || user?.role === "manager") && !isTargetOwnRecord;
 
   return (
     <div>
@@ -474,211 +501,67 @@ export function AttendancePage() {
             }
           }}
           onRowDoubleClick={(a) => {
-            if (isHr) {
-              setRegularizing(a);
-            } else if (a.employee_id && user?.role === "manager") {
-              const empName = a.employee_name ?? a.employee_code ?? "Employee";
-              handleSelectEmployee(a.employee_id, empName);
-            }
+            setRegularizing(a);
           }}
         />
       )}
 
       {regularizing && (
-        <RegularizeDialog
-          record={regularizing}
+        <RegularizeAttendanceModal
+          isOpen={Boolean(regularizing)}
           onClose={() => setRegularizing(null)}
-          onDone={async () => {
+          isAdmin={isModalAdminMode}
+          employeeName={regularizing.employee_name || "Employee"}
+          attendanceDate={regularizing.date}
+          currentStatus={regularizing.status}
+          initialCheckIn={regularizing.active_regularization?.requested_check_in ?? regularizing.check_in}
+          initialCheckOut={regularizing.active_regularization?.requested_check_out ?? regularizing.check_out}
+          existingReason={regularizing.active_regularization?.reason ?? regularizing.notes}
+          existingAttachmentUrl={regularizing.active_regularization?.attachment_url ?? undefined}
+          onSubmit={async (formData) => {
+            await submitRegularizationRequest(regularizing.id, formData);
+            notify("Regularization request submitted successfully.");
+            setRegularizing(null);
+            await refreshAll();
+          }}
+          onApprove={async (adjustedCheckIn, adjustedCheckOut, adminNotes) => {
+            if (regularizing.active_regularization) {
+              await approveRegularizationRequest(regularizing.active_regularization.id, {
+                status: "approved",
+                adjusted_check_in: adjustedCheckIn,
+                adjusted_check_out: adjustedCheckOut,
+                admin_notes: adminNotes,
+              });
+            } else {
+              // Direct override if no pending request
+              const inIso = adjustedCheckIn ? new Date(adjustedCheckIn).toISOString() : undefined;
+              const outIso = adjustedCheckOut ? new Date(adjustedCheckOut).toISOString() : undefined;
+              await submitRegularizationRequest(regularizing.id, (() => {
+                const fd = new FormData();
+                if (inIso) fd.append("check_in", inIso);
+                if (outIso) fd.append("check_out", outIso);
+                if (adminNotes) fd.append("admin_notes", adminNotes);
+                fd.append("reason", "Admin direct regularize");
+                return fd;
+              })());
+            }
+            notify("Attendance regularized and approved.");
+            setRegularizing(null);
+            await refreshAll();
+          }}
+          onReject={async (rejectionReason) => {
+            if (regularizing.active_regularization) {
+              await approveRegularizationRequest(regularizing.active_regularization.id, {
+                status: "rejected",
+                rejection_reason: rejectionReason,
+              });
+            }
+            notify("Regularization request rejected.");
             setRegularizing(null);
             await refreshAll();
           }}
         />
       )}
-    </div>
-  );
-}
-
-function RegularizeDialog({
-  record,
-  onClose,
-  onDone,
-}: {
-  record: Attendance;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const { notify } = useToast();
-
-  // Helper to format ISO to datetime-local value (YYYY-MM-DDTHH:mm)
-  function toDateTimeLocalValue(isoStr: string | null | undefined, fallbackDate: string, defaultHour: string): string {
-    if (isoStr) {
-      try {
-        const d = new Date(isoStr);
-        const pad = (n: number) => String(n).padStart(2, "0");
-        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      } catch {
-        // fallback
-      }
-    }
-    return `${fallbackDate}T${defaultHour}`;
-  }
-
-  const [checkInTime, setCheckInTime] = useState(
-    toDateTimeLocalValue(record.check_in, record.date, "09:00")
-  );
-  const [checkOutTime, setCheckOutTime] = useState(
-    record.check_out
-      ? toDateTimeLocalValue(record.check_out, record.date, "18:00")
-      : `${record.date}T18:00`
-  );
-  const [status, setStatus] = useState<AttendanceStatus>(
-    record.status === "absent" && !record.check_out ? "present" : record.status
-  );
-  const [notes, setNotes] = useState(record.notes ?? "");
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  // Live computed hours difference
-  let computedHours = 0;
-  if (checkInTime && checkOutTime) {
-    const tIn = new Date(checkInTime).getTime();
-    const tOut = new Date(checkOutTime).getTime();
-    if (tOut > tIn) {
-      computedHours = Math.round(((tOut - tIn) / (1000 * 3600)) * 100) / 100;
-    }
-  }
-
-  async function handleSubmit() {
-    if (!reason.trim()) {
-      setError("A reason is required for attendance regularization.");
-      return;
-    }
-    if (checkInTime && checkOutTime && new Date(checkOutTime) <= new Date(checkInTime)) {
-      setError("Check-out time must be strictly after Check-in time.");
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-    try {
-      const inIso = checkInTime ? new Date(checkInTime).toISOString() : undefined;
-      const outIso = checkOutTime ? new Date(checkOutTime).toISOString() : undefined;
-
-      await regularizeAttendance(record.id, {
-        check_in: inIso,
-        check_out: outIso,
-        status,
-        notes: notes || undefined,
-        reason: reason.trim(),
-      });
-      notify("Attendance regularized successfully.");
-      onDone();
-    } catch (err) {
-      setError(parseApiError(err).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal stack" style={{ maxWidth: "520px" }} onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-          <div>
-            <h3 style={{ margin: 0, fontSize: "1.1rem" }}>
-              Regularize Attendance — {record.employee_name || "Employee"}
-            </h3>
-            <div className="text-xs text-muted mt-1">
-              Date: <strong>{formatDate(record.date)}</strong> • Current Status:{" "}
-              <span className="badge badge-outline text-xs">{record.status.replace("_", " ")}</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="modal-close-btn"
-            onClick={onClose}
-            disabled={busy}
-            title="Close"
-          >
-            ✕
-          </button>
-        </div>
-
-        {error && <div className="alert alert-error">{error}</div>}
-
-        <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-            <div className="field">
-              <label style={{ fontSize: "0.78rem", fontWeight: 600 }}>Actual Check-In Time</label>
-              <input
-                type="datetime-local"
-                value={checkInTime}
-                onChange={(e) => setCheckInTime(e.target.value)}
-                style={{ fontSize: "0.85rem" }}
-              />
-            </div>
-            <div className="field">
-              <label style={{ fontSize: "0.78rem", fontWeight: 600 }}>Actual Check-Out Time</label>
-              <input
-                type="datetime-local"
-                value={checkOutTime}
-                onChange={(e) => setCheckOutTime(e.target.value)}
-                style={{ fontSize: "0.85rem" }}
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-between items-center mt-2 pt-2" style={{ borderTop: "1px dashed #cbd5e1", fontSize: "0.82rem" }}>
-            <span className="text-muted">Calculated Work Duration:</span>
-            <span style={{ fontWeight: 700, color: computedHours >= 7.5 ? "#047857" : computedHours >= 4.0 ? "#b45309" : "#dc2626" }}>
-              {computedHours > 0 ? `${computedHours} hours` : "0.00 hours"}
-              {computedHours >= 7.5 ? " (Full Day)" : computedHours >= 4.0 ? " (Half Day)" : computedHours > 0 ? " (Under Minimum)" : ""}
-            </span>
-          </div>
-        </div>
-
-        <div className="field">
-          <label style={{ fontSize: "0.82rem", fontWeight: 600 }}>Corrected Attendance Status</label>
-          <select value={status} onChange={(e) => setStatus(e.target.value as AttendanceStatus)}>
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s.replace("_", " ").toUpperCase()}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="field">
-          <label style={{ fontSize: "0.82rem", fontWeight: 600 }}>HR Admin Notes (Optional)</label>
-          <input
-            type="text"
-            placeholder="e.g., Client site visit confirmed by manager"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-        </div>
-
-        <div className="field">
-          <label style={{ fontSize: "0.82rem", fontWeight: 600 }}>Reason for Regularization (Mandatory Audit Trail) *</label>
-          <textarea
-            rows={2}
-            placeholder="e.g., Laptop battery died before out-punch, or biometric device malfunction"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            autoFocus
-          />
-        </div>
-
-        <div className="row-end" style={{ gap: "10px", marginTop: "0.5rem" }}>
-          <button className="btn" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" onClick={handleSubmit} disabled={busy}>
-            {busy ? "Applying Correction…" : "Approve & Regularize"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

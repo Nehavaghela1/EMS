@@ -320,3 +320,74 @@ def test_regularize_with_timestamps_recomputes_hours_and_status(client, company_
     assert body["status"] == "present"
     assert "Regularized by" in (body["notes"] or "")
 
+
+def test_employee_request_regularization_with_attachment_and_admin_adjust_approval(client, company_a, db):
+    """Test full split workflow:
+    1. Employee submits regularization with requested times, reason, and attachment.
+    2. Record switches to pending_regularization.
+    3. Admin inspects, adjusts timings, adds note, and approves.
+    """
+    employee = _create_employee(client, company_a.hr_headers)
+    own_headers = _link_user_to_employee(
+        db, company_a.company_id, employee["id"], UserRole.employee
+    )
+    created = client.post("/api/v1/attendance/check-in", headers=own_headers).json()
+
+    in_time = (utcnow() - timedelta(hours=9)).isoformat()
+    out_time = utcnow().isoformat()
+
+    # 1. Employee applies with multipart form and dummy attachment
+    files = {
+        "attachment": ("gate_pass.pdf", b"%PDF-1.4 gate pass content", "application/pdf")
+    }
+    data = {
+        "check_in": in_time,
+        "check_out": out_time,
+        "reason": "Forgot punch out due to client visit offsite",
+    }
+    req_resp = client.post(
+        f"/api/v1/attendance/{created['id']}/regularize",
+        headers=own_headers,
+        data=data,
+        files=files,
+    )
+    assert req_resp.status_code == 200, req_resp.text
+    req_data = req_resp.json()
+    assert req_data["reason"] == "Forgot punch out due to client visit offsite"
+    assert req_data["status"] == "pending"
+    assert req_data["attachment_url"] is not None
+    assert "gate_pass.pdf" in req_data["attachment_url"]
+
+    # Verify attachment is downloadable
+    att_resp = client.get(req_data["attachment_url"])
+    assert att_resp.status_code == 200
+    assert att_resp.content == b"%PDF-1.4 gate pass content"
+
+    # Verify attendance record has pending_regularization and active_regularization populated
+    att_record = client.get(f"/api/v1/attendance/{created['id']}", headers=company_a.hr_headers).json()
+    assert att_record["status"] == "pending_regularization"
+    assert att_record["active_regularization"] is not None
+    assert att_record["active_regularization"]["id"] == req_data["id"]
+
+    # 2. Admin inspects and adjusts check-out by 1 hour (8 hrs instead of 9) and approves
+    adjusted_out = (utcnow() - timedelta(hours=1)).isoformat()
+    approve_resp = client.put(
+        f"/api/v1/attendance/regularizations/{req_data['id']}/approve",
+        headers=company_a.hr_headers,
+        json={
+            "status": "approved",
+            "adjusted_check_out": adjusted_out,
+            "admin_notes": "Adjusted to 5:00 PM per security gate slip",
+        },
+    )
+    assert approve_resp.status_code == 200, approve_resp.text
+    approved_data = approve_resp.json()
+    assert approved_data["status"] == "approved"
+    assert approved_data["admin_notes"] == "Adjusted to 5:00 PM per security gate slip"
+
+    # 3. Verify attendance record is now present and reflects adjusted hours
+    updated_rec = client.get(f"/api/v1/attendance/{created['id']}", headers=company_a.hr_headers).json()
+    assert updated_rec["status"] == "present"
+    assert float(updated_rec["hours_worked"]) >= 7.9
+    assert "HR: Adjusted to 5:00 PM per security gate slip" in (updated_rec["notes"] or "")
+

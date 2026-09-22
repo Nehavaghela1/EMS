@@ -3,7 +3,33 @@ import type { Page } from "../../shared/api/pagination";
 
 // --- Attendance (routes 43-49) --------------------------------------------
 
-export type AttendanceStatus = "present" | "absent" | "half_day" | "wfh" | "on_leave" | "holiday" | "weekend";
+export type AttendanceStatus =
+  | "present"
+  | "absent"
+  | "half_day"
+  | "wfh"
+  | "on_leave"
+  | "holiday"
+  | "weekend"
+  | "mispunch"
+  | "pending_regularization";
+
+export interface AttendanceRegularization {
+  id: string;
+  attendance_id: string;
+  employee_id: string;
+  manager_id?: string | null;
+  requested_check_in?: string | null;
+  requested_check_out?: string | null;
+  reason: string;
+  attachment_url?: string | null;
+  admin_notes?: string | null;
+  status: "pending" | "approved" | "rejected";
+  approved_by?: string | null;
+  approved_at?: string | null;
+  rejection_reason?: string | null;
+  created_at: string;
+}
 
 export interface Attendance {
   id: string;
@@ -18,6 +44,7 @@ export interface Attendance {
   hours_worked: string | null;
   source: string;
   notes: string | null;
+  active_regularization?: AttendanceRegularization | null;
   created_at: string;
 }
 
@@ -91,6 +118,48 @@ export interface RegularizeAttendanceInput {
 
 export async function regularizeAttendance(id: string, input: RegularizeAttendanceInput): Promise<Attendance> {
   const { data } = await apiClient.put<Attendance>(`/attendance/${id}`, input);
+  return data;
+}
+
+export async function submitRegularizationRequest(
+  attendanceId: string,
+  formData: FormData
+): Promise<AttendanceRegularization> {
+  const { data } = await apiClient.post<AttendanceRegularization>(
+    `/attendance/${attendanceId}/regularize`,
+    formData,
+    {
+      headers: { "Content-Type": "multipart/form-data" },
+    }
+  );
+  return data;
+}
+
+export interface ApproveRegularizationInput {
+  status: "approved" | "rejected";
+  adjusted_check_in?: string;
+  adjusted_check_out?: string;
+  admin_notes?: string;
+  rejection_reason?: string;
+}
+
+export async function approveRegularizationRequest(
+  regularizationId: string,
+  input: ApproveRegularizationInput
+): Promise<AttendanceRegularization> {
+  const { data } = await apiClient.put<AttendanceRegularization>(
+    `/attendance/regularizations/${regularizationId}/approve`,
+    input
+  );
+  return data;
+}
+
+export async function getAttendanceRegularization(
+  attendanceId: string
+): Promise<AttendanceRegularization | null> {
+  const { data } = await apiClient.get<AttendanceRegularization | null>(
+    `/attendance/${attendanceId}/regularization`
+  );
   return data;
 }
 

@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseApiError } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
-import { checkIn, checkOut, getAssignedShift, listAttendance } from "../api";
+import { checkIn, checkOut, getAssignedShift, listAttendance, submitRegularizationRequest } from "../api";
+import { RegularizeAttendanceModal } from "./RegularizeAttendanceModal";
 
 function formatTimeString(timeStr: string): string {
   // Converts "09:00:00" or "09:00" to "09:00 AM"
@@ -72,6 +73,7 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
 
   const [checkBusy, setCheckBusy] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
+  const [showRegularizeModal, setShowRegularizeModal] = useState(false);
 
   async function refreshAll() {
     await Promise.all([
@@ -189,23 +191,44 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
               <strong>{unclosedPastRecord.date}</strong>. Live clock is closed. Please apply for attendance regularization.
             </span>
           </div>
-          <a
-            href="/attendance"
+          <button
+            type="button"
+            onClick={() => setShowRegularizeModal(true)}
             className="btn btn-sm"
             style={{
               backgroundColor: "#f59e0b",
               color: "#ffffff",
               border: "none",
               fontWeight: 600,
-              textDecoration: "none",
               padding: "4px 12px",
               borderRadius: "6px",
               whiteSpace: "nowrap",
+              cursor: "pointer",
             }}
           >
             Regularize Now
-          </a>
+          </button>
         </div>
+      )}
+
+      {showRegularizeModal && unclosedPastRecord && (
+        <RegularizeAttendanceModal
+          isOpen={showRegularizeModal}
+          onClose={() => setShowRegularizeModal(false)}
+          isAdmin={false}
+          employeeName={user?.employee ? `${user.employee.first_name} ${user.employee.last_name || ""}`.trim() : "My Attendance"}
+          attendanceDate={unclosedPastRecord.date}
+          currentStatus={unclosedPastRecord.status}
+          initialCheckIn={unclosedPastRecord.check_in}
+          initialCheckOut={unclosedPastRecord.check_out}
+          existingReason={unclosedPastRecord.notes}
+          onSubmit={async (formData) => {
+            await submitRegularizationRequest(unclosedPastRecord.id, formData);
+            notify("Regularization request submitted to your manager.");
+            setShowRegularizeModal(false);
+            await refreshAll();
+          }}
+        />
       )}
 
       <div className="card">
