@@ -95,72 +95,167 @@ COUNTRY_REGIONS_MAP: dict[str, dict[str, any]] = {
     "IN": {
         "name": "India",
         "states": [
+            # 28 States
+            "Andhra Pradesh",
+            "Arunachal Pradesh",
+            "Assam",
+            "Bihar",
+            "Chhattisgarh",
+            "Goa",
             "Gujarat",
-            "Maharashtra",
+            "Haryana",
+            "Himachal Pradesh",
+            "Jharkhand",
             "Karnataka",
-            "Delhi",
+            "Kerala",
+            "Madhya Pradesh",
+            "Maharashtra",
+            "Manipur",
+            "Meghalaya",
+            "Mizoram",
+            "Nagaland",
+            "Odisha",
+            "Punjab",
+            "Rajasthan",
+            "Sikkim",
             "Tamil Nadu",
             "Telangana",
+            "Tripura",
             "Uttar Pradesh",
+            "Uttarakhand",
             "West Bengal",
-            "Rajasthan",
-            "Kerala",
-            "Haryana",
-            "Punjab",
-            "Madhya Pradesh",
+            # 8 Union Territories
+            "Andaman and Nicobar Islands",
+            "Chandigarh",
+            "Dadra and Nagar Haveli and Daman and Diu",
+            "Delhi (NCT)",
+            "Jammu and Kashmir",
+            "Ladakh",
+            "Lakshadweep",
+            "Puducherry",
         ],
     },
     "US": {
         "name": "United States",
         "states": [
+            "Alabama",
+            "Alaska",
+            "Arizona",
+            "Arkansas",
             "California",
-            "New York",
-            "Texas",
-            "Washington",
-            "Illinois",
+            "Colorado",
+            "Connecticut",
+            "Delaware",
+            "District of Columbia",
             "Florida",
-            "Massachusetts",
             "Georgia",
+            "Hawaii",
+            "Idaho",
+            "Illinois",
+            "Indiana",
+            "Iowa",
+            "Kansas",
+            "Kentucky",
+            "Louisiana",
+            "Maine",
+            "Maryland",
+            "Massachusetts",
+            "Michigan",
+            "Minnesota",
+            "Mississippi",
+            "Missouri",
+            "Montana",
+            "Nebraska",
+            "Nevada",
+            "New Hampshire",
+            "New Jersey",
+            "New Mexico",
+            "New York",
+            "North Carolina",
+            "North Dakota",
+            "Ohio",
+            "Oklahoma",
+            "Oregon",
+            "Pennsylvania",
+            "Rhode Island",
+            "South Carolina",
+            "South Dakota",
+            "Tennessee",
+            "Texas",
+            "Utah",
+            "Vermont",
+            "Virginia",
+            "Washington",
+            "West Virginia",
+            "Wisconsin",
+            "Wyoming",
         ],
     },
     "GB": {
         "name": "United Kingdom",
         "states": [
-            "England & Wales",
+            "England",
             "Scotland",
+            "Wales",
             "Northern Ireland",
         ],
     },
     "AE": {
         "name": "United Arab Emirates",
         "states": [
-            "Dubai",
             "Abu Dhabi",
+            "Dubai",
             "Sharjah",
+            "Ajman",
+            "Umm Al Quwain",
+            "Ras Al Khaimah",
+            "Fujairah",
         ],
     },
     "SG": {
         "name": "Singapore",
         "states": [
-            "Singapore (National)",
+            "Central Region",
+            "East Region",
+            "North Region",
+            "North-East Region",
+            "West Region",
+            "National (All Singapore)",
         ],
     },
     "CA": {
         "name": "Canada",
         "states": [
-            "Ontario",
-            "British Columbia",
-            "Quebec",
+            # 10 Provinces
             "Alberta",
+            "British Columbia",
+            "Manitoba",
+            "New Brunswick",
+            "Newfoundland and Labrador",
+            "Nova Scotia",
+            "Ontario",
+            "Prince Edward Island",
+            "Quebec",
+            "Saskatchewan",
+            # 3 Territories
+            "Northwest Territories",
+            "Nunavut",
+            "Yukon",
         ],
     },
     "AU": {
         "name": "Australia",
         "states": [
+            # 6 States
             "New South Wales",
-            "Victoria",
             "Queensland",
+            "South Australia",
+            "Tasmania",
+            "Victoria",
             "Western Australia",
+            # 2 Internal Territories
+            "Australian Capital Territory",
+            "Northern Territory",
         ],
     },
 }
@@ -182,29 +277,74 @@ def get_regional_statutory_holidays(state: str, year: int, country: str = "IN") 
         # Check Gujarat pre-seed as baseline
         if "Gujarat" in STATUTORY_HOLIDAYS_INDIA and year in STATUTORY_HOLIDAYS_INDIA["Gujarat"]:
             guj_list = STATUTORY_HOLIDAYS_INDIA["Gujarat"][year]
-            # State-specific adjustments
-            if norm_state == "Maharashtra":
+            # State-specific adjustments for all Indian states
+            h_list = list(guj_list)
+            if norm_state in ("Maharashtra", "Goa"):
                 return [
-                    {"name": "Maharashtra Day", "date": f"{year:04d}-05-01", "is_optional": False}
+                    {"name": "Maharashtra Day" if norm_state == "Maharashtra" else "Goa Liberation Day", "date": f"{year:04d}-05-01" if norm_state == "Maharashtra" else f"{year:04d}-12-19", "is_optional": False}
                     if h["name"] == "Makar Sankranti / Uttarayan"
                     else h
-                    for h in guj_list
+                    for h in h_list
                 ]
-            elif norm_state == "Karnataka":
+            elif norm_state in ("Karnataka", "Andhra Pradesh", "Telangana"):
                 return [
-                    {"name": "Kannada Rajyotsava", "date": f"{year:04d}-11-01", "is_optional": False}
+                    {"name": "Kannada Rajyotsava" if norm_state == "Karnataka" else "Ugadi / Telugu New Year", "date": f"{year:04d}-11-01" if norm_state == "Karnataka" else f"{year:04d}-03-30", "is_optional": False}
                     if h["name"] == "Gujarati New Year (Bestu Varas)"
                     else h
-                    for h in guj_list
+                    for h in h_list
                 ]
             elif norm_state == "Tamil Nadu":
                 return [
                     {"name": "Pongal", "date": f"{year:04d}-01-15", "is_optional": False}
                     if h["name"] == "Makar Sankranti / Uttarayan"
-                    else h
-                    for h in guj_list
+                    else (
+                        {"name": "Tamil New Year (Puthandu)", "date": f"{year:04d}-04-14", "is_optional": False}
+                        if h["name"] == "Gujarati New Year (Bestu Varas)"
+                        else h
+                    )
+                    for h in h_list
                 ]
-            return guj_list
+            elif norm_state == "Kerala":
+                return [
+                    {"name": "Thiruvonam (Onam)", "date": f"{year:04d}-08-27", "is_optional": False}
+                    if h["name"] == "Janmashtami"
+                    else (
+                        {"name": "Vishu", "date": f"{year:04d}-04-14", "is_optional": False}
+                        if h["name"] == "Gujarati New Year (Bestu Varas)"
+                        else h
+                    )
+                    for h in h_list
+                ]
+            elif norm_state in ("West Bengal", "Odisha", "Tripura", "Assam"):
+                return [
+                    {"name": "Durga Puja (Maha Ashtami / Nabami)", "date": f"{year:04d}-10-21", "is_optional": False}
+                    if h["name"] == "Dussehra"
+                    else (
+                        {"name": "Poila Boishakh / Bohag Bihu", "date": f"{year:04d}-04-15", "is_optional": False}
+                        if h["name"] == "Gujarati New Year (Bestu Varas)"
+                        else h
+                    )
+                    for h in h_list
+                ]
+            elif norm_state in ("Punjab", "Haryana", "Chandigarh"):
+                return [
+                    {"name": "Baisakhi", "date": f"{year:04d}-04-14", "is_optional": False}
+                    if h["name"] == "Gujarati New Year (Bestu Varas)"
+                    else (
+                        {"name": "Guru Nanak Jayanti", "date": f"{year:04d}-11-24", "is_optional": False}
+                        if h["name"] == "Bhai Dooj"
+                        else h
+                    )
+                    for h in h_list
+                ]
+            elif norm_state in ("Bihar", "Jharkhand"):
+                return [
+                    {"name": "Chhath Puja", "date": f"{year:04d}-11-17", "is_optional": False}
+                    if h["name"] == "Bhai Dooj"
+                    else h
+                    for h in h_list
+                ]
+            return h_list
 
         # Generalized Indian Gazetted Holidays for other years
         return [
