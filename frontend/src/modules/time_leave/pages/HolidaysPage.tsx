@@ -496,7 +496,15 @@ export function HolidaysPage() {
                           </h4>
 
                           <p style={{ margin: 0, fontSize: "0.82rem", color: "#64748b" }}>
-                            {dayName} • Office Closed
+                            {dayName} • {holiday.is_optional ? (
+                              <span style={{ color: "#d97706", fontWeight: 600 }}>
+                                Office Open • Optional Holiday (Floater)
+                              </span>
+                            ) : (
+                              <span style={{ color: "#475569" }}>
+                                Office Closed • Mandatory Off
+                              </span>
+                            )}
                           </p>
                         </div>
 
@@ -677,16 +685,22 @@ export function HolidaysPage() {
                   />
                 </div>
 
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
-                  <input
-                    type="checkbox"
-                    id="is_optional_check"
-                    checked={newIsOptional}
-                    onChange={(e) => setNewIsOptional(e.target.checked)}
-                  />
-                  <label htmlFor="is_optional_check" style={{ fontSize: "0.85rem", color: "#334155", cursor: "pointer" }}>
-                    Restricted / Optional Holiday (office open, quota based)
-                  </label>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
+                    <input
+                      type="checkbox"
+                      id="is_optional_check"
+                      checked={newIsOptional}
+                      onChange={(e) => setNewIsOptional(e.target.checked)}
+                    />
+                    <label htmlFor="is_optional_check" style={{ fontSize: "0.85rem", color: "#334155", cursor: "pointer", fontWeight: 600 }}>
+                      Restricted / Optional Holiday (Office remains OPEN)
+                    </label>
+                  </div>
+                  <p style={{ margin: "4px 0 0 24px", fontSize: "0.75rem", color: "#64748b", lineHeight: 1.4 }}>
+                    • <strong>Office Status:</strong> The office stays OPEN. Normal work continues.<br />
+                    • <strong>Leave / Salary:</strong> No salary is deducted. Employees can apply for this date as an Optional Holiday (Floater Leave) under their assigned quota.
+                  </p>
                 </div>
               </div>
 

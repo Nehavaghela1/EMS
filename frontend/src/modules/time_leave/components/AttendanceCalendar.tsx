@@ -685,7 +685,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
                               {h.name}
                             </h4>
                             <p style={{ margin: 0, fontSize: "0.78rem", color: "#64748b" }}>
-                              {dayName} • Office Closed • Paid Off
+                              {dayName} • {h.is_optional ? "Office Open • Optional Floater" : "Office Closed • Paid Off"}
                             </p>
                           </div>
                         </div>
