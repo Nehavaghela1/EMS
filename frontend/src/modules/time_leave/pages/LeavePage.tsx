@@ -240,7 +240,7 @@ export function LeavePage() {
       label: "",
       render: (l) => (
         <div className="row">
-          {canDecide && l.status === "pending" && (
+          {canDecide && l.status === "pending" && (user?.role === "owner" || user?.role === "super_admin" || user?.role === "hr_admin" || l.employee_id !== user?.employee?.id) && (
             <>
               <button
                 className="btn btn-sm btn-primary"

@@ -72,8 +72,11 @@ def verify_approval_authority(
     Validates if current_user can approve/reject leaves or regularizations
     for target_employee.
     """
-    # Rule A: Anti-Self-Approval (Strict)
+    # Rule A: Anti-Self-Approval
+    # Exception: Company Owner / Super Admin has no reporting manager above them, so they can directly approve their own requests.
     if target_employee.user_id == current_user.id:
+        if current_user.role in [UserRole.owner, UserRole.super_admin]:
+            return True
         raise ForbiddenError(
             "Self-approval is forbidden. You cannot approve your own request. Your request must be approved by your reporting manager or CEO."
         )
@@ -445,6 +448,41 @@ class AttendanceService:
         )
         self.repo.create_regularization_request(req)
         
+        # For Owner / Super Admin: Auto-approve immediately since no manager is above them
+        if current_user.role in [UserRole.owner, UserRole.super_admin]:
+            req.status = RegularizationStatus.approved
+            req.approved_by = current_user.id
+            req.approved_at = utcnow()
+            req.admin_notes = "Auto-approved for Owner / Leadership"
+            
+            eff_check_in = data.requested_check_in
+            eff_check_out = data.requested_check_out
+            if eff_check_in:
+                record.check_in = eff_check_in
+            if eff_check_out:
+                record.check_out = eff_check_out
+            if record.check_in and record.check_out and record.check_out > record.check_in:
+                from decimal import ROUND_HALF_UP
+                calc_hours = (Decimal((record.check_out - record.check_in).total_seconds()) / Decimal(3600)).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                record.hours_worked = calc_hours
+                settings_row = self.settings_repo.get_by_company(company_id)
+                half_thresh = settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+                if calc_hours < Decimal("1.0"):
+                    record.status = AttendanceStatus.absent
+                elif calc_hours < half_thresh:
+                    record.status = AttendanceStatus.half_day
+                else:
+                    record.status = AttendanceStatus.present
+            else:
+                record.status = AttendanceStatus.absent
+
+            record.notes = ((record.notes or "") + " [Auto-regularized by Owner]").strip()
+            self.db.commit()
+            DashboardService.invalidate_company_dashboards(company_id)
+            return req
+
         record.status = AttendanceStatus.pending_regularization
 
         # Notify manager if present
@@ -1180,6 +1218,10 @@ class LeaveService:
             if available < total_days:
                 raise InsufficientLeaveBalanceError(available=available, requested=total_days)
 
+        # Determine if owner / super_admin: auto-approve immediately
+        is_leadership = current_user.role in [UserRole.owner, UserRole.super_admin]
+        initial_status = LeaveStatus.approved if is_leadership else LeaveStatus.pending
+
         leave = self.repo.create(
             company_id=company_id,
             employee_id=employee.id,
@@ -1189,11 +1231,32 @@ class LeaveService:
             total_days=total_days,
             is_half_day=data.is_half_day,
             reason=data.reason,
-            status=LeaveStatus.pending,
+            status=initial_status,
+            approved_by=current_user.id if is_leadership else None,
+            approved_at=utcnow() if is_leadership else None,
         )
 
-        # Notify manager if present
-        if employee.reporting_manager_id:
+        if is_leadership:
+            if leave_type is not None and leave_type.is_paid:
+                year = self._leave_year(settings_row, leave.start_date)
+                balance = self._get_or_allocate_balance(company_id, employee.id, leave_type, year)
+                self.balance_repo.update(balance, used=balance.used + leave.total_days)
+            self._write_attendance_for_leave(company_id, settings_row, employee, leave)
+            self.audit.record(
+                company_id=company_id,
+                actor=current_user,
+                action="LEAVE_APPROVED",
+                entity_type="leave",
+                entity_id=leave.id,
+                details={
+                    "auto_approved": True,
+                    "role": current_user.role.value,
+                    "reason": data.reason,
+                    "days": str(total_days),
+                },
+            )
+        elif employee.reporting_manager_id:
+            # Notify manager if present
             mgr = self.employee_repo.get_by_id_any_status(employee.reporting_manager_id, company_id)
             if mgr and mgr.user_id:
                 emp_name = f"{employee.first_name} {employee.last_name or ''}".strip()

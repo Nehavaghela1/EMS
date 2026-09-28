@@ -277,7 +277,8 @@ export function AttendancePage() {
       label: "",
       render: (a: Attendance) => {
         const isOwnRecord = Boolean(user?.employee?.id && a.employee_id === user.employee.id);
-        const canReview = (isHr || user?.role === "manager") && !isOwnRecord;
+        const isLeadership = user?.role === "owner" || user?.role === "super_admin";
+        const canReview = isLeadership || ((isHr || user?.role === "manager") && !isOwnRecord);
         const canApply = isOwnRecord && (a.status === "absent" || a.status === "mispunch" || (!a.check_out && a.date < todayIso()));
 
         return (
