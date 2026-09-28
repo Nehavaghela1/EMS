@@ -926,15 +926,14 @@ class HolidayService:
         self.db.commit()
 
     def import_regional_holidays(
-        self, company_id: uuid.UUID, state: str = "Gujarat", year: int = 2026
+        self, company_id: uuid.UUID, state: str = "Gujarat", year: int = 2026, country: str = "IN"
     ) -> tuple[int, list[Holiday]]:
-        from app.modules.time_leave.constants import STATUTORY_HOLIDAYS_INDIA
+        from app.modules.time_leave.constants import get_regional_statutory_holidays
         from datetime import date as dt_date
 
-        state_data = STATUTORY_HOLIDAYS_INDIA.get(state, {})
-        holidays_data = state_data.get(year, [])
+        holidays_data = get_regional_statutory_holidays(state=state, year=year, country=country)
         if not holidays_data:
-            raise NotFoundError(f"No pre-seeded statutory holidays found for state '{state}' in year {year}.")
+            raise NotFoundError(f"No statutory holidays found for region '{state}' ({country}) in year {year}.")
 
         # Fetch existing active holidays for this company and year to avoid duplicates
         existing_holidays = self.repo.list_by_year(company_id, year)

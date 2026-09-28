@@ -274,7 +274,35 @@ export async function deleteHoliday(id: string): Promise<void> {
   await apiClient.delete(`/holidays/${id}`);
 }
 
+export interface RegionalHolidayItem {
+  name: string;
+  date: string;
+  is_optional: boolean;
+}
+
+export interface CountryRegionInfo {
+  name: string;
+  states: string[];
+}
+
+export async function getHolidayRegions(): Promise<Record<string, CountryRegionInfo>> {
+  const { data } = await apiClient.get<Record<string, CountryRegionInfo>>("/holidays/regions");
+  return data;
+}
+
+export async function previewRegionalHolidays(params?: {
+  country?: string;
+  state?: string;
+  year?: number;
+}): Promise<RegionalHolidayItem[]> {
+  const { data } = await apiClient.get<RegionalHolidayItem[]>("/holidays/regional-preview", {
+    params,
+  });
+  return data;
+}
+
 export async function importRegionalHolidays(params?: {
+  country?: string;
   state?: string;
   year?: number;
 }): Promise<HolidayImportResponse> {

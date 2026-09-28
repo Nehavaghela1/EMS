@@ -404,6 +404,29 @@ def delete_holiday(
     HolidayService(db).delete_holiday(user.company_id, holiday_id)
 
 
+@holidays_router.get("/regions")
+def get_supported_holiday_regions(
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Returns all supported countries and regional states/territories for statutory holiday import."""
+    from app.modules.time_leave.constants import COUNTRY_REGIONS_MAP
+
+    return COUNTRY_REGIONS_MAP
+
+
+@holidays_router.get("/regional-preview")
+def preview_regional_holidays(
+    country: str = "IN",
+    state: str = "Gujarat",
+    year: int = 2026,
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    """Returns the statutory public holiday list for a given country, state & year from the regional database."""
+    from app.modules.time_leave.constants import get_regional_statutory_holidays
+
+    return get_regional_statutory_holidays(state=state, year=year, country=country)
+
+
 @holidays_router.post("/import-regional", response_model=HolidayImportResponse)
 def import_regional_holidays(
     data: HolidayImportRegionalRequest | None = None,
@@ -413,11 +436,13 @@ def import_regional_holidays(
     req_data = data or HolidayImportRegionalRequest()
     imported_count, all_holidays = HolidayService(db).import_regional_holidays(
         company_id=user.company_id,
+        country=req_data.country,
         state=req_data.state,
         year=req_data.year,
     )
+    country_name = req_data.country.upper()
     return HolidayImportResponse(
-        message=f"Successfully imported {imported_count} statutory holidays for {req_data.state} ({req_data.year}).",
+        message=f"Successfully imported {imported_count} statutory holidays for {req_data.state} ({country_name}, {req_data.year}).",
         imported_count=imported_count,
         total_holidays=len(all_holidays),
         holidays=[_to_holiday_response(h) for h in all_holidays],

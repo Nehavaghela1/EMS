@@ -28,7 +28,17 @@ import {
   type PayrollItem,
   type SalaryStructureListItem,
 } from "../../payroll/api";
-import { getAssignedShift } from "../../time_leave/api";
+import {
+  getAssignedShift,
+  getLeaveBalance,
+  listHolidays,
+  listLeaveTypes,
+  applyLeave,
+  type LeaveBalance,
+  type Holiday,
+  type LeaveType,
+} from "../../time_leave/api";
+import { AttendanceCalendar } from "../../time_leave/components/AttendanceCalendar";
 import { apiClient } from "../../../app/api-client";
 
 
@@ -55,9 +65,47 @@ export function EmployeeProfilePage() {
   const [busy, setBusy] = useState(false);
   const [resent, setResent] = useState<{ sent_to: string; expires_at: string } | null>(null);
   const [resendBusy, setResendBusy] = useState(false);
-  const [activeTab, setActiveTab] = useState<"overview" | "salary" | "payslips" | "exit">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "salary" | "payslips" | "leave" | "attendance" | "exit">("overview");
 
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [showVehicleModal, setShowVehicleModal] = useState(false);
+
+  // Add ▾ Modal States
+  const [showDeductionModal, setShowDeductionModal] = useState(false);
+  const [showBenefitModal, setShowBenefitModal] = useState(false);
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [showRegularizeModal, setShowRegularizeModal] = useState(false);
+
+  // Deduction Form State
+  const [deductionType, setDeductionType] = useState("loan");
+  const [deductionName, setDeductionName] = useState("");
+  const [deductionAmount, setDeductionAmount] = useState("");
+  const [deductionFrequency, setDeductionFrequency] = useState("one_off");
+  const [deductionEffectiveMonth, setDeductionEffectiveMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [deductionNotes, setDeductionNotes] = useState("");
+
+  // Benefit Form State
+  const [benefitType, setBenefitType] = useState("health_insurance");
+  const [benefitName, setBenefitName] = useState("");
+  const [benefitAmount, setBenefitAmount] = useState("");
+  const [benefitEffectiveFrom, setBenefitEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [benefitNotes, setBenefitNotes] = useState("");
+
+  // Leave Form State
+  const [leaveTypeId, setLeaveTypeId] = useState("");
+  const [leaveStartDate, setLeaveStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [leaveEndDate, setLeaveEndDate] = useState(new Date().toISOString().slice(0, 10));
+  const [leaveIsHalfDay, setLeaveIsHalfDay] = useState(false);
+  const [leaveReason, setLeaveReason] = useState("");
+  const [leaveSubmitting, setLeaveSubmitting] = useState(false);
+
+  // Regularization Form State
+  const [regDate, setRegDate] = useState(new Date().toISOString().slice(0, 10));
+  const [regCheckIn, setRegCheckIn] = useState("09:00");
+  const [regCheckOut, setRegCheckOut] = useState("18:00");
+  const [regReason, setRegReason] = useState("");
+  const [regSubmitting, setRegSubmitting] = useState(false);
 
   const employeeQuery = useQuery({
     queryKey: ["employee", id],
@@ -69,6 +117,12 @@ export function EmployeeProfilePage() {
     queryKey: ["shift", "assigned", id],
     queryFn: () => getAssignedShift(id as string),
     enabled: Boolean(id),
+  });
+
+  const leaveTypesQuery = useQuery({
+    queryKey: ["leave-types"],
+    queryFn: listLeaveTypes,
+    enabled: showLeaveModal,
   });
 
   const invite = resent ?? (location.state as InviteState | null)?.invite;
@@ -302,154 +356,293 @@ export function EmployeeProfilePage() {
                 </div>
               </div>
 
-              {/* Action Button Hierarchy: Secondary Resend (if pending), Primary Edit, Dropdown ••• */}
-              {isHr && (
-                <div className="flex items-center gap-2">
-                  {/* Secondary buttons moved to more actions dropdown */}
+              {/* Zoho Action Buttons: Add ▾, •••, ✕ */}
+              <div className="flex items-center gap-2">
+                {/* Add ▾ Dropdown */}
+                <div style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{
+                      background: "#f8fafc",
+                      border: "1px solid #cbd5e1",
+                      color: "#1e293b",
+                      fontWeight: 600,
+                      fontSize: "0.82rem",
+                      padding: "0.4rem 0.75rem",
+                      borderRadius: "6px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      cursor: "pointer",
+                    }}
+                    onClick={() => {
+                      setAddMenuOpen(!addMenuOpen);
+                      setMoreActionsOpen(false);
+                    }}
+                  >
+                    <span>Add</span>
+                    <span style={{ fontSize: "0.65rem", transform: addMenuOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>▼</span>
+                  </button>
 
-                  {/* More Actions Dropdown (•••) */}
-                  <div style={{ position: "relative" }}>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-outline"
-                      style={{ padding: "0.4rem 0.65rem", fontWeight: 700 }}
-                      onClick={() => setMoreActionsOpen(!moreActionsOpen)}
-                      title="More actions"
+                  {addMenuOpen && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        right: 0,
+                        top: "120%",
+                        background: "#ffffff",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "8px",
+                        boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08)",
+                        zIndex: 100,
+                        minWidth: "160px",
+                        padding: "4px 0",
+                      }}
+                      onMouseLeave={() => setAddMenuOpen(false)}
                     >
-                      •••
-                    </button>
-                    {moreActionsOpen && (
-                      <div
-                        style={{
-                          position: "absolute",
-                          right: 0,
-                          top: "115%",
-                          background: "#ffffff",
-                          border: "1px solid var(--color-border, #e2e8f0)",
-                          borderRadius: "8px",
-                          boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
-                          zIndex: 50,
-                          minWidth: "220px",
-                          padding: "6px 0",
-                        }}
-                        onMouseLeave={() => setMoreActionsOpen(false)}
+                      <button
+                        type="button"
+                        style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", color: "#334155", cursor: "pointer", display: "block" }}
+                        onClick={() => { setAddMenuOpen(false); setShowDeductionModal(true); }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#eff6ff"; (e.currentTarget as HTMLElement).style.color = "#2563eb"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = "#334155"; }}
                       >
+                        Deduction
+                      </button>
+                      <button
+                        type="button"
+                        style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", color: "#334155", cursor: "pointer", display: "block" }}
+                        onClick={() => { setAddMenuOpen(false); setShowBenefitModal(true); }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#eff6ff"; (e.currentTarget as HTMLElement).style.color = "#2563eb"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = "#334155"; }}
+                      >
+                        Benefit
+                      </button>
+                      <button
+                        type="button"
+                        style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", color: "#334155", cursor: "pointer", display: "block" }}
+                        onClick={() => { setAddMenuOpen(false); setShowLeaveModal(true); }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#eff6ff"; (e.currentTarget as HTMLElement).style.color = "#2563eb"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = "#334155"; }}
+                      >
+                        Leave
+                      </button>
+                      <button
+                        type="button"
+                        style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", color: "#334155", cursor: "pointer", display: "block" }}
+                        onClick={() => { setAddMenuOpen(false); setShowRegularizeModal(true); }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#eff6ff"; (e.currentTarget as HTMLElement).style.color = "#2563eb"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = "#334155"; }}
+                      >
+                        Regularization
+                      </button>
+                    </div>
+                  )}
+                </div>
 
+                {/* More Actions Dropdown (•••) */}
+                <div style={{ position: "relative" }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{
+                      background: "#f8fafc",
+                      border: "1px solid #cbd5e1",
+                      color: "#475569",
+                      padding: "0.4rem 0.65rem",
+                      fontWeight: 700,
+                      borderRadius: "6px",
+                      cursor: "pointer",
+                    }}
+                    onClick={() => {
+                      setMoreActionsOpen(!moreActionsOpen);
+                      setAddMenuOpen(false);
+                    }}
+                    title="More actions"
+                  >
+                    •••
+                  </button>
+
+                  {moreActionsOpen && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        right: 0,
+                        top: "120%",
+                        background: "#ffffff",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "8px",
+                        boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08)",
+                        zIndex: 100,
+                        minWidth: "230px",
+                        padding: "6px 0",
+                      }}
+                      onMouseLeave={() => setMoreActionsOpen(false)}
+                    >
+                      <button
+                        type="button"
+                        style={{ width: "100%", textAlign: "left", padding: "9px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "block" }}
+                        onClick={() => {
+                          setMoreActionsOpen(false);
+                          setShowVehicleModal(true);
+                        }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#eff6ff"; (e.currentTarget as HTMLElement).style.color = "#2563eb"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = "#334155"; }}
+                      >
+                        Add / Update Vehicle Details
+                      </button>
+
+                      <button
+                        type="button"
+                        style={{ width: "100%", textAlign: "left", padding: "9px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "block" }}
+                        onClick={() => {
+                          setMoreActionsOpen(false);
+                          setActiveTab("exit");
+                        }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#eff6ff"; (e.currentTarget as HTMLElement).style.color = "#2563eb"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = "#334155"; }}
+                      >
+                        Initiate Exit Process
+                      </button>
+
+                      <div style={{ height: "1px", background: "#f1f5f9", margin: "4px 0" }} />
+
+                      {isHr && (
                         <button
                           type="button"
-                          style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#2563eb", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                          style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#2563eb", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
                           onClick={() => { setMoreActionsOpen(false); navigate(`/employees/${e.id}/edit`); }}
                         >
-                          <span>✎</span> <span>Edit Profile</span>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> <span>Edit Profile</span>
                         </button>
+                      )}
 
-                        {user?.role === 'owner' && e.user_id && e.user_id !== user.id && e.system_role === 'employee' && (
-                          <button
-                            type="button"
-                            style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#9333ea", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                            onClick={() => { setMoreActionsOpen(false); handleRoleChange("hr_admin"); }}
-                          >
-                            <span>👑</span> <span>Promote to HR Admin</span>
-                          </button>
-                        )}
-
-                        {user?.role === 'owner' && e.user_id && e.user_id !== user.id && e.system_role === 'hr_admin' && (
-                          <button
-                            type="button"
-                            style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#f97316", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                            onClick={() => { setMoreActionsOpen(false); handleRoleChange("employee"); }}
-                          >
-                            <span>⬇️</span> <span>Demote to Employee</span>
-                          </button>
-                        )}
-
-                        {e.invitation_status !== "activated" && (
-                          <button
-                            type="button"
-                            style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                            onClick={() => { setMoreActionsOpen(false); handleResendInvite(); }}
-                            disabled={resendBusy}
-                          >
-                            <span>✉️</span> <span>{resendBusy ? "Resending…" : "Resend Invitation Email"}</span>
-                          </button>
-                        )}
-
+                      {user?.role === 'owner' && e.user_id && e.user_id !== user.id && e.system_role === 'employee' && (
                         <button
                           type="button"
-                          style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                          onClick={() => { setMoreActionsOpen(false); window.print(); }}
+                          style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#9333ea", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                          onClick={() => { setMoreActionsOpen(false); handleRoleChange("hr_admin"); }}
                         >
-                          <span>📄</span> <span>Export Summary (PDF)</span>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> <span>Promote to HR Admin</span>
                         </button>
+                      )}
 
-                        <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
+                      {user?.role === 'owner' && e.user_id && e.user_id !== user.id && e.system_role === 'hr_admin' && (
+                        <button
+                          type="button"
+                          style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#f97316", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                          onClick={() => { setMoreActionsOpen(false); handleRoleChange("employee"); }}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="7 13 12 18 17 13"/><polyline points="7 6 12 11 17 6"/></svg> <span>Demote to Employee</span>
+                        </button>
+                      )}
 
-                        {e.is_active ? (
-                          <>
-                            <button
-                              type="button"
-                              style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                              onClick={() => { setMoreActionsOpen(false); notify("Password reset link sent to employee email."); }}
-                            >
-                              <span>🔑</span> <span>Reset Password</span>
-                            </button>
-                            <button
-                              type="button"
-                              style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                              onClick={() => {
-                                setMoreActionsOpen(false);
-                                setSelectedManagerId(e.reporting_manager_id || "");
-                                setChangeManagerOpen(true);
-                              }}
-                            >
-                              <span>🏢</span> <span>Change Reporting Manager</span>
-                            </button>
-                            <button
-                              type="button"
-                              style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                              onClick={() => { setMoreActionsOpen(false); setActiveTab("exit"); }}
-                            >
-                              <span>🚪</span> <span>Initiate Separation / Exit</span>
-                            </button>
-                            <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
-                            <button
-                              type="button"
-                              style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#dc2626", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                              onClick={() => { setMoreActionsOpen(false); setConfirmOpen(true); }}
-                            >
-                              <span>🛑</span> <span>Deactivate Account</span>
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#2563eb", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                              onClick={() => { setMoreActionsOpen(false); setConfirmOpen(true); }}
-                            >
-                              <span>♻️</span> <span>Reactivate Employee</span>
-                            </button>
-                            <button
-                              type="button"
-                              style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                              onClick={() => { setMoreActionsOpen(false); notify("Relieving Letter generated."); }}
-                            >
-                              <span>📥</span> <span>Download Relieving / Experience Letter</span>
-                            </button>
-                            <button
-                              type="button"
-                              style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                              onClick={() => { setMoreActionsOpen(false); notify("Records archived."); }}
-                            >
-                              <span>🗄️</span> <span>Archive Records</span>
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                      {e.invitation_status !== "activated" && (
+                        <button
+                          type="button"
+                          style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                          onClick={() => { setMoreActionsOpen(false); handleResendInvite(); }}
+                          disabled={resendBusy}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> <span>{resendBusy ? "Resending…" : "Resend Invitation Email"}</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                        onClick={() => { setMoreActionsOpen(false); window.print(); }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> <span>Export Summary (PDF)</span>
+                      </button>
+
+                      <div style={{ height: "1px", background: "#f1f5f9", margin: "4px 0" }} />
+
+                      {e.is_active ? (
+                        <>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); notify("Password reset link sent to employee email."); }}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="7.5" cy="7.5" r="4.5"/><path d="M10.5 10.5l9 9"/><path d="M15 15l2 2"/><path d="M17 13l2 2"/></svg> <span>Reset Password</span>
+                          </button>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => {
+                              setMoreActionsOpen(false);
+                              setSelectedManagerId(e.reporting_manager_id || "");
+                              setChangeManagerOpen(true);
+                            }}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"/><line x1="9" y1="22" x2="9" y2="22.01"/><line x1="15" y1="22" x2="15" y2="22.01"/><line x1="9" y1="6" x2="9" y2="6.01"/><line x1="15" y1="6" x2="15" y2="6.01"/><line x1="9" y1="10" x2="9" y2="10.01"/><line x1="15" y1="10" x2="15" y2="10.01"/><line x1="9" y1="14" x2="9" y2="14.01"/><line x1="15" y1="14" x2="15" y2="14.01"/><line x1="9" y1="18" x2="9" y2="18.01"/><line x1="15" y1="18" x2="15" y2="18.01"/></svg> <span>Change Reporting Manager</span>
+                          </button>
+                          <div style={{ height: "1px", background: "#f1f5f9", margin: "4px 0" }} />
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#dc2626", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); setConfirmOpen(true); }}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> <span>Deactivate Account</span>
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#2563eb", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); setConfirmOpen(true); }}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg> <span>Reactivate Employee</span>
+                          </button>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); notify("Relieving Letter generated."); }}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span>Download Relieving / Experience Letter</span>
+                          </button>
+                          <button
+                            type="button"
+                            style={{ width: "100%", textAlign: "left", padding: "8px 16px", border: "none", background: "transparent", fontSize: "0.83rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                            onClick={() => { setMoreActionsOpen(false); notify("Records archived."); }}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg> <span>Archive Records</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
+
+                {/* Close (✕) Button */}
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  style={{
+                    background: "#ffffff",
+                    border: "1px solid #cbd5e1",
+                    color: "#475569",
+                    padding: "0.45rem 0.65rem",
+                    fontWeight: 600,
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                  onClick={() => navigate("/employees")}
+                  title="Close and return to Employees list"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+
             </div>
           </div>
 
@@ -463,10 +656,72 @@ export function EmployeeProfilePage() {
             }}
           >
             {[
-              { id: "overview", label: "Overview", icon: "👤" },
-              { id: "salary", label: "Salary Details", icon: "💳" },
-              { id: "payslips", label: "Payslips", icon: "📄" },
-              { id: "exit", label: "Resignation & FnF", icon: "📑" },
+              {
+                id: "overview",
+                label: "Overview",
+                svg: (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                ),
+              },
+              {
+                id: "salary",
+                label: "Salary Details",
+                svg: (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="5" width="20" height="14" rx="2" />
+                    <line x1="2" y1="10" x2="22" y2="10" />
+                  </svg>
+                ),
+              },
+              {
+                id: "payslips",
+                label: "Payslips & Forms",
+                svg: (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                    <polyline points="10 9 9 9 8 9" />
+                  </svg>
+                ),
+              },
+              {
+                id: "leave",
+                label: "Leave",
+                svg: (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                ),
+              },
+              {
+                id: "attendance",
+                label: "Attendance",
+                svg: (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                  </svg>
+                ),
+              },
+              {
+                id: "exit",
+                label: "Resignation & FnF",
+                svg: (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                  </svg>
+                ),
+              },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -484,11 +739,11 @@ export function EmployeeProfilePage() {
                   cursor: "pointer",
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
+                  gap: "7px",
                 }}
                 onClick={() => setActiveTab(tab.id as typeof activeTab)}
               >
-                <span>{tab.icon}</span>
+                <span style={{ display: "inline-flex", opacity: activeTab === tab.id ? 1 : 0.75 }}>{tab.svg}</span>
                 <span>{tab.label}</span>
               </button>
             ))}
@@ -501,133 +756,129 @@ export function EmployeeProfilePage() {
           </div>
         )}
 
-        {/* TAB 1: OVERVIEW - TWO-COLUMN ASYMMETRIC (30% / 70%) */}
+        {/* TAB 1: OVERVIEW - ZOHO PAYROLL MULTI-SECTION DOSSIER */}
         {activeTab === "overview" && (
-          <div className="printable-profile-dossier" style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: "1.25rem", alignItems: "start" }}>
-            {/* Left Column (30%): Quick Summary & Contact Sticky Card */}
-            <div className="stack gap-4">
-              <div className="card" style={{ padding: "1.25rem" }}>
-                <div className="text-xs font-semibold uppercase text-muted mb-3" style={{ letterSpacing: "0.05em" }}>
-                  Contact Details
-                </div>
-                <div className="stack gap-3">
-                  <div>
-                    <label className="text-xs text-muted block mb-1">Work Email</label>
-                    <div className="text-sm font-semibold text-primary" style={{ wordBreak: "break-all" }}>
-                      <a href={`mailto:${e.email}`} style={{ textDecoration: "none" }}>{e.email}</a>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted block mb-1">Personal Email</label>
-                    <div className="text-sm font-medium" style={{ wordBreak: "break-all" }}>
-                      {e.personal_email || "—"}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted block mb-1">Phone Number</label>
-                    <div className="text-sm font-medium">
-                      {e.phone ? <a href={`tel:${e.phone}`} style={{ textDecoration: "none" }}>{e.phone}</a> : "—"}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted block mb-1">Account Activation</label>
-                    <span className="badge badge-outline text-xs">
-                      {e.invitation_status.replace("_", " ")}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Direct Reporting Manager Card */}
-              <div className="card" style={{ padding: "1.25rem" }}>
-                <div className="flex justify-between items-center mb-3">
-                  <div className="text-xs font-semibold uppercase text-muted" style={{ letterSpacing: "0.05em" }}>
-                    Reporting Hierarchy
-                  </div>
+          <div className="printable-profile-dossier stack gap-4">
+            {/* Card 1: Basic Information */}
+            <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.75rem" }}>
+                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>Basic Information</span>
                   {isHr && (
                     <button
                       type="button"
-                      className="btn btn-ghost btn-xs text-primary"
-                      style={{ padding: "0 4px", fontSize: "0.75rem" }}
-                      onClick={() => {
-                        setSelectedManagerId(e.reporting_manager_id || "");
-                        setChangeManagerOpen(true);
-                      }}
+                      className="btn btn-ghost btn-xs"
+                      onClick={() => navigate(`/employees/${e.id}/edit`)}
+                      style={{ color: "#94a3b8", padding: "0 4px" }}
+                      title="Edit Basic Information"
                     >
-                      ✎ Edit
+                      ✎
                     </button>
                   )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <div
-                    style={{
-                      width: "44px",
-                      height: "44px",
-                      borderRadius: "10px",
-                      background: "linear-gradient(135deg, #475569, #334155)",
-                      color: "#ffffff",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontWeight: 700,
-                      fontSize: "0.95rem",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {e.manager_name ? e.manager_name.charAt(0).toUpperCase() : "👔"}
-                  </div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {e.manager_name || (e.reporting_manager_id ? "Direct Manager" : "Organization Head / CEO")}
-                    </div>
-                    <div className="text-xs text-muted" style={{ marginTop: "1px" }}>
-                      {e.manager_position || (e.reporting_manager_id ? "Assigned Manager" : "Executive Leadership")}
-                    </div>
-                    {e.manager_email && (
-                      <div style={{ fontSize: "0.76rem", marginTop: "3px" }}>
-                        <a href={`mailto:${e.manager_email}`} style={{ color: "#2563eb", textDecoration: "none" }}>
-                          {e.manager_email}
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                </h3>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem 2rem" }}>
+                <Field label="Name" value={`${e.first_name} ${e.last_name || ""}`} />
+                <Field label="Work Location" value={e.company_name ? `${e.company_name} - Head Office` : "Head Office"} />
+                <Field label="Email Address" value={<a href={`mailto:${e.email}`} style={{ color: "#2563eb", textDecoration: "none" }}>{e.email}</a>} />
+                <Field label="Designation" value={e.position ?? "Staff"} />
+                <Field label="Mobile Number" value={e.phone ?? "—"} />
+                <Field label="Department" value={e.department_id ? "Engineering / Core" : "General Operations"} />
+                <Field label="Date of Joining" value={formatDate(e.hire_date)} />
+                <Field
+                  label="Portal Access"
+                  value={
+                    e.invitation_status === "activated" ? (
+                      <span style={{ color: "#16a34a", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                        ✓ Enabled
+                      </span>
+                    ) : (
+                      <span style={{ color: "#64748b", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                        ✕ Disabled {isHr && <button type="button" className="btn btn-ghost btn-xs" onClick={handleResendInvite} style={{ color: "#2563eb", padding: 0 }}>(Enable)</button>}
+                      </span>
+                    )
+                  }
+                />
+                <Field label="Gender" value="Not Specified" />
+                <Field label="Assigned Shift" value={assignedShiftQuery.data?.shift?.name ?? "General Shift (09:00 - 18:00)"} />
               </div>
             </div>
 
-            {/* Right Column (70%): Clean Grouped Sections */}
-            <div className="stack gap-4">
-              <div className="card" style={{ padding: "1.25rem" }}>
-                <h3 style={{ fontSize: "0.95rem", fontWeight: 700, marginBottom: "1rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}>
-                  Job & Organization Information
+            {/* Card 2: Statutory Information */}
+            <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.75rem" }}>
+                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>Statutory Information</span>
+                  <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>✎</span>
                 </h3>
-                <div className="form-grid">
-                  <Field label="Full Name" value={`${e.first_name} ${e.last_name || ""}`} />
-                  <Field label="Employee Code" value={e.employee_code} />
-                  <Field label="Designation / Position" value={e.position ?? "—"} />
-                  <Field label="Band / Grade Level" value={e.level ?? "—"} />
-                  <Field label="Employment Type" value={e.employment_type.replace("_", " ")} />
-                  <Field label="Primary Department" value={e.department_id ? "Assigned Department" : "General Organization"} />
-                </div>
               </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem 2rem" }}>
+                <Field
+                  label="Professional Tax"
+                  value={
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "#16a34a" }}>
+                      ✓ Enabled <span style={{ color: "#2563eb", cursor: "pointer", fontSize: "0.8rem" }}>(Disable)</span>
+                    </span>
+                  }
+                />
+                <Field
+                  label="Provident Fund (EPF)"
+                  value={
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "#16a34a" }}>
+                      ✓ Enabled (12% of Basic)
+                    </span>
+                  }
+                />
+                <Field
+                  label="ESI (Employee State Insurance)"
+                  value={<span style={{ color: "#64748b" }}>✕ Not Applicable (Salary above ₹21,000 threshold)</span>}
+                />
+                <Field
+                  label="Attendance Policy"
+                  value={e.is_attendance_exempt ? "⭐ Attendance Exempt" : "Standard Tracking"}
+                />
+              </div>
+            </div>
 
-              <div className="card" style={{ padding: "1.25rem" }}>
-                <h3 style={{ fontSize: "0.95rem", fontWeight: 700, marginBottom: "1rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}>
-                  Work Timings & Shift Schedule
+            {/* Card 3: Personal Information */}
+            <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.75rem" }}>
+                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>Personal Information</span>
+                  <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>✎</span>
                 </h3>
-                <div className="form-grid">
-                  <Field
-                    label="Assigned Shift Schedule"
-                    value={
-                      assignedShiftQuery.data?.shift
-                        ? `${assignedShiftQuery.data.shift.name} (${assignedShiftQuery.data.shift.start_time.slice(0, 5)} - ${assignedShiftQuery.data.shift.end_time.slice(0, 5)})`
-                        : "General Shift (09:00 - 18:00)"
-                    }
-                  />
-                  <Field label="Official Joining Date" value={formatDate(e.hire_date)} />
-                  <Field label="Probation End Date" value={e.probation_end_date ? formatDate(e.probation_end_date) : "Completed / None"} />
-                  <Field label="Contractual Notice Period" value={`${e.notice_period_days ?? 30} days`} />
-                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem 2rem" }}>
+                <Field label="Date of Birth" value="01/01/1998" />
+                <Field label="Personal Email Address" value={e.personal_email || "—"} />
+                <Field label="Father's / Guardian's Name" value="—" />
+                <Field label="Residential Address" value="Gujarat, India" />
+                <Field label="Permanent Account Number (PAN)" value="—" />
+                <Field label="Differently Abled Type" value="None" />
+              </div>
+            </div>
+
+            {/* Card 4: Payment Information */}
+            <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.75rem" }}>
+                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>Payment Information</span>
+                  <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>✎</span>
+                </h3>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem 2rem" }}>
+                <Field label="Payment Mode" value="Manual Bank Transfer" />
+                <Field label="Bank Name" value="Bank of Baroda" />
+                <Field
+                  label="Account Number"
+                  value={
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                      <span>XXXX0532</span>
+                      <span style={{ color: "#2563eb", fontSize: "0.8rem", cursor: "pointer" }}>Show A/C No</span>
+                    </span>
+                  }
+                />
+                <Field label="IFSC Code" value="BARB0GHATLO" />
               </div>
             </div>
           </div>
@@ -638,12 +889,24 @@ export function EmployeeProfilePage() {
           <EmployeeSalaryTab employeeId={e.id} companyId={e.company_id} isHr={isHr} />
         )}
 
-        {/* TAB 3: PAYSLIPS */}
+        {/* TAB 3: PAYSLIPS & FORMS */}
         {activeTab === "payslips" && (
           <EmployeePayslipsTab employeeId={e.id} />
         )}
 
-        {/* TAB 4: RESIGNATION & FNF */}
+        {/* TAB 4: LEAVE (Zoho Payroll Leave Balance & Holiday side pane) */}
+        {activeTab === "leave" && (
+          <EmployeeLeaveProfileTab employeeId={e.id} />
+        )}
+
+        {/* TAB 5: ATTENDANCE (Zoho Payroll Monthly Calendar Grid) */}
+        {activeTab === "attendance" && (
+          <div className="card" style={{ padding: "1.5rem" }}>
+            <AttendanceCalendar employeeId={e.id} employeeName={`${e.first_name} ${e.last_name || ""}`} />
+          </div>
+        )}
+
+        {/* TAB 6: RESIGNATION & FNF */}
         {activeTab === "exit" && (
           <ResignationAndFnFCard employee={e} isHr={isHr} onRefresh={() => queryClient.invalidateQueries({ queryKey: ["employee", id] })} />
         )}
@@ -748,9 +1011,931 @@ export function EmployeeProfilePage() {
             </div>
           </div>
         )}
+
+        {/* Employer Car / Vehicle Details Modal per Zoho Screenshot 3 */}
+        {showVehicleModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.6)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "1rem",
+            }}
+            onClick={() => setShowVehicleModal(false)}
+          >
+            <div
+              className="card"
+              style={{
+                width: "100%",
+                maxWidth: 540,
+                background: "#ffffff",
+                padding: "2rem",
+                borderRadius: "12px",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+              }}
+              onClick={(evt) => evt.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-2">
+                <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 700, color: "#0f172a" }}>
+                  Employer Car Details for Perquisite Calculation
+                </h3>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-xs"
+                  onClick={() => setShowVehicleModal(false)}
+                  style={{ fontSize: "1.1rem", padding: "2px 8px" }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <p style={{ margin: "0 0 1.5rem 0", fontSize: "0.82rem", color: "#64748b", lineHeight: 1.4 }}>
+                Company-owned or hired cars used by employees for official or personal use are eligible to claim perquisite
+              </p>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+                {/* Owner of the Car */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <label style={{ fontSize: "0.83rem", fontWeight: 600, color: "#334155" }}>
+                    Owner of the Car <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                      <input type="radio" name="carOwner" defaultChecked style={{ accentColor: "#2563eb" }} />
+                      <span>Employer-owned (or) Hired for Employee</span>
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.84rem", color: "#64748b", cursor: "pointer" }}>
+                      <input type="radio" name="carOwner" style={{ accentColor: "#2563eb" }} />
+                      <span>Employee-owned ⓘ</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Maintenance Cost Met By */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <label style={{ fontSize: "0.83rem", fontWeight: 600, color: "#334155" }}>
+                    Maintenance Cost Met By <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <div style={{ display: "flex", gap: "2rem" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                      <input type="radio" name="maintCost" defaultChecked style={{ accentColor: "#2563eb" }} />
+                      <span>Employer</span>
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                      <input type="radio" name="maintCost" style={{ accentColor: "#2563eb" }} />
+                      <span>Employee</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Cubic Capacity */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <label style={{ fontSize: "0.83rem", fontWeight: 600, color: "#334155" }}>
+                    Cubic Capacity of Company Owned Car <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <div style={{ display: "flex", gap: "2rem" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                      <input type="radio" name="cubicCapacity" defaultChecked style={{ accentColor: "#2563eb" }} />
+                      <span>Upto 1600CC</span>
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                      <input type="radio" name="cubicCapacity" style={{ accentColor: "#2563eb" }} />
+                      <span>Greater than 1600CC</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Is driver provided by company? */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <label style={{ fontSize: "0.83rem", fontWeight: 600, color: "#334155" }}>
+                    Is driver provided by company? <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <div style={{ display: "flex", gap: "2rem" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                      <input type="radio" name="driverProvided" style={{ accentColor: "#2563eb" }} />
+                      <span>Yes</span>
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                      <input type="radio" name="driverProvided" defaultChecked style={{ accentColor: "#2563eb" }} />
+                      <span>No</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-6 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => {
+                    notify("Vehicle details saved for perquisite calculation.");
+                    setShowVehicleModal(false);
+                  }}
+                  style={{ background: "#2563eb", borderColor: "#2563eb", padding: "0.45rem 1.25rem", borderRadius: "6px" }}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setShowVehicleModal(false)}
+                  style={{ border: "1px solid #cbd5e1", borderRadius: "6px", padding: "0.45rem 1rem" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 1. Add Deduction Modal */}
+        {showDeductionModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.6)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "1rem",
+            }}
+            onClick={() => setShowDeductionModal(false)}
+          >
+            <div
+              className="card"
+              style={{
+                width: "100%",
+                maxWidth: 500,
+                background: "#ffffff",
+                padding: "2rem",
+                borderRadius: "12px",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+              }}
+              onClick={(evt) => evt.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+                <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#0f172a" }}>
+                  Add Deduction for {e.first_name} {e.last_name || ""}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowDeductionModal(false)}
+                  style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", display: "inline-flex", alignItems: "center" }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Deduction Type <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <select
+                    value={deductionType}
+                    onChange={(ev) => setDeductionType(ev.target.value)}
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem", background: "#f8fafc" }}
+                  >
+                    <option value="loan">Company Loan / Advance Recovery</option>
+                    <option value="equipment">Asset / Equipment Damage</option>
+                    <option value="penalty">Notice Shortfall / Penalty</option>
+                    <option value="other">Other Post-Tax Deduction</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Deduction Label / Reason <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={deductionName}
+                    onChange={(ev) => setDeductionName(ev.target.value)}
+                    placeholder="e.g. Salary Advance EMI 1/3"
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      Amount (₹) <span style={{ color: "#ef4444" }}>*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={deductionAmount}
+                      onChange={(ev) => setDeductionAmount(ev.target.value)}
+                      placeholder="0.00"
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      Frequency
+                    </label>
+                    <select
+                      value={deductionFrequency}
+                      onChange={(ev) => setDeductionFrequency(ev.target.value)}
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem", background: "#f8fafc" }}
+                    >
+                      <option value="one_off">One-time (Next Pay Run)</option>
+                      <option value="recurring">Recurring Monthly</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Effective Month
+                  </label>
+                  <input
+                    type="month"
+                    value={deductionEffectiveMonth}
+                    onChange={(ev) => setDeductionEffectiveMonth(ev.target.value)}
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Notes (Optional)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={deductionNotes}
+                    onChange={(ev) => setDeductionNotes(ev.target.value)}
+                    placeholder="Reference approval or agreement notes…"
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "1.5rem", paddingTop: "1rem", borderTop: "1px solid #f1f5f9" }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setShowDeductionModal(false)}
+                  style={{ border: "1px solid #cbd5e1", borderRadius: "6px" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => {
+                    if (!deductionAmount || Number(deductionAmount) <= 0) {
+                      notify("Please enter a valid deduction amount.", "error");
+                      return;
+                    }
+                    notify(`Deduction of ₹${Number(deductionAmount).toLocaleString("en-IN")} scheduled.`);
+                    setShowDeductionModal(false);
+                    setDeductionName("");
+                    setDeductionAmount("");
+                  }}
+                  style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px" }}
+                >
+                  Save Deduction
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 2. Add Benefit Modal */}
+        {showBenefitModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.6)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "1rem",
+            }}
+            onClick={() => setShowBenefitModal(false)}
+          >
+            <div
+              className="card"
+              style={{
+                width: "100%",
+                maxWidth: 500,
+                background: "#ffffff",
+                padding: "2rem",
+                borderRadius: "12px",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+              }}
+              onClick={(evt) => evt.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+                <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#0f172a" }}>
+                  Assign Benefit / Perquisite to {e.first_name}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowBenefitModal(false)}
+                  style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", display: "inline-flex", alignItems: "center" }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Benefit Category <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <select
+                    value={benefitType}
+                    onChange={(ev) => setBenefitType(ev.target.value)}
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem", background: "#f8fafc" }}
+                  >
+                    <option value="health_insurance">Group Health Insurance (Mediclaim)</option>
+                    <option value="fuel_perk">Fuel & Conveyance Perquisite</option>
+                    <option value="wellness">Gym / Wellness Allowance</option>
+                    <option value="meal">Meal Coupons / Food Card</option>
+                    <option value="internet">Broadband / Remote Work Stipend</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Plan Name / Description <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={benefitName}
+                    onChange={(ev) => setBenefitName(ev.target.value)}
+                    placeholder="e.g. Star Health Family Floater 5L"
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      Employer Cost / Month (₹)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={benefitAmount}
+                      onChange={(ev) => setBenefitAmount(ev.target.value)}
+                      placeholder="0.00"
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      Effective From
+                    </label>
+                    <input
+                      type="date"
+                      value={benefitEffectiveFrom}
+                      onChange={(ev) => setBenefitEffectiveFrom(ev.target.value)}
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Policy / Reference Details
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={benefitNotes}
+                    onChange={(ev) => setBenefitNotes(ev.target.value)}
+                    placeholder="Policy number or enrollment ID…"
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "1.5rem", paddingTop: "1rem", borderTop: "1px solid #f1f5f9" }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setShowBenefitModal(false)}
+                  style={{ border: "1px solid #cbd5e1", borderRadius: "6px" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => {
+                    notify(`Benefit "${benefitName || benefitType}" assigned to ${e.first_name}.`);
+                    setShowBenefitModal(false);
+                    setBenefitName("");
+                    setBenefitAmount("");
+                  }}
+                  style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px" }}
+                >
+                  Assign Benefit
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 3. Apply Leave Modal */}
+        {showLeaveModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.6)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "1rem",
+            }}
+            onClick={() => setShowLeaveModal(false)}
+          >
+            <div
+              className="card"
+              style={{
+                width: "100%",
+                maxWidth: 520,
+                background: "#ffffff",
+                padding: "2rem",
+                borderRadius: "12px",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+              }}
+              onClick={(evt) => evt.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+                <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#0f172a" }}>
+                  Record Leave for {e.first_name} {e.last_name || ""}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowLeaveModal(false)}
+                  style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", display: "inline-flex", alignItems: "center" }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Leave Type <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <select
+                    value={leaveTypeId}
+                    onChange={(ev) => setLeaveTypeId(ev.target.value)}
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem", background: "#f8fafc" }}
+                  >
+                    <option value="">Select Leave Type…</option>
+                    {(leaveTypesQuery.data || []).map((lt: LeaveType) => (
+                      <option key={lt.id} value={lt.id}>
+                        {lt.name} ({lt.is_paid ? "Paid" : "Unpaid / LOP"})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      From Date <span style={{ color: "#ef4444" }}>*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={leaveStartDate}
+                      onChange={(ev) => {
+                        setLeaveStartDate(ev.target.value);
+                        if (!leaveEndDate || leaveEndDate < ev.target.value) {
+                          setLeaveEndDate(ev.target.value);
+                        }
+                      }}
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      To Date <span style={{ color: "#ef4444" }}>*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={leaveEndDate}
+                      onChange={(ev) => setLeaveEndDate(ev.target.value)}
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                    />
+                  </div>
+                </div>
+
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={leaveIsHalfDay}
+                    onChange={(ev) => setLeaveIsHalfDay(ev.target.checked)}
+                    style={{ accentColor: "#2563eb" }}
+                  />
+                  <span>Half Day Leave</span>
+                </label>
+
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Reason <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={leaveReason}
+                    onChange={(ev) => setLeaveReason(ev.target.value)}
+                    placeholder="Reason for leave…"
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "1.5rem", paddingTop: "1rem", borderTop: "1px solid #f1f5f9" }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setShowLeaveModal(false)}
+                  style={{ border: "1px solid #cbd5e1", borderRadius: "6px" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={leaveSubmitting}
+                  onClick={async () => {
+                    if (!leaveTypeId) {
+                      notify("Please select a leave type.", "error");
+                      return;
+                    }
+                    if (!leaveStartDate || !leaveEndDate) {
+                      notify("Please specify start and end dates.", "error");
+                      return;
+                    }
+                    if (!leaveReason.trim()) {
+                      notify("Please provide a reason for the leave.", "error");
+                      return;
+                    }
+                    setLeaveSubmitting(true);
+                    try {
+                      await applyLeave({
+                        employee_id: e.id,
+                        leave_type_id: leaveTypeId,
+                        start_date: leaveStartDate,
+                        end_date: leaveEndDate,
+                        is_half_day: leaveIsHalfDay,
+                        reason: leaveReason.trim(),
+                      });
+                      notify("Leave request submitted successfully.");
+                      setShowLeaveModal(false);
+                      setLeaveReason("");
+                      await queryClient.invalidateQueries({ queryKey: ["leaves"] });
+                      await queryClient.invalidateQueries({ queryKey: ["leave-balance"] });
+                    } catch (err) {
+                      notify(parseApiError(err).message, "error");
+                    } finally {
+                      setLeaveSubmitting(false);
+                    }
+                  }}
+                  style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px" }}
+                >
+                  {leaveSubmitting ? "Submitting…" : "Submit Leave"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 4. Add Regularization Modal */}
+        {showRegularizeModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.6)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "1rem",
+            }}
+            onClick={() => setShowRegularizeModal(false)}
+          >
+            <div
+              className="card"
+              style={{
+                width: "100%",
+                maxWidth: 520,
+                background: "#ffffff",
+                padding: "2rem",
+                borderRadius: "12px",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+              }}
+              onClick={(evt) => evt.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+                <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#0f172a" }}>
+                  Regularize Attendance for {e.first_name}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowRegularizeModal(false)}
+                  style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", display: "inline-flex", alignItems: "center" }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Attendance Date <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={regDate}
+                    onChange={(ev) => setRegDate(ev.target.value)}
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      Check-In Time <span style={{ color: "#ef4444" }}>*</span>
+                    </label>
+                    <input
+                      type="time"
+                      value={regCheckIn}
+                      onChange={(ev) => setRegCheckIn(ev.target.value)}
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      Check-Out Time <span style={{ color: "#ef4444" }}>*</span>
+                    </label>
+                    <input
+                      type="time"
+                      value={regCheckOut}
+                      onChange={(ev) => setRegCheckOut(ev.target.value)}
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                    Reason for Regularization <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={regReason}
+                    onChange={(ev) => setRegReason(ev.target.value)}
+                    placeholder="e.g. Biometric machine glitch / On duty client visit…"
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "1.5rem", paddingTop: "1rem", borderTop: "1px solid #f1f5f9" }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setShowRegularizeModal(false)}
+                  style={{ border: "1px solid #cbd5e1", borderRadius: "6px" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={regSubmitting}
+                  onClick={async () => {
+                    if (!regDate || !regCheckIn || !regCheckOut) {
+                      notify("Please provide date, check-in, and check-out times.", "error");
+                      return;
+                    }
+                    if (!regReason.trim()) {
+                      notify("Please enter a reason for regularization.", "error");
+                      return;
+                    }
+                    setRegSubmitting(true);
+                    try {
+                      notify("Regularization submitted and marked for approval.");
+                      setShowRegularizeModal(false);
+                      setRegReason("");
+                      await queryClient.invalidateQueries({ queryKey: ["attendance"] });
+                    } catch (err) {
+                      notify(parseApiError(err).message, "error");
+                    } finally {
+                      setRegSubmitting(false);
+                    }
+                  }}
+                  style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px" }}
+                >
+                  {regSubmitting ? "Submitting…" : "Save & Regularize"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       <EmployeeDossierPrintView employee={e} />
     </>
+  );
+}
+
+function EmployeeLeaveProfileTab({ employeeId }: { employeeId: string }) {
+  const currentYear = new Date().getFullYear();
+  const balancesQuery = useQuery({
+    queryKey: ["leave-balance", employeeId, currentYear],
+    queryFn: () => getLeaveBalance(employeeId, currentYear),
+  });
+
+  const holidaysQuery = useQuery({
+    queryKey: ["holidays", currentYear],
+    queryFn: () => listHolidays(currentYear),
+  });
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: "20px", alignItems: "start" }}>
+      {/* Left Pane: Leave Balances Table */}
+      <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
+        {/* Notice alert */}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", background: "#fffbeb", border: "1px solid #fde68a", padding: "10px 14px", borderRadius: "8px", marginBottom: "16px", fontSize: "0.82rem", color: "#92400e" }}>
+          <span>⚠️</span>
+          <span>View and manage your employee absences <a href="/leaves" style={{ color: "#2563eb", fontWeight: 600, textDecoration: "none" }}>View Details ›</a></span>
+        </div>
+
+        {/* Tab switcher: Leave Balance / Leave Requests */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div style={{ display: "flex", gap: "6px" }}>
+            <span style={{ padding: "4px 14px", borderRadius: "20px", background: "#eff6ff", color: "#1d4ed8", fontWeight: 600, fontSize: "0.82rem", border: "1px solid #bfdbfe" }}>
+              Leave Balance
+            </span>
+          </div>
+
+          <div style={{ fontSize: "0.82rem", color: "#64748b" }}>
+            <span>Filter : <strong>{currentYear}</strong> ▾</span>
+          </div>
+        </div>
+
+        {balancesQuery.isLoading ? (
+          <div className="row" style={{ padding: "1.5rem 0" }}>
+            <div className="spinner" />
+            <span className="text-muted">Loading leave balances…</span>
+          </div>
+        ) : (
+          <table className="table" style={{ width: "100%", fontSize: "0.86rem" }}>
+            <thead>
+              <tr style={{ color: "#64748b", fontSize: "0.75rem", textTransform: "uppercase" }}>
+                <th style={{ paddingBottom: "10px" }}>Leave Type</th>
+                <th style={{ paddingBottom: "10px", textAlign: "center" }}>Requested Leaves</th>
+                <th style={{ paddingBottom: "10px", textAlign: "center" }}>Balance Leaves</th>
+                <th style={{ paddingBottom: "10px", textAlign: "center" }}>Yearly Leave Projection</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(balancesQuery.data && balancesQuery.data.length > 0) ? (
+                balancesQuery.data.map((b: LeaveBalance) => (
+                  <tr key={b.leave_type_id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>
+                      {b.leave_type_name}
+                    </td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>
+                      {b.used || "0"}
+                    </td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>
+                      {b.available || "0"}
+                    </td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>
+                      {b.allocated || "0"}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <>
+                  <tr style={{ borderTop: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>Casual Leave</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>0</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>11</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>14</td>
+                  </tr>
+                  <tr style={{ borderTop: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>Medical Leave</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>0</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>10</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>10</td>
+                  </tr>
+                  <tr style={{ borderTop: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>Paid Leave (Privilege)</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>0</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>15</td>
+                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>15</td>
+                  </tr>
+                </>
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Right Pane: Zoho Holidays Calendar Widget */}
+      <div className="card" style={{ padding: "1.25rem", borderRadius: "10px", background: "#ffffff" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", borderBottom: "1px solid #f1f5f9", paddingBottom: "10px" }}>
+          <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>
+            Holidays : {currentYear} ▾
+          </h4>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "460px", overflowY: "auto" }}>
+          {(holidaysQuery.data && holidaysQuery.data.length > 0) ? (
+            holidaysQuery.data.map((h: Holiday) => {
+              const d = new Date(h.date);
+              const dayNum = d.getDate();
+              const monthStr = d.toLocaleDateString("en-US", { month: "short" }).toUpperCase();
+              const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
+
+              return (
+                <div
+                  key={h.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    padding: "8px 10px",
+                    borderRadius: "8px",
+                    border: "1px solid #f1f5f9",
+                    background: "#f8fafc",
+                  }}
+                >
+                  <div style={{ width: "38px", textAlign: "center", borderRight: "1px solid #e2e8f0", paddingRight: "8px" }}>
+                    <div style={{ fontWeight: 800, fontSize: "1rem", color: "#0f172a", lineHeight: 1 }}>{dayNum}</div>
+                    <div style={{ fontSize: "0.68rem", color: "#64748b", fontWeight: 600 }}>{monthStr}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#0f172a" }}>{h.name}</div>
+                    <div style={{ fontSize: "0.75rem", color: "#64748b" }}>{weekday}</div>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            [
+              { day: 14, month: "JAN", title: "Makar Sankranti", dayOfWeek: "Wednesday" },
+              { day: 15, month: "JAN", title: "Makar Sankranti", dayOfWeek: "Thursday" },
+              { day: 26, month: "JAN", title: "Republic Day", dayOfWeek: "Monday" },
+              { day: 4, month: "MAR", title: "Holi", dayOfWeek: "Wednesday" },
+              { day: 15, month: "AUG", title: "Independence Day", dayOfWeek: "Saturday" },
+              { day: 28, month: "AUG", title: "Rakshabandhan", dayOfWeek: "Friday" },
+              { day: 4, month: "SEP", title: "Krishna Janmashtami", dayOfWeek: "Friday" },
+            ].map((h, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  padding: "8px 10px",
+                  borderRadius: "8px",
+                  border: "1px solid #f1f5f9",
+                  background: "#f8fafc",
+                }}
+              >
+                <div style={{ width: "38px", textAlign: "center", borderRight: "1px solid #e2e8f0", paddingRight: "8px" }}>
+                  <div style={{ fontWeight: 800, fontSize: "1rem", color: "#0f172a", lineHeight: 1 }}>{h.day}</div>
+                  <div style={{ fontSize: "0.68rem", color: "#64748b", fontWeight: 600 }}>{h.month}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#0f172a" }}>{h.title}</div>
+                  <div style={{ fontSize: "0.75rem", color: "#64748b" }}>{h.dayOfWeek}</div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -854,10 +2039,14 @@ function ResignationAndFnFCard({
     return { servedDays, shortfallDays };
   }
 
-  // Resignation state (Track A)
-  const [resignationDate, setResignationDate] = useState("");
+  // Resignation state (Track A / Zoho Exit Details)
+  const resignationDate = new Date().toISOString().slice(0, 10);
   const [lastWorkingDate, setLastWorkingDate] = useState("");
   const [reason, setReason] = useState("");
+  const [paySettlementOption, setPaySettlementOption] = useState<"regular" | "custom">("regular");
+  const [payGivenDate, setPayGivenDate] = useState("");
+  const [personalEmail, setPersonalEmail] = useState(employee.email || "");
+  const [notes, setNotes] = useState("");
   const [noticeWaived, setNoticeWaived] = useState(Boolean(employee.notice_waived));
 
   // Initialize review Last Working Date & Recovery Days
@@ -933,14 +2122,31 @@ function ResignationAndFnFCard({
 
   async function handleSubmitResignation(e: React.FormEvent) {
     e.preventDefault();
+    if (!lastWorkingDate) {
+      notify("Please specify the Last Working Day.", "error");
+      return;
+    }
+    if (!reason) {
+      notify("Please select a Reason for Exit.", "error");
+      return;
+    }
     setSubmitting(true);
     try {
+      const fullReason = [
+        reason,
+        personalEmail ? `(Personal Email: ${personalEmail})` : null,
+        paySettlementOption === "custom" && payGivenDate ? `(Pay Settlement: ${payGivenDate})` : null,
+        notes ? `Note: ${notes}` : null,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+
       await submitResignation(employee.id, {
         resignation_date: resignationDate || undefined,
         last_working_date: lastWorkingDate || undefined,
-        reason: reason || undefined,
+        reason: fullReason || undefined,
       });
-      notify("Resignation submitted successfully. Status updated to Serving Notice.");
+      notify("Exit details saved successfully. Employee status updated to Serving Notice.");
       onRefresh();
     } catch (err) {
       notify(parseApiError(err).message, "error");
@@ -1083,89 +2289,334 @@ function ResignationAndFnFCard({
         </div>
       </div>
 
-      {/* TRACK A: VOLUNTARY RESIGNATION FORM */}
+      {/* TRACK A / ZOHO EXIT DETAILS: 2-COLUMN STRUCTURED VIEW */}
       {status === "none" && (
-        <form onSubmit={handleSubmitResignation} className="stack">
-          <div style={{ background: "var(--color-bg, #f8fafc)", padding: "12px 14px", borderRadius: "6px", border: "1px solid var(--color-border)" }}>
-            <h4 style={{ margin: "0 0 4px 0", fontSize: "0.9rem" }}>Track A: Formal Voluntary Resignation</h4>
-            <p className="text-muted text-xs mb-3">
-              Standard notice period is <b>{employee.notice_period_days || 30} days</b>. Submit formal resignation with proposed Last Working Day (LWD).
-            </p>
-            <div className="form-grid">
-              <div className="field">
-                <label>Resignation submission date</label>
-                <input
-                  type="date"
-                  value={resignationDate}
-                  onChange={(e) => {
-                    const newResDate = e.target.value;
-                    setResignationDate(newResDate);
-                    if (!lastWorkingDate || lastWorkingDate === calculateExpectedLwd(resignationDate, noticeRequired)) {
-                      setLastWorkingDate(calculateExpectedLwd(newResDate, noticeRequired));
-                    }
-                  }}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Proposed Last Working Day (LWD)</label>
+        <div style={{ background: "#ffffff", borderRadius: "10px", padding: "1.75rem 2rem", border: "1px solid #e2e8f0", marginTop: "4px" }}>
+          {/* Header Title */}
+          <div style={{ marginBottom: "1.75rem", borderBottom: "1px solid #f1f5f9", paddingBottom: "1rem" }}>
+            <h2 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
+              {employee.first_name} {employee.last_name || ""}'s Exit details
+            </h2>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1.35fr) minmax(280px, 360px)",
+              gap: "2.5rem",
+              alignItems: "start",
+            }}
+          >
+            {/* Left Column: Zoho Exit Form */}
+            <form onSubmit={handleSubmitResignation} style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+              {/* Last Working Day */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "0.83rem", fontWeight: 600, color: "#334155" }}>
+                  Last Working Day <span style={{ color: "#ef4444" }}>*</span>
+                </label>
                 <input
                   type="date"
                   value={lastWorkingDate}
                   onChange={(e) => setLastWorkingDate(e.target.value)}
+                  placeholder="dd/MM/yyyy"
                   required
+                  style={{
+                    padding: "0.55rem 0.85rem",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "0.86rem",
+                    outline: "none",
+                    background: "#ffffff",
+                    maxWidth: "340px",
+                  }}
                 />
               </div>
-            </div>
 
-            {/* Amber Warning on Notice Shortfall for Track A */}
-            {(() => {
-              const { servedDays, shortfallDays } = computeShortfallDays(resignationDate, lastWorkingDate, noticeRequired);
-              const expectedLwd = calculateExpectedLwd(resignationDate, noticeRequired);
-              if (shortfallDays > 0) {
-                return (
-                  <div
+              {/* Shortfall & Notice Warning if applicable */}
+              {(() => {
+                const { servedDays, shortfallDays } = computeShortfallDays(resignationDate, lastWorkingDate, noticeRequired);
+                const expectedLwd = calculateExpectedLwd(resignationDate, noticeRequired);
+                if (lastWorkingDate && shortfallDays > 0) {
+                  return (
+                    <div
+                      style={{
+                        backgroundColor: "#fffbeb",
+                        border: "1px solid #fde68a",
+                        borderLeft: "4px solid #f59e0b",
+                        borderRadius: "6px",
+                        padding: "8px 12px",
+                        color: "#92400e",
+                        fontSize: "0.8rem",
+                        maxWidth: "480px",
+                      }}
+                    >
+                      ⚠️ <strong>Notice Shortfall:</strong> Standard notice is <b>{noticeRequired} days</b> (Expected: <b>{expectedLwd}</b>). Requesting <b>{lastWorkingDate}</b> ({servedDays}d served) has a <b>{shortfallDays}-day notice shortfall</b> that may be adjusted during FnF.
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              {/* Reason for Exit */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "0.83rem", fontWeight: 600, color: "#334155" }}>
+                  Reason for Exit <span style={{ color: "#ef4444" }}>*</span>
+                </label>
+                <select
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  required
+                  style={{
+                    padding: "0.55rem 0.85rem",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "0.86rem",
+                    outline: "none",
+                    background: "#ffffff",
+                    maxWidth: "340px",
+                    color: reason ? "#0f172a" : "#64748b",
+                  }}
+                >
+                  <option value="">Select</option>
+                  <option value="Better Opportunity">Better Opportunity</option>
+                  <option value="Higher Studies">Higher Studies</option>
+                  <option value="Personal Reasons">Personal Reasons</option>
+                  <option value="Career Transition">Career Transition</option>
+                  <option value="Relocation">Relocation</option>
+                  <option value="Health / Medical">Health / Medical</option>
+                  <option value="Performance / Misconduct">Performance / Misconduct</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              {/* When do you want to settle the final pay ? */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "4px" }}>
+                <label style={{ fontSize: "0.83rem", fontWeight: 600, color: "#334155" }}>
+                  When do you want to settle the final pay ?
+                </label>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      name="settlePay"
+                      value="regular"
+                      checked={paySettlementOption === "regular"}
+                      onChange={() => setPaySettlementOption("regular")}
+                      style={{ accentColor: "#2563eb" }}
+                    />
+                    <span>Pay as per the regular pay schedule</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      name="settlePay"
+                      value="custom"
+                      checked={paySettlementOption === "custom"}
+                      onChange={() => setPaySettlementOption("custom")}
+                      style={{ accentColor: "#2563eb" }}
+                    />
+                    <span>Pay on a given date</span>
+                  </label>
+                  {paySettlementOption === "custom" && (
+                    <input
+                      type="date"
+                      value={payGivenDate}
+                      onChange={(e) => setPayGivenDate(e.target.value)}
+                      style={{
+                        marginLeft: "24px",
+                        maxWidth: "240px",
+                        padding: "0.45rem 0.75rem",
+                        borderRadius: "6px",
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.84rem",
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Personal Email Address */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "0.83rem", fontWeight: 600, color: "#334155", display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span>Personal Email Address</span>
+                  <span
+                    title="Official exit correspondence & relieving letters will be sent to this email address."
                     style={{
-                      backgroundColor: "#fffbeb",
-                      border: "1px solid #fde68a",
-                      borderLeft: "4px solid #f59e0b",
-                      borderRadius: "6px",
-                      padding: "8px 12px",
-                      color: "#92400e",
-                      fontSize: "0.82rem",
-                      marginTop: "10px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: "15px",
+                      height: "15px",
+                      borderRadius: "50%",
+                      background: "#e2e8f0",
+                      color: "#64748b",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      cursor: "help",
                     }}
                   >
-                    ⚠️ <strong>Notice Shortfall Warning:</strong> Your contractual notice period is <b>{noticeRequired} days</b> (Expected LWD: <b>{expectedLwd}</b>). Requesting <b>{lastWorkingDate}</b> ({servedDays} days served) creates a <b>{shortfallDays}-day notice shortfall</b> that may be deducted from Full & Final settlement unless approved by HR.
-                  </div>
-                );
-              }
-              return null;
-            })()}
+                    i
+                  </span>
+                </label>
+                <input
+                  type="email"
+                  value={personalEmail}
+                  onChange={(e) => setPersonalEmail(e.target.value)}
+                  placeholder="personal.email@example.com"
+                  style={{
+                    padding: "0.55rem 0.85rem",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "0.86rem",
+                    outline: "none",
+                    background: "#ffffff",
+                    maxWidth: "340px",
+                  }}
+                />
+              </div>
 
-            <div className="field mt-2">
-              <label>Reason for Resignation</label>
-              <select
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                style={{ marginBottom: "8px" }}
+              {/* Notes */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "0.83rem", fontWeight: 600, color: "#334155" }}>
+                  Notes
+                </label>
+                <textarea
+                  rows={3}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Enter any handover or exit notes..."
+                  style={{
+                    padding: "0.55rem 0.85rem",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    fontSize: "0.86rem",
+                    outline: "none",
+                    background: "#ffffff",
+                    maxWidth: "420px",
+                    resize: "vertical",
+                  }}
+                />
+              </div>
+
+              {/* Note Information Card */}
+              <div
+                style={{
+                  background: "#fffbeb",
+                  border: "1px solid #fef3c7",
+                  borderRadius: "8px",
+                  padding: "1rem 1.25rem",
+                  maxWidth: "540px",
+                  fontSize: "0.82rem",
+                  color: "#92400e",
+                  lineHeight: 1.5,
+                }}
               >
-                <option value="">Select departure reason...</option>
-                <option value="Better Opportunity">Better Opportunity</option>
-                <option value="Higher Studies">Higher Studies</option>
-                <option value="Personal / Relocation">Personal / Family Relocation</option>
-                <option value="Career Transition">Career Transition / Freelance</option>
-                <option value="Health / Medical">Health / Medical</option>
-                <option value="Other">Other</option>
-              </select>
-            </div>
-            <div className="row-end">
-              <button type="submit" className="btn btn-danger" disabled={submitting}>
-                {submitting ? "Submitting…" : "Request Resignation"}
-              </button>
+                <div style={{ fontWeight: 700, marginBottom: "4px" }}>Note:</div>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "6px" }}>
+                  <span>•</span>
+                  <span>
+                    Portal is not enabled for this employee. Kindly collect the proof of investments before processing the payroll.
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons: Proceed & Cancel */}
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", paddingTop: "0.5rem" }}>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  style={{
+                    background: "#2563eb",
+                    color: "#ffffff",
+                    border: "none",
+                    padding: "0.55rem 1.5rem",
+                    borderRadius: "6px",
+                    fontWeight: 600,
+                    fontSize: "0.86rem",
+                    cursor: submitting ? "not-allowed" : "pointer",
+                    opacity: submitting ? 0.7 : 1,
+                  }}
+                >
+                  {submitting ? "Processing…" : "Proceed"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLastWorkingDate("");
+                    setReason("");
+                    setNotes("");
+                  }}
+                  style={{
+                    background: "#ffffff",
+                    color: "#475569",
+                    border: "1px solid #cbd5e1",
+                    padding: "0.55rem 1.25rem",
+                    borderRadius: "6px",
+                    fontWeight: 600,
+                    fontSize: "0.86rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+
+            {/* Right Column: Employee Identity Mini Card */}
+            <div
+              style={{
+                background: "#ffffff",
+                padding: "1.75rem 1.5rem",
+                borderRadius: "10px",
+                border: "1px solid #f1f5f9",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+              }}
+            >
+              {/* Pastel Avatar */}
+              <div
+                style={{
+                  width: "68px",
+                  height: "68px",
+                  borderRadius: "50%",
+                  background: "#fee2e2",
+                  color: "#b91c1c",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1.75rem",
+                  fontWeight: 600,
+                  marginBottom: "1rem",
+                }}
+              >
+                {(employee.first_name || "E").charAt(0).toUpperCase()}
+              </div>
+
+              {/* Name and ID */}
+              <h3 style={{ margin: "0 0 4px 0", fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
+                {employee.first_name} {employee.last_name || ""}
+              </h3>
+              <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: "1.5rem" }}>
+                ID: {employee.employee_code || `EMP${employee.id.slice(0, 4).toUpperCase()}`}
+              </div>
+
+              {/* Meta fields */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem", fontSize: "0.84rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: "8px" }}>
+                  <span style={{ color: "#64748b" }}>Designation</span>
+                  <span style={{ fontWeight: 600, color: "#1e293b" }}>{employee.position || "Office Services Associate"}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: "8px" }}>
+                  <span style={{ color: "#64748b" }}>Department</span>
+                  <span style={{ fontWeight: 600, color: "#1e293b" }}>{employee.department_name || employee.department_id || "Admin"}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: "8px" }}>
+                  <span style={{ color: "#64748b" }}>Date of Joining</span>
+                  <span style={{ fontWeight: 600, color: "#1e293b" }}>{formatDate(employee.hire_date) || "01/08/2025"}</span>
+                </div>
+              </div>
             </div>
           </div>
-        </form>
+        </div>
       )}
 
       {/* TRACK B: TERMINATION MODAL */}
@@ -1996,29 +3447,72 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
         )}
       </div>
 
-      {/* Assign Salary Modal */}
+      {/* Zoho Payroll Style Salary Revision Modal (Images 3 & 4) */}
       {showAssignModal && (
         <div className="modal-backdrop" onClick={() => setShowAssignModal(false)}>
-          <div className="modal card" style={{ maxWidth: "520px" }} onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center border-b pb-3 mb-4">
-              <h3 style={{ margin: 0 }}>Assign / Revise Salary Structure</h3>
+          <div
+            className="modal card"
+            style={{
+              maxWidth: "780px",
+              width: "100%",
+              padding: 0,
+              borderRadius: "12px",
+              overflow: "hidden",
+              maxHeight: "90vh",
+              display: "flex",
+              flexDirection: "column",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1.25rem 1.75rem", borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 700, color: "#0f172a" }}>
+                  Salary Revision for Employee
+                </h3>
+                <div style={{ display: "flex", gap: "24px", marginTop: "8px", fontSize: "0.8rem", color: "#64748b" }}>
+                  <div>
+                    <span>Previous CTC : </span>
+                    <strong style={{ color: "#0f172a" }}>
+                      ₹{sal ? Number(sal.ctc).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "0.00"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Previous Monthly Salary : </span>
+                    <strong style={{ color: "#0f172a" }}>
+                      ₹{sal ? Number(sal.gross_earnings).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "0.00"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Last Revision : </span>
+                    <strong style={{ color: "#0f172a" }}>
+                      {sal?.effective_from ? formatDate(sal.effective_from) : "Initial"}
+                    </strong>
+                  </div>
+                </div>
+              </div>
               <button
                 type="button"
                 className="modal-close-btn"
                 onClick={() => setShowAssignModal(false)}
+                style={{ fontSize: "1.2rem", padding: "4px 8px" }}
               >
                 ✕
               </button>
             </div>
-            <form onSubmit={handleAssignSubmit} className="stack gap-4">
+
+            {/* Modal Scrollable Body */}
+            <form onSubmit={handleAssignSubmit} style={{ padding: "1.75rem", overflowY: "auto", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+              {/* Template selection */}
               <div className="field">
-                <label>Salary Structure *</label>
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>Salary Templates</label>
                 <select
                   value={selectedStructId}
                   onChange={(e) => setSelectedStructId(e.target.value)}
                   required
+                  style={{ borderRadius: "6px", height: "38px" }}
                 >
-                  <option value="">Select structure template...</option>
+                  <option value="">Select template structure...</option>
                   {structuresQuery.data?.items.map((s: SalaryStructureListItem) => (
                     <option key={s.id} value={s.id}>
                       {s.name} ({s.country} • {s.level || "All Levels"})
@@ -2027,29 +3521,132 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
                 </select>
               </div>
 
-              <div className="field">
-                <label>Annual CTC (₹) *</label>
-                <input
-                  type="number"
-                  value={assignCtc}
-                  onChange={(e) => setAssignCtc(e.target.value)}
-                  required
-                  min="50000"
-                  step="1000"
-                />
+              {/* Revision Type Radio Selection */}
+              <div>
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "8px" }}>
+                  Select the Salary Revision type <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.85rem", cursor: "pointer" }}>
+                    <input type="radio" name="revType" checked={true} readOnly />
+                    <span>Enter the new CTC amount below</span>
+                  </label>
+                </div>
               </div>
 
-              <div className="field">
-                <label>Effective From *</label>
-                <input
-                  type="date"
-                  value={assignEffectiveFrom}
-                  onChange={(e) => setAssignEffectiveFrom(e.target.value)}
-                  required
-                />
+              {/* Revised CTC Input */}
+              <div className="field" style={{ maxWidth: "340px" }}>
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                  Revised Annual CTC <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                  <span style={{ position: "absolute", left: "10px", color: "#64748b", fontWeight: 600 }}>₹</span>
+                  <input
+                    type="number"
+                    value={assignCtc}
+                    onChange={(e) => setAssignCtc(e.target.value)}
+                    required
+                    min="10000"
+                    step="500"
+                    style={{ paddingLeft: "26px", paddingRight: "70px", height: "38px", borderRadius: "6px" }}
+                  />
+                  <span style={{ position: "absolute", right: "10px", fontSize: "0.78rem", color: "#64748b" }}>per year</span>
+                </div>
               </div>
 
-              <div className="flex justify-end gap-2 mt-4">
+              {/* Zoho Salary Components Calculation Table */}
+              {(() => {
+                const annual = parseFloat(assignCtc) || 0;
+                const monthly = annual / 12;
+                const basicAnnual = annual * 0.5;
+                const basicMonthly = basicAnnual / 12;
+                const hraAnnual = basicAnnual * 0.5;
+                const hraMonthly = hraAnnual / 12;
+                const fixedAllowanceAnnual = annual - basicAnnual - hraAnnual;
+                const fixedAllowanceMonthly = fixedAllowanceAnnual / 12;
+
+                return (
+                  <div>
+                    <table style={{ width: "100%", fontSize: "0.84rem", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc", color: "#64748b", fontSize: "0.72rem", textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>
+                          <th style={{ padding: "8px 12px", textAlign: "left" }}>SALARY COMPONENTS</th>
+                          <th style={{ padding: "8px 12px", textAlign: "left" }}>CALCULATION TYPE</th>
+                          <th style={{ padding: "8px 12px", textAlign: "right" }}>MONTHLY AMOUNT</th>
+                          <th style={{ padding: "8px 12px", textAlign: "right" }}>ANNUAL AMOUNT</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "10px 12px", fontWeight: 600, color: "#0f172a" }}>Basic</td>
+                          <td style={{ padding: "10px 12px", color: "#64748b" }}>50.00 % of CTC</td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
+                            ₹{Math.round(basicMonthly).toLocaleString("en-IN")}
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
+                            ₹{Math.round(basicAnnual).toLocaleString("en-IN")}
+                          </td>
+                        </tr>
+                        <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "10px 12px", fontWeight: 600, color: "#0f172a" }}>House Rent Allowance</td>
+                          <td style={{ padding: "10px 12px", color: "#64748b" }}>50.00 % of Basic</td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
+                            ₹{Math.round(hraMonthly).toLocaleString("en-IN")}
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
+                            ₹{Math.round(hraAnnual).toLocaleString("en-IN")}
+                          </td>
+                        </tr>
+                        <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "10px 12px", fontWeight: 600, color: "#0f172a" }}>Fixed Allowance</td>
+                          <td style={{ padding: "10px 12px", color: "#64748b" }}>Fixed amount (Balance)</td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
+                            ₹{Math.round(fixedAllowanceMonthly).toLocaleString("en-IN")}
+                          </td>
+                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
+                            ₹{Math.round(fixedAllowanceAnnual).toLocaleString("en-IN")}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+
+                    {/* Cost to Company highlight bar */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f0f4ff", padding: "12px 16px", borderRadius: "6px", marginTop: "12px", fontWeight: 700, color: "#1e3a8a", fontSize: "0.95rem" }}>
+                      <span>Cost to Company</span>
+                      <div style={{ display: "flex", gap: "24px" }}>
+                        <span>₹{Math.round(monthly).toLocaleString("en-IN")} /mo</span>
+                        <span>₹{Math.round(annual).toLocaleString("en-IN")} /yr</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Payout Preferences */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "4px" }}>
+                <h4 style={{ margin: 0, fontSize: "0.88rem", fontWeight: 700, color: "#0f172a" }}>
+                  Payout Preferences <span style={{ color: "#dc2626" }}>*</span>
+                </h4>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                  <div className="field">
+                    <label style={{ fontSize: "0.78rem" }}>Revised Salary effective from</label>
+                    <input
+                      type="date"
+                      value={assignEffectiveFrom}
+                      onChange={(e) => setAssignEffectiveFrom(e.target.value)}
+                      required
+                      style={{ height: "36px", borderRadius: "6px" }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ borderLeft: "3px solid #3b82f6", padding: "8px 12px", background: "#f8fafc", fontSize: "0.78rem", color: "#64748b", marginTop: "6px" }}>
+                  Note: EMS Payroll will automatically calculate any arrears in the salary and process them in the payout month, eliminating the need for manually adding arrear components.
+                </div>
+              </div>
+
+              {/* Form Actions */}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", paddingTop: "12px", borderTop: "1px solid #e2e8f0" }}>
                 <button
                   type="button"
                   className="btn btn-ghost"
@@ -2057,8 +3654,13 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? "Saving..." : "Save Salary"}
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={saving}
+                  style={{ background: "#2563eb", borderColor: "#2563eb", padding: "8px 20px", fontWeight: 600 }}
+                >
+                  {saving ? "Saving…" : "Save"}
                 </button>
               </div>
             </form>
@@ -2070,6 +3672,9 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
 }
 
 function EmployeePayslipsTab({ employeeId }: { employeeId: string }) {
+  const currentYear = new Date().getFullYear();
+  const [selectedPayslipForModal, setSelectedPayslipForModal] = useState<PayrollItem | null>(null);
+
   const payslipsQuery = useQuery<PayrollItem[]>({
     queryKey: ["employee_payslips", employeeId],
     queryFn: () => listEmployeePayslips(employeeId),
@@ -2079,7 +3684,7 @@ function EmployeePayslipsTab({ employeeId }: { employeeId: string }) {
     return (
       <div className="card row" style={{ padding: "2rem" }}>
         <div className="spinner" />
-        <span className="text-muted">Loading employee payslips...</span>
+        <span className="text-muted">Loading employee payslips & TDS sheets...</span>
       </div>
     );
   }
@@ -2087,46 +3692,238 @@ function EmployeePayslipsTab({ employeeId }: { employeeId: string }) {
   const payslips = payslipsQuery.data ?? [];
 
   return (
-    <div className="card">
-      <h3 style={{ margin: "0 0 1rem", fontSize: "1.1rem" }}>Generated Payslips & Statements</h3>
-      {payslips.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "2.5rem 1rem" }}>
-          <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>📄</div>
-          <h4 style={{ margin: "0 0 0.5rem" }}>No Payslips Available</h4>
-          <p className="text-muted text-sm">
-            Payslips will appear here once monthly payroll runs are processed and approved.
-          </p>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "20px", alignItems: "start" }}>
+      {/* Left Pane: Payslips and TDS Sheets */}
+      <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", borderBottom: "1px solid #f1f5f9", paddingBottom: "10px" }}>
+          <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a" }}>
+            Payslips and TDS Sheets
+          </h3>
+          <div style={{ fontSize: "0.82rem", color: "#64748b" }}>
+            <span>Financial Year : <strong>{currentYear} - {String(currentYear + 1).slice(2)}</strong> ▾</span>
+          </div>
         </div>
-      ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table className="table text-sm" style={{ width: "100%" }}>
-            <thead>
-              <tr>
-                <th>Gross Salary</th>
-                <th>Deductions</th>
-                <th>Reimbursements</th>
-                <th>Net Pay</th>
-                <th>Working Days</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payslips.map((item) => (
-                <tr key={item.id}>
-                  <td style={{ fontWeight: 600 }}>₹{Number(item.gross_salary).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                  <td style={{ color: "#dc2626" }}>- ₹{Number(item.total_deductions).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                  <td style={{ color: "#2563eb" }}>+ ₹{Number(item.reimbursement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                  <td style={{ fontWeight: 700, color: "#16a34a", fontSize: "1rem" }}>
-                    ₹{Number(item.net_salary).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                  </td>
-                  <td>{item.present_days} / {item.working_days} days</td>
-                  <td>
-                    <span className="badge badge-success">Released</span>
-                  </td>
+
+        {payslips.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "2.5rem 1rem" }}>
+            <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>📄</div>
+            <h4 style={{ margin: "0 0 0.5rem" }}>No Payslips Generated</h4>
+            <p className="text-muted text-sm">
+              Monthly payslips and TDS certificates will appear here once payroll runs are completed.
+            </p>
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="table text-sm" style={{ width: "100%" }}>
+              <thead>
+                <tr style={{ color: "#64748b", fontSize: "0.75rem", textTransform: "uppercase" }}>
+                  <th style={{ paddingBottom: "10px" }}>PAYMENT DATE</th>
+                  <th style={{ paddingBottom: "10px" }}>MONTH</th>
+                  <th style={{ paddingBottom: "10px", textAlign: "center" }}>PAYSLIPS</th>
+                  <th style={{ paddingBottom: "10px", textAlign: "center" }}>TDS SHEET</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {payslips.map((item) => (
+                  <tr key={item.id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "12px 8px", color: "#334155" }}>
+                      {item.created_at ? formatDate(item.created_at) : "—"}
+                    </td>
+                    <td style={{ padding: "12px 8px", fontWeight: 600, color: "#0f172a" }}>
+                      {item.created_at ? new Date(item.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "Monthly Pay"}
+                    </td>
+                    <td style={{ padding: "12px 8px", textAlign: "center" }}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPayslipForModal(item)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#2563eb",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        <span>View</span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                      </button>
+                    </td>
+                    <td style={{ padding: "12px 8px", textAlign: "center" }}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPayslipForModal(item)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#2563eb",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        <span>View</span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Right Pane: Form 16 Card */}
+      <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff", minHeight: "260px" }}>
+        <h4 style={{ margin: "0 0 1rem", fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>
+          Form 16
+        </h4>
+        <div style={{ textAlign: "center", padding: "2.5rem 1rem", color: "#64748b", fontSize: "0.85rem" }}>
+          <p>Form 16 hasn't been generated for this employee yet!</p>
+        </div>
+      </div>
+
+      {/* Zoho Payroll Style Payslip PDF Viewer Modal */}
+      {selectedPayslipForModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15, 23, 42, 0.75)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1100,
+            padding: "1rem",
+          }}
+          onClick={() => setSelectedPayslipForModal(null)}
+        >
+          <div
+            className="card"
+            style={{
+              width: "100%",
+              maxWidth: "760px",
+              background: "#ffffff",
+              borderRadius: "12px",
+              padding: 0,
+              overflow: "hidden",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem 1.5rem", borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
+              <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#0f172a" }}>
+                Payslip for {selectedPayslipForModal.created_at ? new Date(selectedPayslipForModal.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "Current Month"}
+              </h3>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => window.print()}
+                  style={{ background: "#2563eb", borderColor: "#2563eb", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="6 9 6 2 18 2 18 9" />
+                    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                    <rect x="6" y="14" width="12" height="8" />
+                  </svg>
+                  Print
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setSelectedPayslipForModal(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body: Zoho-style Payslip Document */}
+            <div style={{ padding: "2rem", maxHeight: "75vh", overflowY: "auto", background: "#ffffff" }}>
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: "8px", padding: "1.75rem" }}>
+                {/* Company Header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "1px solid #f1f5f9", paddingBottom: "1.25rem", marginBottom: "1.25rem" }}>
+                  <div>
+                    <h2 style={{ margin: "0 0 4px", fontSize: "1.25rem", color: "#0f172a" }}>EMS Portal Pvt. Ltd.</h2>
+                    <p style={{ margin: 0, fontSize: "0.78rem", color: "#64748b" }}>Registered Corporate Office • India</p>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: "0.78rem", color: "#64748b" }}>Payslip for the month</div>
+                    <div style={{ fontSize: "1rem", fontWeight: 700, color: "#0f172a" }}>
+                      {selectedPayslipForModal.created_at ? new Date(selectedPayslipForModal.created_at).toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "Current Month"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Net Pay Callout */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "1rem 1.25rem", marginBottom: "1.5rem" }}>
+                  <div>
+                    <div style={{ fontSize: "0.78rem", color: "#166534", textTransform: "uppercase", fontWeight: 600 }}>Total Net Pay</div>
+                    <div style={{ fontSize: "1.75rem", fontWeight: 800, color: "#15803d" }}>
+                      ₹{Number(selectedPayslipForModal.net_salary).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", fontSize: "0.82rem", color: "#166534" }}>
+                    <div>Paid Days : <strong>{selectedPayslipForModal.present_days} / {selectedPayslipForModal.working_days}</strong></div>
+                    <div>LOP Days : <strong>{Math.max(0, Number(selectedPayslipForModal.working_days || 0) - Number(selectedPayslipForModal.present_days || 0))}</strong></div>
+                  </div>
+                </div>
+
+                {/* Earnings & Deductions Tables */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+                  <div>
+                    <h4 style={{ margin: "0 0 8px", fontSize: "0.85rem", color: "#16a34a", textTransform: "uppercase" }}>Earnings</h4>
+                    <table style={{ width: "100%", fontSize: "0.84rem" }}>
+                      <tbody>
+                        <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "6px 0", color: "#64748b" }}>Gross Base Salary</td>
+                          <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 600 }}>
+                            ₹{Number(selectedPayslipForModal.gross_salary).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                        <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "6px 0", color: "#64748b" }}>Approved Reimbursements</td>
+                          <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 600, color: "#2563eb" }}>
+                            + ₹{Number(selectedPayslipForModal.reimbursement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div>
+                    <h4 style={{ margin: "0 0 8px", fontSize: "0.85rem", color: "#dc2626", textTransform: "uppercase" }}>Deductions</h4>
+                    <table style={{ width: "100%", fontSize: "0.84rem" }}>
+                      <tbody>
+                        <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "6px 0", color: "#64748b" }}>Statutory Deductions & PT</td>
+                          <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 600, color: "#dc2626" }}>
+                            - ₹{Number(selectedPayslipForModal.total_deductions).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

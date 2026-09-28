@@ -6,7 +6,7 @@ import { parseApiError, fieldErrorsFromDetails } from "../../../shared/api/error
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { getMyEmployee, listDepartments, updateEmployee, submitResignation, listEmployees, type Employee } from "../../hr/api";
-import { changePassword, listAdministrators, updateUserRole, type AdminUser } from "../api";
+import { changePassword, listAdministrators, updateUserRole, getMyCompany, updateMyCompany, type AdminUser } from "../api";
 import { changePasswordSchema } from "../schemas";
 
 /**
@@ -659,36 +659,85 @@ function EnterpriseSecuritySection({ notify }: { notify: (msg: string, type?: "s
 }
 
 function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "success" | "error" | "info") => void }) {
+  const queryClient = useQueryClient();
   const [brandColor, setBrandColor] = useState("#2563eb");
-  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [logoWidth, setLogoWidth] = useState<number>(140);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    getMyCompany().then((comp) => {
+      if (comp.logo_url) {
+        setLogoPreview(comp.logo_url);
+      }
+    }).catch(() => {});
+    const savedWidth = localStorage.getItem("ems_brand_logo_width");
+    if (savedWidth) setLogoWidth(Number(savedWidth));
+  }, []);
+
+  async function handleSaveBranding() {
+    setSaving(true);
+    try {
+      if (logoPreview) {
+        await updateMyCompany({ logo_url: logoPreview });
+      }
+      localStorage.setItem("ems_brand_logo_width", String(logoWidth));
+      notify("Branding and payslip logo preferences saved successfully.", "success");
+      await queryClient.invalidateQueries({ queryKey: ["company", "me"] });
+    } catch (err) {
+      notify(parseApiError(err).message || "Failed to save branding preferences", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="card stack mb-6">
-      <div>
-        <h3 style={{ margin: 0 }}>Tenant Branding & Custom Theme</h3>
-        <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
-          Customize company logo and primary theme colors displayed on portal and generated payslips.
-        </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Company Branding & Payslip Document Layout</h3>
+          <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+            Customize your company logo, payslip display width, and primary theme colors.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={handleSaveBranding}
+          disabled={saving}
+          style={{ background: "#2563eb", borderColor: "#2563eb" }}
+        >
+          {saving ? "Saving…" : "Save Branding"}
+        </button>
       </div>
 
       <div className="grid grid-2 gap-6 mt-2">
         <div className="field">
-          <label>Company Logo</label>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <label>Company Logo for Payslips & Reports</label>
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             <div
               style={{
-                width: "56px",
-                height: "56px",
+                width: "80px",
+                height: "64px",
                 borderRadius: "8px",
-                border: "2px dashed var(--color-border, #cbd5e1)",
+                border: "1px solid var(--color-border, #cbd5e1)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                background: "var(--color-surface, #f8fafc)",
-                fontSize: "1.5rem",
+                background: "var(--color-surface, #ffffff)",
+                overflow: "hidden",
+                padding: "4px",
               }}
             >
-              {logoFile ? "🖼️" : "🏢"}
+              {logoPreview ? (
+                <img
+                  src={logoPreview}
+                  alt="Company Logo"
+                  style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                />
+              ) : (
+                <span style={{ fontSize: "1.75rem" }}>🏢</span>
+              )}
             </div>
             <div>
               <input
@@ -698,21 +747,63 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
                 style={{ display: "none" }}
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
-                    setLogoFile(e.target.files[0]);
-                    notify(`Uploaded logo: ${e.target.files[0].name}`, "info");
+                    const file = e.target.files[0];
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                      const dataUrl = ev.target?.result as string;
+                      setLogoPreview(dataUrl);
+                      notify(`Logo loaded: ${file.name}. Click "Save Branding" to apply.`, "info");
+                    };
+                    reader.readAsDataURL(file);
                   }
                 }}
               />
-              <button
-                type="button"
-                className="btn btn-sm btn-outline"
-                onClick={() => document.getElementById("tenant-logo-input")?.click()}
-              >
-                Upload Brand Logo
-              </button>
-              <div className="text-muted text-xs mt-1">Recommended: PNG or SVG 200x200px</div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  onClick={() => document.getElementById("tenant-logo-input")?.click()}
+                >
+                  Upload Brand Logo
+                </button>
+                {logoPreview && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => {
+                      setLogoPreview(null);
+                      notify("Logo cleared. Save branding to apply changes.", "info");
+                    }}
+                    style={{ color: "#dc2626" }}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              <div className="text-muted text-xs mt-1">Accepts PNG, JPG, or SVG. Shows on all generated payslip PDFs.</div>
             </div>
           </div>
+
+          {/* Logo sizing controls */}
+          {logoPreview && (
+            <div style={{ marginTop: "14px", background: "#f8fafc", padding: "10px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "#334155", margin: 0 }}>
+                  Payslip Logo Width: <strong>{logoWidth}px</strong>
+                </label>
+                <span className="text-muted text-xs">(Adjust to fit your logo aspect ratio)</span>
+              </div>
+              <input
+                type="range"
+                min="80"
+                max="260"
+                step="5"
+                value={logoWidth}
+                onChange={(e) => setLogoWidth(Number(e.target.value))}
+                style={{ width: "100%", accentColor: "#2563eb", cursor: "pointer" }}
+              />
+            </div>
+          )}
         </div>
 
         <div className="field">

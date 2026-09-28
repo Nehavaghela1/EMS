@@ -794,7 +794,18 @@ class PayrollRunService:
         processed_count = 0
 
         for emp in employees:
-            salary_record = self.salary_repo.get_in_force(emp.id, company_id, run_date)
+            from calendar import monthrange
+            _, last_day = monthrange(data.year, data.month)
+            month_start = date(data.year, data.month, 1)
+            month_end = date(data.year, data.month, last_day)
+
+            # Check if salary was active at any point in this pay period (effective_from <= month_end)
+            salary_record = self.salary_repo.get_in_force(emp.id, company_id, month_end)
+            if salary_record is None:
+                # Fallback to run_date (month_start) or latest open-ended salary
+                salary_record = self.salary_repo.get_in_force(emp.id, company_id, run_date)
+            if salary_record is None:
+                salary_record = self.salary_repo.get_open_ended(emp.id, company_id)
             if salary_record is None:
                 continue
 
@@ -818,10 +829,6 @@ class PayrollRunService:
             ]
 
             # ── Attendance: calendar days in the payroll month ────────────────
-            from calendar import monthrange
-            _, last_day = monthrange(data.year, data.month)
-            month_start = date(data.year, data.month, 1)
-            month_end = date(data.year, data.month, last_day)
             working_days = Decimal(str(last_day))
 
             # Real LOP from approved unpaid leaves — cross-month intersection

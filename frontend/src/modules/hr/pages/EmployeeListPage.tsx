@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { PageHeader } from "../../../shared/components/PageHeader";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
 import { usePagination } from "../../../shared/hooks/usePagination";
 import { useDebounce } from "../../../shared/hooks/useDebounce";
@@ -10,14 +9,12 @@ import { useAuth } from "../../../app/auth-context";
 import { useHasRole } from "../../../shared/hooks/useRole";
 import { parseApiError } from "../../../shared/api/errors";
 import { listDepartments, listEmployees, updateEmployee, type Employee } from "../api";
-import { listCompanies } from "../../identity/api";
-import { updateUserRole } from "../../identity/api";
-import { formatDate } from "../../../shared/utils/date";
+import { listCompanies, updateUserRole } from "../../identity/api";
 import { getPositionsForDepartment, toTitleCase } from "../constants/departmentPositions";
 
 export function EmployeeListPage() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const isSuperAdmin = useHasRole("super_admin");
   const isOwner = user?.role === "owner";
@@ -84,27 +81,7 @@ export function EmployeeListPage() {
     setQuickPositionValue(emp.position ?? "");
   }
 
-  // Color generator for positions / roles
-  function getPositionBadgeStyle(pos: string | null | undefined) {
-    if (!pos) return { bg: "#f1f5f9", color: "#475569", border: "#cbd5e1" };
-    const p = pos.toLowerCase();
-    if (p.includes("dev") || p.includes("engineer") || p.includes("tech")) {
-      return { bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" };
-    }
-    if (p.includes("sales") || p.includes("marketing") || p.includes("growth")) {
-      return { bg: "#ecfdf5", color: "#047857", border: "#a7f3d0" };
-    }
-    if (p.includes("lead") || p.includes("head") || p.includes("manager") || p.includes("dir")) {
-      return { bg: "#fdf4ff", color: "#86198f", border: "#f5d0fe" };
-    }
-    if (p.includes("hr") || p.includes("admin") || p.includes("people")) {
-      return { bg: "#fff7ed", color: "#c2410c", border: "#fed7aa" };
-    }
-    if (p.includes("design") || p.includes("ui") || p.includes("ux")) {
-      return { bg: "#f5f3ff", color: "#6d28d9", border: "#ddd6fe" };
-    }
-    return { bg: "#f8fafc", color: "#334155", border: "#e2e8f0" };
-  }
+
 
   async function handleSaveQuickPosition() {
     if (!quickEditEmp) return;
@@ -155,109 +132,168 @@ export function EmployeeListPage() {
     }
   }
 
+  // Consistent Zoho-style pastel initial avatar colors
+  function getZohoAvatarColor(name: string) {
+    const palettes = [
+      { bg: "#ffedd5", text: "#c2410c", border: "#fed7aa" }, // Peach / orange
+      { bg: "#ede9fe", text: "#6d28d9", border: "#ddd6fe" }, // Lavender / purple
+      { bg: "#fee2e2", text: "#b91c1c", border: "#fecaca" }, // Coral / red
+      { bg: "#dcfce7", text: "#15803d", border: "#bbf7d0" }, // Mint / green
+      { bg: "#e0f2fe", text: "#0369a1", border: "#bae6fd" }, // Sky blue
+      { bg: "#fef3c7", text: "#b45309", border: "#fde68a" }, // Amber
+      { bg: "#fce7f3", text: "#be185d", border: "#fbcfe8" }, // Pink
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const idx = Math.abs(hash) % palettes.length;
+    return palettes[idx];
+  }
+
+  const [activeViewFilter, setActiveViewFilter] = useState<"active" | "inactive" | "all">("active");
+
   const columns: DataTableColumn<Employee>[] = [
-    { key: "employee_code", label: "Code", render: (e) => e.employee_code },
     {
-      key: "first_name",
-      label: "Name",
+      key: "employee_name",
+      label: "EMPLOYEE NAME",
       sortable: true,
-      render: (e) => (
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 500 }}>
-            {e.first_name}{e.last_name ? " " + e.last_name : ""}
-          </span>
-          {e.system_role === "owner" && (
-            <span
-              style={{
-                display: "inline-flex", alignItems: "center", gap: "3px",
-                padding: "1px 7px", borderRadius: "20px", fontSize: "0.67rem",
-                fontWeight: 700, letterSpacing: "0.02em",
-                background: "#fffbeb", color: "#b45309", border: "1px solid #fcd34d",
-                whiteSpace: "nowrap",
-              }}
-              title="Workspace Owner"
-            >
-              👑 Owner
-            </span>
-          )}
-          {e.system_role === "hr_admin" && (
-            <span
-              style={{
-                display: "inline-flex", alignItems: "center", gap: "3px",
-                padding: "1px 7px", borderRadius: "20px", fontSize: "0.67rem",
-                fontWeight: 700, letterSpacing: "0.02em",
-                background: "#f5f3ff", color: "#6d28d9", border: "1px solid #ddd6fe",
-                whiteSpace: "nowrap",
-              }}
-              title="HR Admin — administrative access"
-            >
-              🛡️ HR Admin
-            </span>
-          )}
-        </div>
-      ),
-    },
-    ...(isSuperAdmin
-      ? [
-          {
-            key: "company_name" as keyof Employee,
-            label: "Company",
-            render: (e: Employee) => (
-              <span className="badge badge-outline" style={{ fontWeight: 600 }}>
-                {e.company_name || "—"}
-              </span>
-            ),
-          },
-        ]
-      : []),
-    { key: "email", label: "Email", render: (e) => e.email },
-    {
-      key: "position",
-      label: "Position",
       render: (e) => {
-        const style = getPositionBadgeStyle(e.position);
+        const fullName = `${e.first_name}${e.last_name ? " " + e.last_name : ""}`;
+        const avatarColor = getZohoAvatarColor(fullName);
+        const initial = e.first_name ? e.first_name.charAt(0).toUpperCase() : "E";
+
         return (
-          <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-            <span
-              className="badge"
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            {/* Pastel circular initial avatar */}
+            <div
               style={{
-                backgroundColor: style.bg,
-                color: style.color,
-                border: `1px solid ${style.border}`,
+                width: "36px",
+                height: "36px",
+                borderRadius: "50%",
+                backgroundColor: avatarColor.bg,
+                color: avatarColor.text,
+                border: `1px solid ${avatarColor.border}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
                 fontWeight: 600,
-                fontSize: "0.75rem",
+                fontSize: "14px",
+                flexShrink: 0,
               }}
             >
-              {e.position ?? "Staff"}
-            </span>
-            {canCreate && (
-              <button
-                className="btn btn-ghost btn-xs"
-                style={{ padding: "0 4px", fontSize: "0.7rem", color: "var(--color-muted, #64748b)" }}
-                title="Quick edit position"
-                onClick={(evt) => {
-                  evt.stopPropagation();
-                  handleOpenQuickEdit(e);
-                }}
-              >
-                ✎
-              </button>
-            )}
+              {initial}
+            </div>
+
+            {/* Two-line: Name - Code on line 1, Designation on line 2 */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <span
+                  style={{
+                    fontWeight: 600,
+                    fontSize: "0.875rem",
+                    color: "#2563eb",
+                    cursor: "pointer",
+                  }}
+                  title="View Profile"
+                >
+                  {fullName} - {e.employee_code}
+                </span>
+
+                {e.system_role === "owner" && (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "3px",
+                      padding: "1px 6px",
+                      borderRadius: "12px",
+                      fontSize: "0.65rem",
+                      fontWeight: 700,
+                      background: "#fffbeb",
+                      color: "#b45309",
+                      border: "1px solid #fcd34d",
+                    }}
+                    title="Workspace Owner"
+                  >
+                    👑 Owner
+                  </span>
+                )}
+                {e.system_role === "hr_admin" && (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "3px",
+                      padding: "1px 6px",
+                      borderRadius: "12px",
+                      fontSize: "0.65rem",
+                      fontWeight: 700,
+                      background: "#f5f3ff",
+                      color: "#6d28d9",
+                      border: "1px solid #ddd6fe",
+                    }}
+                    title="HR Admin"
+                  >
+                    🛡️ HR Admin
+                  </span>
+                )}
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.78rem", color: "#64748b" }}>
+                <span>{e.position || "Staff"}</span>
+                {canCreate && (
+                  <button
+                    className="btn btn-ghost btn-xs"
+                    style={{ padding: "0 2px", fontSize: "0.7rem", color: "#94a3b8" }}
+                    title="Quick edit designation"
+                    onClick={(evt) => {
+                      evt.stopPropagation();
+                      handleOpenQuickEdit(e);
+                    }}
+                  >
+                    ✎
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         );
       },
     },
     {
-      key: "hire_date",
-      label: "Hire date",
-      sortable: true,
-      render: (e) => formatDate(e.hire_date),
+      key: "email",
+      label: "WORK EMAIL",
+      render: (e) => (
+        <span style={{ color: "#334155", fontSize: "0.84rem" }}>{e.email}</span>
+      ),
+    },
+    {
+      key: "department",
+      label: "DEPARTMENT",
+      render: (e) => (
+        <span style={{ color: "#475569", fontSize: "0.84rem" }}>
+          {departmentsQuery.data?.items.find((d) => d.id === e.department_id)?.name || e.company_name || "General"}
+        </span>
+      ),
     },
     {
       key: "is_active",
-      label: "Status",
+      label: "EMPLOYEE STATUS",
       render: (e) => (
-        <span className={"badge " + (e.is_active ? "badge-success" : "badge-muted")}>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            padding: "2px 8px",
+            borderRadius: "4px",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            background: e.is_active ? "#ecfdf5" : "#f1f5f9",
+            color: e.is_active ? "#15803d" : "#64748b",
+            border: `1px solid ${e.is_active ? "#bbf7d0" : "#cbd5e1"}`,
+          }}
+        >
           {e.is_active ? "Active" : "Inactive"}
         </span>
       ),
@@ -270,7 +306,7 @@ export function EmployeeListPage() {
           <button
             type="button"
             className="btn btn-sm btn-ghost"
-            style={{ padding: "0.2rem 0.5rem" }}
+            style={{ padding: "0.2rem 0.5rem", color: "#64748b" }}
             onClick={(evt) => {
               evt.stopPropagation();
               setActionMenuOpen(actionMenuOpen === e.id ? null : e.id);
@@ -287,47 +323,39 @@ export function EmployeeListPage() {
                 background: "#ffffff",
                 border: "1px solid var(--color-border, #e2e8f0)",
                 borderRadius: "8px",
-                boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
                 zIndex: 50,
-                minWidth: "200px",
+                minWidth: "190px",
                 padding: "6px 0",
-                textAlign: "left"
+                textAlign: "left",
               }}
-              onMouseLeave={() => setActionMenuOpen(null)}
+              onClick={(evt) => evt.stopPropagation()}
             >
               <button
                 type="button"
                 style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
                 onClick={(evt) => { evt.stopPropagation(); navigate(`/employees/${e.id}`); }}
               >
-                <span>👁️</span> <span>View Full Profile</span>
+                <span>👤</span> <span>View Profile</span>
               </button>
+              {canCreate && (
+                <button
+                  type="button"
+                  style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                  onClick={(evt) => { evt.stopPropagation(); navigate(`/employees/${e.id}/edit`); }}
+                >
+                  <span>✎</span> <span>Edit Details</span>
+                </button>
+              )}
               {canCreate && (
                 <button
                   type="button"
                   style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
                   onClick={(evt) => { evt.stopPropagation(); handleOpenQuickEdit(e); setActionMenuOpen(null); }}
                 >
-                  <span>✎</span> <span>Quick Edit Position</span>
+                  <span>🏷️</span> <span>Edit Designation</span>
                 </button>
               )}
-              {e.invitation_status !== "activated" && (
-                <button
-                  type="button"
-                  style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                  onClick={(evt) => { evt.stopPropagation(); notify("Resend Invite flow triggered"); setActionMenuOpen(null); }}
-                >
-                  <span>✉️</span> <span>Resend Invite</span>
-                </button>
-              )}
-              <button
-                type="button"
-                style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                onClick={(evt) => { evt.stopPropagation(); navigate(`/employees/${e.id}`); notify("Redirected to profile to print dossier"); }}
-              >
-                <span>📄</span> <span>Download Dossier</span>
-              </button>
-              {/* Owner-only: security role actions — separate from job designation */}
               {isOwner && e.user_id && e.user_id !== user?.id && (
                 <>
                   <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
@@ -351,14 +379,6 @@ export function EmployeeListPage() {
                   )}
                 </>
               )}
-              <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
-              <button
-                type="button"
-                style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#dc2626", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                onClick={(evt) => { evt.stopPropagation(); notify("Deactivate flow initiated."); setActionMenuOpen(null); }}
-              >
-                <span>🚫</span> <span>Deactivate / Archive</span>
-              </button>
             </div>
           )}
         </div>
@@ -367,52 +387,114 @@ export function EmployeeListPage() {
   ];
 
   return (
-    <div>
-      <PageHeader
-        title={isSuperAdmin ? "Platform Employees Directory" : "Employees"}
-        breadcrumb={isSuperAdmin ? "Super Admin / Directory" : "HR"}
-        action={
-          canCreate && (
-            <button className="btn btn-primary" onClick={() => navigate("/employees/new")}>
-              + New employee
-            </button>
-          )
-        }
-      />
-
-      <div className="row mb-4" style={{ gap: "var(--space-3)", flexWrap: "wrap" }}>
-        <input
-          placeholder="Search by name, email or code…"
-          value={q}
-          onChange={(e) => {
-            setQ(e.target.value);
-            setPage(1);
-          }}
-          style={{ minWidth: 240 }}
-        />
-        {isSuperAdmin && (
+    <div style={{ background: "#ffffff", borderRadius: "8px", border: "1px solid #e2e8f0", padding: "20px" }}>
+      {/* Top Zoho Payroll Header: View Dropdown on left, Action buttons on right */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <select
-            value={companyId}
-            onChange={(e) => {
-              const val = e.target.value;
-              setCompanyId(val);
-              setPage(1);
-              if (val) {
-                setSearchParams({ companyId: val });
-              } else {
-                setSearchParams({});
-              }
+            value={activeViewFilter}
+            onChange={(e) => setActiveViewFilter(e.target.value as any)}
+            style={{
+              fontSize: "1.25rem",
+              fontWeight: 700,
+              color: "#0f172a",
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              padding: "0 4px",
+              outline: "none",
             }}
-            style={{ minWidth: 200 }}
           >
-            <option value="">All Companies (Platform-wide)</option>
-            {companiesQuery.data?.items.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.code})
-              </option>
-            ))}
+            <option value="active">Active Employees</option>
+            <option value="inactive">Inactive Employees</option>
+            <option value="all">All Employees</option>
           </select>
-        )}
+        </div>
+
+        {/* Right Zoho Action Toolbar */}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {canCreate && (
+            <button
+              className="btn btn-primary"
+              style={{
+                borderRadius: "6px",
+                padding: "7px 14px",
+                fontSize: "0.85rem",
+                fontWeight: 600,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px",
+                background: "#2563eb",
+                borderColor: "#2563eb",
+              }}
+              onClick={() => navigate("/employees/new")}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>Add</span>
+            </button>
+          )}
+
+          {/* Quick more action button */}
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{ padding: "6px 10px", color: "#64748b", borderRadius: "6px" }}
+            title="More actions"
+            onClick={() => notify("Export and bulk actions available in Settings.")}
+          >
+            •••
+          </button>
+
+          {/* Filter Icon button */}
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{ padding: "7px 10px", color: "#64748b", borderRadius: "6px" }}
+            title="Toggle Filters"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Sub-toolbar: Search + Quick Department Filter */}
+      <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: "220px", maxWidth: "340px" }}>
+          <input
+            placeholder="Search in Employee…"
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setPage(1);
+            }}
+            style={{
+              paddingLeft: "32px",
+              height: "36px",
+              borderRadius: "6px",
+              fontSize: "0.85rem",
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+            }}
+          />
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#94a3b8"
+            strokeWidth="2"
+            style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)" }}
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </div>
+
         {!isSuperAdmin && (
           <select
             value={departmentId}
@@ -420,8 +502,17 @@ export function EmployeeListPage() {
               setDepartmentId(e.target.value);
               setPage(1);
             }}
+            style={{
+              height: "36px",
+              borderRadius: "6px",
+              border: "1px solid #e2e8f0",
+              fontSize: "0.84rem",
+              padding: "0 10px",
+              minWidth: "160px",
+              background: "#f8fafc",
+            }}
           >
-            <option value="">All departments</option>
+            <option value="">All Departments</option>
             {departmentsQuery.data?.items.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
@@ -429,29 +520,52 @@ export function EmployeeListPage() {
             ))}
           </select>
         )}
-        {/* Role filter — client-side scan; shows admins in 1 click */}
+
+        {isSuperAdmin && (
+          <select
+            value={companyId}
+            onChange={(e) => {
+              setCompanyId(e.target.value);
+              setPage(1);
+            }}
+            style={{
+              height: "36px",
+              borderRadius: "6px",
+              border: "1px solid #e2e8f0",
+              fontSize: "0.84rem",
+              padding: "0 10px",
+              minWidth: "160px",
+              background: "#f8fafc",
+            }}
+          >
+            <option value="">All Companies</option>
+            {companiesQuery.data?.items.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        )}
+
         <select
-          id="dir-role-filter"
           value={roleFilter}
           onChange={(e) => {
             setRoleFilter(e.target.value);
             setPage(1);
           }}
           style={{
-            borderRadius: "8px",
+            height: "36px",
+            borderRadius: "6px",
             border: "1px solid #e2e8f0",
-            padding: "6px 10px",
             fontSize: "0.84rem",
-            color: "#374151",
-            background: roleFilter ? "#f0f4ff" : undefined,
-            fontWeight: roleFilter ? 600 : undefined,
+            padding: "0 10px",
+            background: "#f8fafc",
           }}
         >
-          <option value="">All roles</option>
+          <option value="">All Roles</option>
           <option value="owner">👑 Owner</option>
           <option value="hr_admin">🛡️ HR Admin</option>
           <option value="employee">Employee</option>
-          <option value="manager">Manager</option>
         </select>
       </div>
 
@@ -459,12 +573,18 @@ export function EmployeeListPage() {
         columns={columns}
         page={(() => {
           const raw = employeesQuery.data;
-          if (!raw || !roleFilter) return raw;
-          const cleanRole = roleFilter.toLowerCase();
-          const filtered = raw.items.filter(
-            (e) => !e.system_role || e.system_role.toLowerCase() === cleanRole
-          );
-          return { ...raw, items: filtered };
+          if (!raw) return raw;
+          let items = raw.items;
+          if (activeViewFilter === "active") {
+            items = items.filter((e) => e.is_active);
+          } else if (activeViewFilter === "inactive") {
+            items = items.filter((e) => !e.is_active);
+          }
+          if (roleFilter) {
+            const cleanRole = roleFilter.toLowerCase();
+            items = items.filter((e) => !e.system_role || e.system_role.toLowerCase() === cleanRole);
+          }
+          return { ...raw, items };
         })()}
         isLoading={employeesQuery.isLoading}
         isError={employeesQuery.isError}
@@ -476,7 +596,7 @@ export function EmployeeListPage() {
           setSort(s);
           setPage(1);
         }}
-        emptyMessage={roleFilter ? `No employees with role "${roleFilter}" found.` : "No employees match your search."}
+        emptyMessage="No employees found matching the current filters."
         rowKey={(e) => e.id}
         onRowClick={(e) => navigate(`/employees/${e.id}`)}
         onRowDoubleClick={(e) => navigate(`/employees/${e.id}`)}

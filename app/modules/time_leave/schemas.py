@@ -158,6 +158,7 @@ class HolidayResponse(BaseModel):
 
 
 class HolidayImportRegionalRequest(BaseModel):
+    country: str = "IN"
     state: str = "Gujarat"
     year: int = 2026
 

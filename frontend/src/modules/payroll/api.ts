@@ -156,6 +156,8 @@ export interface PayrollItem {
   paid_leave_days: string;
   lop_days: string;
   reimbursement_amount: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface PayrollRunDetail {

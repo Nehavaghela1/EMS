@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { useAuth } from "../../../app/auth-context";
@@ -8,9 +8,11 @@ import {
   createHoliday,
   deleteHoliday,
   importRegionalHolidays,
+  previewRegionalHolidays,
+  getHolidayRegions,
   type Holiday,
 } from "../api";
-import { listLocations } from "../../identity/api";
+import { listLocations, getMyCompany } from "../../identity/api";
 import { formatDate } from "../../../shared/utils/date";
 
 export function HolidaysPage() {
@@ -32,9 +34,48 @@ export function HolidaysPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Import state
+  const [importCountry, setImportCountry] = useState("IN");
   const [importState, setImportState] = useState("Gujarat");
-  const [importYear, setImportYear] = useState(2026);
+  const [importYear, setImportYear] = useState(selectedYear);
   const [isImporting, setIsImporting] = useState(false);
+  const [showAllPreview, setShowAllPreview] = useState(false);
+
+  // Sync importYear with selectedYear whenever outer year filter changes
+  useEffect(() => {
+    setImportYear(selectedYear);
+  }, [selectedYear]);
+
+  // Query company details to detect company's configured country and state
+  const companyQuery = useQuery({
+    queryKey: ["my-company"],
+    queryFn: getMyCompany,
+    enabled: isHr,
+  });
+
+  // Query all supported countries and their states/regions
+  const regionsQuery = useQuery({
+    queryKey: ["holiday-regions"],
+    queryFn: getHolidayRegions,
+    enabled: isImportModalOpen,
+  });
+
+  // Set defaults based on company country/state when loaded
+  useEffect(() => {
+    if (companyQuery.data) {
+      const coCountry = (companyQuery.data.country || "IN").toUpperCase();
+      setImportCountry(coCountry);
+      if (companyQuery.data.state) {
+        setImportState(companyQuery.data.state);
+      }
+    }
+  }, [companyQuery.data]);
+
+  // Query actual statutory holidays from the backend for the selected country, state & year
+  const regionalPreviewQuery = useQuery({
+    queryKey: ["regional-preview", importCountry, importState, importYear],
+    queryFn: () => previewRegionalHolidays({ country: importCountry, state: importState, year: importYear }),
+    enabled: isImportModalOpen,
+  });
 
   // Query locations
   const locationsQuery = useQuery({
@@ -110,11 +151,13 @@ export function HolidaysPage() {
     setIsImporting(true);
     try {
       const res = await importRegionalHolidays({
+        country: importCountry,
         state: importState,
         year: importYear,
       });
       notify(res.message, "success");
       setIsImportModalOpen(false);
+      setSelectedYear(importYear);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["holidays"] }),
         queryClient.invalidateQueries({ queryKey: ["attendance-calendar"] }),
@@ -129,7 +172,7 @@ export function HolidaysPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", backgroundColor: "#f8fafc" }}>
       <PageHeader
-        title="Holiday Calendar (2026)"
+        title={`Holiday Calendar (${selectedYear})`}
         breadcrumb="Leave & Attendance / Holiday Calendar"
         action={
           isHr && (
@@ -137,7 +180,10 @@ export function HolidaysPage() {
               <button
                 type="button"
                 className="btn btn-sm"
-                onClick={() => setIsImportModalOpen(true)}
+                onClick={() => {
+                  setImportYear(selectedYear);
+                  setIsImportModalOpen(true);
+                }}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -272,22 +318,63 @@ export function HolidaysPage() {
 
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#64748b" }}>Year:</label>
-              <select
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(Number(e.target.value))}
-                style={{
-                  padding: "4px 10px",
-                  borderRadius: "6px",
-                  border: "1px solid #cbd5e1",
-                  fontSize: "0.82rem",
-                  fontWeight: 600,
-                  backgroundColor: "#ffffff",
-                }}
-              >
-                <option value={2025}>2025</option>
-                <option value={2026}>2026</option>
-                <option value={2027}>2027</option>
-              </select>
+              <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid #cbd5e1", borderRadius: "6px", backgroundColor: "#ffffff", overflow: "hidden" }}>
+                <button
+                  type="button"
+                  title="Previous Year"
+                  onClick={() => setSelectedYear((y) => y - 1)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    borderRight: "1px solid #e2e8f0",
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                    fontSize: "0.75rem",
+                    color: "#475569",
+                  }}
+                >
+                  ◀
+                </button>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(Number(e.target.value))}
+                  style={{
+                    padding: "4px 8px",
+                    border: "none",
+                    fontSize: "0.82rem",
+                    fontWeight: 600,
+                    backgroundColor: "transparent",
+                    cursor: "pointer",
+                    outline: "none",
+                  }}
+                >
+                  {Array.from({ length: 16 }, (_, i) => 2020 + i).map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                  {/* Keep current custom year if user navigated outside the 2020-2035 window */}
+                  {(selectedYear < 2020 || selectedYear > 2035) && (
+                    <option value={selectedYear}>{selectedYear}</option>
+                  )}
+                </select>
+                <button
+                  type="button"
+                  title="Next Year"
+                  onClick={() => setSelectedYear((y) => y + 1)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    borderLeft: "1px solid #e2e8f0",
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                    fontSize: "0.75rem",
+                    color: "#475569",
+                  }}
+                >
+                  ▶
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -704,15 +791,65 @@ export function HolidaysPage() {
                 Import standard gazetted statutory public holidays for your regional branch directly into your calendar. The system skips any dates already configured.
               </p>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+                <div>
+                  <label className="form-label" style={{ fontWeight: 600, color: "#334155" }}>Country</label>
+                  <select
+                    value={importCountry}
+                    onChange={(e) => {
+                      const newC = e.target.value;
+                      setImportCountry(newC);
+                      const regInfo = regionsQuery.data?.[newC];
+                      if (regInfo && regInfo.states && regInfo.states.length > 0) {
+                        setImportState(regInfo.states[0]);
+                      }
+                    }}
+                    className="form-input"
+                    style={{ fontWeight: 600 }}
+                  >
+                    {regionsQuery.data ? (
+                      Object.entries(regionsQuery.data).map(([code, info]) => (
+                        <option key={code} value={code}>
+                          {info.name} ({code})
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="IN">India (IN)</option>
+                        <option value="US">United States (US)</option>
+                        <option value="GB">United Kingdom (GB)</option>
+                        <option value="AE">United Arab Emirates (AE)</option>
+                        <option value="SG">Singapore (SG)</option>
+                        <option value="CA">Canada (CA)</option>
+                        <option value="AU">Australia (AU)</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+
                 <div>
                   <label className="form-label" style={{ fontWeight: 600, color: "#334155" }}>State / Region</label>
                   <select
                     value={importState}
                     onChange={(e) => setImportState(e.target.value)}
                     className="form-input"
+                    style={{ fontWeight: 600 }}
                   >
-                    <option value="Gujarat">Gujarat (15 statutory days)</option>
+                    {regionsQuery.data && regionsQuery.data[importCountry]?.states ? (
+                      regionsQuery.data[importCountry].states.map((st) => (
+                        <option key={st} value={st}>
+                          {st}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="Gujarat">Gujarat</option>
+                        <option value="Maharashtra">Maharashtra</option>
+                        <option value="Karnataka">Karnataka</option>
+                        <option value="Delhi">Delhi</option>
+                        <option value="Tamil Nadu">Tamil Nadu</option>
+                      </>
+                    )}
                   </select>
                 </div>
 
@@ -722,8 +859,16 @@ export function HolidaysPage() {
                     value={importYear}
                     onChange={(e) => setImportYear(Number(e.target.value))}
                     className="form-input"
+                    style={{ fontWeight: 600 }}
                   >
-                    <option value={2026}>2026</option>
+                    {Array.from({ length: 16 }, (_, i) => 2020 + i).map((y) => (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    ))}
+                    {(importYear < 2020 || importYear > 2035) && (
+                      <option value={importYear}>{importYear}</option>
+                    )}
                   </select>
                 </div>
               </div>
@@ -736,17 +881,77 @@ export function HolidaysPage() {
                   padding: "12px",
                   fontSize: "0.8rem",
                   color: "#581c87",
+                  maxHeight: "220px",
+                  overflowY: "auto",
                 }}
               >
-                <strong>Preview of Included Gazetted Holidays:</strong>
-                <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
-                  <li>Republic Day (Jan 26)</li>
-                  <li>Holi / Dhuleti (Mar 04)</li>
-                  <li>Independence Day (Aug 15)</li>
-                  <li>Janmashtami (Sep 04)</li>
-                  <li>Diwali & Gujarati New Year (Nov 08 - 09)</li>
-                  <li>Christmas (Dec 25) + 9 others</li>
-                </ul>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                  <strong>
+                    Preview of Gazetted Holidays ({importState}, {importYear}):
+                  </strong>
+                  {regionalPreviewQuery.data && regionalPreviewQuery.data.length > 6 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllPreview(!showAllPreview)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "#7c3aed",
+                        cursor: "pointer",
+                        fontWeight: 700,
+                        fontSize: "0.75rem",
+                        padding: "2px 6px",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      {showAllPreview ? "Show less" : `+${regionalPreviewQuery.data.length - 6} more (View all)`}
+                    </button>
+                  )}
+                </div>
+
+                {regionalPreviewQuery.isLoading ? (
+                  <div style={{ padding: "8px 0", color: "#7c3aed", fontStyle: "italic" }}>
+                    Fetching regional holiday database for {importState} ({importYear})...
+                  </div>
+                ) : !regionalPreviewQuery.data || regionalPreviewQuery.data.length === 0 ? (
+                  <div style={{ padding: "8px 0", color: "#6b7280" }}>
+                    No pre-seeded holidays available for {importState} in {importYear}.
+                  </div>
+                ) : (
+                  <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>
+                    {(showAllPreview
+                      ? regionalPreviewQuery.data
+                      : regionalPreviewQuery.data.slice(0, 6)
+                    ).map((item, idx) => (
+                      <li key={idx} style={{ marginBottom: "3px" }}>
+                        <span style={{ fontWeight: 600 }}>{item.name}</span>{" "}
+                        <span style={{ color: "#6b21a8", fontSize: "0.75rem" }}>
+                          ({formatDate(item.date)})
+                        </span>
+                      </li>
+                    ))}
+                    {!showAllPreview && regionalPreviewQuery.data.length > 6 && (
+                      <li style={{ listStyleType: "none", marginTop: "6px" }}>
+                        <button
+                          type="button"
+                          onClick={() => setShowAllPreview(true)}
+                          style={{
+                            background: "#ede9fe",
+                            border: "1px solid #c4b5fd",
+                            color: "#5b21b6",
+                            borderRadius: "4px",
+                            padding: "2px 8px",
+                            cursor: "pointer",
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                          }}
+                        >
+                          +{regionalPreviewQuery.data.length - 6} more holidays... Click to view all
+                        </button>
+                      </li>
+                    )}
+                  </ul>
+                )}
               </div>
             </div>
 
@@ -773,9 +978,9 @@ export function HolidaysPage() {
                 type="button"
                 className="btn btn-primary"
                 onClick={handleImportRegional}
-                disabled={isImporting}
+                disabled={isImporting || regionalPreviewQuery.isLoading}
               >
-                {isImporting ? "Importing..." : `Import ${importYear} Public Holidays`}
+                {isImporting ? "Importing..." : `Import ${importState} (${importYear}) Holidays`}
               </button>
             </div>
           </div>

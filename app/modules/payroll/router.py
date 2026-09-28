@@ -330,7 +330,7 @@ def get_payroll_run_detail(
     run, items = service.get_run_detail(user.company_id, id)
 
     # An employee cannot see a payslip before the run is approved (Spec 11.9, Gate WP-19)
-    if user.role not in (UserRole.hr_admin, UserRole.super_admin):
+    if user.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
         if run.status != PayrollRunStatus.approved:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

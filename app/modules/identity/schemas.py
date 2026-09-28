@@ -99,6 +99,8 @@ class CompanyProfileUpdateRequest(BaseModel):
     city: str | None = None
     state: str | None = None
     pincode: str | None = None
+    website: str | None = None
+    logo_url: str | None = None
 
 class UserRoleUpdateRequest(BaseModel):
     role: UserRole

@@ -42,6 +42,23 @@ export async function getMyCompany(): Promise<CompanyResponse> {
   return data;
 }
 
+export interface UpdateMyCompanyInput {
+  name?: string;
+  phone?: string;
+  industry?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  website?: string;
+  logo_url?: string;
+}
+
+export async function updateMyCompany(input: UpdateMyCompanyInput): Promise<CompanyResponse> {
+  const { data } = await apiClient.put<CompanyResponse>("/companies/me", input);
+  return data;
+}
+
 export async function registerCompany(input: RegisterCompanyInput): Promise<CompanyResponse> {
   const { data } = await apiClient.post<CompanyResponse>("/companies/register", input);
   return data;
