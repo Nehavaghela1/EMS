@@ -18,7 +18,7 @@ export function HolidaysPage() {
   const { notify } = useToast();
   const queryClient = useQueryClient();
 
-  const isHr = user?.role === "hr_admin" || user?.role === "super_admin";
+  const isHr = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "owner";
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [scopeFilter, setScopeFilter] = useState<"my" | "all">("my");
   const [locationFilter, setLocationFilter] = useState<string>("all");

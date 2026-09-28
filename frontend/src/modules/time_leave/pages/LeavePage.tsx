@@ -43,9 +43,9 @@ export function LeavePage() {
   const navigate = useNavigate();
   const { notify } = useToast();
   const queryClient = useQueryClient();
-  const canDecide = user?.role === "hr_admin" || user?.role === "manager" || user?.role === "super_admin";
-  const canPickEmployee = user?.role === "hr_admin" || user?.role === "manager" || user?.role === "super_admin";
-  const isHR = user?.role === "hr_admin" || user?.role === "super_admin";
+  const canDecide = user?.role === "hr_admin" || user?.role === "manager" || user?.role === "super_admin" || user?.role === "owner";
+  const canPickEmployee = user?.role === "hr_admin" || user?.role === "manager" || user?.role === "super_admin" || user?.role === "owner";
+  const isHR = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "owner";
   const [seedingBalances, setSeedingBalances] = useState(false);
 
   const leaveTypesQuery = useQuery({ queryKey: ["leave-types"], queryFn: listLeaveTypes });
@@ -159,63 +159,63 @@ export function LeavePage() {
 
   function canCancel(leave: Leave): boolean {
     const isOwn = user?.employee?.id === leave.employee_id;
-    if (leave.status === "pending") return isOwn || user?.role === "hr_admin";
-    if (leave.status === "approved") return user?.role === "hr_admin";
+    if (leave.status === "pending") return isOwn || user?.role === "hr_admin" || user?.role === "owner";
+    if (leave.status === "approved") return user?.role === "hr_admin" || user?.role === "owner";
     return false;
   }
 
   const columns: DataTableColumn<Leave>[] = [
     ...(canPickEmployee
       ? [
-          {
-            key: "employee",
-            label: "Employee",
-            render: (l: Leave) => {
-              const empName = employeeNameById.get(l.employee_id) ?? l.employee_id;
-              const isSelected = filterEmployee?.id === l.employee_id;
-              return (
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <div
-                    style={{ cursor: "pointer" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSelectEmployee(l.employee_id, empName);
-                    }}
-                    title="Click to view this employee's leave records"
-                  >
-                    <strong
-                      style={{
-                        color: "var(--color-primary, #2563eb)",
-                        textDecoration: isSelected ? "underline" : "none",
-                      }}
-                    >
-                      {empName}
-                    </strong>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-xs"
+        {
+          key: "employee",
+          label: "Employee",
+          render: (l: Leave) => {
+            const empName = employeeNameById.get(l.employee_id) ?? l.employee_id;
+            const isSelected = filterEmployee?.id === l.employee_id;
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <div
+                  style={{ cursor: "pointer" }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSelectEmployee(l.employee_id, empName);
+                  }}
+                  title="Click to view this employee's leave records"
+                >
+                  <strong
                     style={{
-                      padding: "1px 6px",
-                      fontSize: "0.72rem",
-                      color: "var(--color-muted, #6b7280)",
-                      background: "transparent",
-                      border: "1px solid var(--color-border, #e5e7eb)",
-                      borderRadius: "4px",
-                    }}
-                    title="View full profile"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/employees/${l.employee_id}`);
+                      color: "var(--color-primary, #2563eb)",
+                      textDecoration: isSelected ? "underline" : "none",
                     }}
                   >
-                    Profile ↗
-                  </button>
+                    {empName}
+                  </strong>
                 </div>
-              );
-            },
-          } satisfies DataTableColumn<Leave>,
-        ]
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  style={{
+                    padding: "1px 6px",
+                    fontSize: "0.72rem",
+                    color: "var(--color-muted, #6b7280)",
+                    background: "transparent",
+                    border: "1px solid var(--color-border, #e5e7eb)",
+                    borderRadius: "4px",
+                  }}
+                  title="View full profile"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/employees/${l.employee_id}`);
+                  }}
+                >
+                  Profile ↗
+                </button>
+              </div>
+            );
+          },
+        } satisfies DataTableColumn<Leave>,
+      ]
       : []),
     { key: "leave_type", label: "Type", render: (l) => leaveTypeNameById.get(l.leave_type_id) ?? "—" },
     { key: "dates", label: "Dates", render: (l) => `${formatDate(l.start_date)} → ${formatDate(l.end_date)}` },
@@ -396,7 +396,7 @@ export function LeavePage() {
         currentPage={page}
         onPageChange={setPage}
         sort={null}
-        onSortChange={() => {}}
+        onSortChange={() => { }}
         emptyMessage={filterEmployee ? `No leave requests found for ${filterEmployee.name}.` : "No leave requests."}
         rowKey={(l) => l.id}
         onRowClick={(l) => {

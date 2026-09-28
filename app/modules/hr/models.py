@@ -128,6 +128,7 @@ class Employee(TenantBase):
     probation_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     notice_period_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_attendance_exempt: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     invitation_status: Mapped[InvitationStatus] = mapped_column(
         Enum(InvitationStatus, name="invitation_status"),
         nullable=False,

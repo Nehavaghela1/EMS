@@ -6,5 +6,11 @@ export function useRole(): UserRole | null {
 
 export function useHasRole(...roles: UserRole[]): boolean {
   const role = useRole();
-  return role !== null && roles.includes(role);
+  if (role === null) return false;
+  // Mirror the backend's require_role elevation: owner inherits all hr_admin rights.
+  const effective = [...roles];
+  if (roles.includes("hr_admin") && !effective.includes("owner")) {
+    effective.push("owner");
+  }
+  return effective.includes(role);
 }

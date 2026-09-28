@@ -22,7 +22,7 @@ export function MyGoalsPage() {
   const { user } = useAuth();
   const { notify } = useToast();
 
-  const isHrOrManager = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager";
+  const isHrOrManager = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager" || user?.role === "owner";
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(user?.employee?.id || "");
 

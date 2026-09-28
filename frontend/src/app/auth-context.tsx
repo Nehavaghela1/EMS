@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { apiClient, setAccessToken, setOnSessionExpired } from "./api-client";
 
-export type UserRole = "employee" | "manager" | "hr_admin" | "super_admin";
+export type UserRole = "owner" | "employee" | "manager" | "hr_admin" | "super_admin";
 
 export interface EmployeeSummary {
   id: string;

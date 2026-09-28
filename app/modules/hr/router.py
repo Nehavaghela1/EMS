@@ -105,8 +105,14 @@ def _to_employee_response(
     employee: Employee,
     company_map: dict[uuid.UUID, str] | None = None,
     manager: Employee | None = None,
+    system_role: str | None = None,
 ) -> EmployeeResponse:
     resp = EmployeeResponse.model_validate(employee)
+    if system_role is not None:
+        resp.system_role = system_role
+    elif hasattr(employee, "system_role") and getattr(employee, "system_role") is not None:
+        val = getattr(employee, "system_role")
+        resp.system_role = val.value if hasattr(val, "value") else str(val)
     resp.company_id = employee.company_id
     if company_map and employee.company_id in company_map:
         resp.company_name = company_map[employee.company_id]
@@ -149,6 +155,8 @@ def list_employees(
     q: str | None = None,
     company_id: uuid.UUID | None = None,
     department_id: uuid.UUID | None = None,
+    role: str | None = None,
+    system_role: str | None = None,
     is_active: bool | None = None,
     level: str | None = None,
     employment_type: EmploymentType | None = None,
@@ -159,6 +167,7 @@ def list_employees(
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
 ):
     target_company_id = company_id if user.role == UserRole.super_admin else user.company_id
+    effective_role = role or system_role
     items, total, pages = EmployeeService(db).list_employees(
         target_company_id,
         user,
@@ -168,11 +177,13 @@ def list_employees(
         level=level,
         employment_type=employment_type,
         reporting_manager_id=reporting_manager_id,
+        role=effective_role,
         sort=sort,
         page_params=params,
     )
 
     company_map: dict[uuid.UUID, str] = {}
+    user_role_map: dict[uuid.UUID, str] = {}
     if items:
         company_ids = {e.company_id for e in items if e.company_id}
         if company_ids:
@@ -180,8 +191,24 @@ def list_employees(
             rows = db.execute(select(Company.id, Company.name).where(Company.id.in_(company_ids))).all()
             company_map = {r[0]: r[1] for r in rows}
 
+        user_ids = {e.user_id for e in items if e.user_id}
+        if user_ids:
+            from sqlalchemy import select
+            user_rows = db.execute(select(User.id, User.role).where(User.id.in_(user_ids))).all()
+            user_role_map = {
+                r[0]: (r[1].value if hasattr(r[1], "value") else str(r[1]))
+                for r in user_rows
+            }
+
     return Page(
-        items=[_to_employee_response(e, company_map) for e in items],
+        items=[
+            _to_employee_response(
+                e,
+                company_map,
+                system_role=user_role_map.get(e.user_id) if e.user_id else None,
+            )
+            for e in items
+        ],
         page=params.page,
         limit=params.limit,
         total=total,
@@ -206,7 +233,8 @@ def get_my_employee(
     user: User = Depends(get_current_user),
 ):
     employee = EmployeeService(db).get_my_employee_record(user.company_id, user)
-    return _to_employee_response(employee)
+    system_role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    return _to_employee_response(employee, system_role=system_role)
 
 
 @employees_router.get("/resignations", response_model=list[EmployeeResponse])
@@ -246,7 +274,10 @@ def get_employee(
         manager = db.scalar(
             select(Employee).where(Employee.id == employee.reporting_manager_id, Employee.deleted_at.is_(None))
         )
-    return _to_employee_response(employee, company_map, manager)
+    system_role = None
+    if employee.user_id:
+        system_role = db.scalar(select(User.role).where(User.id == employee.user_id))
+    return _to_employee_response(employee, company_map, manager, system_role)
 
 
 @employees_router.put("/{employee_id}", response_model=EmployeeResponse)

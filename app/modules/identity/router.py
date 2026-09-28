@@ -5,10 +5,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
+from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.security import verify_password
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import limiter
 from app.db.session import get_db
-from app.modules.identity.models import CompanyStatus, User, UserRole
+from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.identity.schemas import (
     ActivateAccountRequest,
     ActivationPreviewResponse,
@@ -19,7 +21,9 @@ from app.modules.identity.schemas import (
     CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
     CompanyRejectRequest,
+    CompanyDeactivateRequest,
     CompanyResponse,
+    UserRoleUpdateRequest,
     ForgotPasswordRequest,
     LoginRequest,
     MeResponse,
@@ -32,6 +36,7 @@ from app.modules.identity.schemas import (
     CreateWorkspaceResponse,
     CompanyLocationCreate,
     CompanyLocationResponse,
+    AdminUserResponse,
 )
 from app.modules.identity.service import AuthService, CompanyService, LocationService
 
@@ -306,6 +311,34 @@ def reject_company(
     return CompanyService(db).reject_company(company_id, data.reason)
 
 
+@companies_router.post("/{company_id}/deactivate")
+def deactivate_company(
+    company_id: uuid.UUID,
+    data: CompanyDeactivateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_tenant_db),
+):
+    if current_user.role not in [UserRole.owner, UserRole.super_admin]:
+        raise ForbiddenError(
+            "Only the Workspace Owner (CEO) can deactivate this company workspace."
+        )
+
+    if not verify_password(data.password, current_user.hashed_password):
+        raise ForbiddenError("Invalid password.")
+
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if company is None:
+        raise NotFoundError("Company not found.")
+    if current_user.role != UserRole.super_admin and current_user.company_id != company.id:
+        raise ForbiddenError("You cannot deactivate another company's workspace.")
+
+    company.is_active = False
+    company.deactivation_reason = data.reason
+    db.commit()
+    return {"message": "Company workspace has been deactivated."}
+
+
+
 # --- Locations ---
 @companies_router.get("/locations", response_model=list[CompanyLocationResponse])
 def list_locations(
@@ -322,3 +355,79 @@ def create_location(
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
     return LocationService(db).create_location(user.company_id, data)
+
+# --- Users ---
+users_router = APIRouter(prefix="/users", tags=["Users"])
+
+@users_router.patch("/{user_id}/role")
+def update_user_role(
+    user_id: uuid.UUID,
+    data: UserRoleUpdateRequest,
+    current_user: User = Depends(require_role(UserRole.owner)),
+    db: Session = Depends(get_tenant_db),
+):
+    if user_id == current_user.id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Cannot change your own role.")
+    
+    if data.role not in [UserRole.employee, UserRole.hr_admin]:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Can only promote to hr_admin or demote to employee.")
+        
+    user = db.query(User).filter(User.id == user_id, User.company_id == current_user.company_id).first()
+    if not user:
+        raise NotFoundError("User not found.")
+        
+    user.role = data.role
+    db.commit()
+    return {"message": f"User role updated to {data.role.value}"}
+
+
+@users_router.get("/administrators", response_model=list[AdminUserResponse])
+def list_administrators(
+    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+    db: Session = Depends(get_tenant_db),
+):
+    """Return all users in the tenant who hold an administrative role (owner or hr_admin).
+    Used by the Settings > Manage Admins card. Accessible to owner and hr_admin.
+    """
+    from app.modules.hr.models import Employee as EmployeeModel
+    from sqlalchemy import select, outerjoin
+
+    # Fetch all admin users in the tenant
+    admin_users = (
+        db.query(User)
+        .filter(
+            User.company_id == current_user.company_id,
+            User.role.in_([UserRole.owner, UserRole.hr_admin]),
+        )
+        .all()
+    )
+
+    # Build response — join employee names where available
+    result: list[AdminUserResponse] = []
+    for u in admin_users:
+        emp = None
+        if u.id:
+            emp = (
+                db.query(EmployeeModel)
+                .filter(
+                    EmployeeModel.user_id == u.id,
+                    EmployeeModel.company_id == current_user.company_id,
+                    EmployeeModel.deleted_at.is_(None),
+                )
+                .first()
+            )
+        result.append(
+            AdminUserResponse(
+                id=u.id,
+                email=u.email,
+                role=u.role,
+                first_name=emp.first_name if emp else None,
+                last_name=emp.last_name if emp else None,
+                employee_id=emp.id if emp else None,
+                position=emp.position if emp else None,
+                hire_date=str(emp.hire_date) if emp and emp.hire_date else None,
+            )
+        )
+    return result

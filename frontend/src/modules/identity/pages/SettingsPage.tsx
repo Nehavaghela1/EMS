@@ -5,8 +5,8 @@ import { PasswordInput } from "../../../shared/components/PasswordInput";
 import { parseApiError, fieldErrorsFromDetails } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
-import { getMyEmployee, listDepartments, updateEmployee, submitResignation, type Employee } from "../../hr/api";
-import { changePassword } from "../api";
+import { getMyEmployee, listDepartments, updateEmployee, submitResignation, listEmployees, type Employee } from "../../hr/api";
+import { changePassword, listAdministrators, updateUserRole, type AdminUser } from "../api";
 import { changePasswordSchema } from "../schemas";
 
 /**
@@ -47,6 +47,9 @@ export function SettingsPage() {
     <div>
       <PageHeader title="Settings" breadcrumb="Account" />
 
+      {/* ── Admins & Access Control (Owner only) ─────────────── */}
+      {user?.role === "owner" && <AdminDelegationSection />}
+
       {!user?.employee ? (
         <div className="card mb-6">
           <span className="text-muted">
@@ -84,6 +87,504 @@ export function SettingsPage() {
       {/* Enterprise Branding & Theme Settings */}
       <EnterpriseBrandingSection notify={notify} />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AdminDelegationSection — Zoho-style admin management hub (owner-only)
+// ─────────────────────────────────────────────────────────────────────────────
+function AdminDelegationSection() {
+  const { notify } = useToast();
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+  const [empSearch, setEmpSearch] = useState("");
+  const [selectedEmp, setSelectedEmp] = useState<Employee | null>(null);
+  const [confirmRevoke, setConfirmRevoke] = useState<AdminUser | null>(null);
+  const [promoting, setPromoting] = useState(false);
+  const [revoking, setRevoking] = useState(false);
+
+  const adminQuery = useQuery({
+    queryKey: ["administrators"],
+    queryFn: listAdministrators,
+  });
+
+  const empQuery = useQuery({
+    queryKey: ["employees-search-admin", empSearch],
+    queryFn: () => listEmployees({ q: empSearch || undefined, page: 1, limit: 10 }),
+    enabled: showModal,
+    placeholderData: (prev) => prev,
+  });
+
+  async function handlePromote() {
+    if (!selectedEmp?.user_id) {
+      notify("Selected employee has no linked user account.", "error");
+      return;
+    }
+    setPromoting(true);
+    try {
+      await updateUserRole(selectedEmp.user_id, "hr_admin");
+      await queryClient.invalidateQueries({ queryKey: ["administrators"] });
+      notify(`${selectedEmp.first_name} promoted to HR Admin.`, "success");
+      setShowModal(false);
+      setSelectedEmp(null);
+      setEmpSearch("");
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setPromoting(false);
+    }
+  }
+
+  async function handleRevoke(admin: AdminUser) {
+    setRevoking(true);
+    try {
+      await updateUserRole(admin.id, "employee");
+      await queryClient.invalidateQueries({ queryKey: ["administrators"] });
+      notify(`${admin.first_name ?? admin.email}'s admin access revoked.`, "success");
+      setConfirmRevoke(null);
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setRevoking(false);
+    }
+  }
+
+  const admins = adminQuery.data ?? [];
+
+  return (
+    <>
+      {/* ── Main Card ─────────────────────────── */}
+      <div
+        style={{
+          background: "#ffffff",
+          borderRadius: "16px",
+          border: "1px solid #e2e8f0",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+          marginBottom: "1.5rem",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "20px 24px 16px",
+            borderBottom: "1px solid #f1f5f9",
+            background: "linear-gradient(135deg, #f8faff 0%, #f0f4ff 100%)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <div
+              style={{
+                width: 40, height: 40, borderRadius: "10px",
+                background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: "1.1rem",
+              }}
+            >
+              👑
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>
+                Administrators & Access Control
+              </h3>
+              <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "#64748b" }}>
+                Manage who can configure HR, run payroll, and govern the workspace
+              </p>
+            </div>
+          </div>
+          <button
+            id="btn-assign-hr-admin"
+            onClick={() => setShowModal(true)}
+            style={{
+              display: "flex", alignItems: "center", gap: "6px",
+              padding: "8px 16px", borderRadius: "8px", border: "none",
+              background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+              color: "#fff", fontWeight: 600, fontSize: "0.82rem",
+              cursor: "pointer", boxShadow: "0 2px 8px rgba(99,102,241,0.3)",
+              transition: "all 0.2s",
+            }}
+          >
+            <span style={{ fontSize: "1rem" }}>+</span> Assign HR Admin
+          </button>
+        </div>
+
+        {/* Zoho-style data table */}
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+            <thead>
+              <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                {["Administrator", "Email", "Designation", "Member Since", "Role", "Action"].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      padding: "10px 16px", textAlign: "left", fontWeight: 700,
+                      color: "#64748b", fontSize: "0.74rem", textTransform: "uppercase",
+                      letterSpacing: "0.06em", whiteSpace: "nowrap",
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {adminQuery.isLoading ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: "28px 16px", textAlign: "center", color: "#94a3b8" }}>
+                    Loading administrators…
+                  </td>
+                </tr>
+              ) : admins.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: "28px 16px", textAlign: "center", color: "#94a3b8" }}>
+                    No administrators found.
+                  </td>
+                </tr>
+              ) : (
+                admins.map((admin, i) => {
+                  const displayName = admin.first_name
+                    ? `${admin.first_name}${admin.last_name ? " " + admin.last_name : ""}`
+                    : admin.email;
+                  const initials = admin.first_name
+                    ? `${admin.first_name[0]}${admin.last_name?.[0] ?? ""}`.toUpperCase()
+                    : admin.email[0].toUpperCase();
+                  const isOwner = admin.role === "owner";
+                  const memberSince = admin.hire_date
+                    ? new Date(admin.hire_date).toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" })
+                    : "—";
+
+                  return (
+                    <tr
+                      key={admin.id}
+                      style={{
+                        borderBottom: i < admins.length - 1 ? "1px solid #f1f5f9" : "none",
+                        transition: "background 0.12s",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#fafbff")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+                    >
+                      {/* Administrator */}
+                      <td style={{ padding: "14px 16px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <div
+                            style={{
+                              width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+                              background: isOwner
+                                ? "linear-gradient(135deg, #f59e0b, #d97706)"
+                                : "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                              fontWeight: 700, fontSize: "0.72rem", color: "#fff",
+                            }}
+                          >
+                            {initials}
+                          </div>
+                          <span style={{ fontWeight: 600, color: "#0f172a" }}>{displayName}</span>
+                        </div>
+                      </td>
+
+                      {/* Email */}
+                      <td style={{ padding: "14px 16px", color: "#475569" }}>{admin.email}</td>
+
+                      {/* Designation */}
+                      <td style={{ padding: "14px 16px", color: "#475569" }}>
+                        {admin.position ?? <span style={{ color: "#94a3b8" }}>—</span>}
+                      </td>
+
+                      {/* Member Since */}
+                      <td style={{ padding: "14px 16px", color: "#475569", whiteSpace: "nowrap" }}>
+                        {memberSince}
+                      </td>
+
+                      {/* Role badge */}
+                      <td style={{ padding: "14px 16px" }}>
+                        <span
+                          style={{
+                            padding: "3px 10px", borderRadius: "20px", fontSize: "0.69rem",
+                            fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em",
+                            whiteSpace: "nowrap",
+                            ...(isOwner
+                              ? { background: "#fffbeb", color: "#b45309", border: "1px solid #fcd34d" }
+                              : { background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }),
+                          }}
+                        >
+                          {isOwner ? "👑 Primary Owner" : "🛡️ HR Admin"}
+                        </span>
+                      </td>
+
+                      {/* Action */}
+                      <td style={{ padding: "14px 16px" }}>
+                        {!isOwner ? (
+                          <button
+                            onClick={() => setConfirmRevoke(admin)}
+                            style={{
+                              padding: "5px 12px", borderRadius: "6px",
+                              border: "1px solid #fecaca", background: "#fff5f5",
+                              color: "#dc2626", fontSize: "0.75rem", fontWeight: 600,
+                              cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.15s",
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = "#fee2e2"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = "#fff5f5"; }}
+                          >
+                            Revoke Admin Access
+                          </button>
+                        ) : (
+                          <span style={{ color: "#94a3b8", fontSize: "0.75rem" }}>Primary Owner</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Assign HR Admin Modal ─────────────── */}
+      {showModal && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 9999,
+            backgroundColor: "rgba(15, 23, 42, 0.7)",
+            backdropFilter: "blur(4px)",
+            display: "flex", alignItems: "center", justifyContent: "center", padding: "16px",
+          }}
+          onClick={() => { setShowModal(false); setSelectedEmp(null); setEmpSearch(""); }}
+        >
+          <div
+            style={{
+              background: "#ffffff", borderRadius: "16px", width: "100%", maxWidth: "480px",
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.35)", border: "1px solid #e2e8f0",
+              overflow: "hidden",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div
+              style={{
+                padding: "20px 24px", borderBottom: "1px solid #f1f5f9",
+                background: "linear-gradient(135deg, #f8faff 0%, #f0f4ff 100%)",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+              }}
+            >
+              <div>
+                <h3 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>
+                  Assign HR Admin
+                </h3>
+                <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "#64748b" }}>
+                  Search and select an employee to grant HR Admin access
+                </p>
+              </div>
+              <button
+                onClick={() => { setShowModal(false); setSelectedEmp(null); setEmpSearch(""); }}
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: "1.2rem", color: "#64748b", padding: "4px" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: "20px 24px" }}>
+              <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#374151", display: "block", marginBottom: "6px" }}>
+                Search Employee
+              </label>
+              <input
+                id="admin-emp-search"
+                type="text"
+                placeholder="Type name or email…"
+                value={empSearch}
+                onChange={(e) => { setEmpSearch(e.target.value); setSelectedEmp(null); }}
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: "8px",
+                  border: "1px solid #e2e8f0", fontSize: "0.875rem", outline: "none",
+                  boxSizing: "border-box",
+                }}
+                autoFocus
+              />
+
+              {/* Results */}
+              {empQuery.data && empQuery.data.items.length > 0 && !selectedEmp && (
+                <div
+                  style={{
+                    marginTop: "8px", borderRadius: "8px", border: "1px solid #e2e8f0",
+                    overflow: "hidden", maxHeight: "200px", overflowY: "auto",
+                  }}
+                >
+                  {empQuery.data.items
+                    .filter((e) => !admins.find((a) => a.employee_id === e.id))
+                    .map((emp) => (
+                      <button
+                        key={emp.id}
+                        type="button"
+                        onClick={() => { setSelectedEmp(emp); setEmpSearch(`${emp.first_name} ${emp.last_name ?? ""}`); }}
+                        style={{
+                          width: "100%", textAlign: "left", padding: "10px 14px",
+                          border: "none", borderBottom: "1px solid #f8fafc",
+                          background: "#fff", cursor: "pointer", fontSize: "0.875rem",
+                          display: "flex", alignItems: "center", gap: "10px",
+                          transition: "background 0.1s",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
+                      >
+                        <div
+                          style={{
+                            width: 30, height: 30, borderRadius: "50%",
+                            background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                            color: "#fff", fontWeight: 700, fontSize: "0.75rem",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {emp.first_name[0]}{emp.last_name?.[0] ?? ""}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 600, color: "#0f172a" }}>
+                            {emp.first_name} {emp.last_name ?? ""}
+                          </div>
+                          <div style={{ fontSize: "0.75rem", color: "#64748b" }}>{emp.email}</div>
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              )}
+
+              {/* Selection confirmation */}
+              {selectedEmp && (
+                <div
+                  style={{
+                    marginTop: "12px", padding: "12px 14px", borderRadius: "10px",
+                    background: "#f0fdf4", border: "1px solid #bbf7d0",
+                    display: "flex", alignItems: "center", gap: "10px",
+                  }}
+                >
+                  <span style={{ fontSize: "1.2rem" }}>✅</span>
+                  <div>
+                    <p style={{ margin: 0, fontWeight: 600, fontSize: "0.875rem", color: "#166534" }}>
+                      {selectedEmp.first_name} {selectedEmp.last_name ?? ""}
+                    </p>
+                    <p style={{ margin: "1px 0 0", fontSize: "0.75rem", color: "#15803d" }}>
+                      Will be granted <strong>HR Admin</strong> privileges
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Warning */}
+              <div
+                style={{
+                  marginTop: "16px", padding: "10px 12px", borderRadius: "8px",
+                  background: "#fffbeb", border: "1px solid #fde68a",
+                  fontSize: "0.78rem", color: "#92400e",
+                }}
+              >
+                ⚠️ HR Admins can view all employee records, configure payroll, and manage leave policies.
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div
+              style={{
+                padding: "16px 24px", borderTop: "1px solid #f1f5f9",
+                background: "#fafafa", display: "flex", justifyContent: "flex-end", gap: "8px",
+              }}
+            >
+              <button
+                onClick={() => { setShowModal(false); setSelectedEmp(null); setEmpSearch(""); }}
+                style={{
+                  padding: "8px 18px", borderRadius: "8px", border: "1px solid #e2e8f0",
+                  background: "#fff", color: "#64748b", fontWeight: 600,
+                  fontSize: "0.85rem", cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                id="btn-confirm-promote"
+                onClick={handlePromote}
+                disabled={!selectedEmp || promoting}
+                style={{
+                  padding: "8px 18px", borderRadius: "8px", border: "none",
+                  background: selectedEmp ? "linear-gradient(135deg, #6366f1, #8b5cf6)" : "#e2e8f0",
+                  color: selectedEmp ? "#fff" : "#94a3b8",
+                  fontWeight: 600, fontSize: "0.85rem",
+                  cursor: selectedEmp ? "pointer" : "not-allowed",
+                  boxShadow: selectedEmp ? "0 2px 8px rgba(99,102,241,0.3)" : "none",
+                }}
+              >
+                {promoting ? "Granting…" : "Grant HR Admin Access"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm Revoke Modal ─────────────── */}
+      {confirmRevoke && (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 9999,
+            backgroundColor: "rgba(15, 23, 42, 0.7)",
+            backdropFilter: "blur(4px)",
+            display: "flex", alignItems: "center", justifyContent: "center", padding: "16px",
+          }}
+          onClick={() => setConfirmRevoke(null)}
+        >
+          <div
+            style={{
+              background: "#ffffff", borderRadius: "16px", width: "100%", maxWidth: "420px",
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.35)", border: "1px solid #e2e8f0",
+              padding: "28px 28px 24px",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ textAlign: "center", marginBottom: "20px" }}>
+              <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>🔒</div>
+              <h3 style={{ margin: "0 0 6px", fontSize: "1rem", fontWeight: 700, color: "#0f172a" }}>
+                Revoke Admin Access?
+              </h3>
+              <p style={{ margin: 0, fontSize: "0.85rem", color: "#64748b", lineHeight: 1.5 }}>
+                <strong style={{ color: "#0f172a" }}>
+                  {confirmRevoke.first_name
+                    ? `${confirmRevoke.first_name} ${confirmRevoke.last_name ?? ""}`
+                    : confirmRevoke.email}
+                </strong>{" "}
+                will lose all HR Admin privileges and revert to a regular employee.
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
+              <button
+                onClick={() => setConfirmRevoke(null)}
+                style={{
+                  padding: "9px 22px", borderRadius: "8px", border: "1px solid #e2e8f0",
+                  background: "#fff", color: "#64748b", fontWeight: 600,
+                  fontSize: "0.875rem", cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                id="btn-confirm-revoke"
+                onClick={() => handleRevoke(confirmRevoke)}
+                disabled={revoking}
+                style={{
+                  padding: "9px 22px", borderRadius: "8px", border: "none",
+                  background: "linear-gradient(135deg, #dc2626, #b91c1c)",
+                  color: "#fff", fontWeight: 600, fontSize: "0.875rem",
+                  cursor: revoking ? "not-allowed" : "pointer",
+                  boxShadow: "0 2px 8px rgba(220,38,38,0.3)",
+                }}
+              >
+                {revoking ? "Revoking…" : "Yes, Revoke Access"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

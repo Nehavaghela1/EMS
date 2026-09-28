@@ -49,7 +49,7 @@ function Public({ children }: { children: ReactNode }) {
   return <PublicOnly>{children}</PublicOnly>;
 }
 
-const ALL_ROLES: UserRole[] = ["employee", "manager", "hr_admin", "super_admin"];
+const ALL_ROLES: UserRole[] = ["owner", "employee", "manager", "hr_admin", "super_admin"];
 
 export function AppRouter() {
   return (
@@ -119,7 +119,7 @@ export function AppRouter() {
       <Route
         path="/shifts"
         element={
-          <Protected roles={["employee", "manager", "hr_admin", "super_admin"]}>
+          <Protected roles={["employee", "manager", "hr_admin", "super_admin", "owner"]}>
             <ShiftsPage />
           </Protected>
         }
@@ -136,7 +136,7 @@ export function AppRouter() {
       <Route
         path="/employees"
         element={
-          <Protected roles={["hr_admin", "manager", "super_admin"]}>
+          <Protected roles={["hr_admin", "manager", "super_admin", "owner"]}>
             <EmployeeListPage />
           </Protected>
         }
@@ -144,7 +144,7 @@ export function AppRouter() {
       <Route
         path="/employees/new"
         element={
-          <Protected roles={["hr_admin", "super_admin"]}>
+          <Protected roles={["hr_admin", "super_admin", "owner"]}>
             <EmployeeFormPage />
           </Protected>
         }
@@ -152,7 +152,7 @@ export function AppRouter() {
       <Route
         path="/employees/:id/edit"
         element={
-          <Protected roles={["hr_admin", "super_admin"]}>
+          <Protected roles={["hr_admin", "super_admin", "owner"]}>
             <EmployeeFormPage />
           </Protected>
         }
@@ -160,7 +160,7 @@ export function AppRouter() {
       <Route
         path="/employees/:id"
         element={
-          <Protected roles={["hr_admin", "manager", "super_admin"]}>
+          <Protected roles={["hr_admin", "manager", "super_admin", "owner"]}>
             <EmployeeProfilePage />
           </Protected>
         }
@@ -169,7 +169,7 @@ export function AppRouter() {
       <Route
         path="/departments"
         element={
-          <Protected roles={["hr_admin", "super_admin"]}>
+          <Protected roles={["hr_admin", "super_admin", "owner"]}>
             <DepartmentListPage />
           </Protected>
         }
@@ -178,7 +178,7 @@ export function AppRouter() {
       <Route
         path="/payroll/setup"
         element={
-          <Protected roles={["hr_admin", "super_admin"]}>
+          <Protected roles={["hr_admin", "super_admin", "owner"]}>
             <PayrollSetupPage />
           </Protected>
         }
@@ -186,7 +186,7 @@ export function AppRouter() {
       <Route
         path="/payroll/run"
         element={
-          <Protected roles={["hr_admin", "super_admin"]}>
+          <Protected roles={["hr_admin", "super_admin", "owner"]}>
             <PayrollRunPage />
           </Protected>
         }
@@ -211,7 +211,7 @@ export function AppRouter() {
       <Route
         path="/performance"
         element={
-          <Protected roles={["hr_admin", "super_admin"]}>
+          <Protected roles={["hr_admin", "super_admin", "owner"]}>
             <PerformanceCyclesPage />
           </Protected>
         }
@@ -227,7 +227,7 @@ export function AppRouter() {
       <Route
         path="/performance/review/:employeeId"
         element={
-          <Protected roles={["hr_admin", "manager", "super_admin"]}>
+          <Protected roles={["hr_admin", "manager", "super_admin", "owner"]}>
             <PerformanceReviewPage />
           </Protected>
         }
@@ -269,7 +269,7 @@ export function AppRouter() {
       <Route
         path="/settings/locations"
         element={
-          <Protected roles={["hr_admin", "super_admin"]}>
+          <Protected roles={["hr_admin", "super_admin", "owner"]}>
             <LocationListPage />
           </Protected>
         }
@@ -277,7 +277,7 @@ export function AppRouter() {
       <Route
         path="/settings/locations/new"
         element={
-          <Protected roles={["hr_admin", "super_admin"]}>
+          <Protected roles={["hr_admin", "super_admin", "owner"]}>
             <LocationFormPage />
           </Protected>
         }

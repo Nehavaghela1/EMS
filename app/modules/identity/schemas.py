@@ -78,6 +78,11 @@ class CompanyRejectRequest(BaseModel):
     reason: str
 
 
+class CompanyDeactivateRequest(BaseModel):
+    reason: str
+    password: str
+
+
 class CompanyApproveResponse(BaseModel):
     """The temporary password is never returned here (CLAUDE.md rule 10) —
     it goes to the new HR admin's own email instead (Spec 13, WP-26)."""
@@ -94,7 +99,26 @@ class CompanyProfileUpdateRequest(BaseModel):
     city: str | None = None
     state: str | None = None
     pincode: str | None = None
+
+class UserRoleUpdateRequest(BaseModel):
+    role: UserRole
     website: str | None = None
+
+
+class AdminUserResponse(BaseModel):
+    """A slim projection of a User row returned by GET /users/administrators."""
+    id: uuid.UUID
+    email: str
+    role: UserRole
+    first_name: str | None = None
+    last_name: str | None = None
+    employee_id: uuid.UUID | None = None
+    position: str | None = None   # Job title / designation from employees table
+    hire_date: str | None = None  # ISO date — shown as "Assigned since" in the table
+
+    model_config = {"from_attributes": True}
+
+
 
 
 class AdminCompanyUpdateRequest(CompanyProfileUpdateRequest):

@@ -61,9 +61,14 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
     enabled: Boolean(user?.employee),
   });
 
-  const unclosedPastRecord = recentHistoryQuery.data?.items.find(
-    (item) => item.date < today && item.check_in && !item.check_out
-  );
+  // Attendance-exempt users (owners) never see missing-punch warnings
+  const isAttendanceExempt = user?.role === 'owner';
+
+  const unclosedPastRecord = isAttendanceExempt
+    ? undefined
+    : recentHistoryQuery.data?.items.find(
+        (item) => item.date < today && item.check_in && !item.check_out
+      );
 
   const assignedShiftQuery = useQuery({
     queryKey: ["shift", "assigned", user?.employee?.id],
@@ -145,7 +150,8 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
 
   return (
     <div className="mb-6">
-      {user?.employee && (
+      {/* Attendance-exempt users (owner/executives) skip the punch clock strip entirely */}
+      {user?.employee && !isAttendanceExempt && (
         <div
           style={{
             display: "inline-flex",
@@ -232,6 +238,7 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
       )}
 
       <div className="card">
+        {/* Attendance-exempt employees (owner/executives) never see punch prompts */}
         {!user?.employee ? (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 0" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -260,6 +267,27 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
               </div>
             </div>
             <span className="badge badge-outline" style={{ fontWeight: 600 }}>Admin View</span>
+          </div>
+        ) : isAttendanceExempt ? (
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "4px 0" }}>
+            <div
+              style={{
+                width: "36px", height: "36px", borderRadius: "8px",
+                background: "linear-gradient(135deg, #f59e0b, #d97706)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: "1.1rem", flexShrink: 0,
+              }}
+            >
+              👑
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: "0.9rem", color: "#92400e" }}>
+                Executive Account — Attendance Exempt
+              </div>
+              <div style={{ fontSize: "0.78rem", color: "#b45309", marginTop: "1px" }}>
+                Check-in / check-out tracking is disabled for your account by policy.
+              </div>
+            </div>
           </div>
         ) : todayQuery.isLoading ? (
           <div className="row">
@@ -300,4 +328,5 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
     </div>
   );
 }
+
 

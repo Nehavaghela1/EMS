@@ -270,3 +270,32 @@ export async function createLocation(input: CompanyLocationCreate): Promise<Comp
   const { data } = await apiClient.post<CompanyLocation>("/companies/locations", input);
   return data;
 }
+
+// ── Admin Delegation ────────────────────────────────────────────────────────
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  role: "owner" | "hr_admin" | "employee" | "manager" | "super_admin";
+  first_name: string | null;
+  last_name: string | null;
+  employee_id: string | null;
+  position: string | null;   // Designation / job title
+  hire_date: string | null;  // ISO date — shown as "Member since" in the table
+}
+
+/** GET /users/administrators — returns all owner/hr_admin users in the tenant. */
+export async function listAdministrators(): Promise<AdminUser[]> {
+  const { data } = await apiClient.get<AdminUser[]>("/users/administrators");
+  return data;
+}
+
+/** PATCH /users/{id}/role — promotes or revokes a user's admin role.
+ *  Only callable by the workspace owner. */
+export async function updateUserRole(
+  userId: string,
+  role: "hr_admin" | "employee"
+): Promise<{ message: string }> {
+  const { data } = await apiClient.patch<{ message: string }>(`/users/${userId}/role`, { role });
+  return data;
+}

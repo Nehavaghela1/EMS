@@ -45,7 +45,7 @@ export function TimesheetsPage() {
   const { user } = useAuth();
   const { notify } = useToast();
   const { activeTimer, startTimer, stopTimer, formatTime, elapsedSeconds } = useTimer();
-  const isManagerOrAdmin = user?.role === "super_admin" || user?.role === "hr_admin" || user?.role === "manager";
+  const isManagerOrAdmin = user?.role === "super_admin" || user?.role === "hr_admin" || user?.role === "manager" || user?.role === "owner";
 
   const employeeMap = useMemo(() => {
     const map = new Map<string, Employee>();

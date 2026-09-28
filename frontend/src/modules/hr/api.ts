@@ -27,6 +27,7 @@ export interface DepartmentUpdateInput {
 export interface Employee {
   id: string;
   user_id: string | null;
+  system_role?: string | null;
   employee_code: string;
   first_name: string;
   last_name: string | null;
@@ -44,6 +45,7 @@ export interface Employee {
   probation_end_date: string | null;
   notice_period_days?: number;
   is_active: boolean;
+  is_attendance_exempt?: boolean;
   invitation_status: InvitationStatus;
   resignation_status?: string;
   resignation_date?: string | null;
@@ -83,6 +85,7 @@ export interface EmployeeCreateInput {
   hire_date: string;
   probation_end_date?: string | null;
   notice_period_days?: number;
+  is_attendance_exempt?: boolean;
   company_id?: string | null;
 }
 
@@ -100,6 +103,7 @@ export interface EmployeeUpdateInput {
   employment_type?: EmploymentType;
   probation_end_date?: string | null;
   notice_period_days?: number;
+  is_attendance_exempt?: boolean;
 }
 
 export interface EmployeeCreateResponse extends Employee {
@@ -110,6 +114,8 @@ export interface ListEmployeesParams {
   q?: string;
   department_id?: string;
   company_id?: string;
+  role?: string;
+  system_role?: string;
   is_active?: boolean;
   level?: string;
   employment_type?: string;
@@ -297,5 +303,10 @@ export async function updateFnFClearance(employeeId: string, input: FnFClearance
 
 export async function listResignations(): Promise<Employee[]> {
   const { data } = await apiClient.get<Employee[]>("/employees/resignations");
+  return data;
+}
+
+export async function updateUserRole(userId: string, role: string): Promise<{ message: string }> {
+  const { data } = await apiClient.patch<{ message: string }>(`/users/${userId}/role`, { role });
   return data;
 }

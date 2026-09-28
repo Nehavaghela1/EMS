@@ -333,3 +333,48 @@ def test_deleting_a_department_with_employees_returns_409_with_the_count(client,
     client.delete(f"/api/v1/employees/{employee['id']}", headers=company_a.hr_headers)
     ok_resp = client.delete(f"/api/v1/departments/{dept['id']}", headers=company_a.hr_headers)
     assert ok_resp.status_code == 204
+
+
+def test_list_employees_role_filter(client, company_a, db):
+    # Create employee 1 and link as HR Admin
+    emp_hr = _create_employee(
+        client, company_a.hr_headers, first_name="AdminUser", email="admin_user@companya.com"
+    )
+    _link_user_to_employee(db, company_a.company_id, emp_hr["id"], UserRole.hr_admin)
+
+    # Create employee 2 and link as Employee
+    emp_reg = _create_employee(
+        client, company_a.hr_headers, first_name="RegularUser", email="regular_user@companya.com"
+    )
+    _link_user_to_employee(db, company_a.company_id, emp_reg["id"], UserRole.employee)
+
+    # 1. Filter by role=hr_admin (case-insensitive)
+    resp = client.get("/api/v1/employees?role=hr_admin", headers=company_a.hr_headers)
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    ids = [e["id"] for e in items]
+    assert emp_hr["id"] in ids
+    assert emp_reg["id"] not in ids
+    hr_item = next(e for e in items if e["id"] == emp_hr["id"])
+    assert hr_item["system_role"] == "hr_admin"
+
+    # Test uppercase HR_ADMIN
+    resp_upper = client.get("/api/v1/employees?role=HR_ADMIN", headers=company_a.hr_headers)
+    assert resp_upper.status_code == 200
+    assert emp_hr["id"] in [e["id"] for e in resp_upper.json()["items"]]
+
+    # 2. Filter by role=employee
+    resp_emp = client.get("/api/v1/employees?role=employee", headers=company_a.hr_headers)
+    assert resp_emp.status_code == 200
+    emp_items = resp_emp.json()["items"]
+    emp_ids = [e["id"] for e in emp_items]
+    assert emp_reg["id"] in emp_ids
+    assert emp_hr["id"] not in emp_ids
+    reg_item = next(e for e in emp_items if e["id"] == emp_reg["id"])
+    assert reg_item["system_role"] == "employee"
+
+    # 3. System role also works via system_role query parameter
+    resp_sys = client.get("/api/v1/employees?system_role=hr_admin", headers=company_a.hr_headers)
+    assert resp_sys.status_code == 200
+    assert emp_hr["id"] in [e["id"] for e in resp_sys.json()["items"]]
+

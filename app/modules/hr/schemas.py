@@ -48,6 +48,7 @@ class EmployeeCreateRequest(BaseModel):
     hire_date: date
     probation_end_date: date | None = None
     notice_period_days: int = 30
+    is_attendance_exempt: bool = False
 
 
 class EmployeeUpdateRequest(BaseModel):
@@ -71,11 +72,13 @@ class EmployeeUpdateRequest(BaseModel):
     hire_date: date | None = None
     probation_end_date: date | None = None
     notice_period_days: int | None = None
+    is_attendance_exempt: bool | None = None
 
 
 class EmployeeResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID | None
+    system_role: str | None = None
     employee_code: str
     first_name: str
     last_name: str | None
@@ -93,6 +96,7 @@ class EmployeeResponse(BaseModel):
     probation_end_date: date | None
     notice_period_days: int
     is_active: bool
+    is_attendance_exempt: bool = False
     invitation_status: InvitationStatus
     resignation_status: str
     resignation_date: date | None = None

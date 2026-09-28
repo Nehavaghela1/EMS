@@ -36,7 +36,7 @@ export function ProjectsListPage() {
   const { user } = useAuth();
   const { notify } = useToast();
   const isSuperAdmin = user?.role === "super_admin";
-  const canManage = user?.role === "hr_admin" || isSuperAdmin || user?.role === "manager";
+  const canManage = user?.role === "hr_admin" || isSuperAdmin || user?.role === "manager" || user?.role === "owner";
 
   useEffect(() => {
     if (isSuperAdmin) {

@@ -57,7 +57,43 @@ from app.modules.time_leave.schemas import (
     ShiftCreateRequest,
     ShiftUpdateRequest,
 )
+from app.modules.hr.models import Employee
 from app.workers.tasks.email import send_email_task
+
+logger = logging.getLogger(__name__)
+
+
+def verify_approval_authority(
+    db: Session,
+    current_user: User,
+    target_employee: Employee,
+) -> bool:
+    """
+    Validates if current_user can approve/reject leaves or regularizations
+    for target_employee.
+    """
+    # Rule A: Anti-Self-Approval (Strict)
+    if target_employee.user_id == current_user.id:
+        raise ForbiddenError(
+            "Self-approval is forbidden. You cannot approve your own request. Your request must be approved by your reporting manager or CEO."
+        )
+
+    # Rule B: Owner/CEO and HR Admin (plus Super Admin) have organization-wide override power
+    if current_user.role in [UserRole.owner, UserRole.hr_admin, UserRole.super_admin]:
+        return True
+
+    # Rule C: Relational Manager Authority (Direct Reports)
+    if target_employee.reporting_manager_id is not None:
+        emp_repo = EmployeeRepository(db)
+        caller_employee = emp_repo.get_by_user_id(current_user.company_id, current_user.id)
+        if caller_employee is not None and target_employee.reporting_manager_id == caller_employee.id:
+            return True
+
+    # Otherwise, reject
+    raise ForbiddenError(
+        "Unauthorized: You are not the designated reporting manager for this employee."
+    )
+
 
 logger = logging.getLogger("app")
 
@@ -437,18 +473,11 @@ class AttendanceService:
         if req is None:
             raise NotFoundError("Regularization request not found.")
             
-        # Self-approval ban: An employee (even HR Admin) cannot approve their own regularization request
-        caller_employee = self.employee_repo.get_by_user_id(company_id, current_user.id)
-        if caller_employee is not None and req.employee_id == caller_employee.id:
-            raise ForbiddenError(
-                "You cannot approve your own regularization request. "
-                "This request must be approved by your manager or company director."
-            )
-
-        if current_user.role not in (UserRole.hr_admin, UserRole.super_admin):
-            # Manager role check
-            if not caller_employee or req.manager_id != caller_employee.id:
-                raise ForbiddenError("Not authorized to approve this request.")
+        target_employee = self.employee_repo.get_by_id_any_status(req.employee_id, company_id)
+        if target_employee is None:
+            raise NotFoundError("Employee for this regularization request not found.")
+            
+        verify_approval_authority(self.db, current_user, target_employee)
                 
         if data.status not in ("approved", "rejected"):
             raise AppError("Status must be approved or rejected")
@@ -719,13 +748,17 @@ class AttendanceService:
                 holiday_name = None
                 leave_type_name = None
 
-            # Priority 6: Past or Today Unpunched Working Day -> Absent
+            # Priority 6: Past or Today Unpunched Working Day -> Absent (Unless Exempt)
             else:
-                status = "absent"
+                if emp and getattr(emp, "is_attendance_exempt", False):
+                    status = "exempt"
+                    badge = "Exempt"
+                else:
+                    status = "absent"
+                    badge = None
                 work_hours = None
                 check_in_val = None
                 check_out_val = None
-                badge = None
                 holiday_name = None
                 leave_type_name = None
 
@@ -1296,16 +1329,9 @@ class LeaveService:
             raise ConflictError(f"Leave is not pending (current status: {leave.status.value}).")
 
         employee = self.employee_repo.get_by_id_any_status(leave.employee_id, company_id)
-        is_hr = actor.role == UserRole.hr_admin
-        is_manager = False
-        if actor.role == UserRole.manager and employee is not None:
-            caller_employee = self.employee_repo.get_by_user_id(company_id, actor.id)
-            is_manager = (
-                caller_employee is not None and employee.reporting_manager_id == caller_employee.id
-            )
-        if not (is_hr or is_manager):
-            raise ForbiddenError("You do not have permission to decide this leave.")
-        assert employee is not None  # guaranteed live by leave.employee_id's FK
+        if employee is None:
+            raise NotFoundError("Employee for this leave request not found.")
+        verify_approval_authority(self.db, actor, employee)
 
         if data.status == "approved":
             leave_type = self.leave_type_repo.get_by_id(leave.leave_type_id, company_id)

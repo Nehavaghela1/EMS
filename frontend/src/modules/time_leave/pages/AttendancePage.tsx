@@ -86,7 +86,7 @@ export function AttendancePage() {
   const { notify } = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const isHr = user?.role === "hr_admin" || user?.role === "super_admin";
+  const isHr = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "owner";
 
   async function refreshAll() {
     await Promise.all([
@@ -136,80 +136,80 @@ export function AttendancePage() {
     });
   }
 
-  const showEmployeeCol = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager";
+  const showEmployeeCol = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager" || user?.role === "owner";
 
   const columns: DataTableColumn<Attendance>[] = [
     ...(showEmployeeCol
       ? [
-          {
-            key: "employee",
-            label: "Employee",
-            render: (a: Attendance) => {
-              const empName = a.employee_name ?? a.employee_code ?? "—";
-              const isSelected = filterEmployee?.id === a.employee_id;
-              return (
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <div
+        {
+          key: "employee",
+          label: "Employee",
+          render: (a: Attendance) => {
+            const empName = a.employee_name ?? a.employee_code ?? "—";
+            const isSelected = filterEmployee?.id === a.employee_id;
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <div
+                  style={{
+                    cursor: a.employee_id && (isHr || user?.role === "manager") ? "pointer" : "default",
+                  }}
+                  onClick={(e) => {
+                    if (a.employee_id && (isHr || user?.role === "manager")) {
+                      e.stopPropagation();
+                      handleSelectEmployee(a.employee_id, empName);
+                    }
+                  }}
+                  title={a.employee_id ? "Click to view this employee's attendance records" : undefined}
+                >
+                  <strong
                     style={{
-                      cursor: a.employee_id && (isHr || user?.role === "manager") ? "pointer" : "default",
-                    }}
-                    onClick={(e) => {
-                      if (a.employee_id && (isHr || user?.role === "manager")) {
-                        e.stopPropagation();
-                        handleSelectEmployee(a.employee_id, empName);
-                      }
-                    }}
-                    title={a.employee_id ? "Click to view this employee's attendance records" : undefined}
-                  >
-                    <strong
-                      style={{
-                        color: isSelected
-                          ? "var(--color-primary, #2563eb)"
-                          : a.employee_id && (isHr || user?.role === "manager")
+                      color: isSelected
+                        ? "var(--color-primary, #2563eb)"
+                        : a.employee_id && (isHr || user?.role === "manager")
                           ? "var(--color-primary, #2563eb)"
                           : "inherit",
-                        textDecoration: isSelected ? "underline" : "none",
-                      }}
-                    >
-                      {a.employee_name ?? "—"}
-                    </strong>
-                    {a.employee_code && (
-                      <span className="text-xs text-muted block" style={{ fontFamily: "monospace" }}>
-                        {a.employee_code}
-                      </span>
-                    )}
-                  </div>
-                  {a.employee_id && (isHr || user?.role === "manager") && (
-                    <button
-                      type="button"
-                      className="btn btn-xs"
-                      style={{
-                        padding: "1px 6px",
-                        fontSize: "0.72rem",
-                        color: "var(--color-muted, #6b7280)",
-                        background: "transparent",
-                        border: "1px solid var(--color-border, #e5e7eb)",
-                        borderRadius: "4px",
-                      }}
-                      title="View full profile"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/employees/${a.employee_id}`);
-                      }}
-                    >
-                      Profile ↗
-                    </button>
+                      textDecoration: isSelected ? "underline" : "none",
+                    }}
+                  >
+                    {a.employee_name ?? "—"}
+                  </strong>
+                  {a.employee_code && (
+                    <span className="text-xs text-muted block" style={{ fontFamily: "monospace" }}>
+                      {a.employee_code}
+                    </span>
                   )}
                 </div>
-              );
-            },
-          } satisfies DataTableColumn<Attendance>,
-          {
-            key: "department",
-            label: "Department",
-            render: (a: Attendance) => a.department_name ?? "—",
-          } satisfies DataTableColumn<Attendance>,
-        ]
+                {a.employee_id && (isHr || user?.role === "manager") && (
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    style={{
+                      padding: "1px 6px",
+                      fontSize: "0.72rem",
+                      color: "var(--color-muted, #6b7280)",
+                      background: "transparent",
+                      border: "1px solid var(--color-border, #e5e7eb)",
+                      borderRadius: "4px",
+                    }}
+                    title="View full profile"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/employees/${a.employee_id}`);
+                    }}
+                  >
+                    Profile ↗
+                  </button>
+                )}
+              </div>
+            );
+          },
+        } satisfies DataTableColumn<Attendance>,
+        {
+          key: "department",
+          label: "Department",
+          render: (a: Attendance) => a.department_name ?? "—",
+        } satisfies DataTableColumn<Attendance>,
+      ]
       : []),
     { key: "date", label: "Date", render: (a) => formatDate(a.date) },
     { key: "check_in", label: "Check in", render: (a) => (a.check_in ? new Date(a.check_in).toLocaleTimeString() : "—") },
@@ -225,12 +225,12 @@ export function AttendancePage() {
           a.status === "present"
             ? "badge-success"
             : a.status === "half_day"
-            ? "badge-warning"
-            : a.status === "absent"
-            ? "badge-danger"
-            : a.status === "pending_regularization"
-            ? "badge-warning"
-            : "badge-muted";
+              ? "badge-warning"
+              : a.status === "absent"
+                ? "badge-danger"
+                : a.status === "pending_regularization"
+                  ? "badge-warning"
+                  : "badge-muted";
 
         return (
           <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
@@ -396,10 +396,10 @@ export function AttendancePage() {
             {filterEmployee
               ? `Attendance: ${filterEmployee.name}`
               : isHr || user?.role === "super_admin"
-              ? "All Company Attendance"
-              : user?.role === "manager"
-              ? "Team Attendance"
-              : "My Attendance"}
+                ? "All Company Attendance"
+                : user?.role === "manager"
+                  ? "Team Attendance"
+                  : "My Attendance"}
           </h2>
 
           {/* View Toggle */}
@@ -491,7 +491,7 @@ export function AttendancePage() {
           currentPage={page}
           onPageChange={setPage}
           sort={null}
-          onSortChange={() => {}}
+          onSortChange={() => { }}
           emptyMessage={filterEmployee ? `No attendance records found for ${filterEmployee.name}.` : "No attendance records."}
           rowKey={(a) => a.id}
           onRowClick={(a) => {

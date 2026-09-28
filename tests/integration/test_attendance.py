@@ -443,3 +443,39 @@ def test_self_approval_ban_prevents_user_from_approving_own_regularization(clien
     err_msg = err_body.get("error", {}).get("message") or err_body.get("detail", "")
     assert "cannot approve your own" in err_msg.lower()
 
+
+def test_attendance_exempt_calendar_shows_exempt_not_absent(client, company_a, db):
+    """Verifies that employees marked as attendance exempt (e.g. CEO/Owner) show exempt rather than absent."""
+    employee = _create_employee(client, company_a.hr_headers, is_attendance_exempt=True)
+    today = utcnow().date()
+    cal_resp = client.get(
+        f"/api/v1/attendance/calendar?employee_id={employee['id']}&month={today.month}&year={today.year}",
+        headers=company_a.hr_headers,
+    )
+    assert cal_resp.status_code == 200, cal_resp.text
+    cal_data = cal_resp.json()
+    today_cell = next(d for d in cal_data["days"] if d["date"] == today.isoformat())
+    assert today_cell["status"] == "exempt"
+    assert today_cell["badge_label"] == "Exempt"
+
+
+def test_company_deactivation_restricted_to_owner(client, company_a, super_admin_headers, db):
+    """Verifies that deactivating a workspace is strictly restricted to Owner / Super Admin."""
+    # HR Admin caller should be rejected
+    resp_hr = client.post(
+        f"/api/v1/companies/{company_a.company_id}/deactivate",
+        headers=company_a.hr_headers,
+        json={"reason": "Business closure"},
+    )
+    assert resp_hr.status_code == 403
+
+    # Super Admin can deactivate
+    resp_sa = client.post(
+        f"/api/v1/companies/{company_a.company_id}/deactivate",
+        headers=super_admin_headers,
+        json={"reason": "Workspace audit"},
+    )
+    assert resp_sa.status_code == 200
+    assert resp_sa.json()["message"] == "Company workspace has been deactivated."
+
+

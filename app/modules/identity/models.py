@@ -56,6 +56,7 @@ class CompanyStatus(str, enum.Enum):
 
 
 class UserRole(str, enum.Enum):
+    owner = "owner"
     employee = "employee"
     manager = "manager"
     hr_admin = "hr_admin"
@@ -111,11 +112,16 @@ class Company(TimeStampedBase):
         ForeignKey("users.id", use_alter=True, name="fk_companies_approved_by_users"),
         nullable=True,
     )
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, name="fk_companies_owner_user_id_users"),
+        nullable=True,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    deactivation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_employee_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    # `approved_by` (above) is a second FK path between companies and users —
-    # without foreign_keys, SQLAlchemy can't tell which one this relationship
-    # should join on and refuses to configure the mapper at all.
+    # `approved_by` and `owner_user_id` are FK paths between companies and users
     users: Mapped[list["User"]] = relationship(
         back_populates="company", foreign_keys="User.company_id"
     )

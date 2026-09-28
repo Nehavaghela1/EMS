@@ -66,8 +66,8 @@ export function DashboardPage() {
     <div>
       <PageHeader title="Dashboard" breadcrumb="Overview" />
 
-      {/* Persistent Amber PIP Warning Banner for Employee Portal */}
-      {activePip && (
+      {/* Persistent Amber PIP Warning Banner — suppressed for owners (attendance-exempt) */}
+      {activePip && user?.role !== 'owner' && (
         <div
           className="card mb-4"
           style={{
@@ -180,8 +180,80 @@ export function DashboardPage() {
             </div>
           )}
 
-          {data.role === "hr_admin" && (
+          {(data.role === "hr_admin" || data.role === "owner") && (
             <>
+              {(data.role === 'owner' || data.role === 'hr_admin') && (
+                <div
+                  style={{
+                    background: data.role === 'owner'
+                      ? "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)"
+                      : "linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%)",
+                    borderRadius: "12px",
+                    padding: "1.25rem 1.5rem",
+                    marginBottom: "1rem",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    flexWrap: "wrap",
+                    gap: "1rem",
+                  }}
+                >
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "0.78rem", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: "4px" }}>
+                      {data.role === 'owner' ? 'Executive Dashboard' : 'HR Admin Dashboard'}
+                    </div>
+                    <div style={{ color: "#f8fafc", fontSize: "1.1rem", fontWeight: 700 }}>
+                      Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, {user?.employee?.first_name ?? (data.role === 'owner' ? 'CEO' : 'Admin')} 👋
+                    </div>
+                    <div style={{ color: "#64748b", fontSize: "0.82rem", marginTop: "2px" }}>Here's your company overview for today.</div>
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                    {data.role === 'owner' && (
+                      <Link to="/employees/new" className="btn btn-sm" style={{ background: "#2563eb", color: "#fff", border: "none", fontWeight: 600, textDecoration: "none" }}>+ Add Employee</Link>
+                    )}
+                    <Link to="/employees" className="btn btn-sm" style={{ background: "#334155", color: "#f1f5f9", border: "none", fontWeight: 600, textDecoration: "none" }}>View Directory</Link>
+                    {/* Leave Queue — dynamic counter badge */}
+                    <Link
+                      to="/leaves?status=pending"
+                      className="btn btn-sm"
+                      style={{
+                        position: "relative",
+                        background: data.data.pending_leave_requests > 0 ? "#b45309" : "#334155",
+                        color: "#f1f5f9",
+                        border: "none",
+                        fontWeight: 600,
+                        textDecoration: "none",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      Leave Queue
+                      {data.data.pending_leave_requests > 0 && (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            minWidth: "18px",
+                            height: "18px",
+                            borderRadius: "9px",
+                            background: "#f59e0b",
+                            color: "#1c1917",
+                            fontSize: "0.68rem",
+                            fontWeight: 800,
+                            padding: "0 4px",
+                            lineHeight: 1,
+                          }}
+                        >
+                          {data.data.pending_leave_requests}
+                        </span>
+                      )}
+                    </Link>
+                  </div>
+                </div>
+              )}
+
               <div className="stat-grid">
                 <Stat
                   label="Headcount"

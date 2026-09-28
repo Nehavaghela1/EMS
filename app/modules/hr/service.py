@@ -269,6 +269,7 @@ class EmployeeService:
         level: str | None,
         employment_type: EmploymentType | None,
         reporting_manager_id: uuid.UUID | None,
+        role: str | None = None,
         sort: str | None,
         page_params: PageParams,
     ) -> tuple[list[Employee], int, int]:
@@ -292,6 +293,7 @@ class EmployeeService:
             level=level,
             employment_type=employment_type,
             reporting_manager_id=reporting_manager_id,
+            role=role,
             sort=sort,
             page_params=page_params,
         )
@@ -355,6 +357,7 @@ class EmployeeService:
                 is_probation=bool(data.probation_end_date and data.probation_end_date > data.hire_date),
                 custom_days=data.notice_period_days,
             ),
+            is_attendance_exempt=data.is_attendance_exempt,
             invitation_status=InvitationStatus.sent,
             activation_token_hash=hash_token(raw_token),
             activation_expires_at=utcnow() + timedelta(days=settings.INVITE_TOKEN_EXPIRE_DAYS),
@@ -382,7 +385,8 @@ class EmployeeService:
     def _assert_can_view(
         self, company_id: uuid.UUID | None, employee: Employee, current_user: User
     ) -> None:
-        if current_user.role in (UserRole.hr_admin, UserRole.super_admin):
+        # Owner, HR Admin, and Super Admin have unrestricted read access to all employee profiles.
+        if current_user.role in (UserRole.owner, UserRole.hr_admin, UserRole.super_admin):
             return
         if employee.user_id == current_user.id:
             return
@@ -410,7 +414,7 @@ class EmployeeService:
     ) -> Employee:
         """Route 23: Own, HR — never Mgr. Own may set only contact fields."""
         employee = self._get_or_404(company_id, employee_id)
-        is_hr = current_user.role == UserRole.hr_admin
+        is_hr = current_user.role in (UserRole.owner, UserRole.hr_admin)
         is_own = employee.user_id == current_user.id
         if not is_hr and not is_own:
             raise ForbiddenError("You do not have permission to update this employee.")

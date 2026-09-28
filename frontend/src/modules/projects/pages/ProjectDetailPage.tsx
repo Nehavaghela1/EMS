@@ -23,7 +23,7 @@ export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const { activeTimer, startTimer, stopTimer, formatTime, elapsedSeconds } = useTimer();
-  const canManage = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager";
+  const canManage = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager" || user?.role === "owner";
   const [taskFilter, setTaskFilter] = useState<"all" | "my">("all");
 
   const [summary, setSummary] = useState<ProjectSummary | null>(null);

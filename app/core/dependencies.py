@@ -70,7 +70,11 @@ def require_role(*roles: UserRole):
     """
 
     def _check(user: User = Depends(get_current_user)) -> User:
-        if user.role != UserRole.super_admin and user.role not in roles:
+        allowed_roles = list(roles)
+        if UserRole.hr_admin in roles and UserRole.owner not in allowed_roles:
+            allowed_roles.append(UserRole.owner)
+
+        if user.role != UserRole.super_admin and user.role not in allowed_roles:
             raise ForbiddenError("You do not have permission to perform this action.")
         return user
 

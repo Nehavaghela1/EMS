@@ -207,7 +207,7 @@ class DashboardService:
         today = utcnow().date()
         if user.role == UserRole.super_admin:
             data = self._super_admin_data()
-        elif user.role == UserRole.hr_admin:
+        elif user.role in (UserRole.hr_admin, UserRole.owner):
             data = self._hr_admin_data(company_id, today)
         elif user.role == UserRole.manager:
             data = self._manager_data(company_id, user, today)

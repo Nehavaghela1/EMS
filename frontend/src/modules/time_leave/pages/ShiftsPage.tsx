@@ -33,7 +33,7 @@ const DAYS_OF_WEEK = [
 
 export function ShiftsPage() {
   const { user } = useAuth();
-  const isHr = user?.role === "hr_admin" || user?.role === "super_admin";
+  const isHr = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "owner";
   const hasEmployeeProfile = Boolean(user?.employee?.id);
   const [activeTab, setActiveTab] = useState<"company" | "my_schedule">(
     isHr && !hasEmployeeProfile ? "company" : "company"
@@ -238,8 +238,8 @@ export function ShiftsPage() {
                         backgroundColor: isToday
                           ? "var(--color-primary-subtle, #eff6ff)"
                           : day.isWeekend
-                          ? "var(--color-bg-secondary, #f8fafc)"
-                          : "var(--color-bg, #ffffff)",
+                            ? "var(--color-bg-secondary, #f8fafc)"
+                            : "var(--color-bg, #ffffff)",
                         boxShadow: isToday ? "0 4px 12px rgba(37, 99, 235, 0.12)" : "none",
                         display: "flex",
                         flexDirection: "column",
@@ -352,7 +352,7 @@ export function ShiftsPage() {
             currentPage={page}
             onPageChange={setPage}
             sort={null}
-            onSortChange={() => {}}
+            onSortChange={() => { }}
             emptyMessage="No shifts configured yet."
             rowKey={(s) => s.id}
           />
@@ -498,8 +498,8 @@ function AssignDialog({
     assignMode === "individual"
       ? employees.filter((e) => e.id === employeeId)
       : assignMode === "department"
-      ? employees.filter((e) => e.department_id === selectedDepartmentId)
-      : employees.filter((e) => selectedEmpIds.includes(e.id));
+        ? employees.filter((e) => e.department_id === selectedDepartmentId)
+        : employees.filter((e) => selectedEmpIds.includes(e.id));
 
   async function handleSubmit() {
     setError(null);

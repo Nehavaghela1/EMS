@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth, type UserRole } from "./auth-context";
 import { useTimer } from "./timer-context";
 import { getUserWorkspaces, switchWorkspace } from "../modules/identity/api";
+import { fetchDashboard } from "../modules/platform/api";
 import { NotificationBell } from "../shared/components/NotificationBell";
 
 interface SubItem {
@@ -38,7 +39,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "dashboard",
     label: "Dashboard",
     to: "/dashboard",
-    roles: ["employee", "manager", "hr_admin", "super_admin"],
+    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>
@@ -48,10 +49,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "employees",
     label: "Employees",
-    roles: ["hr_admin", "manager", "super_admin"],
+    roles: ["hr_admin", "manager", "super_admin", "owner"],
     children: [
-      { to: "/employees", label: "Directory", roles: ["hr_admin", "manager", "super_admin"] },
-      { to: "/departments", label: "Departments", roles: ["hr_admin", "super_admin"] },
+      { to: "/employees", label: "Directory", roles: ["hr_admin", "manager", "super_admin", "owner"] },
+      { to: "/departments", label: "Departments", roles: ["hr_admin", "super_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -62,12 +63,12 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "time_attendance",
     label: "Leave & Attendance",
-    roles: ["employee", "manager", "hr_admin", "super_admin"],
+    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
     children: [
-      { to: "/attendance", label: "Attendance", roles: ["employee", "manager", "hr_admin", "super_admin"] },
-      { to: "/leaves", label: "Leave Requests", roles: ["employee", "manager", "hr_admin", "super_admin"] },
-      { to: "/shifts", label: "Shift Schedule", roles: ["employee", "manager", "hr_admin", "super_admin"] },
-      { to: "/holidays", label: "Holidays", roles: ["hr_admin", "super_admin"] },
+      { to: "/attendance", label: "Attendance", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/leaves", label: "Leave Requests", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/shifts", label: "Shift Schedule", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/holidays", label: "Holidays", roles: ["hr_admin", "super_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -78,12 +79,12 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "payroll",
     label: "Payroll",
-    roles: ["employee", "manager", "hr_admin", "super_admin"],
+    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
     children: [
-      { to: "/payroll/run", label: "Pay Runs", roles: ["hr_admin", "super_admin"] },
-      { to: "/payroll/setup", label: "Payroll Setup", roles: ["hr_admin", "super_admin"] },
-      { to: "/payroll/payslip", label: "My Payslips", roles: ["employee", "manager", "hr_admin", "super_admin"] },
-      { to: "/payroll/reimbursements", label: "Reimbursements", roles: ["employee", "manager", "hr_admin", "super_admin"] },
+      { to: "/payroll/run", label: "Pay Runs", roles: ["hr_admin", "super_admin", "owner"] },
+      { to: "/payroll/setup", label: "Payroll Setup", roles: ["hr_admin", "super_admin", "owner"] },
+      { to: "/payroll/payslip", label: "My Payslips", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/payroll/reimbursements", label: "Reimbursements", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -94,10 +95,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "performance",
     label: "Performance",
-    roles: ["employee", "manager", "hr_admin", "super_admin"],
+    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
     children: [
-      { to: "/performance", label: "Cycles & Review", roles: ["hr_admin", "super_admin"] },
-      { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "super_admin"] },
+      { to: "/performance", label: "Cycles & Review", roles: ["hr_admin", "super_admin", "owner"] },
+      { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -108,10 +109,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "projects",
     label: "Projects & Timesheet",
-    roles: ["employee", "manager", "hr_admin", "super_admin"],
+    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
     children: [
-      { to: "/projects", label: "Projects", roles: ["employee", "manager", "hr_admin", "super_admin"] },
-      { to: "/timesheets", label: "Timesheets", roles: ["employee", "manager", "hr_admin", "super_admin"] },
+      { to: "/projects", label: "Projects", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/timesheets", label: "Timesheets", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -123,7 +124,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "settings",
     label: "Settings",
     to: "/settings",
-    roles: ["employee", "manager", "hr_admin", "super_admin"],
+    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -139,6 +140,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
 
   const role = user?.role ?? "employee";
+  const isAdministrative = ["owner", "hr_admin", "super_admin"].includes(role);
 
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>(user?.company_id || "");
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
@@ -181,6 +183,72 @@ export function AppLayout({ children }: { children: ReactNode }) {
     user?.company_code ||
     "";
 
+  // ── Profile pill dropdown (top-bar) ─────────────────────────────────────
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function handleOut(e: MouseEvent) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    }
+    if (profileMenuOpen) document.addEventListener("mousedown", handleOut);
+    return () => document.removeEventListener("mousedown", handleOut);
+  }, [profileMenuOpen]);
+
+  // ── Global search (⌘K) ──────────────────────────────────────────────────
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+    setSearchQ("");
+    setTimeout(() => searchInputRef.current?.focus(), 60);
+  }, []);
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        openSearch();
+      }
+      if (e.key === "Escape") setSearchOpen(false);
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [openSearch]);
+
+  const SEARCH_SHORTCUTS = [
+    { label: "Employee Directory", icon: "👥", to: "/employees" },
+    { label: "Leave Requests", icon: "📋", to: "/leaves" },
+    { label: "Attendance", icon: "🕐", to: "/attendance" },
+    { label: "Pay Runs", icon: "💰", to: "/payroll/run" },
+    { label: "My Payslips", icon: "🧾", to: "/payroll/payslip" },
+    { label: "Performance Goals", icon: "🎯", to: "/performance/goals" },
+    { label: "Timesheets", icon: "⏱️", to: "/timesheets" },
+    { label: "Settings", icon: "⚙️", to: "/settings" },
+    { label: "Departments", icon: "🏢", to: "/departments" },
+    { label: "Shift Schedule", icon: "📅", to: "/shifts" },
+    { label: "Holidays", icon: "🎉", to: "/holidays" },
+    { label: "Reimbursements", icon: "🧾", to: "/payroll/reimbursements" },
+  ];
+  const filteredShortcuts = searchQ.trim()
+    ? SEARCH_SHORTCUTS.filter((s) =>
+        s.label.toLowerCase().includes(searchQ.toLowerCase())
+      )
+    : SEARCH_SHORTCUTS;
+
+  // ── Pending approvals badge (admin/owner roles) ──────────────────────────
+  const dashboardQuery = useQuery({
+    queryKey: ["dashboard"],
+    queryFn: fetchDashboard,
+    enabled: ["owner", "hr_admin", "super_admin"].includes(role),
+    staleTime: 60_000,
+  });
+  const pendingLeaves: number =
+    (dashboardQuery.data?.data as any)?.pending_leave_requests ?? 0;
+
   // Filter sections visible to current role
   const visibleSections = NAV_SECTIONS.filter((sec) => sec.roles.includes(role))
     .map((sec) => ({
@@ -188,6 +256,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       children: sec.children?.filter((c) => c.roles.includes(role)),
     }))
     .filter((sec) => !sec.children || sec.children.length > 0);
+
 
   // Keep section open if current pathname matches any of its children
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
@@ -240,6 +309,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   }
 
   return (
+    <>
     <div className="app-shell" style={{ display: "flex", height: "100vh", width: "100vw", overflow: "hidden" }}>
       {/* Zoho HRMS Style Dark Sidebar - fixed height 100% */}
       <aside
@@ -597,7 +667,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         )}
 
         {/* Search */}
-        {user && (user.role === "hr_admin" || user.role === "super_admin" || user.role === "manager") && (
+        {user && isAdministrative && (
           <div style={{ padding: "0.6rem 0.85rem 0.4rem" }}>
             <input
               type="text"
@@ -851,23 +921,149 @@ export function AppLayout({ children }: { children: ReactNode }) {
             )}
           </div>
 
-          {/* User Quick Info & Notification Bell */}
-          <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-            <NotificationBell />
-            <span
+          {/* Right side: Search + Pending + Notification + Profile Pill */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+
+            {/* Global Search trigger (⌘K) */}
+            <button
+              type="button"
+              id="btn-global-search"
+              onClick={openSearch}
+              title="Global Search (⌘K)"
               style={{
-                fontSize: "0.8rem",
-                color: "var(--color-muted, #64748b)",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
+                display: "flex", alignItems: "center", gap: "6px",
+                padding: "5px 10px", borderRadius: "7px",
+                border: "1px solid #e2e8f0", background: "#f8fafc",
+                color: "#64748b", fontSize: "0.78rem", cursor: "pointer",
+                transition: "border-color 0.15s",
               }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "#bfdbfe"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "#e2e8f0"; }}
             >
-              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981" }} />
-              {user?.role === "super_admin" ? "Platform Super Admin" : user?.role?.replace("_", " ")}
-            </span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+              </svg>
+              <span style={{ display: "none" /* hidden on small width */ }}>Search</span>
+              <span style={{ fontSize: "0.67rem", padding: "1px 5px", borderRadius: "4px", background: "#e2e8f0", color: "#94a3b8", fontFamily: "monospace" }}>⌘K</span>
+            </button>
+
+            {/* Pending approvals badge — admin/owner only */}
+            {["owner", "hr_admin", "super_admin"].includes(role) && pendingLeaves > 0 && (
+              <button
+                type="button"
+                id="btn-pending-approvals"
+                onClick={() => navigate("/leaves?status=pending")}
+                title={`${pendingLeaves} pending leave request${pendingLeaves !== 1 ? "s" : ""} — click to review`}
+                style={{
+                  display: "flex", alignItems: "center", gap: "5px",
+                  padding: "5px 10px", borderRadius: "7px",
+                  border: "1px solid #fde68a", background: "#fffbeb",
+                  color: "#92400e", fontSize: "0.78rem", fontWeight: 600, cursor: "pointer",
+                  transition: "background 0.15s",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#fef3c7"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#fffbeb"; }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+                </svg>
+                {pendingLeaves} Pending
+              </button>
+            )}
+
+            <NotificationBell />
+
+            {/* Interactive Profile Pill */}
+            <div ref={profileMenuRef} style={{ position: "relative" }}>
+              <button
+                type="button"
+                id="btn-profile-pill"
+                onClick={() => setProfileMenuOpen((p) => !p)}
+                style={{
+                  display: "flex", alignItems: "center", gap: "6px",
+                  padding: "4px 10px 4px 5px",
+                  borderRadius: "24px",
+                  border: `1px solid ${profileMenuOpen ? "#bfdbfe" : "#e2e8f0"}`,
+                  background: profileMenuOpen ? "#eff6ff" : "#f8fafc",
+                  cursor: "pointer", transition: "all 0.15s ease",
+                }}
+              >
+                {/* Avatar circle */}
+                <div style={{
+                  width: "26px", height: "26px", borderRadius: "50%", flexShrink: 0,
+                  background: role === "owner"
+                    ? "linear-gradient(135deg,#f59e0b,#d97706)"
+                    : role === "hr_admin"
+                    ? "linear-gradient(135deg,#6366f1,#8b5cf6)"
+                    : role === "super_admin"
+                    ? "linear-gradient(135deg,#ec4899,#db2777)"
+                    : "linear-gradient(135deg,#3b82f6,#2563eb)",
+                  color: "#fff", display: "flex", alignItems: "center",
+                  justifyContent: "center", fontWeight: 700, fontSize: "0.72rem",
+                }}>
+                  {user?.email?.charAt(0).toUpperCase()}
+                </div>
+                <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>
+                  {role === "super_admin" ? "Super Admin" : role === "hr_admin" ? "HR Admin" : role.charAt(0).toUpperCase() + role.slice(1)}
+                </span>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transform: profileMenuOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }}>
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+
+              {/* Profile dropdown */}
+              {profileMenuOpen && (
+                <div style={{
+                  position: "absolute", right: 0, top: "calc(100% + 6px)",
+                  background: "#ffffff", border: "1px solid #e2e8f0",
+                  borderRadius: "10px",
+                  boxShadow: "0 10px 25px -5px rgba(0,0,0,0.12), 0 4px 6px -2px rgba(0,0,0,0.05)",
+                  minWidth: "210px", zIndex: 999, overflow: "hidden", padding: "4px 0",
+                }}>
+                  {/* User info header */}
+                  <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid #f1f5f9" }}>
+                    <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {user?.email}
+                    </div>
+                    <div style={{ fontSize: "0.7rem", color: "#64748b", marginTop: "2px", textTransform: "capitalize" }}>
+                      {role === "super_admin" ? "Platform Super Admin" : role.replace("_", " ")}
+                    </div>
+                  </div>
+                  {/* Settings */}
+                  {[
+                    { label: "My Profile & Settings", icon: "👤", to: "/settings" },
+                    ...(["owner", "hr_admin", "super_admin"].includes(role)
+                      ? [{ label: "Manage Admins", icon: "🛡️", to: "/settings" }]
+                      : []),
+                  ].map((item) => (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => { setProfileMenuOpen(false); navigate(item.to); }}
+                      style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.83rem", color: "#374151", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#f8fafc"; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+                    >
+                      <span>{item.icon}</span> {item.label}
+                    </button>
+                  ))}
+                  <div style={{ height: "1px", background: "#f1f5f9", margin: "4px 0" }} />
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.83rem", color: "#dc2626", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", fontWeight: 600 }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#fef2f2"; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+                  >
+                    <span>→</span> Sign Out
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
+
 
         {/* Global Live Stopwatch Top Bar (Zoho / Jira style) */}
         {activeTimer && (
@@ -982,5 +1178,87 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </main>
       </div>
     </div>
+
+    {/* ⌘K Global Search Modal */}
+    {searchOpen && (
+      <div
+        style={{
+          position: "fixed", inset: 0, zIndex: 9999,
+          background: "rgba(15, 23, 42, 0.55)",
+          backdropFilter: "blur(4px)",
+          display: "flex", alignItems: "flex-start", justifyContent: "center",
+          paddingTop: "12vh",
+        }}
+        onClick={() => setSearchOpen(false)}
+      >
+        <div
+          style={{
+            background: "#ffffff", borderRadius: "14px", width: "100%", maxWidth: "540px",
+            boxShadow: "0 25px 50px -12px rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.06)",
+            overflow: "hidden",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Search input */}
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "14px 16px", borderBottom: "1px solid #f1f5f9" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
+            <input
+              ref={searchInputRef}
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && filteredShortcuts.length > 0) {
+                  navigate(filteredShortcuts[0].to);
+                  setSearchOpen(false);
+                }
+              }}
+              placeholder="Jump to a page… (↵ to select first result)"
+              style={{
+                flex: 1, border: "none", outline: "none",
+                fontSize: "0.95rem", color: "#0f172a", background: "transparent",
+              }}
+            />
+            <span style={{ fontSize: "0.7rem", color: "#94a3b8", border: "1px solid #e2e8f0", borderRadius: "4px", padding: "2px 6px", fontFamily: "monospace" }}>ESC</span>
+          </div>
+          {/* Results */}
+          <div style={{ maxHeight: "340px", overflowY: "auto", padding: "6px 0" }}>
+            {filteredShortcuts.length === 0 ? (
+              <div style={{ padding: "20px 16px", textAlign: "center", color: "#94a3b8", fontSize: "0.875rem" }}>
+                No results for "{searchQ}"
+              </div>
+            ) : (
+              filteredShortcuts.map((s) => (
+                <button
+                  key={s.to + s.label}
+                  type="button"
+                  onClick={() => { navigate(s.to); setSearchOpen(false); }}
+                  style={{
+                    width: "100%", textAlign: "left", padding: "9px 16px",
+                    border: "none", background: "transparent",
+                    display: "flex", alignItems: "center", gap: "10px",
+                    cursor: "pointer", fontSize: "0.875rem", color: "#374151",
+                    transition: "background 0.1s",
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#f8fafc"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+                >
+                  <span style={{ fontSize: "1rem", width: "22px", textAlign: "center", flexShrink: 0 }}>{s.icon}</span>
+                  <span style={{ fontWeight: 500 }}>{s.label}</span>
+                  <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "#cbd5e1", fontFamily: "monospace" }}>↵</span>
+                </button>
+              ))
+            )}
+          </div>
+          <div style={{ padding: "8px 16px", borderTop: "1px solid #f1f5f9", display: "flex", gap: "14px", fontSize: "0.72rem", color: "#94a3b8" }}>
+            <span>↑↓ navigate</span>
+            <span>↵ select</span>
+            <span>ESC close</span>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

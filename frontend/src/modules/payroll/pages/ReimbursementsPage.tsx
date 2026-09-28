@@ -35,7 +35,7 @@ export function ReimbursementsPage() {
   const [rejectionReason, setRejectionReason] = useState("");
   const [reviewing, setReviewing] = useState(false);
 
-  const isHR = user?.role === "hr_admin" || user?.role === "super_admin";
+  const isHR = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "owner";
   const isManager = user?.role === "manager";
   // Employees can NEVER approve or reject claims — only HR Admins and Managers can.
   // Managers can only review their direct reports' claims (enforced server-side too).

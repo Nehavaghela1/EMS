@@ -35,9 +35,11 @@ export interface EmployeeDashboardData {
 
 export type DashboardResponse =
   | { role: "super_admin"; generated_at: string; data: SuperAdminDashboardData }
+  | { role: "owner"; generated_at: string; data: HrAdminDashboardData }
   | { role: "hr_admin"; generated_at: string; data: HrAdminDashboardData }
   | { role: "manager"; generated_at: string; data: ManagerDashboardData }
   | { role: "employee"; generated_at: string; data: EmployeeDashboardData };
+
 
 export async function fetchDashboard(): Promise<DashboardResponse> {
   const { data } = await apiClient.get<DashboardResponse>("/dashboard");
