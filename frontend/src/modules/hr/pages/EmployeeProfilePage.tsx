@@ -2013,11 +2013,22 @@ function ResignationAndFnFCard({
   isHr: boolean;
   onRefresh: () => void;
 }) {
+  const { user } = useAuth();
   const { notify } = useToast();
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
   const [terminating, setTerminating] = useState(false);
   const [updatingClearance, setUpdatingClearance] = useState(false);
+
+  // Department-specific and hierarchical delegation
+  const loggedInEmp = user?.employee;
+  const isManager = user?.role === "manager";
+  const userPosition = (loggedInEmp?.position || "").toLowerCase();
+
+  const isItLead = isHr || (isManager && (userPosition.includes("it") || userPosition.includes("tech")));
+  const isFinLead = isHr || (isManager && (userPosition.includes("fin") || userPosition.includes("account") || userPosition.includes("payroll")));
+  const isHrLead = isHr || (isManager && (userPosition.includes("hr") || userPosition.includes("people")));
+  const isReportingManager = isHr || (isManager && Boolean(loggedInEmp?.id && loggedInEmp.id === employee.reporting_manager_id));
 
   const noticeRequired = employee.notice_period_days || 30;
 
@@ -2712,9 +2723,11 @@ function ResignationAndFnFCard({
             <Field label="Resignation date" value={employee.resignation_date ?? "—"} />
             <Field label="Proposed Last Working Day" value={employee.last_working_date ?? "—"} />
           </div>
-          {isHr ? (
+          {(isHr || isReportingManager) ? (
             <div className="card" style={{ background: "var(--color-bg)" }}>
-              <h4 className="mt-0 mb-2">HR Approval & Notice Terms (Track A Review)</h4>
+              <h4 className="mt-0 mb-2">
+                {isReportingManager && !isHr ? "Manager Handover & Notice Review" : "HR Approval & Notice Terms (Track A Review)"}
+              </h4>
 
               {/* Shortfall & Notice Breakdown Banner */}
               {(() => {
@@ -2841,7 +2854,7 @@ function ResignationAndFnFCard({
                   <strong style={{ fontSize: "0.85rem" }}>💻 IT Department</strong>
                   <div className="text-xs text-muted">Laptop, access keys, monitors</div>
                 </div>
-                {isHr ? (
+                {isItLead ? (
                   <button
                     type="button"
                     className={`btn btn-xs ${employee.it_clearance ? "btn-success" : "btn-outline"}`}
@@ -2863,7 +2876,7 @@ function ResignationAndFnFCard({
                   <strong style={{ fontSize: "0.85rem" }}>🪪 HR Department</strong>
                   <div className="text-xs text-muted">ID card, access badges, NDA</div>
                 </div>
-                {isHr ? (
+                {isHrLead ? (
                   <button
                     type="button"
                     className={`btn btn-xs ${employee.hr_clearance ? "btn-success" : "btn-outline"}`}
@@ -2885,7 +2898,7 @@ function ResignationAndFnFCard({
                   <strong style={{ fontSize: "0.85rem" }}>💰 Finance Department</strong>
                   <div className="text-xs text-muted">Loans, advance reconciliations</div>
                 </div>
-                {isHr ? (
+                {isFinLead ? (
                   <button
                     type="button"
                     className={`btn btn-xs ${employee.finance_clearance ? "btn-success" : "btn-outline"}`}
@@ -3032,8 +3045,8 @@ function ResignationAndFnFCard({
                   </div>
                 </div>
 
-                {/* HR Adjustment inputs if not settled */}
-                {isHr && !employee.fnf_settled_at && (
+                {/* HR / Finance Adjustment inputs if not settled */}
+                {(isHr || isFinLead) && !employee.fnf_settled_at && (
                   <div style={{ background: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", padding: "14px", marginBottom: "16px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
                       <strong style={{ fontSize: "12px", color: "#475569", textTransform: "uppercase", letterSpacing: "0.03em" }}>⚙️ Adjust Clearance Ledger Line Items</strong>

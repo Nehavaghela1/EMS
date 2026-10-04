@@ -344,9 +344,9 @@ def approve_resignation(
     employee_id: uuid.UUID,
     data: ResignationApproveRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
 ):
-    employee = EmployeeService(db).approve_resignation(user.company_id, employee_id, data)
+    employee = EmployeeService(db).approve_resignation(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
 
 @employees_router.post("/{employee_id}/terminate", response_model=EmployeeResponse)
@@ -372,6 +372,6 @@ def update_fnf_clearance(
     employee_id: uuid.UUID,
     data: FnFClearanceUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
 ):
     return EmployeeService(db).update_fnf_clearance(user.company_id, employee_id, data, user)

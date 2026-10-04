@@ -539,8 +539,32 @@ class EmployeeService:
         self.db.commit()
         return employee
 
-    def approve_resignation(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: ResignationApproveRequest) -> Employee:
+    def approve_resignation(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: ResignationApproveRequest, actor: User) -> Employee:
         employee = self._get_or_404(company_id, employee_id)
+
+        # Multi-tenant and Role Hierarchy verification
+        if actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+            # If actor is a Manager: check if they are the direct reporting manager or department head
+            actor_emp = self.repo.get_by_user_id(company_id, actor.id)
+            if not actor_emp:
+                raise ForbiddenError("You do not have permission to approve this resignation.")
+
+            # Prevent self-approval
+            if actor_emp.id == employee.id:
+                raise ForbiddenError("Employees and managers cannot approve their own resignation.")
+
+            is_direct_manager = (employee.reporting_manager_id == actor_emp.id)
+            is_dept_head = False
+            if employee.department_id:
+                dept = self.dept_repo.get_by_id(employee.department_id, company_id)
+                if dept and dept.head_employee_id == actor_emp.id:
+                    is_dept_head = True
+
+            if not (is_direct_manager or is_dept_head):
+                raise ForbiddenError(
+                    "Hierarchy Violation: Only the direct reporting manager, department head, or HR Admin can review this resignation."
+                )
+
         if not data.approved:
             self.repo.update(employee, resignation_status=ResignationStatus.rejected)
         else:
@@ -748,22 +772,67 @@ class EmployeeService:
 
     def update_fnf_clearance(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: FnFClearanceUpdateRequest, actor: User) -> FnFSettlementResponse:
         employee = self._get_or_404(company_id, employee_id)
+        actor_emp = self.repo.get_by_user_id(company_id, actor.id)
+
+        # Disallow an employee/manager from approving their own clearance
+        if actor_emp and actor_emp.id == employee.id:
+            raise ForbiddenError("You cannot sign off on your own clearance or settlement.")
+
+        is_executive = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+
+        # Resolve actor's department name if available
+        actor_dept_name = ""
+        if actor_emp and actor_emp.department_id:
+            dept = self.dept_repo.get_by_id(actor_emp.department_id, company_id)
+            if dept:
+                actor_dept_name = dept.name.strip().lower()
+
+        is_it_dept = ("it" in actor_dept_name) or ("tech" in actor_dept_name) or ("information technology" in actor_dept_name)
+        is_fin_dept = ("fin" in actor_dept_name) or ("account" in actor_dept_name) or ("payroll" in actor_dept_name)
+        is_hr_dept = ("hr" in actor_dept_name) or ("human" in actor_dept_name) or ("people" in actor_dept_name)
+
         updates = {}
+
+        # 1. IT Clearance: IT Department leads or HR Admin/Owner
         if data.it_clearance is not None:
+            if not (is_executive or (actor.role == UserRole.manager and is_it_dept)):
+                raise ForbiddenError("Only IT Department Managers or HR Admin/Owner can sign off IT asset clearance.")
             updates["it_clearance"] = data.it_clearance
+
+        # 2. HR Clearance: HR Department leads or HR Admin/Owner
         if data.hr_clearance is not None:
+            if not (is_executive or (actor.role == UserRole.manager and is_hr_dept)):
+                raise ForbiddenError("Only HR Department Managers or HR Admin/Owner can sign off HR policy clearance.")
             updates["hr_clearance"] = data.hr_clearance
+
+        # 3. Finance Clearance: Finance Department leads or HR Admin/Owner
         if data.finance_clearance is not None:
+            if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
+                raise ForbiddenError("Only Finance & Accounts Managers or HR Admin/Owner can sign off Finance clearance.")
             updates["finance_clearance"] = data.finance_clearance
+
+        # 4. Financial Ledger Adjustments: Finance Manager or HR Admin/Owner
         if data.severance_pay is not None:
+            if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
+                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust severance pay.")
             updates["severance_pay"] = data.severance_pay
         if data.pending_reimbursements is not None:
+            if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
+                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust reimbursements.")
             updates["pending_reimbursements"] = data.pending_reimbursements
         if data.gratuity_bonus is not None:
+            if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
+                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust gratuity/bonus.")
             updates["gratuity_bonus"] = data.gratuity_bonus
         if data.asset_deductions is not None:
+            if not (is_executive or (actor.role == UserRole.manager and (is_fin_dept or is_it_dept))):
+                raise ForbiddenError("Only Finance/IT Managers or HR Admin/Owner can adjust asset deductions.")
             updates["asset_deductions"] = data.asset_deductions
+
+        # 5. Maker-Checker Final Settlement Release: strictly Executive (HR Admin & Owner)
         if data.mark_settled:
+            if not is_executive:
+                raise ForbiddenError("Maker-Checker Enforcement: Only HR Admin or Company Owner can authorize final fund release.")
             updates["fnf_settled_at"] = utcnow()
             # Ensure employee is marked inactive upon settlement
             updates["is_active"] = False
