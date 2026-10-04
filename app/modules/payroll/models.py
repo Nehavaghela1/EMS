@@ -212,6 +212,12 @@ class StatutoryConfig(TenantBase):
     default_tax_regime: Mapped[TaxRegime] = mapped_column(
         SAEnum(TaxRegime, name="statutory_config_tax_regime"), nullable=False, default=TaxRegime.new
     )
+    # Direct corporate banking & Zoho Payouts gateway integration
+    payout_bank_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    payout_account_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    payout_ifsc_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    payout_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
     updated_by: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )

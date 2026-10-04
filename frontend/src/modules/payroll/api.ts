@@ -86,6 +86,10 @@ export interface StatutoryConfig {
   lwf_months: number[];
   tds_enabled: boolean;
   default_tax_regime: string;
+  payout_bank_name?: string | null;
+  payout_account_number?: string | null;
+  payout_ifsc_code?: string | null;
+  payout_enabled?: boolean;
 }
 
 export interface PtSlab {

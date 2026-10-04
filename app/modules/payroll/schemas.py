@@ -134,6 +134,10 @@ class StatutoryConfigResponse(BaseModel):
     lwf_months: list[int] | None
     tds_enabled: bool
     default_tax_regime: TaxRegime
+    payout_bank_name: str | None = None
+    payout_account_number: str | None = None
+    payout_ifsc_code: str | None = None
+    payout_enabled: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -155,6 +159,10 @@ class StatutoryConfigUpdateRequest(BaseModel):
     lwf_months: list[int] | None = None
     tds_enabled: bool | None = None
     default_tax_regime: TaxRegime | None = None
+    payout_bank_name: str | None = None
+    payout_account_number: str | None = None
+    payout_ifsc_code: str | None = None
+    payout_enabled: bool | None = None
 
 
 class PtSlabResponse(BaseModel):

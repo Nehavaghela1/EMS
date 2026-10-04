@@ -5,6 +5,8 @@ import {
   getPayrollRunDetail,
   approvePayrollRun,
   deletePayrollRun,
+  getStatutoryConfig,
+  updateStatutoryConfig,
   type PayrollRun,
   type PayrollRunDetail,
   type PayrollItem,
@@ -35,6 +37,13 @@ export function PayrollRunPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [approving, setApproving] = useState(false);
 
+  // Zoho Payout Gateway Setup Modal
+  const [showPayoutSetupModal, setShowPayoutSetupModal] = useState(false);
+  const [payoutBankName, setPayoutBankName] = useState("ICICI Bank Corporate");
+  const [payoutAccNumber, setPayoutAccNumber] = useState("•••• •••• 9281");
+  const [payoutIfsc, setPayoutIfsc] = useState("ICIC0000412");
+  const [payoutSaving, setPayoutSaving] = useState(false);
+
   const [company, setCompany] = useState<CompanyResponse | null>(null);
 
   const employeeMap = useMemo(() => {
@@ -49,7 +58,19 @@ export function PayrollRunPage() {
     fetchRuns();
     fetchEmployees();
     fetchCompany();
+    fetchPayoutConfig();
   }, []);
+
+  async function fetchPayoutConfig() {
+    try {
+      const cfg = await getStatutoryConfig();
+      if (cfg.payout_bank_name) setPayoutBankName(cfg.payout_bank_name);
+      if (cfg.payout_account_number) setPayoutAccNumber(cfg.payout_account_number);
+      if (cfg.payout_ifsc_code) setPayoutIfsc(cfg.payout_ifsc_code);
+    } catch {
+      // Non-critical if defaults apply
+    }
+  }
 
   async function fetchCompany() {
     try {
@@ -856,9 +877,22 @@ export function PayrollRunPage() {
             <span style={{ color: "#ea580c", fontSize: "1rem" }}>✨</span>
             <span>
               Pay salaries from any bank account without switching to your bank portal using Payouts by Zoho Payments.{" "}
-              <a href="#payout" onClick={(e) => { e.preventDefault(); notify("Payout setup opened."); }} style={{ color: "#2563eb", fontWeight: 600, textDecoration: "none" }}>
+              <button
+                type="button"
+                onClick={() => setShowPayoutSetupModal(true)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#2563eb",
+                  fontWeight: 600,
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                  padding: 0,
+                  fontSize: "inherit",
+                }}
+              >
                 Setup Payout
-              </a>
+              </button>
             </span>
           </div>
 
@@ -1173,6 +1207,172 @@ export function PayrollRunPage() {
                   style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px", padding: "6px 16px" }}
                 >
                   {startingRun ? "Running..." : "Run"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Zoho Payouts Direct Banking Gateway Modal */}
+      {showPayoutSetupModal && (
+        <div className="modal-backdrop" onClick={() => setShowPayoutSetupModal(false)}>
+          <div
+            className="modal card"
+            style={{ maxWidth: "520px", padding: 0, borderRadius: "12px", overflow: "hidden" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                background: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)",
+                padding: "1.25rem 1.5rem",
+                color: "#ffffff",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "1.2rem" }}>✨</span>
+                  <h2 style={{ fontSize: "1.1rem", fontWeight: 700, margin: 0, color: "#ffffff" }}>
+                    Zoho Payments & Direct Banking Payout
+                  </h2>
+                </div>
+                <p style={{ margin: "4px 0 0", fontSize: "0.78rem", color: "#94a3b8" }}>
+                  Automate salary disbursements directly from your corporate bank account
+                </p>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                style={{ color: "#ffffff", opacity: 0.8 }}
+                onClick={() => setShowPayoutSetupModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setPayoutSaving(true);
+                try {
+                  await updateStatutoryConfig({
+                    payout_bank_name: payoutBankName,
+                    payout_account_number: payoutAccNumber,
+                    payout_ifsc_code: payoutIfsc,
+                    payout_enabled: true,
+                  });
+                  setShowPayoutSetupModal(false);
+                  notify("Corporate Payout Gateway configured & persisted successfully!", "success");
+                } catch (err) {
+                  notify(parseApiError(err).message || "Failed to save payout configuration", "error");
+                } finally {
+                  setPayoutSaving(false);
+                }
+              }}
+            >
+              <div className="modal-body stack gap-4" style={{ padding: "1.5rem" }}>
+                <div
+                  style={{
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: "8px",
+                    padding: "0.75rem 1rem",
+                    fontSize: "0.82rem",
+                    color: "#166534",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <span>🔒</span>
+                  <span>Instant 256-bit encrypted disbursement via RBI / NPCI Banking Rails (NEFT / RTGS / IMPS).</span>
+                </div>
+
+                <div className="field">
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "4px", display: "block" }}>
+                    Corporate Disbursement Bank
+                  </label>
+                  <select
+                    value={payoutBankName}
+                    onChange={(e) => setPayoutBankName(e.target.value)}
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem", background: "#f8fafc" }}
+                  >
+                    <option value="ICICI Bank Corporate">ICICI Bank (Connected Banking)</option>
+                    <option value="HDFC Bank Corporate">HDFC Bank Direct Payout</option>
+                    <option value="Axis Bank Corporate">Axis Bank Corporate Gateway</option>
+                    <option value="State Bank of India Corporate">State Bank of India (e-Pay)</option>
+                    <option value="Yes Bank Smart API">Yes Bank API Payouts</option>
+                  </select>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "12px" }}>
+                  <div className="field">
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "4px", display: "block" }}>
+                      Corporate Account Number
+                    </label>
+                    <input
+                      type="text"
+                      value={payoutAccNumber}
+                      onChange={(e) => setPayoutAccNumber(e.target.value)}
+                      placeholder="Enter 12-16 digit account number"
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "4px", display: "block" }}>
+                      Bank IFSC Code
+                    </label>
+                    <input
+                      type="text"
+                      value={payoutIfsc}
+                      onChange={(e) => setPayoutIfsc(e.target.value.toUpperCase())}
+                      placeholder="e.g. ICIC0000412"
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem", textTransform: "uppercase" }}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "4px", display: "block" }}>
+                    Disbursement Approval Workflow
+                  </label>
+                  <div style={{ fontSize: "0.82rem", color: "#475569", background: "#f8fafc", padding: "10px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                    ✓ <strong>Maker-Checker Policy:</strong> HR compiles monthly runs &rarr; Owner / Finance Controller authorizes fund release via OTP.
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className="modal-footer"
+                style={{
+                  padding: "1rem 1.5rem",
+                  background: "#f8fafc",
+                  borderTop: "1px solid #e2e8f0",
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: "10px",
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setShowPayoutSetupModal(false)}
+                  style={{ border: "1px solid #cbd5e1", borderRadius: "6px" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary btn-sm"
+                  disabled={payoutSaving}
+                  style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px", padding: "6px 18px", fontWeight: 600 }}
+                >
+                  {payoutSaving ? "Saving Gateway..." : "Save & Enable Gateway"}
                 </button>
               </div>
             </form>
