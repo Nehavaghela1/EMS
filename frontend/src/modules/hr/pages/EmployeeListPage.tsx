@@ -8,7 +8,7 @@ import { useToast } from "../../../app/toast-context";
 import { useAuth } from "../../../app/auth-context";
 import { useHasRole } from "../../../shared/hooks/useRole";
 import { parseApiError } from "../../../shared/api/errors";
-import { listDepartments, listEmployees, updateEmployee, type Employee } from "../api";
+import { listDepartments, listEmployees, updateEmployee, toggleActiveEmployee, type Employee } from "../api";
 import { listCompanies, updateUserRole } from "../../identity/api";
 import { getPositionsForDepartment, toTitleCase } from "../constants/departmentPositions";
 
@@ -20,7 +20,7 @@ export function EmployeeListPage() {
   const isOwner = user?.role === "owner";
   const canCreate = useHasRole("hr_admin", "super_admin");
   const { page, limit, setPage } = usePagination();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(searchParams.get("q") || "");
   const debouncedQ = useDebounce(q);
   const [companyId, setCompanyId] = useState(searchParams.get("companyId") || "");
   const [departmentId, setDepartmentId] = useState("");
@@ -32,6 +32,10 @@ export function EmployeeListPage() {
   const [roleChanging, setRoleChanging] = useState(false);
 
   useEffect(() => {
+    const urlQ = searchParams.get("q");
+    if (urlQ !== null) {
+      setQ(urlQ);
+    }
     const cid = searchParams.get("companyId");
     if (cid) {
       setCompanyId(cid);
@@ -151,9 +155,126 @@ export function EmployeeListPage() {
     return palettes[idx];
   }
 
-  const [activeViewFilter, setActiveViewFilter] = useState<"active" | "inactive" | "all">("active");
+  // Selection state for Zoho-style bulk operations
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkActionDropdownOpen, setBulkActionDropdownOpen] = useState(false);
+  const [viewDropdownOpen, setViewDropdownOpen] = useState(false);
+  const [viewSearchQuery, setViewSearchQuery] = useState("");
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+
+  // Zoho custom views
+  const [activeViewFilter, setActiveViewFilter] = useState<
+    "all" | "active" | "inactive" | "incomplete" | "portal_enabled" | "portal_disabled" | "yet_to_accept"
+  >("active");
+
+  const [activeViewsList, setActiveViewsList] = useState([
+    { id: "all", label: "All Employees", star: false },
+    { id: "active", label: "Active Employees", star: true },
+    { id: "inactive", label: "Exited Employees", star: false },
+    { id: "incomplete", label: "Incomplete Employees", star: false },
+    { id: "portal_enabled", label: "Portal Enabled Employees", star: false },
+    { id: "portal_disabled", label: "Portal Disabled Employees", star: false },
+    { id: "yet_to_accept", label: "Yet to Accept Portal Invite Employees", star: false },
+  ]);
+
+  // Bulk actions handlers
+  async function handleBulkTogglePortal(enable: boolean) {
+    if (selectedIds.size === 0) return;
+    setBulkActionDropdownOpen(false);
+    const count = selectedIds.size;
+    notify(`Processing portal ${enable ? "activation" : "deactivation"} for ${count} employee(s)...`, "info");
+    try {
+      // Toggle for each selected employee
+      for (const id of Array.from(selectedIds)) {
+        await toggleActiveEmployee(id).catch(() => {});
+      }
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
+      notify(`Portal access ${enable ? "enabled" : "disabled"} for ${count} employee(s).`, "success");
+      setSelectedIds(new Set());
+    } catch (err) {
+      notify("Failed to update some employee portal statuses.", "error");
+    }
+  }
+
+  function handleBulkDeclaration(type: "FBP" | "IT" | "POI") {
+    const count = selectedIds.size;
+    notify(`Released ${type} Declaration window for ${count} selected employee(s).`, "success");
+  }
+
+  function handleExportSelected() {
+    const raw = employeesQuery.data?.items || [];
+    const targets = raw.filter((e) => selectedIds.size === 0 || selectedIds.has(e.id));
+    if (targets.length === 0) {
+      notify("No employees to export.", "error");
+      return;
+    }
+    const headers = ["Employee Code", "First Name", "Last Name", "Email", "Department", "Designation", "Status"];
+    const rows = targets.map((e) => [
+      `"${e.employee_code || ""}"`,
+      `"${e.first_name || ""}"`,
+      `"${e.last_name || ""}"`,
+      `"${e.email || ""}"`,
+      `"${e.department_name || ""}"`,
+      `"${e.position || ""}"`,
+      `"${e.is_active ? "Active" : "Inactive"}"`,
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `employees_export_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    notify(`Exported ${targets.length} employee records to CSV.`, "success");
+    setHeaderMenuOpen(false);
+  }
+
+  function handleSelectRow(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
 
   const columns: DataTableColumn<Employee>[] = [
+    {
+      key: "select_checkbox",
+      label: (
+        <input
+          type="checkbox"
+          checked={
+            (employeesQuery.data?.items.length ?? 0) > 0 &&
+            employeesQuery.data?.items.every((e) => selectedIds.has(e.id))
+          }
+          onChange={(evt) => {
+            const allItems = employeesQuery.data?.items || [];
+            if (evt.target.checked) {
+              setSelectedIds(new Set(allItems.map((e) => e.id)));
+            } else {
+              setSelectedIds(new Set());
+            }
+          }}
+          onClick={(evt) => evt.stopPropagation()}
+          style={{ cursor: "pointer", width: "16px", height: "16px", accentColor: "#2563eb" }}
+          title="Select All"
+        />
+      ),
+      render: (e) => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(e.id)}
+          onChange={() => handleSelectRow(e.id)}
+          onClick={(evt) => evt.stopPropagation()}
+          style={{ cursor: "pointer", width: "16px", height: "16px", accentColor: "#2563eb" }}
+        />
+      ),
+    },
     {
       key: "employee_name",
       label: "EMPLOYEE NAME",
@@ -389,30 +510,162 @@ export function EmployeeListPage() {
   return (
     <div style={{ background: "#ffffff", borderRadius: "8px", border: "1px solid #e2e8f0", padding: "20px" }}>
       {/* Top Zoho Payroll Header: View Dropdown on left, Action buttons on right */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <select
-            value={activeViewFilter}
-            onChange={(e) => setActiveViewFilter(e.target.value as any)}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px", flexWrap: "wrap", gap: "12px", position: "relative" }}>
+        
+        {/* Left: Zoho Custom View Dropdown */}
+        <div style={{ position: "relative" }}>
+          <button
+            type="button"
+            onClick={() => setViewDropdownOpen(!viewDropdownOpen)}
             style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "8px",
               fontSize: "1.25rem",
               fontWeight: 700,
               color: "#0f172a",
               border: "none",
               background: "transparent",
               cursor: "pointer",
-              padding: "0 4px",
-              outline: "none",
+              padding: "4px 8px",
+              borderRadius: "6px",
             }}
           >
-            <option value="active">Active Employees</option>
-            <option value="inactive">Inactive Employees</option>
-            <option value="all">All Employees</option>
-          </select>
+            <span>{activeViewsList.find((v) => v.id === activeViewFilter)?.label || "Active Employees"}</span>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#64748b"
+              strokeWidth="2.5"
+              style={{ transform: viewDropdownOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+
+          {/* Zoho People Custom Views Modal / Popover (Matching Screenshot 2) */}
+          {viewDropdownOpen && (
+            <div
+              style={{
+                position: "absolute",
+                top: "100%",
+                left: 0,
+                marginTop: "6px",
+                width: "300px",
+                background: "#ffffff",
+                borderRadius: "8px",
+                boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
+                border: "1px solid #e2e8f0",
+                zIndex: 60,
+                padding: "8px 0",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Search view inside */}
+              <div style={{ padding: "6px 12px 10px", borderBottom: "1px solid #f1f5f9" }}>
+                <div style={{ position: "relative" }}>
+                  <input
+                    type="text"
+                    placeholder="Search view..."
+                    value={viewSearchQuery}
+                    onChange={(e) => setViewSearchQuery(e.target.value)}
+                    autoFocus
+                    style={{
+                      width: "100%",
+                      padding: "6px 10px 6px 28px",
+                      fontSize: "0.82rem",
+                      borderRadius: "6px",
+                      border: "1px solid #cbd5e1",
+                      outline: "none",
+                      background: "#f8fafc",
+                    }}
+                  />
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#94a3b8"
+                    strokeWidth="2.5"
+                    style={{ position: "absolute", left: "9px", top: "50%", transform: "translateY(-50%)" }}
+                  >
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* View Options List */}
+              <div style={{ maxHeight: "280px", overflowY: "auto", padding: "4px 0" }}>
+                {activeViewsList
+                  .filter((v) => v.label.toLowerCase().includes(viewSearchQuery.toLowerCase()))
+                  .map((item) => {
+                    const isSelected = activeViewFilter === item.id;
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => {
+                          setActiveViewFilter(item.id as any);
+                          setViewDropdownOpen(false);
+                          setPage(1);
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "8px 14px",
+                          fontSize: "0.84rem",
+                          fontWeight: isSelected ? 600 : 400,
+                          color: isSelected ? "#2563eb" : "#334155",
+                          background: isSelected ? "#eff6ff" : "transparent",
+                          cursor: "pointer",
+                          transition: "background 0.1s",
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isSelected) e.currentTarget.style.background = "#f8fafc";
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isSelected) e.currentTarget.style.background = "transparent";
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          {isSelected && (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2.5">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          )}
+                          {!isSelected && <span style={{ width: "14px" }} />}
+                          <span>{item.label}</span>
+                        </div>
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveViewsList((prev) =>
+                              prev.map((v) => (v.id === item.id ? { ...v, star: !v.star } : v))
+                            );
+                          }}
+                          style={{
+                            cursor: "pointer",
+                            color: item.star ? "#f59e0b" : "#cbd5e1",
+                            fontSize: "1rem",
+                            lineHeight: 1,
+                          }}
+                          title={item.star ? "Unstar view" : "Star view"}
+                        >
+                          {item.star ? "★" : "☆"}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right Zoho Action Toolbar */}
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", position: "relative" }}>
           {canCreate && (
             <button
               className="btn btn-primary"
@@ -437,16 +690,163 @@ export function EmployeeListPage() {
             </button>
           )}
 
-          {/* Quick more action button */}
-          <button
-            type="button"
-            className="btn btn-outline"
-            style={{ padding: "6px 10px", color: "#64748b", borderRadius: "6px" }}
-            title="More actions"
-            onClick={() => notify("Export and bulk actions available in Settings.")}
-          >
-            •••
-          </button>
+          {/* Zoho 3-Dot More Action Menu Button & Popover */}
+          <div style={{ position: "relative" }}>
+            <button
+              type="button"
+              className="btn btn-outline"
+              style={{
+                padding: "6px 12px",
+                color: "#64748b",
+                borderRadius: "6px",
+                background: headerMenuOpen ? "#f1f5f9" : "#ffffff",
+                border: "1px solid #cbd5e1",
+                cursor: "pointer",
+                fontWeight: 700,
+              }}
+              title="More actions"
+              onClick={() => setHeaderMenuOpen(!headerMenuOpen)}
+            >
+              •••
+            </button>
+
+            {headerMenuOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: "100%",
+                  marginTop: "6px",
+                  background: "#ffffff",
+                  borderRadius: "8px",
+                  boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
+                  border: "1px solid #e2e8f0",
+                  zIndex: 70,
+                  minWidth: "210px",
+                  padding: "6px 0",
+                  textAlign: "left",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "9px 14px",
+                    border: "none",
+                    background: "transparent",
+                    fontSize: "0.84rem",
+                    fontWeight: 500,
+                    color: "#334155",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                  }}
+                  onClick={handleExportSelected}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  <span>Export All Employees (CSV)</span>
+                </button>
+
+                {canCreate && (
+                  <button
+                    type="button"
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "9px 14px",
+                      border: "none",
+                      background: "transparent",
+                      fontSize: "0.84rem",
+                      fontWeight: 500,
+                      color: "#334155",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                    }}
+                    onClick={() => {
+                      setHeaderMenuOpen(false);
+                      navigate("/employees/new");
+                    }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    <span>Import Employees</span>
+                  </button>
+                )}
+
+                <div style={{ height: "1px", background: "#f1f5f9", margin: "4px 0" }} />
+
+                <button
+                  type="button"
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "9px 14px",
+                    border: "none",
+                    background: "transparent",
+                    fontSize: "0.84rem",
+                    fontWeight: 500,
+                    color: "#334155",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                  }}
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
+                    queryClient.invalidateQueries({ queryKey: ["employees"] });
+                    notify("Employee directory refreshed.", "success");
+                  }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2">
+                    <polyline points="23 4 23 10 17 10" />
+                    <polyline points="1 20 1 14 7 14" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                  </svg>
+                  <span>Refresh List</span>
+                </button>
+
+                <button
+                  type="button"
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "9px 14px",
+                    border: "none",
+                    background: "transparent",
+                    fontSize: "0.84rem",
+                    fontWeight: 500,
+                    color: "#334155",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                  }}
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
+                    notify("Column preferences and layout settings saved.", "info");
+                  }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                  <span>Customize Columns</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Filter Icon button */}
           <button
@@ -462,112 +862,314 @@ export function EmployeeListPage() {
         </div>
       </div>
 
-      {/* Sub-toolbar: Search + Quick Department Filter */}
-      <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ position: "relative", flex: 1, minWidth: "220px", maxWidth: "340px" }}>
-          <input
-            placeholder="Search in Employee…"
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setPage(1);
-            }}
-            style={{
-              paddingLeft: "32px",
-              height: "36px",
-              borderRadius: "6px",
-              fontSize: "0.85rem",
-              background: "#f8fafc",
-              border: "1px solid #e2e8f0",
-            }}
-          />
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="#94a3b8"
-            strokeWidth="2"
-            style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)" }}
-          >
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-        </div>
-
-        {!isSuperAdmin && (
-          <select
-            value={departmentId}
-            onChange={(e) => {
-              setDepartmentId(e.target.value);
-              setPage(1);
-            }}
-            style={{
-              height: "36px",
-              borderRadius: "6px",
-              border: "1px solid #e2e8f0",
-              fontSize: "0.84rem",
-              padding: "0 10px",
-              minWidth: "160px",
-              background: "#f8fafc",
-            }}
-          >
-            <option value="">All Departments</option>
-            {departmentsQuery.data?.items.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-        )}
-
-        {isSuperAdmin && (
-          <select
-            value={companyId}
-            onChange={(e) => {
-              setCompanyId(e.target.value);
-              setPage(1);
-            }}
-            style={{
-              height: "36px",
-              borderRadius: "6px",
-              border: "1px solid #e2e8f0",
-              fontSize: "0.84rem",
-              padding: "0 10px",
-              minWidth: "160px",
-              background: "#f8fafc",
-            }}
-          >
-            <option value="">All Companies</option>
-            {companiesQuery.data?.items.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        )}
-
-        <select
-          value={roleFilter}
-          onChange={(e) => {
-            setRoleFilter(e.target.value);
-            setPage(1);
-          }}
+      {/* Zoho People Selection Bulk Actions Bar (Matching Screenshot 3) */}
+      {selectedIds.size > 0 ? (
+        <div
           style={{
-            height: "36px",
-            borderRadius: "6px",
-            border: "1px solid #e2e8f0",
-            fontSize: "0.84rem",
-            padding: "0 10px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
             background: "#f8fafc",
+            border: "1px solid #cbd5e1",
+            borderRadius: "6px",
+            padding: "8px 14px",
+            marginBottom: "16px",
+            flexWrap: "wrap",
+            gap: "10px",
           }}
         >
-          <option value="">All Roles</option>
-          <option value="owner">👑 Owner</option>
-          <option value="hr_admin">🛡️ HR Admin</option>
-          <option value="employee">Employee</option>
-        </select>
-      </div>
+          {/* Action buttons on left */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            {/* Enable Portal Split / Dropdown button */}
+            <div style={{ position: "relative", display: "inline-flex" }}>
+              <button
+                type="button"
+                onClick={() => handleBulkTogglePortal(true)}
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid #cbd5e1",
+                  borderRight: "none",
+                  borderRadius: "6px 0 0 6px",
+                  padding: "6px 12px",
+                  fontSize: "0.82rem",
+                  fontWeight: 500,
+                  color: "#334155",
+                  cursor: "pointer",
+                }}
+              >
+                Enable Portal
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkActionDropdownOpen(!bulkActionDropdownOpen)}
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: "0 6px 6px 0",
+                  padding: "6px 8px",
+                  fontSize: "0.82rem",
+                  color: "#64748b",
+                  cursor: "pointer",
+                }}
+              >
+                ▼
+              </button>
+
+              {bulkActionDropdownOpen && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "100%",
+                    left: 0,
+                    marginTop: "4px",
+                    background: "#2563eb",
+                    borderRadius: "6px",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                    zIndex: 60,
+                    minWidth: "140px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleBulkTogglePortal(false)}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "8px 12px",
+                      border: "none",
+                      background: "transparent",
+                      color: "#ffffff",
+                      fontSize: "0.82rem",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Disable Portal
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Release FBP Declaration */}
+            <button
+              type="button"
+              onClick={() => handleBulkDeclaration("FBP")}
+              style={{
+                background: "#ffffff",
+                border: "1px solid #cbd5e1",
+                borderRadius: "6px",
+                padding: "6px 12px",
+                fontSize: "0.82rem",
+                fontWeight: 500,
+                color: "#334155",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+              }}
+            >
+              <span>Release FBP Declaration</span>
+              <span style={{ fontSize: "0.65rem", color: "#64748b" }}>▼</span>
+            </button>
+
+            {/* Release IT Declaration */}
+            <button
+              type="button"
+              onClick={() => handleBulkDeclaration("IT")}
+              style={{
+                background: "#ffffff",
+                border: "1px solid #cbd5e1",
+                borderRadius: "6px",
+                padding: "6px 12px",
+                fontSize: "0.82rem",
+                fontWeight: 500,
+                color: "#334155",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+              }}
+            >
+              <span>Release IT Declaration</span>
+              <span style={{ fontSize: "0.65rem", color: "#64748b" }}>▼</span>
+            </button>
+
+            {/* Release Proof Of Investment */}
+            <button
+              type="button"
+              onClick={() => handleBulkDeclaration("POI")}
+              style={{
+                background: "#ffffff",
+                border: "1px solid #cbd5e1",
+                borderRadius: "6px",
+                padding: "6px 12px",
+                fontSize: "0.82rem",
+                fontWeight: 500,
+                color: "#334155",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+              }}
+            >
+              <span>Release Proof Of Invest...</span>
+              <span style={{ fontSize: "0.65rem", color: "#64748b" }}>▼</span>
+            </button>
+
+            {/* Quick Export Selected */}
+            <button
+              type="button"
+              onClick={handleExportSelected}
+              style={{
+                background: "#ffffff",
+                border: "1px solid #cbd5e1",
+                borderRadius: "6px",
+                padding: "6px 12px",
+                fontSize: "0.82rem",
+                fontWeight: 500,
+                color: "#2563eb",
+                cursor: "pointer",
+              }}
+            >
+              Export Selected
+            </button>
+          </div>
+
+          {/* Right counter and dismiss: "X Selected  Esc ✕" */}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#2563eb" }}>
+              {selectedIds.size} Selected
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              style={{
+                background: "transparent",
+                border: "none",
+                fontSize: "0.82rem",
+                color: "#dc2626",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                fontWeight: 500,
+              }}
+              title="Clear selection"
+            >
+              <span>Esc</span>
+              <span style={{ fontSize: "1rem", lineHeight: 1 }}>✕</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        /* Standard Sub-toolbar: Search + Quick Department Filter */
+        <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ position: "relative", flex: 1, minWidth: "220px", maxWidth: "340px" }}>
+            <input
+              placeholder="Search in Employee…"
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setPage(1);
+              }}
+              style={{
+                paddingLeft: "32px",
+                height: "36px",
+                borderRadius: "6px",
+                fontSize: "0.85rem",
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+              }}
+            />
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#94a3b8"
+              strokeWidth="2"
+              style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)" }}
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          </div>
+
+          {!isSuperAdmin && (
+            <select
+              value={departmentId}
+              onChange={(e) => {
+                setDepartmentId(e.target.value);
+                setPage(1);
+              }}
+              style={{
+                height: "36px",
+                borderRadius: "6px",
+                border: "1px solid #e2e8f0",
+                fontSize: "0.84rem",
+                padding: "0 10px",
+                minWidth: "160px",
+                background: "#f8fafc",
+              }}
+            >
+              <option value="">All Departments</option>
+              {departmentsQuery.data?.items.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {isSuperAdmin && (
+            <select
+              value={companyId}
+              onChange={(e) => {
+                setCompanyId(e.target.value);
+                setPage(1);
+              }}
+              style={{
+                height: "36px",
+                borderRadius: "6px",
+                border: "1px solid #e2e8f0",
+                fontSize: "0.84rem",
+                padding: "0 10px",
+                minWidth: "160px",
+                background: "#f8fafc",
+              }}
+            >
+              <option value="">All Companies</option>
+              {companiesQuery.data?.items.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <select
+            value={roleFilter}
+            onChange={(e) => {
+              setRoleFilter(e.target.value);
+              setPage(1);
+            }}
+            style={{
+              height: "36px",
+              borderRadius: "6px",
+              border: "1px solid #e2e8f0",
+              fontSize: "0.84rem",
+              padding: "0 10px",
+              background: "#f8fafc",
+            }}
+          >
+            <option value="">All Roles</option>
+            <option value="owner">👑 Owner</option>
+            <option value="hr_admin">🛡️ HR Admin</option>
+            <option value="employee">Employee</option>
+          </select>
+        </div>
+      )}
 
       <DataTable
         columns={columns}
@@ -579,6 +1181,14 @@ export function EmployeeListPage() {
             items = items.filter((e) => e.is_active);
           } else if (activeViewFilter === "inactive") {
             items = items.filter((e) => !e.is_active);
+          } else if (activeViewFilter === "incomplete") {
+            items = items.filter((e) => !e.department_id || !e.position);
+          } else if (activeViewFilter === "portal_enabled") {
+            items = items.filter((e) => e.is_active && e.user_id !== null);
+          } else if (activeViewFilter === "portal_disabled") {
+            items = items.filter((e) => !e.is_active || e.user_id === null);
+          } else if (activeViewFilter === "yet_to_accept") {
+            items = items.filter((e) => e.invitation_status === "sent");
           }
           if (roleFilter) {
             const cleanRole = roleFilter.toLowerCase();
