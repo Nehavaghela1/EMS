@@ -5,7 +5,7 @@ import { EmptyState } from "./EmptyState";
 
 export interface DataTableColumn<T> {
   key: string;
-  label: string;
+  label: ReactNode;
   sortable?: boolean;
   render: (row: T) => ReactNode;
 }

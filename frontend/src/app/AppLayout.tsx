@@ -49,11 +49,8 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "employees",
     label: "Employees",
+    to: "/employees",
     roles: ["hr_admin", "manager", "super_admin", "owner"],
-    children: [
-      { to: "/employees", label: "Directory", roles: ["hr_admin", "manager", "super_admin", "owner"] },
-      { to: "/departments", label: "Departments", roles: ["hr_admin", "super_admin", "owner"] },
-    ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
@@ -140,7 +137,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const location = useLocation();
 
   const role = user?.role ?? "employee";
-  const isAdministrative = ["owner", "hr_admin", "super_admin"].includes(role);
 
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>(user?.company_id || "");
   const [isWorkspaceDropdownOpen, setIsWorkspaceDropdownOpen] = useState(false);
@@ -196,15 +192,47 @@ export function AppLayout({ children }: { children: ReactNode }) {
     return () => document.removeEventListener("mousedown", handleOut);
   }, [profileMenuOpen]);
 
+  // ── Zoho People / Coworkers Quick Directory Popover ───────────────────────
+  const [peopleMenuOpen, setPeopleMenuOpen] = useState(false);
+  const peopleMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function handlePeopleOut(e: MouseEvent) {
+      if (peopleMenuRef.current && !peopleMenuRef.current.contains(e.target as Node)) {
+        setPeopleMenuOpen(false);
+      }
+    }
+    if (peopleMenuOpen) document.addEventListener("mousedown", handlePeopleOut);
+    return () => document.removeEventListener("mousedown", handlePeopleOut);
+  }, [peopleMenuOpen]);
+
+
+  // ── Top Navbar Employee Search ──────────────────────────────────────────
+  const [topEmployeeSearch, setTopEmployeeSearch] = useState("");
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    if (location.pathname === "/employees") {
+      setTopEmployeeSearch(searchParams.get("q") || "");
+    } else {
+      setTopEmployeeSearch("");
+    }
+  }, [location.pathname, location.search]);
+
   // ── Global search (⌘K) ──────────────────────────────────────────────────
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const openSearch = useCallback(() => {
+  const openSearch = useCallback((initialQuery?: string) => {
     setSearchOpen(true);
-    setSearchQ("");
-    setTimeout(() => searchInputRef.current?.focus(), 60);
+    setSearchQ(typeof initialQuery === "string" ? initialQuery : "");
+    setTimeout(() => {
+      if (searchInputRef.current) {
+        searchInputRef.current.focus();
+        if (typeof initialQuery === "string" && initialQuery) {
+          searchInputRef.current.setSelectionRange(initialQuery.length, initialQuery.length);
+        }
+      }
+    }, 50);
   }, []);
 
   useEffect(() => {
@@ -277,31 +305,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
-  // Derive breadcrumb context for top navbar
-  let currentSectionLabel = "";
-  let currentPageLabel = "";
 
-  for (const sec of visibleSections) {
-    if (sec.to && (location.pathname === sec.to || (sec.to !== "/" && location.pathname.startsWith(sec.to)))) {
-      currentSectionLabel = sec.label;
-      break;
-    }
-    if (sec.children) {
-      const matchChild = sec.children.find((c) =>
-        c.to === location.pathname || (c.to !== "/" && location.pathname.startsWith(c.to))
-      );
-      if (matchChild) {
-        currentSectionLabel = sec.label;
-        currentPageLabel = matchChild.label;
-        break;
-      }
-    }
-  }
-
-  if (!currentSectionLabel && location.pathname.startsWith("/employees/")) {
-    currentSectionLabel = "Employees";
-    currentPageLabel = location.pathname.includes("/edit") ? "Edit Employee" : "Profile Details";
-  }
 
   async function handleLogout() {
     await logout();
@@ -326,381 +330,394 @@ export function AppLayout({ children }: { children: ReactNode }) {
           padding: 0,
         }}
       >
-        {/* Brand header */}
+        {/* Top Company / Organization Header (Zoho Style) */}
         <div
+          ref={workspaceDropdownRef}
           style={{
-            padding: "1rem 1.15rem",
+            position: "relative",
             borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-            display: "flex",
-            alignItems: "center",
-            gap: "0.65rem",
+            background: "rgba(15, 23, 42, 0.5)",
           }}
         >
-          <div
-            style={{
-              width: "32px",
-              height: "32px",
-              background: "#2563eb",
-              borderRadius: "8px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#fff",
-              fontWeight: 800,
-              fontSize: "1rem",
-            }}
-          >
-            E
-          </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: "0.95rem", color: "#f8fafc", letterSpacing: "-0.01em" }}>
-              EMS Pro
-            </div>
-            <div style={{ fontSize: "0.68rem", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-              HRMS & Payroll
-            </div>
-          </div>
-        </div>
-
-        {/* Docked Workspace Switcher (Slack / Linear / Notion style) */}
-        {user && (
-          <div
-            ref={workspaceDropdownRef}
-            style={{
-              padding: "0.55rem 0.75rem",
-              borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-              background: "rgba(15, 23, 42, 0.45)",
-              position: "relative",
-            }}
-          >
-            <div style={{ fontSize: "0.62rem", textTransform: "uppercase", letterSpacing: "0.06em", color: "#94a3b8", fontWeight: 700, marginBottom: "5px", paddingLeft: "2px" }}>
-              Active Workspace
-            </div>
-            {user.role !== "employee" ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setIsWorkspaceDropdownOpen((prev) => !prev)}
-                  style={{
-                    width: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "6px 10px",
-                    background: isWorkspaceDropdownOpen ? "#1e293b" : "rgba(30, 41, 59, 0.7)",
-                    border: `1px solid ${isWorkspaceDropdownOpen ? "#6366f1" : "rgba(255, 255, 255, 0.12)"}`,
-                    borderRadius: "6px",
-                    color: "#f1f5f9",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    transition: "all 0.15s ease",
-                    boxShadow: isWorkspaceDropdownOpen ? "0 0 0 2px rgba(99, 102, 241, 0.25)" : "none",
-                  }}
-                  title="Switch or manage active workspace"
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0, flex: 1 }}>
+          {user && user.role !== "employee" ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setIsWorkspaceDropdownOpen((prev) => !prev)}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "0.85rem 1rem",
+                  background: isWorkspaceDropdownOpen ? "rgba(30, 41, 59, 0.9)" : "transparent",
+                  border: "none",
+                  color: "#f8fafc",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  transition: "background 0.15s ease",
+                }}
+                title="Switch company / organization"
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0, flex: 1 }}>
+                  <div
+                    style={{
+                      width: "34px",
+                      height: "34px",
+                      borderRadius: "8px",
+                      background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "1rem",
+                      fontWeight: 800,
+                      color: "#fff",
+                      flexShrink: 0,
+                      boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                    }}
+                  >
+                    {activeCompanyName.charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
                     <div
                       style={{
-                        width: "22px",
-                        height: "22px",
-                        borderRadius: "5px",
-                        background: "#3b82f6",
+                        fontSize: "0.92rem",
+                        fontWeight: 700,
+                        color: "#f8fafc",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        letterSpacing: "-0.01em",
+                      }}
+                    >
+                      {activeCompanyName}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
+                      {activeCompanyCode && (
+                        <span
+                          style={{
+                            fontSize: "0.65rem",
+                            color: "#94a3b8",
+                            fontFamily: "monospace",
+                            background: "rgba(255, 255, 255, 0.08)",
+                            padding: "1px 5px",
+                            borderRadius: "4px",
+                          }}
+                        >
+                          {activeCompanyCode}
+                        </span>
+                      )}
+                      <span style={{ fontSize: "0.66rem", color: "#64748b" }}>Organization</span>
+                    </div>
+                  </div>
+                </div>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#94a3b8"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{
+                    flexShrink: 0,
+                    marginLeft: "8px",
+                    transform: isWorkspaceDropdownOpen ? "rotate(180deg)" : "rotate(0deg)",
+                    transition: "transform 0.15s ease",
+                  }}
+                >
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+
+              {/* Zoho Style Organization / Workspace Dropdown */}
+              {isWorkspaceDropdownOpen && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 4px)",
+                    left: "0.5rem",
+                    right: "0.5rem",
+                    background: "#0f172a",
+                    border: "1px solid #334155",
+                    borderRadius: "8px",
+                    boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5)",
+                    zIndex: 100,
+                    overflow: "hidden",
+                    animation: "fadeIn 0.12s ease-out",
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: "8px 10px 6px",
+                      fontSize: "0.65rem",
+                      fontWeight: 700,
+                      color: "#64748b",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                      borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+                    }}
+                  >
+                    Organizations & Workspaces
+                  </div>
+
+                  <div style={{ maxHeight: "200px", overflowY: "auto", padding: "4px" }}>
+                    {/* Active / Current Company */}
+                    <div
+                      onClick={() => {
+                        setSelectedWorkspace(user.company_id);
+                        setIsWorkspaceDropdownOpen(false);
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "7px 9px",
+                        borderRadius: "6px",
+                        background: selectedWorkspace === user.company_id ? "rgba(99, 102, 241, 0.15)" : "transparent",
+                        cursor: "pointer",
+                        transition: "background 0.15s ease",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (selectedWorkspace !== user.company_id) {
+                          e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (selectedWorkspace !== user.company_id) {
+                          e.currentTarget.style.background = "transparent";
+                        }
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                        <span style={{ fontSize: "0.85rem" }}>🏢</span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#f8fafc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {user.company_name || "Primary Tenant"}
+                          </div>
+                          {user.company_code && (
+                            <div style={{ fontSize: "0.64rem", color: "#94a3b8", fontFamily: "monospace" }}>
+                              {user.company_code}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {selectedWorkspace === user.company_id && (
+                        <span style={{ color: "#38bdf8", fontWeight: 700, fontSize: "0.85rem", paddingLeft: "6px" }} title="Currently Active">
+                          ✓
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Other Accessible Companies */}
+                    {workspacesQuery.data
+                      ?.filter((c) => c.id !== user.company_id)
+                      .map((c) => {
+                        const isCurrent = selectedWorkspace === c.id;
+                        return (
+                          <div
+                            key={c.id}
+                            onClick={async () => {
+                              setSelectedWorkspace(c.id);
+                              setIsWorkspaceDropdownOpen(false);
+                              try {
+                                const tokenData = await switchWorkspace(c.id);
+                                await establishSession(tokenData.access_token);
+                                navigate("/dashboard");
+                              } catch (e) {
+                                console.error(e);
+                                alert("Failed to switch workspace.");
+                              }
+                            }}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              padding: "7px 9px",
+                              borderRadius: "6px",
+                              background: isCurrent ? "rgba(99, 102, 241, 0.15)" : "transparent",
+                              cursor: "pointer",
+                              transition: "background 0.15s ease",
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isCurrent) e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isCurrent) e.currentTarget.style.background = "transparent";
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                              <span style={{ fontSize: "0.85rem" }}>🏢</span>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: "0.78rem", fontWeight: 500, color: "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {c.name}
+                                </div>
+                                <div style={{ fontSize: "0.64rem", color: "#64748b", fontFamily: "monospace" }}>
+                                  {c.code}
+                                </div>
+                              </div>
+                            </div>
+                            {isCurrent && (
+                              <span style={{ color: "#38bdf8", fontWeight: 700, fontSize: "0.85rem", paddingLeft: "6px" }} title="Currently Active">
+                                ✓
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+
+                  {/* Bottom Action: Create New Workspace / Company */}
+                  <div
+                    style={{
+                      borderTop: "1px solid rgba(255, 255, 255, 0.08)",
+                      padding: "6px 4px 4px",
+                      background: "rgba(15, 23, 42, 0.7)",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsWorkspaceDropdownOpen(false);
+                        navigate("/workspaces/new");
+                      }}
+                      style={{
+                        width: "100%",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        fontSize: "0.75rem",
-                        fontWeight: 700,
-                        color: "#fff",
-                        flexShrink: 0,
+                        gap: "8px",
+                        padding: "8px 10px",
+                        fontSize: "0.78rem",
+                        fontWeight: 600,
+                        color: "#4f46e5",
+                        background: "#e0e7ff",
+                        border: "1px solid #c7d2fe",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        textAlign: "center",
+                        transition: "background 0.15s ease",
                       }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#c7d2fe")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "#e0e7ff")}
                     >
-                      {activeCompanyName.charAt(0).toUpperCase()}
-                    </div>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "#f8fafc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {activeCompanyName}
-                      </div>
-                      {activeCompanyCode && (
-                        <div style={{ fontSize: "0.65rem", color: "#94a3b8", fontFamily: "monospace" }}>
-                          {activeCompanyCode}
-                        </div>
-                      )}
-                    </div>
+                      <span style={{ fontSize: "0.95rem", lineHeight: 1 }}>+</span>
+                      <span>Create New Workspace / Company</span>
+                    </button>
                   </div>
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#94a3b8"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    style={{
-                      flexShrink: 0,
-                      marginLeft: "6px",
-                      transform: isWorkspaceDropdownOpen ? "rotate(180deg)" : "rotate(0deg)",
-                      transition: "transform 0.15s ease",
-                    }}
-                  >
-                    <polyline points="6 9 12 15 18 9" />
-                  </svg>
-                </button>
-
-                {/* Dropdown Menu */}
-                {isWorkspaceDropdownOpen && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "calc(100% + 4px)",
-                      left: "0.75rem",
-                      right: "0.75rem",
-                      background: "#0f172a",
-                      border: "1px solid #334155",
-                      borderRadius: "8px",
-                      boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5)",
-                      zIndex: 100,
-                      overflow: "hidden",
-                      animation: "fadeIn 0.12s ease-out",
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: "8px 10px 6px",
-                        fontSize: "0.65rem",
-                        fontWeight: 700,
-                        color: "#64748b",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                        borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
-                      }}
-                    >
-                      Organizations & Workspaces
-                    </div>
-
-                    <div style={{ maxHeight: "200px", overflowY: "auto", padding: "4px" }}>
-                      {/* Active / Current Company */}
-                      <div
-                        onClick={() => {
-                          setSelectedWorkspace(user.company_id);
-                          setIsWorkspaceDropdownOpen(false);
-                        }}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          padding: "7px 9px",
-                          borderRadius: "6px",
-                          background: selectedWorkspace === user.company_id ? "rgba(99, 102, 241, 0.15)" : "transparent",
-                          cursor: "pointer",
-                          transition: "background 0.15s ease",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (selectedWorkspace !== user.company_id) {
-                            e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (selectedWorkspace !== user.company_id) {
-                            e.currentTarget.style.background = "transparent";
-                          }
-                        }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
-                          <span style={{ fontSize: "0.85rem" }}>🏢</span>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#f8fafc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {user.company_name || "Primary Tenant"}
-                            </div>
-                            {user.company_code && (
-                              <div style={{ fontSize: "0.64rem", color: "#94a3b8", fontFamily: "monospace" }}>
-                                {user.company_code}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        {selectedWorkspace === user.company_id && (
-                          <span style={{ color: "#38bdf8", fontWeight: 700, fontSize: "0.85rem", paddingLeft: "6px" }} title="Currently Active">
-                            ✓
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Other Accessible Companies */}
-                      {workspacesQuery.data
-                        ?.filter((c) => c.id !== user.company_id)
-                        .map((c) => {
-                          const isCurrent = selectedWorkspace === c.id;
-                          return (
-                            <div
-                              key={c.id}
-                              onClick={async () => {
-                                setSelectedWorkspace(c.id);
-                                setIsWorkspaceDropdownOpen(false);
-                                try {
-                                  const tokenData = await switchWorkspace(c.id);
-                                  await establishSession(tokenData.access_token);
-                                  navigate("/dashboard");
-                                } catch (e) {
-                                  console.error(e);
-                                  alert("Failed to switch workspace.");
-                                }
-                              }}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                padding: "7px 9px",
-                                borderRadius: "6px",
-                                background: isCurrent ? "rgba(99, 102, 241, 0.15)" : "transparent",
-                                cursor: "pointer",
-                                transition: "background 0.15s ease",
-                              }}
-                              onMouseEnter={(e) => {
-                                if (!isCurrent) e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
-                              }}
-                              onMouseLeave={(e) => {
-                                if (!isCurrent) e.currentTarget.style.background = "transparent";
-                              }}
-                            >
-                              <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
-                                <span style={{ fontSize: "0.85rem" }}>🏢</span>
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontSize: "0.78rem", fontWeight: 500, color: "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                    {c.name}
-                                  </div>
-                                  <div style={{ fontSize: "0.64rem", color: "#64748b", fontFamily: "monospace" }}>
-                                    {c.code}
-                                  </div>
-                                </div>
-                              </div>
-                              {isCurrent && (
-                                <span style={{ color: "#38bdf8", fontWeight: 700, fontSize: "0.85rem", paddingLeft: "6px" }} title="Currently Active">
-                                  ✓
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-                    </div>
-
-                    {/* Bottom Action: Create New Workspace / Company */}
-                    <div
-                      style={{
-                        borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-                        padding: "6px 4px 4px",
-                        background: "rgba(15, 23, 42, 0.7)",
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setIsWorkspaceDropdownOpen(false);
-                          navigate("/workspaces/new");
-                        }}
-                        style={{
-                          width: "100%",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "8px",
-                          padding: "8px 10px",
-                          fontSize: "0.78rem",
-                          fontWeight: 600,
-                          color: "#4f46e5",
-                          background: "#e0e7ff",
-                          border: "1px solid #c7d2fe",
-                          borderRadius: "6px",
-                          cursor: "pointer",
-                          textAlign: "center",
-                          transition: "background 0.15s ease",
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "#c7d2fe")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "#e0e7ff")}
-                      >
-                        <span style={{ fontSize: "0.95rem", lineHeight: 1 }}>+</span>
-                        <span>Create New Workspace / Company</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
+                </div>
+              )}
+            </>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "0.85rem 1rem",
+              }}
+            >
               <div
                 style={{
-                  fontSize: "0.78rem",
-                  fontWeight: 600,
-                  color: "#cbd5e1",
+                  width: "34px",
+                  height: "34px",
+                  borderRadius: "8px",
+                  background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
                   display: "flex",
                   alignItems: "center",
-                  gap: "7px",
-                  padding: "6px 8px",
-                  background: "rgba(30, 41, 59, 0.4)",
-                  borderRadius: "6px",
-                  border: "1px solid rgba(255, 255, 255, 0.06)",
+                  justifyContent: "center",
+                  fontSize: "1rem",
+                  fontWeight: 800,
+                  color: "#fff",
+                  flexShrink: 0,
+                  boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
                 }}
               >
+                {activeCompanyName.charAt(0).toUpperCase()}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
                 <div
                   style={{
-                    width: "20px",
-                    height: "20px",
-                    borderRadius: "4px",
-                    background: "#3b82f6",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "0.7rem",
+                    fontSize: "0.92rem",
                     fontWeight: 700,
-                    color: "#fff",
-                    flexShrink: 0,
+                    color: "#f8fafc",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    letterSpacing: "-0.01em",
                   }}
                 >
-                  {activeCompanyName.charAt(0).toUpperCase()}
-                </div>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {activeCompanyName}
-                </span>
+                </div>
+                {activeCompanyCode && (
+                  <div style={{ fontSize: "0.65rem", color: "#94a3b8", fontFamily: "monospace", marginTop: "2px" }}>
+                    {activeCompanyCode}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
 
-        {/* Search */}
-        {user && isAdministrative && (
+        {/* Global Navigation Search (Sidebar First Search) */}
+        {user && (
           <div style={{ padding: "0.6rem 0.85rem 0.4rem" }}>
-            <input
-              type="text"
-              placeholder="Search..."
+            <div
+              id="sidebar-global-search"
               style={{
+                position: "relative",
                 width: "100%",
-                background: "#0f172a",
-                border: "1px solid #334155",
-                borderRadius: "6px",
-                color: "#e2e8f0",
-                fontSize: "0.78rem",
-                padding: "0.38rem 0.65rem",
-                outline: "none",
               }}
-              onKeyDown={async (e) => {
-                if (e.key === "Enter") {
-                  const q = e.currentTarget.value.trim();
-                  if (q.length >= 2) {
-                    try {
-                      const { globalSearch } = await import("../modules/platform/api");
-                      const res = await globalSearch(q);
-                      if (res.results.length > 0) {
-                        navigate(res.results[0].url);
-                      } else {
-                        alert(`No results found for "${q}"`);
-                      }
-                    } catch (err) {
-                      console.error("Search error:", err);
-                    }
+            >
+              <input
+                type="text"
+                placeholder=""
+                onClick={() => openSearch("")}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  openSearch(val);
+                  e.target.value = "";
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    openSearch((e.target as HTMLInputElement).value);
+                    (e.target as HTMLInputElement).value = "";
                   }
-                }
-              }}
-            />
+                }}
+                style={{
+                  width: "100%",
+                  background: "#0f172a",
+                  border: "1px solid #334155",
+                  borderRadius: "6px",
+                  color: "#e2e8f0",
+                  fontSize: "0.78rem",
+                  padding: "0.38rem 0.65rem 0.38rem 1.85rem",
+                  outline: "none",
+                }}
+              />
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#64748b"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{
+                  position: "absolute",
+                  left: "9px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  pointerEvents: "none",
+                }}
+              >
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.35-4.35" />
+              </svg>
+            </div>
           </div>
         )}
 
@@ -842,24 +859,25 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.5rem" }}>
             <div
               style={{
-                width: "30px",
-                height: "30px",
+                width: "32px",
+                height: "32px",
                 borderRadius: "50%",
-                background: "#334155",
+                background: "linear-gradient(135deg, #475569, #334155)",
                 color: "#e2e8f0",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 fontWeight: 700,
-                fontSize: "0.8rem",
+                fontSize: "0.82rem",
+                flexShrink: 0,
               }}
             >
-              {user?.email?.charAt(0).toUpperCase()}
+              {(user?.employee?.first_name || user?.email || "U").charAt(0).toUpperCase()}
             </div>
             <div style={{ minWidth: 0, overflow: "hidden" }}>
               <div
                 style={{
-                  fontSize: "0.78rem",
+                  fontSize: "0.8rem",
                   fontWeight: 600,
                   color: "#f1f5f9",
                   whiteSpace: "nowrap",
@@ -867,10 +885,18 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   textOverflow: "ellipsis",
                 }}
               >
-                {user?.email}
+                {user?.employee
+                  ? `${user.employee.first_name} ${user.employee.last_name || ""}`.trim()
+                  : user?.email}
               </div>
-              <div style={{ fontSize: "0.68rem", color: "#94a3b8" }}>
-                {user?.role?.replace("_", " ")}
+              <div style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "0.66rem", color: "#94a3b8" }}>
+                {user?.employee?.employee_code && (
+                  <span style={{ fontFamily: "monospace", color: "#38bdf8", fontWeight: 600 }}>
+                    {user.employee.employee_code}
+                  </span>
+                )}
+                <span>•</span>
+                <span>{user?.role?.replace("_", " ")}</span>
               </div>
             </div>
           </div>
@@ -906,46 +932,105 @@ export function AppLayout({ children }: { children: ReactNode }) {
             zIndex: 40,
           }}
         >
-          {/* Breadcrumb Navigation / Current Context */}
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.85rem" }}>
-            <span style={{ color: "var(--color-muted, #64748b)", fontWeight: 500 }}>
-              {currentSectionLabel || "Portal"}
-            </span>
-            {currentPageLabel && (
-              <>
-                <span style={{ color: "var(--color-border, #cbd5e1)", fontSize: "0.75rem" }}>/</span>
-                <span style={{ fontWeight: 600, color: "var(--color-heading, #0f172a)" }}>
-                  {currentPageLabel}
-                </span>
-              </>
-            )}
+          {/* Left/Center: Zoho Employee Search Bar */}
+          <div style={{ display: "flex", alignItems: "center", gap: "14px", flex: 1, maxWidth: "560px" }}>
+            {/* Top Navbar: Employee Search (Second Search) */}
+            <div
+              id="topbar-employee-search"
+              style={{
+                position: "relative",
+                width: "100%",
+                maxWidth: "340px",
+              }}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#64748b"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{
+                  position: "absolute",
+                  left: "11px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  pointerEvents: "none",
+                }}
+              >
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.35-4.35" />
+              </svg>
+              <input
+                type="text"
+                value={topEmployeeSearch}
+                onChange={(e) => setTopEmployeeSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const q = topEmployeeSearch.trim();
+                    if (q) {
+                      navigate(`/employees?q=${encodeURIComponent(q)}`);
+                    } else {
+                      navigate("/employees");
+                    }
+                  }
+                }}
+                placeholder="Search in Employee..."
+                style={{
+                  width: "100%",
+                  paddingLeft: "34px",
+                  paddingRight: topEmployeeSearch ? "28px" : "12px",
+                  height: "33px",
+                  borderRadius: "7px",
+                  background: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                  fontSize: "0.82rem",
+                  color: "#334155",
+                  outline: "none",
+                  transition: "all 0.15s ease",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "#93c5fd";
+                  e.currentTarget.style.background = "#ffffff";
+                  e.currentTarget.style.boxShadow = "0 0 0 3px rgba(59, 130, 246, 0.1)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = "#e2e8f0";
+                  e.currentTarget.style.background = "#f8fafc";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
+              />
+              {topEmployeeSearch && (
+                <button
+                  type="button"
+                  onClick={() => setTopEmployeeSearch("")}
+                  style={{
+                    position: "absolute",
+                    right: "8px",
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "none",
+                    border: "none",
+                    color: "#94a3b8",
+                    cursor: "pointer",
+                    padding: "2px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "0.75rem",
+                  }}
+                  title="Clear"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Right side: Search + Pending + Notification + Profile Pill */}
+          {/* Right side: Pending approvals + Notification + People + Settings + Apps + Profile Pill */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-
-            {/* Global Search trigger (⌘K) */}
-            <button
-              type="button"
-              id="btn-global-search"
-              onClick={openSearch}
-              title="Global Search (⌘K)"
-              style={{
-                display: "flex", alignItems: "center", gap: "6px",
-                padding: "5px 10px", borderRadius: "7px",
-                border: "1px solid #e2e8f0", background: "#f8fafc",
-                color: "#64748b", fontSize: "0.78rem", cursor: "pointer",
-                transition: "border-color 0.15s",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "#bfdbfe"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = "#e2e8f0"; }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-              </svg>
-              <span style={{ display: "none" /* hidden on small width */ }}>Search</span>
-              <span style={{ fontSize: "0.67rem", padding: "1px 5px", borderRadius: "4px", background: "#e2e8f0", color: "#94a3b8", fontFamily: "monospace" }}>⌘K</span>
-            </button>
 
             {/* Pending approvals badge — admin/owner only */}
             {["owner", "hr_admin", "super_admin"].includes(role) && pendingLeaves > 0 && (
@@ -972,6 +1057,239 @@ export function AppLayout({ children }: { children: ReactNode }) {
             )}
 
             <NotificationBell />
+
+            {/* Zoho People / Coworker Directory Quick Access Icon */}
+            <div ref={peopleMenuRef} style={{ position: "relative" }}>
+              <button
+                type="button"
+                id="btn-top-people"
+                onClick={() => setPeopleMenuOpen((p) => !p)}
+                title="Coworkers & Organization Members (Zoho People)"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "32px",
+                  height: "32px",
+                  borderRadius: "7px",
+                  border: `1px solid ${peopleMenuOpen ? "#bfdbfe" : "#e2e8f0"}`,
+                  background: peopleMenuOpen ? "#eff6ff" : "#f8fafc",
+                  color: peopleMenuOpen ? "#2563eb" : "#64748b",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "#cbd5e1";
+                  e.currentTarget.style.color = "#0f172a";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = peopleMenuOpen ? "#bfdbfe" : "#e2e8f0";
+                  e.currentTarget.style.color = peopleMenuOpen ? "#2563eb" : "#64748b";
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+              </button>
+
+              {/* Zoho People Quick Popover Menu */}
+              {peopleMenuOpen && (
+                <div
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: "calc(100% + 6px)",
+                    background: "#ffffff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "10px",
+                    boxShadow: "0 10px 25px -5px rgba(0,0,0,0.15), 0 4px 6px -2px rgba(0,0,0,0.05)",
+                    minWidth: "260px",
+                    zIndex: 999,
+                    overflow: "hidden",
+                    padding: "6px 0",
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div style={{ padding: "8px 14px 6px", borderBottom: "1px solid #f1f5f9" }}>
+                    <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "#0f172a" }}>
+                      People & Teams
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: "2px" }}>
+                      Quick access to organization members
+                    </div>
+                  </div>
+
+                  <div style={{ padding: "4px 0" }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPeopleMenuOpen(false);
+                        navigate("/employees");
+                      }}
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                        padding: "8px 14px",
+                        border: "none",
+                        background: "transparent",
+                        fontSize: "0.82rem",
+                        color: "#334155",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <span style={{ fontSize: "1rem" }}>👥</span>
+                      <div>
+                        <div style={{ fontWeight: 600, color: "#0f172a" }}>Employee Directory</div>
+                        <div style={{ fontSize: "0.72rem", color: "#64748b" }}>View all active & registered staff</div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPeopleMenuOpen(false);
+                        navigate("/departments");
+                      }}
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                        padding: "8px 14px",
+                        border: "none",
+                        background: "transparent",
+                        fontSize: "0.82rem",
+                        color: "#334155",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <span style={{ fontSize: "1rem" }}>🏢</span>
+                      <div>
+                        <div style={{ fontWeight: 600, color: "#0f172a" }}>Departments & Teams</div>
+                        <div style={{ fontSize: "0.72rem", color: "#64748b" }}>Team structures and headcounts</div>
+                      </div>
+                    </button>
+
+                    {["owner", "hr_admin", "super_admin"].includes(role) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPeopleMenuOpen(false);
+                          navigate("/employees/new");
+                        }}
+                        style={{
+                          width: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                          padding: "8px 14px",
+                          border: "none",
+                          background: "transparent",
+                          fontSize: "0.82rem",
+                          color: "#2563eb",
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#eff6ff")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <span style={{ fontSize: "1rem" }}>➕</span>
+                        <div>
+                          <div style={{ fontWeight: 600, color: "#2563eb" }}>Add New Employee</div>
+                          <div style={{ fontSize: "0.72rem", color: "#64748b" }}>Onboard team member or invite</div>
+                        </div>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Zoho Settings Gear Icon */}
+            <button
+              type="button"
+              id="btn-top-settings"
+              onClick={() => navigate("/settings")}
+              title="Organization Settings & Configurations"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "32px",
+                height: "32px",
+                borderRadius: "7px",
+                border: "1px solid #e2e8f0",
+                background: location.pathname.startsWith("/settings") ? "#eff6ff" : "#f8fafc",
+                color: location.pathname.startsWith("/settings") ? "#2563eb" : "#64748b",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "#cbd5e1";
+                e.currentTarget.style.color = "#0f172a";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "#e2e8f0";
+                e.currentTarget.style.color = location.pathname.startsWith("/settings") ? "#2563eb" : "#64748b";
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+
+            {/* Zoho 9-Dots / Apps Launcher Icon */}
+            <button
+              type="button"
+              id="btn-top-apps"
+              onClick={() => navigate("/dashboard")}
+              title="Zoho Apps Suite"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "32px",
+                height: "32px",
+                borderRadius: "7px",
+                border: "1px solid #e2e8f0",
+                background: "#f8fafc",
+                color: "#64748b",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "#cbd5e1";
+                e.currentTarget.style.color = "#0f172a";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "#e2e8f0";
+                e.currentTarget.style.color = "#64748b";
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="4" cy="4" r="2.2" />
+                <circle cx="12" cy="4" r="2.2" />
+                <circle cx="20" cy="4" r="2.2" />
+                <circle cx="4" cy="12" r="2.2" />
+                <circle cx="12" cy="12" r="2.2" />
+                <circle cx="20" cy="12" r="2.2" />
+                <circle cx="4" cy="20" r="2.2" />
+                <circle cx="12" cy="20" r="2.2" />
+                <circle cx="20" cy="20" r="2.2" />
+              </svg>
+            </button>
 
             {/* Interactive Profile Pill */}
             <div ref={profileMenuRef} style={{ position: "relative" }}>
@@ -1214,7 +1532,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   setSearchOpen(false);
                 }
               }}
-              placeholder="Jump to a page… (↵ to select first result)"
+              placeholder="Jump to a page, or type employee name… (↵ to select)"
               style={{
                 flex: 1, border: "none", outline: "none",
                 fontSize: "0.95rem", color: "#0f172a", background: "transparent",
@@ -1224,7 +1542,30 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
           {/* Results */}
           <div style={{ maxHeight: "340px", overflowY: "auto", padding: "6px 0" }}>
-            {filteredShortcuts.length === 0 ? (
+            {searchQ.trim() && (
+              <button
+                type="button"
+                onClick={() => {
+                  navigate(`/employees?q=${encodeURIComponent(searchQ.trim())}`);
+                  setSearchOpen(false);
+                }}
+                style={{
+                  width: "100%", textAlign: "left", padding: "10px 16px",
+                  border: "none", background: "#f0fdf4",
+                  display: "flex", alignItems: "center", gap: "10px",
+                  cursor: "pointer", fontSize: "0.875rem", color: "#166534",
+                  borderBottom: "1px solid #dcfce7",
+                  transition: "background 0.1s",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#dcfce7"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#f0fdf4"; }}
+              >
+                <span style={{ fontSize: "1rem", width: "22px", textAlign: "center", flexShrink: 0 }}>🔍</span>
+                <span style={{ fontWeight: 600 }}>Search employee "{searchQ.trim()}" in directory</span>
+                <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "#16a34a", fontFamily: "monospace" }}>↵</span>
+              </button>
+            )}
+            {filteredShortcuts.length === 0 && !searchQ.trim() ? (
               <div style={{ padding: "20px 16px", textAlign: "center", color: "#94a3b8", fontSize: "0.875rem" }}>
                 No results for "{searchQ}"
               </div>
