@@ -24,7 +24,9 @@ export function GlobalKeyboardHandler() {
       if (e.key === "Escape") {
         // Find if any modal backdrop or dialog is currently present in DOM
         const backdrops = Array.from(
-          document.querySelectorAll<HTMLElement>(".modal-backdrop, [role='dialog']")
+          document.querySelectorAll<HTMLElement>(
+            ".modal-backdrop, [role='dialog'], .modal-overlay, div[style*='position: fixed'][style*='z-index']"
+          )
         );
         const visibleBackdrops = backdrops.filter(
           (b) => b.offsetParent !== null || window.getComputedStyle(b).display !== "none"
@@ -34,9 +36,9 @@ export function GlobalKeyboardHandler() {
           // Top-most modal is the last one in DOM
           const topModal = visibleBackdrops[visibleBackdrops.length - 1];
 
-          // 1. Try finding a close button (.modal-close-btn or button with ✕ / Close)
+          // 1. Try finding a close button (.modal-close-btn, close icon, or button with title/aria-label)
           const closeBtn = topModal.querySelector<HTMLElement>(
-            ".modal-close-btn, button[title='Close'], button[aria-label='Close']"
+            ".modal-close-btn, button[title='Close'], button[aria-label='Close'], button[title*='close' i], button.btn-ghost:has(svg), button:has(svg line)"
           );
           if (closeBtn && !closeBtn.hasAttribute("disabled")) {
             e.preventDefault();
@@ -49,7 +51,7 @@ export function GlobalKeyboardHandler() {
           const buttons = Array.from(topModal.querySelectorAll<HTMLButtonElement>("button"));
           const cancelBtn = buttons.find((btn) => {
             const text = btn.textContent?.trim().toLowerCase();
-            return (text === "cancel" || text === "dismiss" || text === "close") && !btn.disabled;
+            return (text === "cancel" || text === "dismiss" || text === "close" || text === "✕") && !btn.disabled;
           });
           if (cancelBtn) {
             e.preventDefault();
