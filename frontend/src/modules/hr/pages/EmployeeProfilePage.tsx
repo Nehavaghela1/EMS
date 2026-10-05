@@ -25,8 +25,11 @@ import {
   listEmployeePayslips,
   listStructures,
   assignEmployeeSalary,
+  getStatutoryConfig,
+  updateStatutoryConfig,
   type PayrollItem,
   type SalaryStructureListItem,
+  type StatutoryConfig,
 } from "../../payroll/api";
 import {
   getAssignedShift,
@@ -195,6 +198,199 @@ export function EmployeeProfilePage() {
       await queryClient.invalidateQueries({ queryKey: ["employee", id] });
     } catch (err) {
       notify(parseApiError(err).message, "error");
+    }
+  }
+
+  // Modal States for Overview Tab Editing
+  const [showEditBasicModal, setShowEditBasicModal] = useState(false);
+  const [basicForm, setBasicForm] = useState({
+    first_name: "",
+    last_name: "",
+    email: "",
+    phone: "",
+    position: "",
+    level: "L1",
+  });
+  const [savingBasic, setSavingBasic] = useState(false);
+
+  const [showEditPersonalModal, setShowEditPersonalModal] = useState(false);
+  const [personalForm, setPersonalForm] = useState({
+    personal_email: "",
+    phone: "",
+    last_name: "",
+  });
+  const [savingPersonal, setSavingPersonal] = useState(false);
+
+  const [showEditStatutoryModal, setShowEditStatutoryModal] = useState(false);
+  const [statutoryForm, setStatutoryForm] = useState<StatutoryConfig | null>(null);
+  const [empAttendanceExempt, setEmpAttendanceExempt] = useState(false);
+  const [savingStatutory, setSavingStatutory] = useState(false);
+  const [loadingStatutory, setLoadingStatutory] = useState(false);
+
+  // Masked Number reveal toggles (Zoho privacy standard)
+  const [showAccountNo, setShowAccountNo] = useState(false);
+  const [showIfscCode, setShowIfscCode] = useState(false);
+  const [showAadhaarNo, setShowAadhaarNo] = useState(false);
+  const [showPanNo, setShowPanNo] = useState(false);
+
+  // Close modals on Escape key without leaving employee profile page
+  useEffect(() => {
+    function handleKeyDown(evt: KeyboardEvent) {
+      if (evt.key === "Escape") {
+        if (
+          showEditBasicModal ||
+          showEditPersonalModal ||
+          showEditStatutoryModal ||
+          changeManagerOpen ||
+          showDeductionModal ||
+          showBenefitModal ||
+          showLeaveModal ||
+          showRegularizeModal ||
+          showVehicleModal ||
+          confirmOpen
+        ) {
+          evt.stopPropagation();
+          evt.stopImmediatePropagation();
+          setShowEditBasicModal(false);
+          setShowEditPersonalModal(false);
+          setShowEditStatutoryModal(false);
+          setChangeManagerOpen(false);
+          setShowDeductionModal(false);
+          setShowBenefitModal(false);
+          setShowLeaveModal(false);
+          setShowRegularizeModal(false);
+          setShowVehicleModal(false);
+          setConfirmOpen(false);
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown, true); // Capture phase
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [
+    showEditBasicModal,
+    showEditPersonalModal,
+    showEditStatutoryModal,
+    changeManagerOpen,
+    showDeductionModal,
+    showBenefitModal,
+    showLeaveModal,
+    showRegularizeModal,
+    showVehicleModal,
+    confirmOpen,
+  ]);
+
+  async function handleOpenEditBasic() {
+    if (!e) return;
+    setBasicForm({
+      first_name: e.first_name || "",
+      last_name: e.last_name || "",
+      email: e.email || "",
+      phone: e.phone || "",
+      position: e.position || "",
+      level: e.level || "L1",
+    });
+    setShowEditBasicModal(true);
+  }
+
+  async function handleSaveBasic(ev: React.FormEvent) {
+    ev.preventDefault();
+    if (!id || !e) return;
+    setSavingBasic(true);
+    try {
+      if (isHr) {
+        await updateEmployee(id, {
+          first_name: basicForm.first_name.trim(),
+          last_name: basicForm.last_name.trim() || null,
+          email: basicForm.email.trim() as any,
+          phone: basicForm.phone.trim() || null,
+          position: basicForm.position.trim() || null,
+          level: basicForm.level.trim() || null,
+        });
+      } else {
+        // Employee / Self can only update contact fields
+        await updateEmployee(id, {
+          last_name: basicForm.last_name.trim() || null,
+          phone: basicForm.phone.trim() || null,
+        });
+      }
+      notify("Basic information updated successfully.");
+      setShowEditBasicModal(false);
+      await queryClient.invalidateQueries({ queryKey: ["employee", id] });
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setSavingBasic(false);
+    }
+  }
+
+  function handleOpenEditPersonal() {
+    if (!e) return;
+    setPersonalForm({
+      personal_email: e.personal_email || "",
+      phone: e.phone || "",
+      last_name: e.last_name || "",
+    });
+    setShowEditPersonalModal(true);
+  }
+
+  async function handleSavePersonal(ev: React.FormEvent) {
+    ev.preventDefault();
+    if (!id) return;
+    setSavingPersonal(true);
+    try {
+      await updateEmployee(id, {
+        personal_email: (personalForm.personal_email.trim() || null) as any,
+        phone: personalForm.phone.trim() || null,
+        last_name: personalForm.last_name.trim() || null,
+      });
+      notify("Personal details updated successfully.");
+      setShowEditPersonalModal(false);
+      await queryClient.invalidateQueries({ queryKey: ["employee", id] });
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setSavingPersonal(false);
+    }
+  }
+
+  async function handleOpenEditStatutory() {
+    if (!e) return;
+    setEmpAttendanceExempt(Boolean(e.is_attendance_exempt));
+    setLoadingStatutory(true);
+    setShowEditStatutoryModal(true);
+    try {
+      const config = await getStatutoryConfig();
+      setStatutoryForm(config);
+    } catch {
+      notify("Failed to load statutory configuration.", "error");
+    } finally {
+      setLoadingStatutory(false);
+    }
+  }
+
+  async function handleSaveStatutory(ev: React.FormEvent) {
+    ev.preventDefault();
+    if (!id || !e) return;
+    setSavingStatutory(true);
+    try {
+      if (empAttendanceExempt !== e.is_attendance_exempt) {
+        await updateEmployee(id, {
+          is_attendance_exempt: empAttendanceExempt,
+        });
+      }
+      if (statutoryForm) {
+        await updateStatutoryConfig(statutoryForm);
+      }
+      notify("Statutory configuration updated successfully.");
+      setShowEditStatutoryModal(false);
+      await queryClient.invalidateQueries({ queryKey: ["employee", id] });
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setSavingStatutory(false);
     }
   }
 
@@ -620,23 +816,37 @@ export function EmployeeProfilePage() {
                 {/* Close (✕) Button */}
                 <button
                   type="button"
-                  className="btn btn-sm"
                   style={{
+                    width: "34px",
+                    height: "34px",
+                    borderRadius: "50%",
                     background: "#ffffff",
-                    border: "1px solid #cbd5e1",
-                    color: "#475569",
-                    padding: "0.45rem 0.65rem",
-                    fontWeight: 600,
-                    borderRadius: "6px",
+                    border: "1px solid #e2e8f0",
+                    color: "#64748b",
                     cursor: "pointer",
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                    transition: "all 0.15s ease",
+                    marginLeft: "2px",
+                  }}
+                  onMouseEnter={(evt) => {
+                    evt.currentTarget.style.background = "#f1f5f9";
+                    evt.currentTarget.style.color = "#0f172a";
+                    evt.currentTarget.style.borderColor = "#cbd5e1";
+                    evt.currentTarget.style.transform = "scale(1.05)";
+                  }}
+                  onMouseLeave={(evt) => {
+                    evt.currentTarget.style.background = "#ffffff";
+                    evt.currentTarget.style.color = "#64748b";
+                    evt.currentTarget.style.borderColor = "#e2e8f0";
+                    evt.currentTarget.style.transform = "scale(1)";
                   }}
                   onClick={() => navigate("/employees")}
                   title="Close and return to Employees list"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="18" y1="6" x2="6" y2="18" />
                     <line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
@@ -760,31 +970,93 @@ export function EmployeeProfilePage() {
         {activeTab === "overview" && (
           <div className="printable-profile-dossier stack gap-4">
             {/* Card 1: Basic Information */}
-            <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.75rem" }}>
-                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span>Basic Information</span>
-                  {isHr && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-xs"
-                      onClick={() => navigate(`/employees/${e.id}/edit`)}
-                      style={{ color: "#94a3b8", padding: "0 4px" }}
-                      title="Edit Basic Information"
-                    >
-                      ✎
-                    </button>
-                  )}
+            <div
+              className="card"
+              onDoubleClick={() => (isHr || user?.id === e.user_id) && handleOpenEditBasic()}
+              title={(isHr || user?.id === e.user_id) ? "Double-click to edit Basic Information" : undefined}
+              style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff", border: "1px solid #e2e8f0", transition: "box-shadow 0.2s ease" }}
+            >
+              <div
+                onClick={() => (isHr || user?.id === e.user_id) && handleOpenEditBasic()}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "1.25rem",
+                  borderBottom: "1px solid #f1f5f9",
+                  paddingBottom: "0.75rem",
+                  cursor: (isHr || user?.id === e.user_id) ? "pointer" : "default",
+                  userSelect: "none",
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a" }}>
+                  Basic Information
                 </h3>
+                {(isHr || user?.id === e.user_id) && (
+                  <button
+                    type="button"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      handleOpenEditBasic();
+                    }}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "#64748b",
+                      cursor: "pointer",
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      fontSize: "0.82rem",
+                      transition: "color 0.15s ease",
+                    }}
+                    onMouseEnter={(ev) => (ev.currentTarget.style.color = "#2563eb")}
+                    onMouseLeave={(ev) => (ev.currentTarget.style.color = "#64748b")}
+                    title={isHr ? "Edit Basic Information" : "Edit Contact Information"}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                )}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem 2rem" }}>
-                <Field label="Name" value={`${e.first_name} ${e.last_name || ""}`} />
-                <Field label="Work Location" value={e.company_name ? `${e.company_name} - Head Office` : "Head Office"} />
-                <Field label="Email Address" value={<a href={`mailto:${e.email}`} style={{ color: "#2563eb", textDecoration: "none" }}>{e.email}</a>} />
-                <Field label="Designation" value={e.position ?? "Staff"} />
-                <Field label="Mobile Number" value={e.phone ?? "—"} />
-                <Field label="Department" value={e.department_id ? "Engineering / Core" : "General Operations"} />
-                <Field label="Date of Joining" value={formatDate(e.hire_date)} />
+                <Field
+                  label="Name"
+                  value={`${e.first_name} ${e.last_name || ""}`}
+                />
+                <Field
+                  label="Work Location"
+                  value={e.company_name ? `${e.company_name} - Head Office` : "Head Office"}
+                  isLocked={!isHr}
+                />
+                <Field
+                  label="Email Address"
+                  value={<a href={`mailto:${e.email}`} style={{ color: "#2563eb", textDecoration: "none" }}>{e.email}</a>}
+                  isLocked={!isHr}
+                />
+                <Field
+                  label="Designation"
+                  value={e.position ?? "Staff"}
+                  isLocked={!isHr}
+                />
+                <Field
+                  label="Mobile Number"
+                  value={e.phone ?? "—"}
+                />
+                <Field
+                  label="Department"
+                  value={e.department_id ? "Engineering / Core" : "General Operations"}
+                  isLocked={!isHr}
+                />
+                <Field
+                  label="Date of Joining"
+                  value={formatDate(e.hire_date)}
+                  isLocked={!isHr}
+                />
                 <Field
                   label="Portal Access"
                   value={
@@ -798,87 +1070,327 @@ export function EmployeeProfilePage() {
                       </span>
                     )
                   }
+                  isLocked={!isHr}
                 />
-                <Field label="Gender" value="Not Specified" />
-                <Field label="Assigned Shift" value={assignedShiftQuery.data?.shift?.name ?? "General Shift (09:00 - 18:00)"} />
+                <Field label="Gender" value="Not Specified" isLocked />
+                <Field
+                  label="Assigned Shift"
+                  value={assignedShiftQuery.data?.shift?.name ?? "General Shift (09:00 - 18:00)"}
+                  isLocked={!isHr}
+                />
               </div>
             </div>
 
             {/* Card 2: Statutory Information */}
-            <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.75rem" }}>
-                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span>Statutory Information</span>
-                  <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>✎</span>
+            <div
+              className="card"
+              onDoubleClick={() => isHr && handleOpenEditStatutory()}
+              title={isHr ? "Double-click to edit Statutory Information" : undefined}
+              style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff", border: "1px solid #e2e8f0", transition: "box-shadow 0.2s ease" }}
+            >
+              <div
+                onClick={() => isHr && handleOpenEditStatutory()}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "1.25rem",
+                  borderBottom: "1px solid #f1f5f9",
+                  paddingBottom: "0.75rem",
+                  cursor: isHr ? "pointer" : "default",
+                  userSelect: "none",
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a" }}>
+                  Statutory Information
                 </h3>
+                {isHr && (
+                  <button
+                    type="button"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      handleOpenEditStatutory();
+                    }}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "#64748b",
+                      cursor: "pointer",
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      fontSize: "0.82rem",
+                      transition: "color 0.15s ease",
+                    }}
+                    onMouseEnter={(ev) => (ev.currentTarget.style.color = "#2563eb")}
+                    onMouseLeave={(ev) => (ev.currentTarget.style.color = "#64748b")}
+                    title="Edit Statutory Configuration"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                )}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem 2rem" }}>
                 <Field
                   label="Professional Tax"
                   value={
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "#16a34a" }}>
-                      ✓ Enabled <span style={{ color: "#2563eb", cursor: "pointer", fontSize: "0.8rem" }}>(Disable)</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: isHr ? "#16a34a" : "#475569" }}>
+                      ✓ Enabled {isHr && <span style={{ color: "#2563eb", cursor: "pointer", fontSize: "0.8rem" }} onClick={(ev) => { ev.stopPropagation(); handleOpenEditStatutory(); }}>(Configure)</span>}
                     </span>
                   }
+                  isLocked={!isHr}
                 />
                 <Field
                   label="Provident Fund (EPF)"
                   value={
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "#16a34a" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: isHr ? "#16a34a" : "#475569" }}>
                       ✓ Enabled (12% of Basic)
                     </span>
                   }
+                  isLocked={!isHr}
                 />
                 <Field
                   label="ESI (Employee State Insurance)"
                   value={<span style={{ color: "#64748b" }}>✕ Not Applicable (Salary above ₹21,000 threshold)</span>}
+                  isLocked={!isHr}
                 />
                 <Field
                   label="Attendance Policy"
                   value={e.is_attendance_exempt ? "⭐ Attendance Exempt" : "Standard Tracking"}
+                  isLocked={!isHr}
                 />
               </div>
             </div>
 
             {/* Card 3: Personal Information */}
-            <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.75rem" }}>
-                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span>Personal Information</span>
-                  <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>✎</span>
+            <div
+              className="card"
+              onDoubleClick={() => (isHr || user?.id === e.user_id) && handleOpenEditPersonal()}
+              title={(isHr || user?.id === e.user_id) ? "Double-click to edit Personal Information" : undefined}
+              style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff", border: "1px solid #e2e8f0", transition: "box-shadow 0.2s ease" }}
+            >
+              <div
+                onClick={() => (isHr || user?.id === e.user_id) && handleOpenEditPersonal()}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "1.25rem",
+                  borderBottom: "1px solid #f1f5f9",
+                  paddingBottom: "0.75rem",
+                  cursor: (isHr || user?.id === e.user_id) ? "pointer" : "default",
+                  userSelect: "none",
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a" }}>
+                  Personal Information
                 </h3>
+                {(isHr || user?.id === e.user_id) && (
+                  <button
+                    type="button"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      handleOpenEditPersonal();
+                    }}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "#64748b",
+                      cursor: "pointer",
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      fontSize: "0.82rem",
+                      transition: "color 0.15s ease",
+                    }}
+                    onMouseEnter={(ev) => (ev.currentTarget.style.color = "#2563eb")}
+                    onMouseLeave={(ev) => (ev.currentTarget.style.color = "#64748b")}
+                    title="Edit Personal Information"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                )}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem 2rem" }}>
-                <Field label="Date of Birth" value="01/01/1998" />
-                <Field label="Personal Email Address" value={e.personal_email || "—"} />
-                <Field label="Father's / Guardian's Name" value="—" />
-                <Field label="Residential Address" value="Gujarat, India" />
-                <Field label="Permanent Account Number (PAN)" value="—" />
-                <Field label="Differently Abled Type" value="None" />
+                <Field label="Date of Birth" value="01/01/1998" isLocked={!isHr} />
+                <Field
+                  label="Personal Email Address"
+                  value={e.personal_email || "—"}
+                />
+                <Field label="Father's / Guardian's Name" value="—" isLocked={!isHr} />
+                <Field label="Residential Address" value="Gujarat, India" isLocked={!isHr} />
+                <Field
+                  label="Permanent Account Number (PAN)"
+                  value={
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                      <span>{showPanNo ? "ABCDE1234F" : "XXXXX1234F"}</span>
+                      <button
+                        type="button"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setShowPanNo(!showPanNo);
+                        }}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#2563eb",
+                          fontSize: "0.78rem",
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        {showPanNo ? "Hide" : "Show PAN"}
+                      </button>
+                    </span>
+                  }
+                  isLocked={!isHr}
+                />
+                <Field
+                  label="Aadhaar Number"
+                  value={
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                      <span>{showAadhaarNo ? "5482 1928 8931" : "XXXX XXXX 8931"}</span>
+                      <button
+                        type="button"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setShowAadhaarNo(!showAadhaarNo);
+                        }}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#2563eb",
+                          fontSize: "0.78rem",
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        {showAadhaarNo ? "Hide" : "Show Aadhaar"}
+                      </button>
+                    </span>
+                  }
+                  isLocked={!isHr}
+                />
               </div>
             </div>
 
             {/* Card 4: Payment Information */}
-            <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.75rem" }}>
-                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span>Payment Information</span>
-                  <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>✎</span>
+            <div
+              className="card"
+              onDoubleClick={() => isHr && handleOpenEditStatutory()}
+              title={isHr ? "Double-click to edit Payment / Payout Information" : undefined}
+              style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff", border: "1px solid #e2e8f0", transition: "box-shadow 0.2s ease" }}
+            >
+              <div
+                onClick={() => isHr && handleOpenEditStatutory()}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "1.25rem",
+                  borderBottom: "1px solid #f1f5f9",
+                  paddingBottom: "0.75rem",
+                  cursor: isHr ? "pointer" : "default",
+                  userSelect: "none",
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#0f172a" }}>
+                  Payment Information
                 </h3>
+                {isHr && (
+                  <button
+                    type="button"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      handleOpenEditStatutory();
+                    }}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "#64748b",
+                      cursor: "pointer",
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      fontSize: "0.82rem",
+                      transition: "color 0.15s ease",
+                    }}
+                    onMouseEnter={(ev) => (ev.currentTarget.style.color = "#2563eb")}
+                    onMouseLeave={(ev) => (ev.currentTarget.style.color = "#64748b")}
+                    title="Manage Corporate Payout Settings"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                )}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem 2rem" }}>
-                <Field label="Payment Mode" value="Manual Bank Transfer" />
-                <Field label="Bank Name" value="Bank of Baroda" />
+                <Field label="Payment Mode" value="Manual Bank Transfer" isLocked={!isHr} />
+                <Field label="Bank Name" value="Bank of Baroda" isLocked={!isHr} />
                 <Field
                   label="Account Number"
                   value={
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                      <span>XXXX0532</span>
-                      <span style={{ color: "#2563eb", fontSize: "0.8rem", cursor: "pointer" }}>Show A/C No</span>
+                      <span>{showAccountNo ? "053210100456" : "XXXXXXXX0456"}</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowAccountNo(!showAccountNo)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#2563eb",
+                          fontSize: "0.78rem",
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        {showAccountNo ? "Hide" : "Show A/C No"}
+                      </button>
                     </span>
                   }
+                  isLocked={!isHr}
                 />
-                <Field label="IFSC Code" value="BARB0GHATLO" />
+                <Field
+                  label="IFSC Code"
+                  value={
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                      <span>{showIfscCode ? "BARB0GHATLO" : "BARBXXXXTLO"}</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowIfscCode(!showIfscCode)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "#2563eb",
+                          fontSize: "0.78rem",
+                          fontWeight: 500,
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        {showIfscCode ? "Hide" : "Show IFSC"}
+                      </button>
+                    </span>
+                  }
+                  isLocked={!isHr}
+                />
               </div>
             </div>
           </div>
@@ -1759,6 +2271,442 @@ export function EmployeeProfilePage() {
             </div>
           </div>
         )}
+        {/* 5. Edit Basic Information Modal */}
+        {showEditBasicModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.6)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "1rem",
+            }}
+            onClick={() => !savingBasic && setShowEditBasicModal(false)}
+          >
+            <div
+              className="card"
+              style={{
+                width: "100%",
+                maxWidth: 540,
+                background: "#ffffff",
+                padding: "2rem",
+                borderRadius: "12px",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+              }}
+              onClick={(evt) => evt.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#0f172a" }}>
+                    Edit Basic Information
+                  </h3>
+                  <p style={{ margin: "4px 0 0", fontSize: "0.8rem", color: "#64748b" }}>
+                    {isHr ? "Update profile details & system attributes" : "Update your personal contact details"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowEditBasicModal(false)}
+                  style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", display: "inline-flex", alignItems: "center" }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveBasic}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div>
+                      <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                        First Name <span style={{ color: "#ef4444" }}>*</span>
+                      </label>
+                      <input
+                        type="text"
+                        disabled={!isHr}
+                        value={basicForm.first_name}
+                        onChange={(ev) => setBasicForm({ ...basicForm, first_name: ev.target.value })}
+                        style={{
+                          width: "100%",
+                          padding: "8px 12px",
+                          borderRadius: "6px",
+                          border: "1px solid #cbd5e1",
+                          fontSize: "0.86rem",
+                          background: !isHr ? "#f8fafc" : "#ffffff",
+                          color: !isHr ? "#475569" : "#0f172a",
+                          cursor: !isHr ? "not-allowed" : "text",
+                        }}
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                        Last Name
+                      </label>
+                      <input
+                        type="text"
+                        value={basicForm.last_name}
+                        onChange={(ev) => setBasicForm({ ...basicForm, last_name: ev.target.value })}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem", color: "#0f172a" }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div>
+                      <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                        Work Email <span style={{ color: "#ef4444" }}>*</span>
+                      </label>
+                      <input
+                        type="email"
+                        disabled={!isHr}
+                        value={basicForm.email}
+                        onChange={(ev) => setBasicForm({ ...basicForm, email: ev.target.value })}
+                        style={{
+                          width: "100%",
+                          padding: "8px 12px",
+                          borderRadius: "6px",
+                          border: "1px solid #cbd5e1",
+                          fontSize: "0.86rem",
+                          background: !isHr ? "#f8fafc" : "#ffffff",
+                          color: !isHr ? "#475569" : "#0f172a",
+                          cursor: !isHr ? "not-allowed" : "text",
+                        }}
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                        Mobile Phone Number
+                      </label>
+                      <input
+                        type="tel"
+                        value={basicForm.phone}
+                        onChange={(ev) => setBasicForm({ ...basicForm, phone: ev.target.value })}
+                        placeholder="+91 98765 43210"
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                      />
+                    </div>
+                  </div>
+
+                  {isHr && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                      <div>
+                        <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                          Designation
+                        </label>
+                        <input
+                          type="text"
+                          value={basicForm.position}
+                          onChange={(ev) => setBasicForm({ ...basicForm, position: ev.target.value })}
+                          placeholder="e.g. Software Engineer"
+                          style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                          Career Level
+                        </label>
+                        <select
+                          value={basicForm.level}
+                          onChange={(ev) => setBasicForm({ ...basicForm, level: ev.target.value })}
+                          style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                        >
+                          <option value="L1">L1 — Junior / Entry</option>
+                          <option value="L2">L2 — Mid Level</option>
+                          <option value="L3">L3 — Senior / Lead</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "1.5rem", paddingTop: "1rem", borderTop: "1px solid #f1f5f9" }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setShowEditBasicModal(false)}
+                    disabled={savingBasic}
+                    style={{ border: "1px solid #cbd5e1", borderRadius: "6px" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={savingBasic}
+                    style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px" }}
+                  >
+                    {savingBasic ? "Saving…" : "Save Changes"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* 6. Edit Personal Information Modal */}
+        {showEditPersonalModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.6)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "1rem",
+            }}
+            onClick={() => !savingPersonal && setShowEditPersonalModal(false)}
+          >
+            <div
+              className="card"
+              style={{
+                width: "100%",
+                maxWidth: 480,
+                background: "#ffffff",
+                padding: "2rem",
+                borderRadius: "12px",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+              }}
+              onClick={(evt) => evt.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#0f172a" }}>
+                    Edit Personal Information
+                  </h3>
+                  <p style={{ margin: "4px 0 0", fontSize: "0.8rem", color: "#64748b" }}>
+                    Manage contact coordinates and employee personal details
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowEditPersonalModal(false)}
+                  style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", display: "inline-flex", alignItems: "center" }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+              </div>
+
+              <form onSubmit={handleSavePersonal}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      Personal Email Address
+                    </label>
+                    <input
+                      type="email"
+                      value={personalForm.personal_email}
+                      onChange={(ev) => setPersonalForm({ ...personalForm, personal_email: ev.target.value })}
+                      placeholder="e.g. personal@gmail.com"
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      Primary Mobile Number
+                    </label>
+                    <input
+                      type="tel"
+                      value={personalForm.phone}
+                      onChange={(ev) => setPersonalForm({ ...personalForm, phone: ev.target.value })}
+                      placeholder="+91 98765 43210"
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                      Surname / Last Name
+                    </label>
+                    <input
+                      type="text"
+                      value={personalForm.last_name}
+                      onChange={(ev) => setPersonalForm({ ...personalForm, last_name: ev.target.value })}
+                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "1.5rem", paddingTop: "1rem", borderTop: "1px solid #f1f5f9" }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setShowEditPersonalModal(false)}
+                    disabled={savingPersonal}
+                    style={{ border: "1px solid #cbd5e1", borderRadius: "6px" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={savingPersonal}
+                    style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px" }}
+                  >
+                    {savingPersonal ? "Saving…" : "Save Details"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* 7. Edit Statutory Information Modal (HR Only) */}
+        {showEditStatutoryModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.6)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "1rem",
+            }}
+            onClick={() => !savingStatutory && setShowEditStatutoryModal(false)}
+          >
+            <div
+              className="card"
+              style={{
+                width: "100%",
+                maxWidth: 540,
+                background: "#ffffff",
+                padding: "2rem",
+                borderRadius: "12px",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+              }}
+              onClick={(evt) => evt.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#0f172a" }}>
+                    Configure Statutory & Compliance Rules
+                  </h3>
+                  <p style={{ margin: "4px 0 0", fontSize: "0.8rem", color: "#64748b" }}>
+                    Organization-wide PF, PT, and employee-level attendance exemption policies
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowEditStatutoryModal(false)}
+                  style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", display: "inline-flex", alignItems: "center" }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                </button>
+              </div>
+
+              {loadingStatutory ? (
+                <div style={{ padding: "2rem 0", textAlign: "center", color: "#64748b" }}>Loading configuration…</div>
+              ) : (
+                <form onSubmit={handleSaveStatutory}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                    {/* Attendance Exemption Switch */}
+                    <div style={{ padding: "12px 14px", borderRadius: "8px", background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", fontSize: "0.88rem", fontWeight: 600, color: "#0f172a" }}>
+                        <input
+                          type="checkbox"
+                          checked={empAttendanceExempt}
+                          onChange={(ev) => setEmpAttendanceExempt(ev.target.checked)}
+                          style={{ width: "16px", height: "16px", cursor: "pointer" }}
+                        />
+                        <span>Exempt this Employee from Attendance Policy</span>
+                      </label>
+                      <p style={{ margin: "4px 0 0 26px", fontSize: "0.78rem", color: "#64748b" }}>
+                        Attendance-exempt employees are never marked LOP for missing punch-in logs.
+                      </p>
+                    </div>
+
+                    {/* Statutory Switched Toggles */}
+                    {statutoryForm && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px", borderTop: "1px solid #f1f5f9", paddingTop: "12px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <div style={{ fontSize: "0.86rem", fontWeight: 600, color: "#0f172a" }}>Professional Tax (PT)</div>
+                            <div style={{ fontSize: "0.76rem", color: "#64748b" }}>State-level slab deduction ({statutoryForm.pt_state || "Gujarat"})</div>
+                          </div>
+                          <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "0.84rem" }}>
+                            <input
+                              type="checkbox"
+                              checked={statutoryForm.pt_enabled}
+                              onChange={(ev) => setStatutoryForm({ ...statutoryForm, pt_enabled: ev.target.checked })}
+                              style={{ width: "15px", height: "15px" }}
+                            />
+                            <span>{statutoryForm.pt_enabled ? "Enabled" : "Disabled"}</span>
+                          </label>
+                        </div>
+
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <div style={{ fontSize: "0.86rem", fontWeight: 600, color: "#0f172a" }}>Employees' Provident Fund (EPF)</div>
+                            <div style={{ fontSize: "0.76rem", color: "#64748b" }}>Standard {statutoryForm.pf_employee_rate || "12"}% employee contribution</div>
+                          </div>
+                          <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "0.84rem" }}>
+                            <input
+                              type="checkbox"
+                              checked={statutoryForm.pf_enabled}
+                              onChange={(ev) => setStatutoryForm({ ...statutoryForm, pf_enabled: ev.target.checked })}
+                              style={{ width: "15px", height: "15px" }}
+                            />
+                            <span>{statutoryForm.pf_enabled ? "Enabled" : "Disabled"}</span>
+                          </label>
+                        </div>
+
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <div style={{ fontSize: "0.86rem", fontWeight: 600, color: "#0f172a" }}>Employee State Insurance (ESI)</div>
+                            <div style={{ fontSize: "0.76rem", color: "#64748b" }}>Applicable when monthly wages are below ₹21,000</div>
+                          </div>
+                          <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "0.84rem" }}>
+                            <input
+                              type="checkbox"
+                              checked={statutoryForm.esi_enabled}
+                              onChange={(ev) => setStatutoryForm({ ...statutoryForm, esi_enabled: ev.target.checked })}
+                              style={{ width: "15px", height: "15px" }}
+                            />
+                            <span>{statutoryForm.esi_enabled ? "Enabled" : "Disabled"}</span>
+                          </label>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "1.5rem", paddingTop: "1rem", borderTop: "1px solid #f1f5f9" }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setShowEditStatutoryModal(false)}
+                      disabled={savingStatutory}
+                      style={{ border: "1px solid #cbd5e1", borderRadius: "6px" }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary btn-sm"
+                      disabled={savingStatutory}
+                      style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px" }}
+                    >
+                      {savingStatutory ? "Saving…" : "Save Compliance Rules"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       <EmployeeDossierPrintView employee={e} />
     </>
@@ -1942,57 +2890,41 @@ function EmployeeLeaveProfileTab({ employeeId }: { employeeId: string }) {
 function Field({
   label,
   value,
-  editable,
+  isLocked,
 }: {
   label: string;
   value: React.ReactNode;
   isLocked?: boolean;
   editable?: boolean;
+  onEdit?: () => void;
 }) {
   return (
     <div
       style={{
-        padding: "0.65rem 0",
+        padding: "0.55rem 0",
         borderBottom: "1px solid #f1f5f9",
         display: "flex",
         flexDirection: "column",
         gap: "4px",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <label
-          style={{
-            margin: 0,
-            fontSize: "0.72rem",
-            fontWeight: 600,
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-            color: "#64748b",
-          }}
-        >
-          {label}
-        </label>
-        {editable && (
-          <span
-            style={{
-              fontSize: "0.72rem",
-              color: "#3b82f6",
-              cursor: "pointer",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "2px",
-            }}
-            title="Field editable by employee"
-          >
-            ✏️
-          </span>
-        )}
-      </div>
+      <label
+        style={{
+          margin: 0,
+          fontSize: "0.72rem",
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.04em",
+          color: isLocked ? "#94a3b8" : "#64748b",
+        }}
+      >
+        {label}
+      </label>
       <div
         style={{
           fontWeight: 600,
-          color: "#0f172a",
-          fontSize: "0.9rem",
+          color: isLocked ? "#64748b" : "#0f172a",
+          fontSize: "0.88rem",
           minHeight: "22px",
           display: "flex",
           alignItems: "center",
