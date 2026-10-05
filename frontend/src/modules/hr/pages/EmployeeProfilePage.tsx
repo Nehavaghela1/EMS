@@ -2900,6 +2900,7 @@ function Field({
 }) {
   return (
     <div
+      className="profile-field-row"
       style={{
         padding: "0.55rem 0",
         borderBottom: "1px solid #f1f5f9",
@@ -2916,18 +2917,21 @@ function Field({
           textTransform: "uppercase",
           letterSpacing: "0.04em",
           color: isLocked ? "#94a3b8" : "#64748b",
+          userSelect: "none",
         }}
       >
         {label}
       </label>
       <div
         style={{
-          fontWeight: 600,
+          fontWeight: isLocked ? 450 : 500,
           color: isLocked ? "#64748b" : "#0f172a",
           fontSize: "0.88rem",
           minHeight: "22px",
           display: "flex",
           alignItems: "center",
+          lineHeight: 1.4,
+          wordBreak: "break-word",
         }}
       >
         {value}
