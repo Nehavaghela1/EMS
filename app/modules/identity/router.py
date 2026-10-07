@@ -268,9 +268,9 @@ def get_company_detail(
     _admin: User = Depends(require_role(UserRole.super_admin)),
 ):
     company, counts = CompanyService(db).get_company_detail(company_id)
+    base_data = CompanyResponse.model_validate(company).model_dump()
     return CompanyDetailResponse(
-        **CompanyResponse.model_validate(company).model_dump(),
-        phone=company.phone,
+        **base_data,
         rejection_reason=company.rejection_reason,
         approved_at=company.approved_at,
         counts=counts,

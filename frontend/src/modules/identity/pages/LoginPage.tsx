@@ -107,16 +107,50 @@ export function LoginPage() {
         {companies && (
           <div className="field">
             <label htmlFor="company_code">
-              This email is registered at more than one company — enter the company code
+              Select or enter the company code to sign in:
             </label>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", margin: "6px 0 10px 0" }}>
+              {companies.map((c: any) => {
+                const name = typeof c === "string" ? c : c.name;
+                const code = typeof c === "string" ? null : c.code;
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => {
+                      if (code) setCompanyCode(code);
+                    }}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "8px 12px",
+                      background: companyCode === code ? "var(--color-primary-light, #eff6ff)" : "#f8fafc",
+                      border: companyCode === code ? "2px solid var(--color-primary, #2563eb)" : "1px solid #e2e8f0",
+                      borderRadius: "6px",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      fontSize: "13px",
+                    }}
+                  >
+                    <span style={{ fontWeight: 600, color: "#1e293b" }}>🏢 {name}</span>
+                    {code && (
+                      <span style={{ fontFamily: "monospace", background: "#e2e8f0", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: 700, color: "#334155" }}>
+                        {code}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
             <input
               id="company_code"
               type="text"
+              placeholder="e.g. NEHARO-5746 or ANKITS-2296"
               required
               value={companyCode}
               onChange={(e) => setCompanyCode(e.target.value)}
             />
-            <span className="text-xs text-muted">Companies on this email: {companies.join(", ")}</span>
           </div>
         )}
 

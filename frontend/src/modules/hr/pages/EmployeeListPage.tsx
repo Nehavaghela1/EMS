@@ -1229,36 +1229,53 @@ export function EmployeeListPage() {
 
             <div className="field">
               <div className="row-between align-center mb-1">
-                <label style={{ margin: 0 }}>Designation / Position</label>
+                <label style={{ margin: 0, fontWeight: 600 }}>Designation / Position</label>
                 {quickEditEmp.department_id && (
                   <span className="text-xs text-muted">
-                    Suggestions from:{" "}
-                    <strong>{departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name || "department"}</strong>
+                    Dept: <strong>{departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name || "General"}</strong>
                   </span>
                 )}
               </div>
 
-              {/* Single creatable combobox — type anything OR pick a suggestion */}
-              <input
-                id="quick-position-input"
-                list="quick-position-suggestions"
-                value={quickPositionValue}
-                onChange={(e) => setQuickPositionValue(e.target.value)}
-                onBlur={() => setQuickPositionValue(toTitleCase(quickPositionValue))}
-                placeholder="e.g. Senior Python Developer, Prompt Engineer…"
-                autoFocus
-                autoComplete="off"
-                style={{ width: "100%" }}
-              />
-              <datalist id="quick-position-suggestions">
+              {/* Standard visible select dropdown */}
+              <select
+                id="quick-position-select"
+                value={
+                  getPositionsForDepartment(
+                    departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name
+                  ).includes(quickPositionValue)
+                    ? quickPositionValue
+                    : "__custom__"
+                }
+                onChange={(e) => {
+                  if (e.target.value !== "__custom__") {
+                    setQuickPositionValue(e.target.value);
+                  }
+                }}
+                style={{ width: "100%", marginBottom: "8px", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+              >
+                <option value="__custom__">-- Choose a standard designation or type custom below --</option>
                 {getPositionsForDepartment(
                   departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name
                 ).map((pos) => (
-                  <option key={pos} value={pos} />
+                  <option key={pos} value={pos}>
+                    {pos}
+                  </option>
                 ))}
-              </datalist>
-              <span className="field-hint" style={{ fontSize: "0.74rem", marginTop: "4px", display: "block" }}>
-                Auto-formatted to Title Case on save. Pick a suggestion or type your own.
+              </select>
+
+              <input
+                id="quick-position-input"
+                type="text"
+                value={quickPositionValue}
+                onChange={(e) => setQuickPositionValue(e.target.value)}
+                onBlur={() => setQuickPositionValue(toTitleCase(quickPositionValue))}
+                placeholder="Or type a custom job title here…"
+                autoComplete="off"
+                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+              />
+              <span className="field-hint" style={{ fontSize: "0.74rem", marginTop: "6px", display: "block", color: "#64748b" }}>
+                Select from the dropdown above, or type any custom designation in the box.
               </span>
             </div>
 

@@ -52,8 +52,8 @@ export function ConfirmDialog({
         aria-labelledby="confirm-dialog-title"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-          <h3 id="confirm-dialog-title">{title}</h3>
+        <div className="modal-header">
+          <h3 id="confirm-dialog-title" style={{ margin: 0, fontSize: "1.05rem", fontWeight: 600, color: "#1e293b" }}>{title}</h3>
           <button
             type="button"
             className="modal-close-btn"
@@ -64,9 +64,13 @@ export function ConfirmDialog({
             ✕
           </button>
         </div>
-        <p className="text-muted mt-0 mb-0">{message}</p>
-        <div className="row-end">
-          <button ref={cancelRef} className="btn" onClick={onCancel} disabled={busy}>
+        <div className="modal-body" style={{ padding: "18px 20px" }}>
+          <p style={{ margin: 0, fontSize: "0.88rem", color: "#64748b", lineHeight: 1.5 }}>
+            {message}
+          </p>
+        </div>
+        <div className="modal-footer" style={{ padding: "12px 20px" }}>
+          <button ref={cancelRef} className="btn btn-outline" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
           <button

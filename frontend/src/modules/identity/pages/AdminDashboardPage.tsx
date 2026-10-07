@@ -61,6 +61,7 @@ export function AdminDashboardPage() {
   const [editError, setEditError] = useState<string | null>(null);
   const [editSuccess, setEditSuccess] = useState<string | null>(null);
   const [companyDetail, setCompanyDetail] = useState<CompanyDetailResponse | null>(null);
+  const [isEditingCompany, setIsEditingCompany] = useState(false);
 
   async function refreshCompanies() {
     await queryClient.invalidateQueries({ queryKey: ["companies"] });
@@ -69,6 +70,7 @@ export function AdminDashboardPage() {
 
   async function openEditModal(company: CompanyResponse) {
     setEditTargetId(company.id);
+    setIsEditingCompany(false);
     setEditLoading(true);
     setEditError(null);
     setEditSuccess(null);
@@ -427,176 +429,302 @@ export function AdminDashboardPage() {
       )}
 
       {/* Edit / Detail Modal */}
+      {/* Company Detail / View / Edit Modal (Zoho Standard) */}
       {editTargetId && (
         <div className="modal-backdrop" onClick={() => setEditTargetId(null)}>
           <div
-            className="modal stack"
-            style={{ maxWidth: "600px", width: "95%" }}
+            className="modal"
+            style={{ maxWidth: "640px", width: "95%", borderRadius: "16px", overflow: "hidden" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
-              <h3>🏢 Company Details & Profile</h3>
-              <button
-                type="button"
-                className="modal-close-btn"
-                onClick={() => setEditTargetId(null)}
-                disabled={busy}
-                title="Close"
-              >
-                ✕
-              </button>
-            </div>
-
-            {editLoading ? (
-              <div className="row justify-center py-6">
-                <div className="spinner" />
-                <span className="ml-2 text-muted">Loading company profile...</span>
-              </div>
-            ) : (
-              <form onSubmit={handleSaveCompany} className="stack">
-                {editError && <div className="alert alert-error">{editError}</div>}
-                {editSuccess && <div className="alert alert-success">{editSuccess}</div>}
-
+            <div className="modal-header" style={{ padding: "16px 22px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span style={{ fontSize: "1.2rem" }}>🏢</span>
+                <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#1e293b" }}>
+                  {companyDetail?.name || "Company Overview"}
+                </h3>
                 {companyDetail && (
-                  <div className="card mb-3" style={{ background: "var(--color-bg-subtle)", padding: "var(--space-3)" }}>
-                    <div className="stat-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: "var(--space-2)" }}>
-                      <div>
-                        <span className="text-xs text-muted block">Company Code</span>
-                        <code>{companyDetail.code}</code>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted block">Total Users</span>
-                        <strong>{companyDetail.counts?.users ?? 0}</strong>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted block">Departments</span>
-                        <strong>{companyDetail.counts?.departments ?? 0}</strong>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted block">Registered Date</span>
-                        <span>{formatDate(companyDetail.created_at)}</span>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted block">Approved Date</span>
-                        <span>{companyDetail.approved_at ? formatDate(companyDetail.approved_at) : "—"}</span>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted block">Email</span>
-                        <span style={{ fontSize: "12px", wordBreak: "break-all" }}>{companyDetail.email}</span>
-                      </div>
-                    </div>
-                    {companyDetail.rejection_reason && (
-                      <div className="mt-2 text-xs text-danger">
-                        <strong>Rejection Reason:</strong> {companyDetail.rejection_reason}
-                      </div>
-                    )}
-                  </div>
+                  <span
+                    className={`badge ${
+                      companyDetail.status === "active"
+                        ? "badge-success"
+                        : companyDetail.status === "pending"
+                        ? "badge-warning"
+                        : "badge-danger"
+                    }`}
+                  >
+                    {companyDetail.status.toUpperCase()}
+                  </span>
                 )}
-
-                <div className="row" style={{ gap: "var(--space-3)" }}>
-                  <div className="field" style={{ flex: 2 }}>
-                    <label>Company Name *</label>
-                    <input
-                      type="text"
-                      required
-                      value={editFormData.name ?? ""}
-                      onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
-                    />
-                  </div>
-                  <div className="field" style={{ flex: 1 }}>
-                    <label>Status</label>
-                    <select
-                      value={editFormData.status ?? "active"}
-                      onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value })}
-                    >
-                      <option value="active">Active</option>
-                      <option value="pending">Pending</option>
-                      <option value="suspended">Suspended</option>
-                      <option value="rejected">Rejected</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="row" style={{ gap: "var(--space-3)" }}>
-                  <div className="field" style={{ flex: 1 }}>
-                    <label>Industry</label>
-                    <input
-                      type="text"
-                      value={editFormData.industry ?? ""}
-                      onChange={(e) => setEditFormData({ ...editFormData, industry: e.target.value })}
-                    />
-                  </div>
-                  <div className="field" style={{ flex: 1 }}>
-                    <label>Phone</label>
-                    <input
-                      type="text"
-                      value={editFormData.phone ?? ""}
-                      onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
-                    />
-                  </div>
-                </div>
-
-                <div className="field">
-                  <label>Website</label>
-                  <input
-                    type="text"
-                    placeholder="https://..."
-                    value={editFormData.website ?? ""}
-                    onChange={(e) => setEditFormData({ ...editFormData, website: e.target.value })}
-                  />
-                </div>
-
-                <div className="field">
-                  <label>Address</label>
-                  <input
-                    type="text"
-                    value={editFormData.address ?? ""}
-                    onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })}
-                  />
-                </div>
-
-                <div className="row" style={{ gap: "var(--space-3)" }}>
-                  <div className="field" style={{ flex: 1 }}>
-                    <label>City</label>
-                    <input
-                      type="text"
-                      value={editFormData.city ?? ""}
-                      onChange={(e) => setEditFormData({ ...editFormData, city: e.target.value })}
-                    />
-                  </div>
-                  <div className="field" style={{ flex: 1 }}>
-                    <label>State</label>
-                    <input
-                      type="text"
-                      value={editFormData.state ?? ""}
-                      onChange={(e) => setEditFormData({ ...editFormData, state: e.target.value })}
-                    />
-                  </div>
-                  <div className="field" style={{ flex: 1 }}>
-                    <label>Pincode</label>
-                    <input
-                      type="text"
-                      value={editFormData.pincode ?? ""}
-                      onChange={(e) => setEditFormData({ ...editFormData, pincode: e.target.value })}
-                    />
-                  </div>
-                </div>
-
-                <div className="row-end" style={{ gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                {!isEditingCompany ? (
                   <button
                     type="button"
-                    className="btn btn-ghost"
-                    onClick={() => setEditTargetId(null)}
-                    disabled={busy}
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => setIsEditingCompany(true)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: "32px",
+                      height: "32px",
+                      padding: 0,
+                      borderRadius: "8px",
+                      color: "#475569",
+                      background: "#f1f5f9",
+                      border: "1px solid #e2e8f0",
+                    }}
+                    title="Edit Company Details"
                   >
-                    Cancel
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                    </svg>
                   </button>
-                  <button type="submit" className="btn btn-primary" disabled={busy}>
-                    {busy ? "Saving Changes..." : "Save Changes"}
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => setIsEditingCompany(false)}
+                    style={{ fontSize: "12px", color: "#64748b" }}
+                  >
+                    Cancel Edit
                   </button>
+                )}
+                <button
+                  type="button"
+                  className="modal-close-btn"
+                  onClick={() => {
+                    setEditTargetId(null);
+                    setIsEditingCompany(false);
+                  }}
+                  disabled={busy}
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="modal-body" style={{ padding: "20px 24px", maxHeight: "75vh", overflowY: "auto" }}>
+              {editLoading ? (
+                <div className="row justify-center py-6">
+                  <div className="spinner" />
+                  <span className="ml-2 text-muted">Loading company profile...</span>
                 </div>
-              </form>
-            )}
+              ) : (
+                <form onSubmit={handleSaveCompany} className="stack">
+                  {editError && <div className="alert alert-error">{editError}</div>}
+                  {editSuccess && <div className="alert alert-success">{editSuccess}</div>}
+
+                  {companyDetail && (
+                    <div
+                      style={{
+                        background: "#f8fafc",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "10px",
+                        padding: "14px 16px",
+                        marginBottom: "16px",
+                      }}
+                    >
+                      <div className="stat-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: "10px 14px" }}>
+                        <div>
+                          <span className="text-xs text-muted block">Company Code</span>
+                          <strong style={{ fontFamily: "monospace", fontSize: "13px" }}>{companyDetail.code}</strong>
+                        </div>
+                        <div>
+                          <span className="text-xs text-muted block">Total Users</span>
+                          <span style={{ fontWeight: 600 }}>👥 {companyDetail.counts?.users ?? 0}</span>
+                        </div>
+                        <div>
+                          <span className="text-xs text-muted block">Departments</span>
+                          <span style={{ fontWeight: 600 }}>🏢 {companyDetail.counts?.departments ?? 0}</span>
+                        </div>
+                        <div>
+                          <span className="text-xs text-muted block">Registered On</span>
+                          <span style={{ fontSize: "13px" }}>{formatDate(companyDetail.created_at)}</span>
+                        </div>
+                        <div>
+                          <span className="text-xs text-muted block">Approved Date</span>
+                          <span style={{ fontSize: "13px" }}>{companyDetail.approved_at ? formatDate(companyDetail.approved_at) : "—"}</span>
+                        </div>
+                        <div>
+                          <span className="text-xs text-muted block">Official Email</span>
+                          <span style={{ fontSize: "12px", wordBreak: "break-all", color: "#2563eb" }}>{companyDetail.email}</span>
+                        </div>
+                      </div>
+                      {companyDetail.rejection_reason && (
+                        <div className="mt-2 text-xs text-danger" style={{ borderTop: "1px dashed #fca5a5", paddingTop: "6px" }}>
+                          <strong>Rejection Reason:</strong> {companyDetail.rejection_reason}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!isEditingCompany ? (
+                    /* Clean Zoho Profile View */
+                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                        <div style={{ background: "#ffffff", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
+                          <span className="text-xs text-muted block mb-1">Company Name</span>
+                          <div style={{ fontWeight: 600, fontSize: "14px", color: "#1e293b" }}>{editFormData.name || "—"}</div>
+                        </div>
+                        <div style={{ background: "#ffffff", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
+                          <span className="text-xs text-muted block mb-1">Industry</span>
+                          <div style={{ fontWeight: 500, fontSize: "14px", color: "#334155" }}>{editFormData.industry || "—"}</div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                        <div style={{ background: "#ffffff", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
+                          <span className="text-xs text-muted block mb-1">Phone Number</span>
+                          <div style={{ fontWeight: 500, fontSize: "14px", color: "#334155" }}>{editFormData.phone || "—"}</div>
+                        </div>
+                        <div style={{ background: "#ffffff", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
+                          <span className="text-xs text-muted block mb-1">Website</span>
+                          <div style={{ fontSize: "14px" }}>
+                            {editFormData.website ? (
+                              <a href={editFormData.website} target="_blank" rel="noreferrer" style={{ color: "#2563eb", textDecoration: "underline" }}>
+                                {editFormData.website}
+                              </a>
+                            ) : "—"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Zoho Statutory & Identification Data */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                        <div style={{ background: "#ffffff", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
+                          <span className="text-xs text-muted block mb-1">GSTIN Number</span>
+                          <div style={{ fontFamily: "monospace", fontSize: "13px", fontWeight: 600, color: "#334155" }}>
+                            {companyDetail?.gst_number || "—"}
+                          </div>
+                        </div>
+                        <div style={{ background: "#ffffff", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
+                          <span className="text-xs text-muted block mb-1">PAN Number</span>
+                          <div style={{ fontFamily: "monospace", fontSize: "13px", fontWeight: 600, color: "#334155" }}>
+                            {companyDetail?.pan_number || "—"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ background: "#ffffff", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
+                        <span className="text-xs text-muted block mb-1">Registered Office Address</span>
+                        <div style={{ fontSize: "13px", color: "#334155" }}>
+                          {[editFormData.address, editFormData.city, editFormData.state, editFormData.pincode].filter(Boolean).join(", ") || "No address provided"}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Editable Form Mode */
+                    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                      <div className="row" style={{ gap: "var(--space-3)" }}>
+                        <div className="field" style={{ flex: 2 }}>
+                          <label>Company Name *</label>
+                          <input
+                            type="text"
+                            required
+                            value={editFormData.name ?? ""}
+                            onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                          />
+                        </div>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label>Status</label>
+                          <select
+                            value={editFormData.status ?? "active"}
+                            onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value })}
+                          >
+                            <option value="active">Active</option>
+                            <option value="pending">Pending</option>
+                            <option value="suspended">Suspended</option>
+                            <option value="rejected">Rejected</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="row" style={{ gap: "var(--space-3)" }}>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label>Industry</label>
+                          <input
+                            type="text"
+                            value={editFormData.industry ?? ""}
+                            onChange={(e) => setEditFormData({ ...editFormData, industry: e.target.value })}
+                          />
+                        </div>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label>Phone</label>
+                          <input
+                            type="text"
+                            value={editFormData.phone ?? ""}
+                            onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="field">
+                        <label>Website</label>
+                        <input
+                          type="text"
+                          placeholder="https://..."
+                          value={editFormData.website ?? ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, website: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="field">
+                        <label>Address</label>
+                        <input
+                          type="text"
+                          value={editFormData.address ?? ""}
+                          onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="row" style={{ gap: "var(--space-3)" }}>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label>City</label>
+                          <input
+                            type="text"
+                            value={editFormData.city ?? ""}
+                            onChange={(e) => setEditFormData({ ...editFormData, city: e.target.value })}
+                          />
+                        </div>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label>State</label>
+                          <input
+                            type="text"
+                            value={editFormData.state ?? ""}
+                            onChange={(e) => setEditFormData({ ...editFormData, state: e.target.value })}
+                          />
+                        </div>
+                        <div className="field" style={{ flex: 1 }}>
+                          <label>Pincode</label>
+                          <input
+                            type="text"
+                            value={editFormData.pincode ?? ""}
+                            onChange={(e) => setEditFormData({ ...editFormData, pincode: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="row-end" style={{ gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={() => setIsEditingCompany(false)}
+                          disabled={busy}
+                        >
+                          Cancel
+                        </button>
+                        <button type="submit" className="btn btn-primary" disabled={busy}>
+                          {busy ? "Saving Changes..." : "Save Changes"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </form>
+              )}
+            </div>
           </div>
         </div>
       )}
