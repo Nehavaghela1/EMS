@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
@@ -80,6 +80,32 @@ export function LeavePage() {
   const [filterEmployee, setFilterEmployee] = useState<{ id: string; name: string } | null>(
     employeeIdParam ? { id: employeeIdParam, name: employeeNameParam || "Selected Employee" } : null
   );
+
+  const [selectedLeaveTypeId, setSelectedLeaveTypeId] = useState<string>(
+    searchParams.get("leave_type_id") || ""
+  );
+
+  // Sync if URL query param changes
+  useEffect(() => {
+    const fromUrl = searchParams.get("leave_type_id");
+    if (fromUrl) {
+      setSelectedLeaveTypeId(fromUrl);
+    }
+  }, [searchParams]);
+
+  function handleSelectLeaveType(ltId: string) {
+    setSelectedLeaveTypeId(ltId);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("leave_type_id", ltId);
+      return next;
+    });
+    // Smooth scroll down to apply form
+    const formEl = document.getElementById("apply-leave-form");
+    if (formEl) {
+      formEl.scrollIntoView({ behavior: "smooth" });
+    }
+  }
 
   const [statusFilter, setStatusFilter] = useState<LeaveStatus | "">("");
   const { page, limit, setPage } = usePagination();
@@ -315,15 +341,37 @@ export function LeavePage() {
           )}
           {balancesQuery.data && balancesQuery.data.length > 0 && (
             <div className="stat-grid">
-              {balancesQuery.data.map((b) => (
-                <div className="card" key={b.leave_type_id}>
-                  <div className="stat-label">{b.leave_type_name}</div>
-                  <div className="stat-value">{b.available}</div>
-                  <div className="text-xs text-muted" style={{ marginTop: "2px" }}>
-                    {b.allocated} allocated · {b.used} used
+              {balancesQuery.data.map((b) => {
+                const isSelected = selectedLeaveTypeId === b.leave_type_id;
+                return (
+                  <div
+                    className="card"
+                    key={b.leave_type_id}
+                    onClick={() => handleSelectLeaveType(b.leave_type_id)}
+                    style={{
+                      cursor: "pointer",
+                      borderColor: isSelected ? "var(--color-primary, #2563eb)" : undefined,
+                      boxShadow: isSelected ? "0 0 0 2px rgba(37, 99, 235, 0.2)" : undefined,
+                      backgroundColor: isSelected ? "#f0f7ff" : undefined,
+                      transition: "all 0.15s ease",
+                    }}
+                    title="Click to apply for this leave type"
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <div className="stat-label" style={{ color: isSelected ? "var(--color-primary, #2563eb)" : undefined, fontWeight: isSelected ? 700 : undefined }}>
+                        {b.leave_type_name}
+                      </div>
+                      <span style={{ fontSize: "0.75rem", color: isSelected ? "var(--color-primary, #2563eb)" : "#94a3b8", fontWeight: 600 }}>
+                        {isSelected ? "✓ Selected" : "Apply →"}
+                      </span>
+                    </div>
+                    <div className="stat-value">{b.available}</div>
+                    <div className="text-xs text-muted" style={{ marginTop: "2px" }}>
+                      {b.allocated} allocated · {b.used} used
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -334,6 +382,8 @@ export function LeavePage() {
         employees={employeesQuery.data?.items ?? []}
         leaveTypes={leaveTypesQuery.data ?? []}
         currentUser={user}
+        initialLeaveTypeId={selectedLeaveTypeId}
+        onLeaveTypeChange={setSelectedLeaveTypeId}
         onApplied={refreshAll}
       />
 
@@ -465,12 +515,16 @@ function ApplyLeaveForm({
   employees,
   leaveTypes,
   currentUser,
+  initialLeaveTypeId,
+  onLeaveTypeChange,
   onApplied,
 }: {
   canPickEmployee: boolean;
   employees: { id: string; first_name: string; last_name: string | null }[];
   leaveTypes: LeaveType[];
   currentUser?: { email: string; employee?: { id: string } | null; role?: string } | null;
+  initialLeaveTypeId?: string;
+  onLeaveTypeChange?: (id: string) => void;
   onApplied: () => void;
 }) {
   const { notify } = useToast();
@@ -478,13 +532,27 @@ function ApplyLeaveForm({
   const hasLinkedEmployee = Boolean(currentUser?.employee?.id);
   const [targetType, setTargetType] = useState<"myself" | "other">(hasLinkedEmployee ? "myself" : "other");
   const [employeeId, setEmployeeId] = useState(hasLinkedEmployee ? currentUser!.employee!.id : "");
-  const [leaveTypeId, setLeaveTypeId] = useState("");
+  const [leaveTypeId, setLeaveTypeId] = useState(initialLeaveTypeId || "");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [isHalfDay, setIsHalfDay] = useState(false);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Sync when initialLeaveTypeId changes from outside (e.g., clicking a card or URL param)
+  useEffect(() => {
+    if (initialLeaveTypeId) {
+      setLeaveTypeId(initialLeaveTypeId);
+    }
+  }, [initialLeaveTypeId]);
+
+  function handleLeaveTypeSelect(id: string) {
+    setLeaveTypeId(id);
+    if (onLeaveTypeChange) {
+      onLeaveTypeChange(id);
+    }
+  }
 
   // Derive the selected leave type to show LOP warning
   const selectedLeaveType = leaveTypes.find((lt) => lt.id === leaveTypeId) ?? null;
@@ -546,7 +614,7 @@ function ApplyLeaveForm({
   }
 
   return (
-    <form className="card stack mb-6" onSubmit={handleSubmit}>
+    <form id="apply-leave-form" className="card stack mb-6" onSubmit={handleSubmit}>
       <h3>Apply for leave</h3>
       {error && <div className="alert alert-error">{error}</div>}
       <div className="form-grid">
@@ -607,7 +675,11 @@ function ApplyLeaveForm({
         )}
         <div className="field">
           <label>Leave type *</label>
-          <select value={leaveTypeId} onChange={(e) => setLeaveTypeId(e.target.value)} required>
+          <select
+            value={leaveTypeId}
+            onChange={(e) => handleLeaveTypeSelect(e.target.value)}
+            required
+          >
             <option value="">— Select —</option>
             {leaveTypes.map((lt) => (
               <option key={lt.id} value={lt.id}>

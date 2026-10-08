@@ -104,14 +104,39 @@ code {
 }
 
 .sidebar {
-  width: 224px;
+  width: 235px;
   flex-shrink: 0;
-  background: var(--color-surface);
-  border-right: 1px solid var(--color-border);
-  padding: var(--space-5) var(--space-3);
+  background: #1e293b;
+  color: #f8fafc;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  border-right: 1px solid #334155;
+  padding: 0;
+  height: 100%;
+  z-index: 50;
+  transition: transform 0.25s ease;
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 260px;
+    transform: translateX(-100%);
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
+  }
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+  .mobile-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    backdrop-filter: blur(2px);
+    z-index: 49;
+  }
 }
 
 .sidebar-brand {
@@ -164,7 +189,8 @@ code {
   height: 100%;
   overflow-y: auto;
   padding: var(--space-6) var(--space-8);
-  max-width: 1440px;
+  width: 100%;
+  max-width: 100%;
 }
 
 .center-screen {
@@ -490,47 +516,19 @@ textarea:focus {
   max-width: 480px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .form-grid {
     grid-template-columns: 1fr;
   }
-  /* Hardening pass: this used to be `.sidebar { display: none; }` with no
-     replacement — on a narrow window every nav link (and the log-out
-     button) simply vanished, leaving whatever page you loaded on as a dead
-     end. Reflowed into a horizontal, scrollable strip instead of hidden;
-     still no JS, no hamburger state, no animation — every link a wide
-     viewport has stays reachable, just laid out differently. */
-  .app-shell {
-    flex-direction: column;
-  }
-  .sidebar {
-    width: 100%;
-    flex-direction: row;
-    align-items: center;
-    padding: var(--space-2) var(--space-3);
-    overflow-x: auto;
-  }
-  .sidebar-brand {
-    padding: 0 var(--space-3) 0 0;
-  }
-  .sidebar-nav {
-    flex-direction: row;
-    flex-shrink: 0;
-  }
-  .sidebar-footer {
-    flex-direction: row;
-    align-items: center;
-    margin-top: 0;
-    margin-left: var(--space-3);
-    padding-top: 0;
-    padding-left: var(--space-3);
-    border-top: none;
-    border-left: 1px solid var(--color-border);
-    flex-shrink: 0;
-    white-space: nowrap;
-  }
   .main {
-    padding: var(--space-4);
+    padding: var(--space-4) var(--space-3);
+  }
+  .mobile-hamburger-btn {
+    display: inline-flex !important;
+  }
+  /* On mobile screens, hide desktop-only widgets gracefully */
+  .desktop-only-search {
+    display: none !important;
   }
 }
 

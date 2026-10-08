@@ -205,6 +205,26 @@ export function AppLayout({ children }: { children: ReactNode }) {
     return () => document.removeEventListener("mousedown", handlePeopleOut);
   }, [peopleMenuOpen]);
 
+  // ── Zoho 9-Dots Apps Suite Launcher Popover ──────────────────────────────
+  const [appsMenuOpen, setAppsMenuOpen] = useState(false);
+  const appsMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function handleAppsOut(e: MouseEvent) {
+      if (appsMenuRef.current && !appsMenuRef.current.contains(e.target as Node)) {
+        setAppsMenuOpen(false);
+      }
+    }
+    if (appsMenuOpen) document.addEventListener("mousedown", handleAppsOut);
+    return () => document.removeEventListener("mousedown", handleAppsOut);
+  }, [appsMenuOpen]);
+
+  // ── Mobile Responsive Sidebar Drawer ─────────────────────────────────────
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  // Auto-close mobile sidebar drawer on navigation
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [location.pathname]);
+
 
   // ── Top Navbar Employee Search ──────────────────────────────────────────
   const [topEmployeeSearch, setTopEmployeeSearch] = useState("");
@@ -315,9 +335,17 @@ export function AppLayout({ children }: { children: ReactNode }) {
   return (
     <>
     <div className="app-shell" style={{ display: "flex", height: "100vh", width: "100vw", overflow: "hidden" }}>
-      {/* Zoho HRMS Style Dark Sidebar - fixed height 100% */}
+      {/* Mobile Drawer Backdrop */}
+      {isMobileMenuOpen && (
+        <div
+          className="mobile-drawer-backdrop"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Zoho HRMS Style Dark Sidebar */}
       <aside
-        className="sidebar"
+        className={`sidebar ${isMobileMenuOpen ? "mobile-open" : ""}`}
         style={{
           width: "235px",
           height: "100%",
@@ -932,11 +960,40 @@ export function AppLayout({ children }: { children: ReactNode }) {
             zIndex: 40,
           }}
         >
-          {/* Left/Center: Zoho Employee Search Bar */}
-          <div style={{ display: "flex", alignItems: "center", gap: "14px", flex: 1, maxWidth: "560px" }}>
+          {/* Left/Center: Mobile Hamburger + Zoho Employee Search Bar */}
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1, maxWidth: "560px" }}>
+            {/* Mobile Hamburger Toggle Button */}
+            <button
+              type="button"
+              id="btn-mobile-sidebar-toggle"
+              onClick={() => setIsMobileMenuOpen((p) => !p)}
+              title="Toggle Navigation Menu"
+              style={{
+                display: "none",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "32px",
+                height: "32px",
+                borderRadius: "6px",
+                border: "1px solid #e2e8f0",
+                background: "#f8fafc",
+                color: "#1e293b",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+              className="mobile-hamburger-btn"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            </button>
+
             {/* Top Navbar: Employee Search (Second Search) */}
             <div
               id="topbar-employee-search"
+              className="desktop-only-search"
               style={{
                 position: "relative",
                 width: "100%",
@@ -1251,45 +1308,257 @@ export function AppLayout({ children }: { children: ReactNode }) {
             </button>
 
             {/* Zoho 9-Dots / Apps Launcher Icon */}
-            <button
-              type="button"
-              id="btn-top-apps"
-              onClick={() => navigate("/dashboard")}
-              title="Zoho Apps Suite"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: "32px",
-                height: "32px",
-                borderRadius: "7px",
-                border: "1px solid #e2e8f0",
-                background: "#f8fafc",
-                color: "#64748b",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = "#cbd5e1";
-                e.currentTarget.style.color = "#0f172a";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = "#e2e8f0";
-                e.currentTarget.style.color = "#64748b";
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="4" cy="4" r="2.2" />
-                <circle cx="12" cy="4" r="2.2" />
-                <circle cx="20" cy="4" r="2.2" />
-                <circle cx="4" cy="12" r="2.2" />
-                <circle cx="12" cy="12" r="2.2" />
-                <circle cx="20" cy="12" r="2.2" />
-                <circle cx="4" cy="20" r="2.2" />
-                <circle cx="12" cy="20" r="2.2" />
-                <circle cx="20" cy="20" r="2.2" />
-              </svg>
-            </button>
+            <div ref={appsMenuRef} style={{ position: "relative" }}>
+              <button
+                type="button"
+                id="btn-top-apps"
+                onClick={() => setAppsMenuOpen((prev) => !prev)}
+                title="Zoho Apps Suite"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "32px",
+                  height: "32px",
+                  borderRadius: "7px",
+                  border: `1px solid ${appsMenuOpen ? "#bfdbfe" : "#e2e8f0"}`,
+                  background: appsMenuOpen ? "#eff6ff" : "#f8fafc",
+                  color: appsMenuOpen ? "#2563eb" : "#64748b",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "#cbd5e1";
+                  e.currentTarget.style.color = "#0f172a";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = appsMenuOpen ? "#bfdbfe" : "#e2e8f0";
+                  e.currentTarget.style.color = appsMenuOpen ? "#2563eb" : "#64748b";
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="4" cy="4" r="2.2" />
+                  <circle cx="12" cy="4" r="2.2" />
+                  <circle cx="20" cy="4" r="2.2" />
+                  <circle cx="4" cy="12" r="2.2" />
+                  <circle cx="12" cy="12" r="2.2" />
+                  <circle cx="20" cy="12" r="2.2" />
+                  <circle cx="4" cy="20" r="2.2" />
+                  <circle cx="12" cy="20" r="2.2" />
+                  <circle cx="20" cy="20" r="2.2" />
+                </svg>
+              </button>
+
+              {/* Zoho Apps Suite Popover Grid */}
+              {appsMenuOpen && (
+                <div
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: "calc(100% + 6px)",
+                    background: "#ffffff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "12px",
+                    boxShadow: "0 10px 25px -5px rgba(0,0,0,0.15), 0 4px 6px -2px rgba(0,0,0,0.05)",
+                    width: "320px",
+                    zIndex: 999,
+                    overflow: "hidden",
+                    padding: "12px",
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
+                    <div>
+                      <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "#0f172a" }}>
+                        Zoho People Apps Suite
+                      </div>
+                      <div style={{ fontSize: "0.72rem", color: "#64748b" }}>
+                        All workspace productivity modules
+                      </div>
+                    </div>
+                    <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "#2563eb", background: "#eff6ff", padding: "2px 6px", borderRadius: "4px" }}>
+                      PRO
+                    </span>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
+                    {[
+                      {
+                        title: "Attendance",
+                        sub: "Punch clock",
+                        to: "/attendance",
+                        icon: (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2">
+                            <circle cx="12" cy="12" r="10" />
+                            <polyline points="12 6 12 12 16 14" />
+                          </svg>
+                        ),
+                        bg: "#eff6ff",
+                      },
+                      {
+                        title: "Leave Mgmt",
+                        sub: "Quotas & days",
+                        to: "/leaves",
+                        icon: (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                            <line x1="16" y1="2" x2="16" y2="6" />
+                            <line x1="8" y1="2" x2="8" y2="6" />
+                            <line x1="12" y1="11" x2="12" y2="17" />
+                            <line x1="9" y1="14" x2="15" y2="14" />
+                          </svg>
+                        ),
+                        bg: "#ecfdf5",
+                      },
+                      {
+                        title: "Timesheets",
+                        sub: "Hours & tasks",
+                        to: "/timesheets",
+                        icon: (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                            <line x1="16" y1="13" x2="8" y2="13" />
+                            <line x1="16" y1="17" x2="8" y2="17" />
+                          </svg>
+                        ),
+                        bg: "#f5f3ff",
+                      },
+                      {
+                        title: "My Payslip",
+                        sub: "Salary & taxes",
+                        to: "/payroll/payslip",
+                        icon: (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2">
+                            <rect x="2" y="4" width="20" height="16" rx="2" />
+                            <line x1="12" y1="8" x2="12" y2="16" />
+                            <path d="M16 11.5a3.5 3.5 0 0 0-5-2.5h-1a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4h-2a3.5 3.5 0 0 1-3-1.5" />
+                          </svg>
+                        ),
+                        bg: "#fffbeb",
+                      },
+                      {
+                        title: "Performance",
+                        sub: "Goals & reviews",
+                        to: "/performance/goals",
+                        icon: (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2">
+                            <circle cx="12" cy="12" r="10" />
+                            <circle cx="12" cy="12" r="6" />
+                            <circle cx="12" cy="12" r="2" />
+                          </svg>
+                        ),
+                        bg: "#fef2f2",
+                      },
+                      {
+                        title: "Directory",
+                        sub: "People & staff",
+                        to: "/employees",
+                        icon: (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0284c7" strokeWidth="2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                            <circle cx="9" cy="7" r="4" />
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                          </svg>
+                        ),
+                        bg: "#f0f9ff",
+                      },
+                      {
+                        title: "Departments",
+                        sub: "Teams & units",
+                        to: "/departments",
+                        icon: (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="2">
+                            <path d="M3 21h18M3 7v14M21 7v14M6 21V11h4v10M14 21V11h4v10M9 3h6v4H9z" />
+                          </svg>
+                        ),
+                        bg: "#f8fafc",
+                      },
+                      {
+                        title: "Shifts",
+                        sub: "Work schedules",
+                        to: "/shifts",
+                        icon: (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" strokeWidth="2">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                            <line x1="16" y1="2" x2="16" y2="6" />
+                            <line x1="8" y1="2" x2="8" y2="6" />
+                            <line x1="3" y1="10" x2="21" y2="10" />
+                          </svg>
+                        ),
+                        bg: "#f0fdfa",
+                      },
+                      {
+                        title: "Settings",
+                        sub: "Preferences",
+                        to: "/settings",
+                        icon: (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2">
+                            <circle cx="12" cy="12" r="3" />
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                          </svg>
+                        ),
+                        bg: "#f8fafc",
+                      },
+                    ].map((app) => (
+                      <button
+                        key={app.title}
+                        type="button"
+                        onClick={() => {
+                          setAppsMenuOpen(false);
+                          navigate(app.to);
+                        }}
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          padding: "10px 6px",
+                          borderRadius: "8px",
+                          border: "1px solid #f1f5f9",
+                          background: "#ffffff",
+                          cursor: "pointer",
+                          textAlign: "center",
+                          transition: "all 0.15s ease",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "#f8fafc";
+                          e.currentTarget.style.borderColor = "#cbd5e1";
+                          e.currentTarget.style.transform = "translateY(-1px)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "#ffffff";
+                          e.currentTarget.style.borderColor = "#f1f5f9";
+                          e.currentTarget.style.transform = "none";
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: "36px",
+                            height: "36px",
+                            borderRadius: "8px",
+                            background: app.bg,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            marginBottom: "6px",
+                          }}
+                        >
+                          {app.icon}
+                        </div>
+                        <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "#1e293b", lineHeight: 1.2 }}>
+                          {app.title}
+                        </div>
+                        <div style={{ fontSize: "0.64rem", color: "#64748b", marginTop: "2px" }}>
+                          {app.sub}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Interactive Profile Pill */}
             <div ref={profileMenuRef} style={{ position: "relative" }}>

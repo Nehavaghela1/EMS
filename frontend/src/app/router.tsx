@@ -169,7 +169,7 @@ export function AppRouter() {
       <Route
         path="/departments"
         element={
-          <Protected roles={["hr_admin", "super_admin", "owner"]}>
+          <Protected roles={ALL_ROLES}>
             <DepartmentListPage />
           </Protected>
         }

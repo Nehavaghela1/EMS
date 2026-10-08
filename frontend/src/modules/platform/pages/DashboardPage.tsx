@@ -572,7 +572,7 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
           </Link>
 
           <Link
-            to="/projects/timesheets"
+            to="/timesheets"
             className="btn btn-sm"
             style={{
               background: "#f5f3ff",
@@ -597,7 +597,7 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
           </Link>
 
           <Link
-            to="/payroll/payslips"
+            to="/payroll/payslip"
             className="btn btn-sm"
             style={{
               background: "#f8fafc",
@@ -1140,7 +1140,7 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
                   <div style={{ marginTop: "12px", paddingTop: "8px", borderTop: "1px solid rgba(0, 0, 0, 0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: "0.72rem", color: "#64748b" }}>Available quota</span>
                     <Link
-                      to="/leaves"
+                      to={`/leaves?leave_type_id=${b.leave_type_id}`}
                       style={{
                         fontSize: "0.75rem",
                         fontWeight: 600,

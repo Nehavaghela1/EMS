@@ -6,6 +6,7 @@ import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import { usePagination } from "../../../shared/hooks/usePagination";
 import { parseApiError } from "../../../shared/api/errors";
 import { useToast } from "../../../app/toast-context";
+import { useAuth } from "../../../app/auth-context";
 import {
   createDepartment,
   deleteDepartment,
@@ -16,6 +17,8 @@ import {
 import { departmentFormSchema } from "../schemas";
 
 export function DepartmentListPage() {
+  const { user } = useAuth();
+  const isAdmin = ["hr_admin", "super_admin", "owner"].includes(user?.role ?? "");
   const { page, limit, setPage } = usePagination();
   const [sort, setSort] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -63,52 +66,58 @@ export function DepartmentListPage() {
           className={"badge " + (d.employee_count > 0 ? "badge-primary" : "badge-muted")}
           style={{ fontWeight: 600 }}
         >
-          {d.employee_count} {d.employee_count === 1 ? "staff" : "staff"}
+          {d.employee_count} staff
         </span>
       ),
     },
-    {
-      key: "actions",
-      label: "",
-      render: (d) => (
-        <div className="row" style={{ alignItems: "center", gap: "6px" }}>
-          <button className="btn btn-sm" onClick={() => setEditing(d)}>
-            Edit
-          </button>
-          {d.employee_count > 0 ? (
-            <button
-              className="btn btn-sm"
-              disabled
-              style={{
-                opacity: 0.5,
-                cursor: "not-allowed",
-                backgroundColor: "var(--color-bg, #f1f5f9)",
-                color: "var(--color-text-muted, #64748b)",
-                border: "1px solid var(--color-border, #cbd5e1)",
-              }}
-              title={`Reassign ${d.employee_count} employee${d.employee_count > 1 ? "s" : ""} before deleting`}
-            >
-              Locked ({d.employee_count})
-            </button>
-          ) : (
-            <button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget(d)}>
-              Delete
-            </button>
-          )}
-        </div>
-      ),
-    },
+    ...(isAdmin
+      ? [
+          {
+            key: "actions",
+            label: "",
+            render: (d: Department) => (
+              <div className="row" style={{ alignItems: "center", gap: "6px" }}>
+                <button className="btn btn-sm" onClick={() => setEditing(d)}>
+                  Edit
+                </button>
+                {d.employee_count > 0 ? (
+                  <button
+                    className="btn btn-sm"
+                    disabled
+                    style={{
+                      opacity: 0.5,
+                      cursor: "not-allowed",
+                      backgroundColor: "var(--color-bg, #f1f5f9)",
+                      color: "var(--color-text-muted, #64748b)",
+                      border: "1px solid var(--color-border, #cbd5e1)",
+                    }}
+                    title={`Reassign ${d.employee_count} employee${d.employee_count > 1 ? "s" : ""} before deleting`}
+                  >
+                    Locked ({d.employee_count})
+                  </button>
+                ) : (
+                  <button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget(d)}>
+                    Delete
+                  </button>
+                )}
+              </div>
+            ),
+          } satisfies DataTableColumn<Department>,
+        ]
+      : []),
   ];
 
   return (
     <div>
       <PageHeader
-        title="Departments"
-        breadcrumb="HR"
+        title="Departments & Teams"
+        breadcrumb="Organization"
         action={
-          <button className="btn btn-primary" onClick={() => setEditing("new")}>
-            + New department
-          </button>
+          isAdmin ? (
+            <button className="btn btn-primary" onClick={() => setEditing("new")}>
+              + New department
+            </button>
+          ) : undefined
         }
       />
 
