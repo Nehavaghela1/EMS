@@ -389,6 +389,7 @@ export function AttendancePage() {
       <TodayAttendanceCard />
 
       <div
+        className="attendance-view-toggle-bar"
         style={{
           display: "flex",
           justifyContent: "space-between",
@@ -399,7 +400,7 @@ export function AttendancePage() {
           marginBottom: "0.75rem",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
           <h2 style={{ fontSize: "1.25rem", margin: 0 }}>
             {filterEmployee
               ? `Attendance: ${filterEmployee.name}`

@@ -573,6 +573,41 @@ textarea:focus {
     border-top: 1px solid rgba(217, 119, 6, 0.15) !important;
     padding-top: 8px !important;
   }
+
+  /* Mobile Attendance Calendar & Grid Optimization */
+  .attendance-header-actions {
+    width: 100% !important;
+    justify-content: space-between !important;
+    margin-top: 8px !important;
+  }
+  .attendance-month-card {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+    padding: 12px 14px !important;
+  }
+  .attendance-calendar-scroll {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+  .attendance-calendar-inner {
+    min-width: 580px !important;
+  }
+  .attendance-legend-container {
+    gap: 6px !important;
+  }
+  .attendance-legend-pill {
+    padding: 3px 8px !important;
+    font-size: 0.72rem !important;
+  }
+  .attendance-day-cell {
+    min-height: 72px !important;
+    padding: 6px 4px !important;
+  }
+  .attendance-view-toggle-bar {
+    width: 100% !important;
+    justify-content: space-between !important;
+  }
 }
 
 /* ── Table ──────────────────────────────────────────────── */

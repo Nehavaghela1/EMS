@@ -146,6 +146,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
     <div className="stack gap-4">
       {/* Calendar Header Navigation */}
       <div
+        className="attendance-month-card"
         style={{
           display: "flex",
           justifyContent: "space-between",
@@ -168,7 +169,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+        <div className="attendance-header-actions" style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
           {/* Quick Holidays Button for Employees & Admins */}
           <button
             type="button"
@@ -227,6 +228,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
 
       {/* Summary Chips */}
       <div
+        className="attendance-legend-container"
         style={{
           display: "flex",
           flexWrap: "wrap",
@@ -257,6 +259,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
               return (
                 <div
                   key={statusKey}
+                  className="attendance-legend-pill"
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -292,6 +295,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
 
       {/* 7-Column Calendar Grid */}
       <div
+        className="attendance-calendar-scroll"
         style={{
           backgroundColor: "#ffffff",
           borderRadius: "12px",
@@ -300,6 +304,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
           boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
         }}
       >
+        <div className="attendance-calendar-inner" style={{ minWidth: "100%" }}>
         {/* Day-of-Week Column Headers */}
         <div
           style={{
@@ -452,6 +457,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
             })}
           </div>
         )}
+        </div>
       </div>
 
       {/* Selected Day Details Panel */}
