@@ -232,25 +232,31 @@ export function AttendancePage() {
                   ? "badge-warning"
                   : "badge-muted";
 
+        if (isPendingReg) {
+          return (
+            <span
+              style={{
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                padding: "2px 8px",
+                borderRadius: "12px",
+                backgroundColor: "#fffbeb",
+                color: "#b45309",
+                border: "1px solid #fde68a",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+              }}
+              title="Attendance regularization request submitted — awaiting manager/admin approval"
+            >
+              ⏳ Pending Approval
+            </span>
+          );
+        }
+
         return (
           <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
             <span className={`badge ${statusClass}`}>{a.status.replace("_", " ")}</span>
-            {isPendingReg && (
-              <span
-                style={{
-                  fontSize: "0.68rem",
-                  fontWeight: 600,
-                  padding: "1px 5px",
-                  borderRadius: "4px",
-                  backgroundColor: "#fef3c7",
-                  color: "#b45309",
-                  border: "1px solid #fde68a",
-                }}
-                title="Regularization awaiting manager/admin approval"
-              >
-                ⏳ Pending Approval
-              </span>
-            )}
             {isRegularized && (
               <span
                 style={{
@@ -279,7 +285,8 @@ export function AttendancePage() {
         const isOwnRecord = Boolean(user?.employee?.id && a.employee_id === user.employee.id);
         const isLeadership = user?.role === "owner" || user?.role === "super_admin";
         const canReview = isLeadership || ((isHr || user?.role === "manager") && !isOwnRecord);
-        const canApply = isOwnRecord && (a.status === "absent" || a.status === "mispunch" || (!a.check_out && a.date < todayIso()));
+        const isPending = a.status === "pending_regularization" || a.active_regularization?.status === "pending";
+        const canApply = isOwnRecord && !isPending && (a.status === "absent" || a.status === "mispunch" || (!a.check_out && a.date < todayIso()));
 
         return (
           <div style={{ position: "relative", textAlign: "right" }}>

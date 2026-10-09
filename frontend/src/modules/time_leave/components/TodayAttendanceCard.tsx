@@ -67,7 +67,12 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
   const unclosedPastRecord = isAttendanceExempt
     ? undefined
     : recentHistoryQuery.data?.items.find(
-        (item) => item.date < today && item.check_in && !item.check_out
+        (item) =>
+          item.date < today &&
+          item.check_in &&
+          !item.check_out &&
+          item.status !== "pending_regularization" &&
+          item.active_regularization?.status !== "pending"
       );
 
   const assignedShiftQuery = useQuery({

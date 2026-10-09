@@ -253,7 +253,12 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
 
   const unclosedPastRecord = !dismissedPastWarning
     ? recentAttendanceQuery.data?.items.find(
-        (item) => item.date < todayStr && item.check_in && !item.check_out
+        (item) =>
+          item.date < todayStr &&
+          item.check_in &&
+          !item.check_out &&
+          item.status !== "pending_regularization" &&
+          item.active_regularization?.status !== "pending"
       )
     : null;
 
