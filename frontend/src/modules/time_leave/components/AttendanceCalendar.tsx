@@ -293,6 +293,25 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
         })()}
       </div>
 
+      {/* Mobile Swipe Hint Indicator */}
+      <div
+        className="calendar-scroll-hint"
+        style={{
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "6px",
+          padding: "6px 12px",
+          borderRadius: "6px",
+          backgroundColor: "#f8fafc",
+          border: "1px dashed #cbd5e1",
+          fontSize: "0.75rem",
+          color: "#64748b",
+          fontWeight: 500,
+        }}
+      >
+        <span>👈 Swipe left & right to view all 7 days (Mon – Sun) 👉</span>
+      </div>
+
       {/* 7-Column Calendar Grid */}
       <div
         className="attendance-calendar-scroll"
@@ -355,6 +374,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
               return (
                 <div
                   key={day.date}
+                  className="attendance-day-cell"
                   onClick={() => setSelectedDay(day)}
                   style={{
                     backgroundColor: isSelected ? "#eff6ff" : cfg.bg,

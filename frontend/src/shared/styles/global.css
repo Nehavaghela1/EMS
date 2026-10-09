@@ -589,9 +589,11 @@ textarea:focus {
   .attendance-calendar-scroll {
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch !important;
+    position: relative !important;
+    border-radius: 12px !important;
   }
   .attendance-calendar-inner {
-    min-width: 580px !important;
+    min-width: 600px !important;
   }
   .attendance-legend-container {
     gap: 6px !important;
@@ -608,6 +610,13 @@ textarea:focus {
     width: 100% !important;
     justify-content: space-between !important;
   }
+  .calendar-scroll-hint {
+    display: flex !important;
+  }
+}
+
+.calendar-scroll-hint {
+  display: none;
 }
 
 /* ── Table ──────────────────────────────────────────────── */
