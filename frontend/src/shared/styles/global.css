@@ -556,6 +556,23 @@ textarea:focus {
     font-size: 0.8rem !important;
     white-space: nowrap !important;
   }
+  .check-out-alert-box {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+  .check-out-alert-text {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .check-out-alert-actions {
+    display: flex !important;
+    align-items: center !important;
+    justifyContent: flex-end !important;
+    width: 100% !important;
+    border-top: 1px solid rgba(217, 119, 6, 0.15) !important;
+    padding-top: 8px !important;
+  }
 }
 
 /* ── Table ──────────────────────────────────────────────── */
