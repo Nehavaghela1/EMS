@@ -249,9 +249,13 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
     enabled: Boolean(user?.employee?.id),
   });
 
-  const unclosedPastRecord = recentAttendanceQuery.data?.items.find(
-    (item) => item.date < todayStr && item.check_in && !item.check_out
-  );
+  const [dismissedPastWarning, setDismissedPastWarning] = useState(false);
+
+  const unclosedPastRecord = !dismissedPastWarning
+    ? recentAttendanceQuery.data?.items.find(
+        (item) => item.date < todayStr && item.check_in && !item.check_out
+      )
+    : null;
 
   // Shift assignment query
   const shiftQuery = useQuery({
@@ -483,22 +487,42 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
               </div>
             </div>
           </div>
-          <Link
-            to="/attendance"
-            className="btn btn-sm"
-            style={{
-              backgroundColor: "#f59e0b",
-              color: "#ffffff",
-              border: "none",
-              fontWeight: 600,
-              padding: "6px 14px",
-              borderRadius: "6px",
-              whiteSpace: "nowrap",
-              textDecoration: "none",
-            }}
-          >
-            Regularize Now →
-          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
+            <Link
+              to="/attendance"
+              className="btn btn-sm"
+              style={{
+                backgroundColor: "#f59e0b",
+                color: "#ffffff",
+                border: "none",
+                fontWeight: 600,
+                padding: "6px 14px",
+                borderRadius: "6px",
+                whiteSpace: "nowrap",
+                textDecoration: "none",
+              }}
+            >
+              Regularize Now →
+            </Link>
+            <button
+              type="button"
+              onClick={() => setDismissedPastWarning(true)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#92400e",
+                cursor: "pointer",
+                padding: "4px 8px",
+                borderRadius: "4px",
+                fontSize: "1rem",
+                lineHeight: 1,
+                opacity: 0.75,
+              }}
+              title="Dismiss warning"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -1100,7 +1124,7 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fill, minmax(185px, 1fr))",
               gap: "1rem",
             }}
           >
@@ -1108,8 +1132,9 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
               const theme = leaveColors[index % leaveColors.length];
               const availableNum = parseFloat(b.available) || 0;
               return (
-                <div
+                <Link
                   key={b.leave_type_id}
+                  to={`/leaves?leave_type_id=${b.leave_type_id}`}
                   style={{
                     background: theme.bg,
                     border: `1px solid ${theme.border}`,
@@ -1120,8 +1145,19 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
                     flexDirection: "column",
                     justifyContent: "space-between",
                     minHeight: "115px",
+                    textDecoration: "none",
+                    cursor: "pointer",
                     transition: "transform 0.15s ease, box-shadow 0.15s ease",
                   }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                    e.currentTarget.style.boxShadow = "0 6px 14px -2px rgba(0, 0, 0, 0.08)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = "none";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                  title={`Click to apply for ${b.leave_type_name || "leave"}`}
                 >
                   <div>
                     <div style={{ fontSize: "0.82rem", fontWeight: 700, color: theme.text, textTransform: "capitalize" }}>
@@ -1139,19 +1175,17 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
 
                   <div style={{ marginTop: "12px", paddingTop: "8px", borderTop: "1px solid rgba(0, 0, 0, 0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: "0.72rem", color: "#64748b" }}>Available quota</span>
-                    <Link
-                      to={`/leaves?leave_type_id=${b.leave_type_id}`}
+                    <span
                       style={{
                         fontSize: "0.75rem",
-                        fontWeight: 600,
+                        fontWeight: 700,
                         color: theme.text,
-                        textDecoration: "none",
                       }}
                     >
                       Apply →
-                    </Link>
+                    </span>
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>
@@ -1292,8 +1326,44 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
           </div>
 
           {announcements.length === 0 ? (
-            <div style={{ padding: "1.5rem", textAlign: "center", color: "#64748b", fontSize: "0.85rem" }}>
-              No active announcements posted by HR at this time.
+            <div
+              style={{
+                padding: "2rem 1.5rem",
+                textAlign: "center",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                background: "#f8fafc",
+                borderRadius: "10px",
+                border: "1px dashed #e2e8f0",
+              }}
+            >
+              <div
+                style={{
+                  width: "42px",
+                  height: "42px",
+                  borderRadius: "50%",
+                  background: "#eff6ff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#2563eb",
+                  marginBottom: "2px",
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+              </div>
+              <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "#1e293b" }}>
+                All Caught Up!
+              </div>
+              <div style={{ fontSize: "0.78rem", color: "#64748b", maxWidth: "260px", lineHeight: 1.4 }}>
+                No active announcements posted by HR. Company updates and circulars will appear here.
+              </div>
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
