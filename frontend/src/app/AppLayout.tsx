@@ -991,16 +991,17 @@ export function AppLayout({ children }: { children: ReactNode }) {
               </svg>
             </button>
 
-            {/* Top Navbar: Employee Search (Second Search) */}
-            <div
-              id="topbar-employee-search"
-              className="desktop-only-search"
-              style={{
-                position: "relative",
-                width: "100%",
-                maxWidth: "340px",
-              }}
-            >
+            {/* Top Navbar: Employee Search (Only visible to HR, Manager, and Owners who have access to employee directory) */}
+            {["hr_admin", "manager", "super_admin", "owner"].includes(role) && (
+              <div
+                id="topbar-employee-search"
+                className="desktop-only-search"
+                style={{
+                  position: "relative",
+                  width: "100%",
+                  maxWidth: "340px",
+                }}
+              >
               <svg
                 width="14"
                 height="14"
@@ -1085,6 +1086,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 </button>
               )}
             </div>
+          )}
           </div>
 
           {/* Right side: Pending approvals + Notification + People + Settings + Apps + Profile Pill */}
@@ -1116,8 +1118,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
             <NotificationBell />
 
-            {/* Zoho People / Coworker Directory Quick Access Icon */}
-            <div ref={peopleMenuRef} style={{ position: "relative" }}>
+            {/* Zoho People / Coworker Directory Quick Access Icon (Only for HR, Manager, Owners) */}
+            {["hr_admin", "manager", "super_admin", "owner"].includes(role) && (
+              <div ref={peopleMenuRef} style={{ position: "relative" }}>
               <button
                 type="button"
                 id="btn-top-people"
@@ -1273,6 +1276,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 </div>
               )}
             </div>
+          )}
 
             {/* Zoho Settings Gear Icon */}
             <button
@@ -1502,7 +1506,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
                         ),
                         bg: "#f8fafc",
                       },
-                    ].map((app) => (
+                    ].filter((app) => {
+                      if (app.to === "/employees") {
+                        return ["hr_admin", "manager", "super_admin", "owner"].includes(role);
+                      }
+                      return true;
+                    }).map((app) => (
                       <button
                         key={app.title}
                         type="button"

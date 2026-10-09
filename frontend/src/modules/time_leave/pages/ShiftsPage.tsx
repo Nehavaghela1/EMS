@@ -213,6 +213,7 @@ export function ShiftsPage() {
 
               {/* 7-Day Calendar Grid */}
               <div
+                className="shift-schedule-grid"
                 style={{
                   display: "grid",
                   gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",

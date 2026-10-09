@@ -651,6 +651,12 @@ textarea:focus {
     overflow: hidden !important;
     text-overflow: ellipsis !important;
   }
+
+  /* Shift Schedule Grid Mobile Layout */
+  .shift-schedule-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+  }
 }
 
 .calendar-scroll-hint {
