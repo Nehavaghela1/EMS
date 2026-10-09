@@ -363,12 +363,12 @@ export function ReimbursementsPage() {
         </div>
       )}
 
-      {/* Modal: Review Claim */}
+      {/* Modal: View Claim Details & Manager/HR Review */}
       {selectedClaim && (
         <div className="modal-backdrop" onClick={() => setSelectedClaim(null)}>
           <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Review Reimbursement Claim</h2>
+              <h2>{canReview && selectedClaim.status === "pending" ? "Review Reimbursement Claim" : "Reimbursement Claim Details"}</h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -390,34 +390,64 @@ export function ReimbursementsPage() {
                   <span className="text-muted text-xs block">Date & Description</span>
                   <p className="text-sm mt-1">{formatDate(selectedClaim.expense_date)}: {selectedClaim.description}</p>
                 </div>
+                <div>
+                  <span className="text-muted text-xs block">Current Status</span>
+                  <span className="mt-1 inline-block">
+                    {selectedClaim.status === "paid" ? (
+                      <span className="badge badge-success">✅ Paid in Payroll</span>
+                    ) : selectedClaim.status === "approved" ? (
+                      <span className="badge" style={{ backgroundColor: "#ecfdf5", color: "#065f46", border: "1px solid #6ee7b7" }}>
+                        ⏳ Approved • Pending Payroll
+                      </span>
+                    ) : selectedClaim.status === "rejected" ? (
+                      <span className="badge badge-danger text-red">Rejected</span>
+                    ) : (
+                      <span className="badge badge-warning">Pending Approval</span>
+                    )}
+                  </span>
+                </div>
               </div>
 
-              <div className="field">
-                <label>Rejection Reason (required if rejecting)</label>
-                <input
-                  type="text"
-                  placeholder="Enter reason if rejecting..."
-                  value={rejectionReason}
-                  onChange={(e) => setRejectionReason(e.target.value)}
-                />
-              </div>
+              {canReview && selectedClaim.status === "pending" && (
+                <div className="field">
+                  <label>Rejection Reason (required if rejecting)</label>
+                  <input
+                    type="text"
+                    placeholder="Enter reason if rejecting..."
+                    value={rejectionReason}
+                    onChange={(e) => setRejectionReason(e.target.value)}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2 justify-end mt-4">
-              <button
-                className="btn btn-danger"
-                onClick={() => handleReview("reject")}
-                disabled={reviewing}
-              >
-                Reject
-              </button>
-              <button
-                className="btn btn-success"
-                onClick={() => handleReview("approve")}
-                disabled={reviewing}
-              >
-                Approve
-              </button>
+              {canReview && selectedClaim.status === "pending" ? (
+                <>
+                  <button
+                    className="btn btn-danger"
+                    onClick={() => handleReview("reject")}
+                    disabled={reviewing}
+                  >
+                    Reject
+                  </button>
+                  <button
+                    className="btn btn-success"
+                    onClick={() => handleReview("approve")}
+                    disabled={reviewing}
+                  >
+                    Approve
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setSelectedClaim(null)}
+                >
+                  Close
+                </button>
+              )}
             </div>
           </div>
         </div>

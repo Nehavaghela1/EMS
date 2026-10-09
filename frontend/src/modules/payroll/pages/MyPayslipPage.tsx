@@ -461,6 +461,64 @@ export function MyPayslipPage() {
                 </div>
               </div>
 
+              {/* Employee Information & Net Pay Hero Banner (Zoho People Standard) */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                  gap: "1rem",
+                  padding: "1rem",
+                  borderRadius: "8px",
+                  backgroundColor: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Employee Name
+                  </div>
+                  <div style={{ fontSize: "1rem", fontWeight: 700, color: "#0f172a", marginTop: "2px" }}>
+                    {user?.employee ? `${user.employee.first_name} ${user.employee.last_name || ""}`.trim() : user?.email}
+                  </div>
+                  {user?.employee?.employee_code && (
+                    <div style={{ fontSize: "0.75rem", color: "#64748b", fontFamily: "monospace", marginTop: "2px" }}>
+                      Emp ID: {user.employee.employee_code}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    Department & Role
+                  </div>
+                  <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "#334155", marginTop: "2px" }}>
+                    {user?.employee?.department_id ? "Staff Member" : "Engineering / Operations"}
+                  </div>
+                  <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "2px" }}>
+                    Pay Period: {new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    backgroundColor: "#ecfdf5",
+                    border: "1px solid #a7f3d0",
+                    borderRadius: "8px",
+                    padding: "0.75rem 1rem",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                  }}
+                >
+                  <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#065f46", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    Net Take-Home Pay
+                  </div>
+                  <div style={{ fontSize: "1.45rem", fontWeight: 800, color: "#047857", marginTop: "2px" }}>
+                    ₹{Number(selectedPayslip.net_salary).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+              </div>
+
               {/* Attendance & Summary Stats */}
               <div className="grid grid-4 gap-4 p-3 bg-muted rounded text-sm" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
                 <div>
