@@ -949,6 +949,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       <div className="app-content-wrapper" style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
         {/* Enterprise Top Bar: Workspace Switcher & Context */}
         <header
+          className="app-header"
           style={{
             height: "54px",
             background: "#ffffff",
@@ -1590,7 +1591,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 }}>
                   {user?.email?.charAt(0).toUpperCase()}
                 </div>
-                <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>
+                <span className="profile-pill-text" style={{ fontSize: "0.78rem", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>
                   {role === "super_admin" ? "Super Admin" : role === "hr_admin" ? "HR Admin" : role.charAt(0).toUpperCase() + role.slice(1)}
                 </span>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"

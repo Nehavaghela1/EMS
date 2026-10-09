@@ -469,6 +469,8 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "10px",
             padding: "12px 18px",
             borderRadius: "10px",
             boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
