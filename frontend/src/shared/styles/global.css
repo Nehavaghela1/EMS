@@ -631,6 +631,26 @@ textarea:focus {
   .calendar-scroll-hint {
     display: none !important;
   }
+
+  /* Leave Balances Cards Mobile Layout */
+  .leave-balances-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+  }
+  .leave-balance-card {
+    padding: 10px 12px !important;
+  }
+  .leave-balance-card .stat-value {
+    font-size: 1.35rem !important;
+    margin-top: 2px !important;
+  }
+  .leave-balance-card .stat-label {
+    font-size: 0.72rem !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
 }
 
 .calendar-scroll-hint {

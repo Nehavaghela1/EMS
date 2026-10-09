@@ -340,12 +340,12 @@ export function LeavePage() {
             </div>
           )}
           {balancesQuery.data && balancesQuery.data.length > 0 && (
-            <div className="stat-grid">
+            <div className="stat-grid leave-balances-grid">
               {balancesQuery.data.map((b) => {
                 const isSelected = selectedLeaveTypeId === b.leave_type_id;
                 return (
                   <div
-                    className="card"
+                    className="card leave-balance-card"
                     key={b.leave_type_id}
                     onClick={() => handleSelectLeaveType(b.leave_type_id)}
                     style={{
