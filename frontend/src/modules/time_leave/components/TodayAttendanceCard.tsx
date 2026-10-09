@@ -84,6 +84,7 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
   const [checkBusy, setCheckBusy] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [showRegularizeModal, setShowRegularizeModal] = useState(false);
+  const [dismissedPastWarning, setDismissedPastWarning] = useState(false);
 
   async function refreshAll() {
     await Promise.all([
@@ -179,9 +180,9 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
         </div>
       )}
 
-      {unclosedPastRecord && (
+      {unclosedPastRecord && !dismissedPastWarning && (
         <div
-          className="alert"
+          className="alert check-out-alert-box"
           style={{
             backgroundColor: "#fffbeb",
             border: "1px solid #fde68a",
@@ -189,36 +190,67 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "10px 16px",
-            borderRadius: "8px",
+            flexWrap: "wrap",
+            gap: "12px",
+            padding: "12px 16px",
+            borderRadius: "10px",
             marginBottom: "1rem",
-            fontSize: "0.88rem",
+            boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ fontSize: "1.1rem" }}>⚠️</span>
-            <span>
-              <strong>Missing Check-Out:</strong> You have an open attendance punch from{" "}
-              <strong>{unclosedPastRecord.date}</strong>. Live clock is closed. Please apply for attendance regularization.
-            </span>
+          <div className="check-out-alert-text" style={{ display: "flex", alignItems: "flex-start", gap: "10px", flex: 1, minWidth: "240px" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2.2" style={{ flexShrink: 0, marginTop: "2px" }}>
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+              <line x1="12" y1="9" x2="12" y2="13"></line>
+              <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+            <div style={{ fontSize: "0.85rem", lineHeight: 1.45, color: "#92400e" }}>
+              <strong>Missing Check-Out:</strong> Open punch on <strong>{unclosedPastRecord.date}</strong>. Live clock is closed. Submit regularization to record clock-out.
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowRegularizeModal(true)}
-            className="btn btn-sm"
-            style={{
-              backgroundColor: "#f59e0b",
-              color: "#ffffff",
-              border: "none",
-              fontWeight: 600,
-              padding: "4px 12px",
-              borderRadius: "6px",
-              whiteSpace: "nowrap",
-              cursor: "pointer",
-            }}
-          >
-            Regularize Now
-          </button>
+          <div className="check-out-alert-actions" style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => setShowRegularizeModal(true)}
+              className="btn btn-sm"
+              style={{
+                backgroundColor: "#f59e0b",
+                color: "#ffffff",
+                border: "none",
+                fontWeight: 600,
+                padding: "7px 16px",
+                borderRadius: "6px",
+                whiteSpace: "nowrap",
+                cursor: "pointer",
+                fontSize: "0.82rem",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              Regularize Now
+            </button>
+            <button
+              type="button"
+              onClick={() => setDismissedPastWarning(true)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#92400e",
+                cursor: "pointer",
+                padding: "6px 8px",
+                borderRadius: "4px",
+                fontSize: "1.1rem",
+                lineHeight: 1,
+                opacity: 0.7,
+                transition: "opacity 0.15s ease",
+              }}
+              title="Dismiss warning for now"
+              aria-label="Dismiss warning"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
