@@ -587,35 +587,56 @@ textarea:focus {
     padding: 12px 14px !important;
   }
   .attendance-calendar-scroll {
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-    position: relative !important;
+    overflow-x: hidden !important;
+    width: 100% !important;
     border-radius: 12px !important;
   }
   .attendance-calendar-inner {
-    min-width: 600px !important;
+    min-width: 100% !important;
+    width: 100% !important;
   }
   .attendance-legend-container {
-    gap: 6px !important;
+    gap: 4px !important;
   }
   .attendance-legend-pill {
-    padding: 3px 8px !important;
-    font-size: 0.72rem !important;
+    padding: 2px 7px !important;
+    font-size: 0.7rem !important;
+  }
+  .attendance-calendar-grid {
+    grid-auto-rows: minmax(58px, auto) !important;
   }
   .attendance-day-cell {
-    min-height: 72px !important;
-    padding: 6px 4px !important;
+    min-height: 58px !important;
+    padding: 4px 2px !important;
+  }
+  .attendance-day-num {
+    font-size: 0.75rem !important;
+  }
+  .attendance-day-badge {
+    display: none !important;
+  }
+  .attendance-day-dot {
+    display: block !important;
+  }
+  .attendance-day-label-text {
+    display: none !important;
+  }
+  .attendance-day-hours {
+    font-size: 0.65rem !important;
   }
   .attendance-view-toggle-bar {
     width: 100% !important;
     justify-content: space-between !important;
   }
   .calendar-scroll-hint {
-    display: flex !important;
+    display: none !important;
   }
 }
 
 .calendar-scroll-hint {
+  display: none;
+}
+.attendance-day-dot {
   display: none;
 }
 

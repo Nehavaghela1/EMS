@@ -350,6 +350,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
           </div>
         ) : (
           <div
+            className="attendance-calendar-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(7, 1fr)",
@@ -404,6 +405,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
                     }}
                   >
                     <span
+                      className="attendance-day-num"
                       style={{
                         fontWeight: day.is_today ? 800 : 600,
                         fontSize: "0.85rem",
@@ -417,6 +419,7 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
                     </span>
                     {day.work_duration_hours && (
                       <span
+                        className="attendance-day-hours"
                         style={{
                           fontSize: "0.72rem",
                           fontWeight: 600,
@@ -431,23 +434,37 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
                   {/* Badges / Status label */}
                   <div style={{ marginTop: "4px" }}>
                     {day.badge_label ? (
-                      <div
-                        style={{
-                          fontSize: "0.72rem",
-                          fontWeight: 600,
-                          backgroundColor: "#ffffff",
-                          border: `1px solid ${cfg.border}`,
-                          color: cfg.text,
-                          padding: "2px 5px",
-                          borderRadius: "4px",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                        title={day.badge_label}
-                      >
-                        {day.badge_label}
-                      </div>
+                      <>
+                        <div
+                          className="attendance-day-badge"
+                          style={{
+                            fontSize: "0.72rem",
+                            fontWeight: 600,
+                            backgroundColor: "#ffffff",
+                            border: `1px solid ${cfg.border}`,
+                            color: cfg.text,
+                            padding: "2px 5px",
+                            borderRadius: "4px",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                          title={day.badge_label}
+                        >
+                          {day.badge_label}
+                        </div>
+                        <div
+                          className="attendance-day-dot"
+                          style={{
+                            width: "7px",
+                            height: "7px",
+                            borderRadius: "50%",
+                            backgroundColor: cfg.dot,
+                            margin: "2px auto 0",
+                          }}
+                          title={day.badge_label}
+                        />
+                      </>
                     ) : (
                       <div
                         style={{
@@ -456,19 +473,21 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
                           color: cfg.text,
                           display: "flex",
                           alignItems: "center",
+                          justifyContent: "center",
                           gap: "4px",
                         }}
                       >
                         <span
                           style={{
-                            width: "5px",
-                            height: "5px",
+                            width: "6px",
+                            height: "6px",
                             borderRadius: "50%",
                             backgroundColor: cfg.dot,
                             display: "inline-block",
+                            flexShrink: 0,
                           }}
                         />
-                        {cfg.label}
+                        <span className="attendance-day-label-text">{cfg.label}</span>
                       </div>
                     )}
                   </div>
