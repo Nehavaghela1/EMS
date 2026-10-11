@@ -67,11 +67,17 @@ def send_email(*, to: str, subject: str, text_body: str, html_body: str) -> None
         cur_subject = f"[Copy: To {to}] {subject}" if is_copy else subject
         try:
             if settings.EMAIL_BACKEND == "console":
-                _send_via_console(to=target, subject=cur_subject, text_body=text_body, html_body=html_body)
+                _send_via_console(
+                    to=target, subject=cur_subject, text_body=text_body, html_body=html_body
+                )
             elif settings.EMAIL_BACKEND == "smtp":
-                _send_via_smtp(to=target, subject=cur_subject, text_body=text_body, html_body=html_body)
+                _send_via_smtp(
+                    to=target, subject=cur_subject, text_body=text_body, html_body=html_body
+                )
             elif settings.EMAIL_BACKEND == "resend":
-                _send_via_resend(to=target, subject=cur_subject, text_body=text_body, html_body=html_body)
+                _send_via_resend(
+                    to=target, subject=cur_subject, text_body=text_body, html_body=html_body
+                )
             else:
                 raise PermanentEmailError(f"Unknown EMAIL_BACKEND: {settings.EMAIL_BACKEND!r}")
             sent_count += 1
@@ -112,6 +118,7 @@ def _send_via_smtp(*, to: str, subject: str, text_body: str, html_body: str) -> 
     try:
         try:
             import certifi
+
             ssl_ctx = ssl.create_default_context(cafile=certifi.where())
         except Exception:
             ssl_ctx = ssl.create_default_context()

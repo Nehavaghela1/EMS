@@ -34,10 +34,7 @@ class ProjectRepository:
     # --- Projects ---
     def create_project(self, company_id: UUID, data: ProjectCreate) -> Project:
         project_dict = data.dict(exclude={"company_id"})
-        project = Project(
-            company_id=company_id,
-            **project_dict
-        )
+        project = Project(company_id=company_id, **project_dict)
         self.db.add(project)
         self.db.commit()
         self.db.refresh(project)
@@ -50,12 +47,15 @@ class ProjectRepository:
         return query.first()
 
     def get_project_by_code(self, company_id: UUID, code: str) -> Project | None:
-        return self.db.query(Project).filter(
-            Project.company_id == company_id,
-            Project.code == code
-        ).first()
+        return (
+            self.db.query(Project)
+            .filter(Project.company_id == company_id, Project.code == code)
+            .first()
+        )
 
-    def list_projects(self, company_id: UUID | None = None, status: str | None = None) -> list[Project]:
+    def list_projects(
+        self, company_id: UUID | None = None, status: str | None = None
+    ) -> list[Project]:
         query = self.db.query(Project)
         if company_id is not None:
             query = query.filter(Project.company_id == company_id)
@@ -77,42 +77,49 @@ class ProjectRepository:
         self.db.commit()
 
     # --- Members ---
-    def add_member(self, company_id: UUID, project_id: UUID, data: ProjectMemberCreate) -> ProjectMember:
+    def add_member(
+        self, company_id: UUID, project_id: UUID, data: ProjectMemberCreate
+    ) -> ProjectMember:
         member = ProjectMember(
             company_id=company_id,
             project_id=project_id,
             employee_id=data.employee_id,
             role=data.role,
-            joined_at=data.joined_at or date.today()
+            joined_at=data.joined_at or date.today(),
         )
         self.db.add(member)
         self.db.commit()
         self.db.refresh(member)
         return member
 
-    def get_member(self, company_id: UUID, project_id: UUID, employee_id: UUID) -> ProjectMember | None:
-        return self.db.query(ProjectMember).filter(
-            ProjectMember.company_id == company_id,
-            ProjectMember.project_id == project_id,
-            ProjectMember.employee_id == employee_id
-        ).first()
+    def get_member(
+        self, company_id: UUID, project_id: UUID, employee_id: UUID
+    ) -> ProjectMember | None:
+        return (
+            self.db.query(ProjectMember)
+            .filter(
+                ProjectMember.company_id == company_id,
+                ProjectMember.project_id == project_id,
+                ProjectMember.employee_id == employee_id,
+            )
+            .first()
+        )
 
     def list_members(self, company_id: UUID, project_id: UUID) -> list[ProjectMember]:
-        return self.db.query(ProjectMember).filter(
-            ProjectMember.company_id == company_id,
-            ProjectMember.project_id == project_id
-        ).all()
+        return (
+            self.db.query(ProjectMember)
+            .filter(ProjectMember.company_id == company_id, ProjectMember.project_id == project_id)
+            .all()
+        )
 
     def list_members_with_details(self, company_id: UUID, project_id: UUID):
         from app.modules.hr.models import Department, Employee
+
         return (
             self.db.query(ProjectMember, Employee, Department.name.label("department_name"))
             .outerjoin(Employee, ProjectMember.employee_id == Employee.id)
             .outerjoin(Department, Employee.department_id == Department.id)
-            .filter(
-                ProjectMember.company_id == company_id,
-                ProjectMember.project_id == project_id
-            )
+            .filter(ProjectMember.company_id == company_id, ProjectMember.project_id == project_id)
             .all()
         )
 
@@ -121,12 +128,11 @@ class ProjectRepository:
         self.db.commit()
 
     # --- Tasks ---
-    def create_task(self, company_id: UUID, project_id: UUID, created_by: UUID | None, data: TaskCreate) -> Task:
+    def create_task(
+        self, company_id: UUID, project_id: UUID, created_by: UUID | None, data: TaskCreate
+    ) -> Task:
         task = Task(
-            company_id=company_id,
-            project_id=project_id,
-            created_by=created_by,
-            **data.dict()
+            company_id=company_id, project_id=project_id, created_by=created_by, **data.dict()
         )
         if data.status == "done":
             task.completed_at = datetime.utcnow()
@@ -141,10 +147,15 @@ class ProjectRepository:
             query = query.filter(Task.company_id == company_id)
         return query.first()
 
-    def list_tasks(self, company_id: UUID, project_id: UUID, status: str | None = None, assigned_to: UUID | None = None) -> list[Task]:
+    def list_tasks(
+        self,
+        company_id: UUID,
+        project_id: UUID,
+        status: str | None = None,
+        assigned_to: UUID | None = None,
+    ) -> list[Task]:
         query = self.db.query(Task).filter(
-            Task.company_id == company_id,
-            Task.project_id == project_id
+            Task.company_id == company_id, Task.project_id == project_id
         )
         if status:
             query = query.filter(Task.status == status)
@@ -152,15 +163,19 @@ class ProjectRepository:
             query = query.filter(Task.assigned_to == assigned_to)
         return query.order_by(Task.created_at.desc()).all()
 
-    def list_tasks_with_details(self, company_id: UUID, project_id: UUID, status: str | None = None, assigned_to: UUID | None = None):
+    def list_tasks_with_details(
+        self,
+        company_id: UUID,
+        project_id: UUID,
+        status: str | None = None,
+        assigned_to: UUID | None = None,
+    ):
         from app.modules.hr.models import Employee
+
         query = (
             self.db.query(Task, Employee)
             .outerjoin(Employee, Task.assigned_to == Employee.id)
-            .filter(
-                Task.company_id == company_id,
-                Task.project_id == project_id
-            )
+            .filter(Task.company_id == company_id, Task.project_id == project_id)
         )
         if status:
             query = query.filter(Task.status == status)
@@ -187,42 +202,40 @@ class ProjectRepository:
         self.db.commit()
 
     # --- Task Comments ---
-    def add_comment(self, company_id: UUID, task_id: UUID, user_id: UUID, comment: str) -> TaskComment:
-        tc = TaskComment(
-            company_id=company_id,
-            task_id=task_id,
-            user_id=user_id,
-            comment=comment
-        )
+    def add_comment(
+        self, company_id: UUID, task_id: UUID, user_id: UUID, comment: str
+    ) -> TaskComment:
+        tc = TaskComment(company_id=company_id, task_id=task_id, user_id=user_id, comment=comment)
         self.db.add(tc)
         self.db.commit()
         self.db.refresh(tc)
         return tc
 
     def list_comments(self, company_id: UUID, task_id: UUID) -> list[TaskComment]:
-        return self.db.query(TaskComment).filter(
-            TaskComment.company_id == company_id,
-            TaskComment.task_id == task_id
-        ).order_by(TaskComment.created_at.asc()).all()
+        return (
+            self.db.query(TaskComment)
+            .filter(TaskComment.company_id == company_id, TaskComment.task_id == task_id)
+            .order_by(TaskComment.created_at.asc())
+            .all()
+        )
 
     # --- Time Entries ---
-    def create_time_entry(self, company_id: UUID, employee_id: UUID, data: TimeEntryCreate) -> TimeEntry:
+    def create_time_entry(
+        self, company_id: UUID, employee_id: UUID, data: TimeEntryCreate
+    ) -> TimeEntry:
         entry_dict = data.dict(exclude={"employee_id"})
-        entry = TimeEntry(
-            company_id=company_id,
-            employee_id=employee_id,
-            **entry_dict
-        )
+        entry = TimeEntry(company_id=company_id, employee_id=employee_id, **entry_dict)
         self.db.add(entry)
         self.db.commit()
         self.db.refresh(entry)
         return entry
 
     def get_time_entry_by_id(self, company_id: UUID, entry_id: UUID) -> TimeEntry | None:
-        return self.db.query(TimeEntry).filter(
-            TimeEntry.company_id == company_id,
-            TimeEntry.id == entry_id
-        ).first()
+        return (
+            self.db.query(TimeEntry)
+            .filter(TimeEntry.company_id == company_id, TimeEntry.id == entry_id)
+            .first()
+        )
 
     def list_time_entries(
         self,
@@ -231,7 +244,7 @@ class ProjectRepository:
         employee_id: UUID | None = None,
         status: str | None = None,
         start_date: date | None = None,
-        end_date: date | None = None
+        end_date: date | None = None,
     ) -> list[TimeEntry]:
         query = self.db.query(TimeEntry).filter(TimeEntry.company_id == company_id)
         if project_id:
@@ -253,11 +266,18 @@ class ProjectRepository:
         employee_id: UUID | None = None,
         status: str | None = None,
         start_date: date | None = None,
-        end_date: date | None = None
+        end_date: date | None = None,
     ):
         from app.modules.hr.models import Employee
+
         query = (
-            self.db.query(TimeEntry, Employee, Task.title.label("task_title"), Project.name.label("project_name"), Project.code.label("project_code"))
+            self.db.query(
+                TimeEntry,
+                Employee,
+                Task.title.label("task_title"),
+                Project.name.label("project_name"),
+                Project.code.label("project_code"),
+            )
             .outerjoin(Employee, TimeEntry.employee_id == Employee.id)
             .outerjoin(Task, TimeEntry.task_id == Task.id)
             .outerjoin(Project, TimeEntry.project_id == Project.id)
@@ -285,8 +305,7 @@ class ProjectRepository:
         return entry
 
     def approve_reject_time_entry(
-        self, entry: TimeEntry, status: str, approved_by: UUID,
-        rejection_reason: str | None = None
+        self, entry: TimeEntry, status: str, approved_by: UUID, rejection_reason: str | None = None
     ) -> TimeEntry:
         entry.status = status
         entry.approved_by = approved_by
@@ -299,18 +318,15 @@ class ProjectRepository:
         self.db.refresh(entry)
         return entry
 
-
     def delete_time_entry(self, entry: TimeEntry) -> None:
         self.db.delete(entry)
         self.db.commit()
 
     # --- Milestones ---
-    def create_milestone(self, company_id: UUID, project_id: UUID, data: MilestoneCreate) -> Milestone:
-        milestone = Milestone(
-            company_id=company_id,
-            project_id=project_id,
-            **data.dict()
-        )
+    def create_milestone(
+        self, company_id: UUID, project_id: UUID, data: MilestoneCreate
+    ) -> Milestone:
+        milestone = Milestone(company_id=company_id, project_id=project_id, **data.dict())
         if data.status == "completed" or data.completion_percentage == Decimal("100.00"):
             milestone.completed_at = datetime.utcnow()
         self.db.add(milestone)
@@ -325,10 +341,12 @@ class ProjectRepository:
         return query.first()
 
     def list_milestones(self, company_id: UUID, project_id: UUID) -> list[Milestone]:
-        return self.db.query(Milestone).filter(
-            Milestone.company_id == company_id,
-            Milestone.project_id == project_id
-        ).order_by(Milestone.due_date.asc().nulls_last()).all()
+        return (
+            self.db.query(Milestone)
+            .filter(Milestone.company_id == company_id, Milestone.project_id == project_id)
+            .order_by(Milestone.due_date.asc().nulls_last())
+            .all()
+        )
 
     def update_milestone(self, milestone: Milestone, data: MilestoneUpdate) -> Milestone:
         update_data = data.dict(exclude_unset=True)
@@ -339,7 +357,10 @@ class ProjectRepository:
             elif update_data["status"] != "completed" and milestone.status == "completed":
                 milestone.completed_at = None
         if "completion_percentage" in update_data:
-            if update_data["completion_percentage"] == Decimal("100.00") and milestone.status != "completed":
+            if (
+                update_data["completion_percentage"] == Decimal("100.00")
+                and milestone.status != "completed"
+            ):
                 milestone.status = "completed"
                 milestone.completed_at = datetime.utcnow()
 
@@ -355,7 +376,13 @@ class ProjectRepository:
         self.db.commit()
 
     # --- Project Documents ---
-    def create_project_document(self, company_id: UUID, project_id: UUID, data: ProjectDocumentCreate, uploaded_by: UUID | None = None) -> ProjectDocument:
+    def create_project_document(
+        self,
+        company_id: UUID,
+        project_id: UUID,
+        data: ProjectDocumentCreate,
+        uploaded_by: UUID | None = None,
+    ) -> ProjectDocument:
         doc = ProjectDocument(
             company_id=company_id,
             project_id=project_id,
@@ -373,24 +400,24 @@ class ProjectRepository:
 
     def list_project_documents(self, company_id: UUID, project_id: UUID):
         from app.modules.identity.models import User
+
         return (
             self.db.query(ProjectDocument, User.email.label("uploaded_by_name"))
             .outerjoin(User, ProjectDocument.uploaded_by == User.id)
             .filter(
-                ProjectDocument.company_id == company_id,
-                ProjectDocument.project_id == project_id
+                ProjectDocument.company_id == company_id, ProjectDocument.project_id == project_id
             )
             .order_by(ProjectDocument.created_at.desc())
             .all()
         )
 
     def get_project_document(self, company_id: UUID, document_id: UUID) -> ProjectDocument | None:
-        return self.db.query(ProjectDocument).filter(
-            ProjectDocument.company_id == company_id,
-            ProjectDocument.id == document_id
-        ).first()
+        return (
+            self.db.query(ProjectDocument)
+            .filter(ProjectDocument.company_id == company_id, ProjectDocument.id == document_id)
+            .first()
+        )
 
     def delete_project_document(self, doc: ProjectDocument) -> None:
         self.db.delete(doc)
         self.db.commit()
-

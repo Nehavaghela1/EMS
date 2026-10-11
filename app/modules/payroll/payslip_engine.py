@@ -129,14 +129,19 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
             assert c.value is not None
             val = _round(monthly_ctc * c.value / Decimal("100"))
             full_earnings[c.code] = val
-            if c.code.upper() in ("BASIC", "BASIC_PAY", "BASIC_SALARY") or "BASIC" in c.name.upper():
+            if (
+                c.code.upper() in ("BASIC", "BASIC_PAY", "BASIC_SALARY")
+                or "BASIC" in c.name.upper()
+            ):
                 basic_full = val
         elif c.calculation_type == "fixed":
             assert c.value is not None
             full_earnings[c.code] = _round(c.value)
-            if c.code.upper() in ("BASIC", "BASIC_PAY", "BASIC_SALARY") or "BASIC" in c.name.upper():
+            if (
+                c.code.upper() in ("BASIC", "BASIC_PAY", "BASIC_SALARY")
+                or "BASIC" in c.name.upper()
+            ):
                 basic_full = full_earnings[c.code]
-
 
     # Second pass: Percentage of BASIC components
     for c in earning_specs_sorted:
@@ -159,7 +164,9 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
     balance_spec = next((c for c in earning_specs_sorted if c.calculation_type == "balance"), None)
     if balance_spec is not None:
         non_balance_sum = sum(full_earnings.values(), Decimal("0"))
-        full_earnings[balance_spec.code] = _round(monthly_ctc - (non_balance_sum + employer_pf_full))
+        full_earnings[balance_spec.code] = _round(
+            monthly_ctc - (non_balance_sum + employer_pf_full)
+        )
 
     full_gross = sum(full_earnings.values(), Decimal("0"))
 
@@ -185,7 +192,9 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
             non_balance_earned = sum(earned_earnings.values(), Decimal("0"))
             residual = target_gross - non_balance_earned
             if residual != 0 and earning_specs_sorted:
-                largest = max(earning_specs_sorted, key=lambda c: earned_earnings.get(c.code, Decimal("0")))
+                largest = max(
+                    earning_specs_sorted, key=lambda c: earned_earnings.get(c.code, Decimal("0"))
+                )
                 earned_earnings[largest.code] = earned_earnings[largest.code] + residual
 
         earned_gross = sum(earned_earnings.values(), Decimal("0"))
@@ -203,7 +212,10 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
     earned_basic = earned_earnings.get(BASIC_CODE)
     if earned_basic is None:
         for c in earning_specs_sorted:
-            if c.code.upper() in ("BASIC", "BASIC_PAY", "BASIC_SALARY") or "BASIC" in c.name.upper():
+            if (
+                c.code.upper() in ("BASIC", "BASIC_PAY", "BASIC_SALARY")
+                or "BASIC" in c.name.upper()
+            ):
                 earned_basic = earned_earnings.get(c.code)
                 break
     if earned_basic is None:
@@ -211,7 +223,6 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
 
     # EPF Calculation (12% of Basic Pay, capped at statutory ceiling if checked)
     if data.statutory.pf_enabled and earned_basic > 0:
-
         pf_wage = (
             min(earned_basic, data.statutory.pf_wage_ceiling)
             if data.statutory.pf_restrict_to_ceiling
@@ -224,7 +235,11 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
         employer_lines.append(LineItem(code="EPF_ER", name="Employer PF", amount=epf_er))
 
     # ESI Calculation (Tested on FULL-MONTH gross; rate applied to earned gross)
-    if data.statutory.esi_enabled and full_gross <= data.statutory.esi_wage_ceiling and earned_gross > 0:
+    if (
+        data.statutory.esi_enabled
+        and full_gross <= data.statutory.esi_wage_ceiling
+        and earned_gross > 0
+    ):
         esi_ee = _round(earned_gross * data.statutory.esi_employee_rate / Decimal("100"))
         esi_er = _round(earned_gross * data.statutory.esi_employer_rate / Decimal("100"))
 
@@ -235,17 +250,24 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
     if data.statutory.pt_enabled and earned_gross > 0 and data.pt_slabs:
         matching_slab = None
         for slab in data.pt_slabs:
-            if slab.income_min <= full_gross and (slab.income_max is None or full_gross <= slab.income_max):
+            if slab.income_min <= full_gross and (
+                slab.income_max is None or full_gross <= slab.income_max
+            ):
                 matching_slab = slab
                 break
 
         if matching_slab is not None:
             pt_amount = matching_slab.monthly_amount
-            if matching_slab.special_month == data.month and matching_slab.special_month_amount is not None:
+            if (
+                matching_slab.special_month == data.month
+                and matching_slab.special_month_amount is not None
+            ):
                 pt_amount = matching_slab.special_month_amount
 
             if pt_amount > 0:
-                deduction_lines.append(LineItem(code="PT", name="Professional Tax", amount=_round(pt_amount)))
+                deduction_lines.append(
+                    LineItem(code="PT", name="Professional Tax", amount=_round(pt_amount))
+                )
 
     # Labour Welfare Fund (LWF) Calculation
     if (
@@ -254,7 +276,11 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
         and data.month in data.statutory.lwf_months
     ):
         deduction_lines.append(
-            LineItem(code="LWF", name="Labour Welfare Fund", amount=_round(data.statutory.lwf_employee_amount))
+            LineItem(
+                code="LWF",
+                name="Labour Welfare Fund",
+                amount=_round(data.statutory.lwf_employee_amount),
+            )
         )
 
     # TDS (Income Tax) Calculation
@@ -280,7 +306,11 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
             cess_percent = matching_tax_slabs[0].cess_percent
             for slab in sorted(matching_tax_slabs, key=lambda s: s.min_income):
                 if taxable_annual_income > slab.min_income:
-                    top = taxable_annual_income if slab.max_income is None else min(taxable_annual_income, slab.max_income)
+                    top = (
+                        taxable_annual_income
+                        if slab.max_income is None
+                        else min(taxable_annual_income, slab.max_income)
+                    )
                     taxable_in_bracket = top - slab.min_income
                     annual_tax += _round(taxable_in_bracket * slab.rate_percent / Decimal("100"))
 
@@ -302,17 +332,28 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
             months_remaining = 4 - data.month
         months_remaining = max(1, months_remaining)
 
-        monthly_tds = _round(max(Decimal("0.00"), (projected_annual_tax - data.tds_paid_ytd) / Decimal(str(months_remaining))))
+        monthly_tds = _round(
+            max(
+                Decimal("0.00"),
+                (projected_annual_tax - data.tds_paid_ytd) / Decimal(str(months_remaining)),
+            )
+        )
         if monthly_tds > 0:
-            deduction_lines.append(LineItem(code="TDS", name="Income Tax (Estimated)", amount=monthly_tds))
+            deduction_lines.append(
+                LineItem(code="TDS", name="Income Tax (Estimated)", amount=monthly_tds)
+            )
 
     total_deductions = sum((d.amount for d in deduction_lines), Decimal("0.00"))
     net_salary = earned_gross - total_deductions + data.reimbursement_amount
     employer_cost = earned_gross + sum((er.amount for er in employer_lines), Decimal("0.00"))
 
     # Invariant assertions (Spec 11.1 / 11.6 step 6)
-    assert sum((e.amount for e in earning_lines), Decimal("0.00")) == earned_gross, "Earnings line sum mismatch"
-    assert earned_gross - total_deductions + data.reimbursement_amount == net_salary, "Net salary balance mismatch"
+    assert sum((e.amount for e in earning_lines), Decimal("0.00")) == earned_gross, (
+        "Earnings line sum mismatch"
+    )
+    assert earned_gross - total_deductions + data.reimbursement_amount == net_salary, (
+        "Net salary balance mismatch"
+    )
 
     return PayslipOutput(
         earnings=earning_lines,

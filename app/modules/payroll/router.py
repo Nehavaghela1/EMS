@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
+from app.modules.hr.models import Employee
+from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import (
     PayrollRunStatus,
@@ -79,7 +81,9 @@ def list_structures(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
-    target_company_id = company_id if user.role == UserRole.super_admin and company_id else user.company_id
+    target_company_id = (
+        company_id if user.role == UserRole.super_admin and company_id else user.company_id
+    )
     items, total, pages = SalaryStructureService(db).list_structures(target_company_id, params)
     return Page(
         items=[
@@ -270,8 +274,6 @@ def post_tax_slabs(
     return [_to_tax_slab_response(s) for s in slabs]
 
 
-from app.modules.hr.repository import EmployeeRepository
-
 # --- Routes 91-94: payroll runs --------------------------------------------
 
 payroll_runs_router = APIRouter(prefix="/payroll/runs", tags=["Payroll — Payroll Runs"])
@@ -324,7 +326,9 @@ def list_payroll_runs(
 def get_payroll_run_detail(
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.employee, UserRole.manager, UserRole.super_admin)),
+    user: User = Depends(
+        require_role(UserRole.hr_admin, UserRole.employee, UserRole.manager, UserRole.super_admin)
+    ),
 ):
     service = PayrollRunService(db)
     run, items = service.get_run_detail(user.company_id, id)
@@ -367,7 +371,6 @@ def delete_payroll_run(
     service.delete_run(user.company_id, id, user)
 
 
-
 # --- Routes 95-96: payslips -----------------------------------------------
 
 payslips_router = APIRouter(prefix="/payroll/payslips", tags=["Payroll — Payslips"])
@@ -402,7 +405,9 @@ def list_employee_payslips(
 
 # --- Routes 97-99: reimbursements ------------------------------------------
 
-reimbursements_router = APIRouter(prefix="/payroll/reimbursements", tags=["Payroll — Reimbursements"])
+reimbursements_router = APIRouter(
+    prefix="/payroll/reimbursements", tags=["Payroll — Reimbursements"]
+)
 
 
 @reimbursements_router.post("", response_model=ReimbursementResponse, status_code=201)
@@ -446,5 +451,3 @@ def review_reimbursement_claim(
     service = ReimbursementService(db)
     claim = service.review_claim(user.company_id, id, data, user)
     return ReimbursementResponse.model_validate(claim)
-
-

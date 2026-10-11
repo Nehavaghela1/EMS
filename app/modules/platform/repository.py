@@ -402,7 +402,15 @@ class AnnouncementRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(self, company_id: uuid.UUID, created_by: uuid.UUID, title: str, content: str, target_role: str, expires_at: datetime | None) -> Announcement:
+    def create(
+        self,
+        company_id: uuid.UUID,
+        created_by: uuid.UUID,
+        title: str,
+        content: str,
+        target_role: str,
+        expires_at: datetime | None,
+    ) -> Announcement:
         announcement = Announcement(
             company_id=company_id,
             created_by=created_by,
@@ -447,7 +455,15 @@ class FileRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(self, company_id: uuid.UUID, uploaded_by: uuid.UUID, file_name: str, file_type: str, file_size: int, storage_path: str) -> FileObject:
+    def create(
+        self,
+        company_id: uuid.UUID,
+        uploaded_by: uuid.UUID,
+        file_name: str,
+        file_type: str,
+        file_size: int,
+        storage_path: str,
+    ) -> FileObject:
         file_obj = FileObject(
             company_id=company_id,
             uploaded_by=uploaded_by,
@@ -474,7 +490,14 @@ class EmployeeDocumentRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(self, company_id: uuid.UUID, employee_id: uuid.UUID, file_object_id: uuid.UUID, document_type: str, name: str) -> EmployeeDocument:
+    def create(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        file_object_id: uuid.UUID,
+        document_type: str,
+        name: str,
+    ) -> EmployeeDocument:
         doc = EmployeeDocument(
             company_id=company_id,
             employee_id=employee_id,
@@ -486,7 +509,9 @@ class EmployeeDocumentRepository:
         self.db.flush()
         return doc
 
-    def list_for_employee(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> list[EmployeeDocument]:
+    def list_for_employee(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID
+    ) -> list[EmployeeDocument]:
         stmt = (
             select(EmployeeDocument)
             .where(
@@ -505,63 +530,79 @@ class SearchRepository:
 
     def search_all(self, company_id: uuid.UUID, query: str) -> list[dict]:
         from app.modules.projects.models import Project, Task
+
         q = f"%{query.lower()}%"
         results = []
 
         # 1. Employees
-        emp_stmt = select(Employee).where(
-            Employee.company_id == company_id,
-            Employee.deleted_at.is_(None),
-            Employee.is_active.is_(True),
-            (
-                func.lower(Employee.first_name).like(q) |
-                func.lower(Employee.last_name).like(q) |
-                func.lower(Employee.email).like(q) |
-                func.lower(Employee.employee_code).like(q)
+        emp_stmt = (
+            select(Employee)
+            .where(
+                Employee.company_id == company_id,
+                Employee.deleted_at.is_(None),
+                Employee.is_active.is_(True),
+                (
+                    func.lower(Employee.first_name).like(q)
+                    | func.lower(Employee.last_name).like(q)
+                    | func.lower(Employee.email).like(q)
+                    | func.lower(Employee.employee_code).like(q)
+                ),
             )
-        ).limit(10)
+            .limit(10)
+        )
         for emp in self.db.scalars(emp_stmt):
-            results.append({
-                "id": emp.id,
-                "type": "employee",
-                "title": f"{emp.first_name} {emp.last_name}",
-                "subtitle": f"{emp.employee_code} • {emp.email}",
-                "url": f"/employees/{emp.id}"
-            })
+            results.append(
+                {
+                    "id": emp.id,
+                    "type": "employee",
+                    "title": f"{emp.first_name} {emp.last_name}",
+                    "subtitle": f"{emp.employee_code} • {emp.email}",
+                    "url": f"/employees/{emp.id}",
+                }
+            )
 
         # 2. Projects
-        proj_stmt = select(Project).where(
-            Project.company_id == company_id,
-            (
-                func.lower(Project.name).like(q) |
-                func.lower(Project.code).like(q) |
-                func.lower(Project.client_name).like(q)
+        proj_stmt = (
+            select(Project)
+            .where(
+                Project.company_id == company_id,
+                (
+                    func.lower(Project.name).like(q)
+                    | func.lower(Project.code).like(q)
+                    | func.lower(Project.client_name).like(q)
+                ),
             )
-        ).limit(10)
+            .limit(10)
+        )
         for proj in self.db.scalars(proj_stmt):
-            results.append({
-                "id": proj.id,
-                "type": "project",
-                "title": proj.name,
-                "subtitle": f"Code: {proj.code} • Status: {proj.status}",
-                "url": f"/projects/{proj.id}"
-            })
+            results.append(
+                {
+                    "id": proj.id,
+                    "type": "project",
+                    "title": proj.name,
+                    "subtitle": f"Code: {proj.code} • Status: {proj.status}",
+                    "url": f"/projects/{proj.id}",
+                }
+            )
 
         # 3. Tasks
-        task_stmt = select(Task).where(
-            Task.company_id == company_id,
-            (
-                func.lower(Task.title).like(q) |
-                func.lower(Task.description).like(q)
+        task_stmt = (
+            select(Task)
+            .where(
+                Task.company_id == company_id,
+                (func.lower(Task.title).like(q) | func.lower(Task.description).like(q)),
             )
-        ).limit(10)
+            .limit(10)
+        )
         for task in self.db.scalars(task_stmt):
-            results.append({
-                "id": task.id,
-                "type": "task",
-                "title": task.title,
-                "subtitle": f"Status: {task.status} • Priority: {task.priority}",
-                "url": f"/projects/{task.project_id}"
-            })
+            results.append(
+                {
+                    "id": task.id,
+                    "type": "task",
+                    "title": task.title,
+                    "subtitle": f"Status: {task.status} • Priority: {task.priority}",
+                    "url": f"/projects/{task.project_id}",
+                }
+            )
 
         return results

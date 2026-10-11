@@ -252,6 +252,7 @@ class EmployeeRepository:
             from sqlalchemy import String, cast
 
             from app.modules.identity.models import User
+
             role_clean = role.strip().lower().replace(" ", "_")
             stmt = stmt.join(User, Employee.user_id == User.id).where(
                 func.lower(cast(User.role, String)) == role_clean

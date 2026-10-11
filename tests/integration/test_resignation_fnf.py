@@ -16,7 +16,11 @@ def test_resignation_and_fnf_workflow(client: TestClient, db: Session, company_a
     # Expected shortfall = 30 - 14 = 16 days
     res_sub = client.post(
         f"/api/v1/employees/{emp_id}/resignation",
-        json={"resignation_date": "2026-09-17", "last_working_date": "2026-10-01", "reason": "Better opportunity"},
+        json={
+            "resignation_date": "2026-09-17",
+            "last_working_date": "2026-10-01",
+            "reason": "Better opportunity",
+        },
         headers=hr_headers,
     )
     assert res_sub.status_code == 200, res_sub.text

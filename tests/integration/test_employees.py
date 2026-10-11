@@ -377,4 +377,3 @@ def test_list_employees_role_filter(client, company_a, db):
     resp_sys = client.get("/api/v1/employees?system_role=hr_admin", headers=company_a.hr_headers)
     assert resp_sys.status_code == 200
     assert emp_hr["id"] in [e["id"] for e in resp_sys.json()["items"]]
-

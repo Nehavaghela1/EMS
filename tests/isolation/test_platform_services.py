@@ -26,7 +26,10 @@ def _create_user_and_headers(db: Session, company_id: uuid.UUID) -> tuple[User, 
     )
     return user, {"Authorization": f"Bearer {token}"}
 
-def test_platform_services_tenant_isolation(client: TestClient, db: Session, company_a: TenantContext, company_b: TenantContext):
+
+def test_platform_services_tenant_isolation(
+    client: TestClient, db: Session, company_a: TenantContext, company_b: TenantContext
+):
     user_a, headers_a = _create_user_and_headers(db, company_a.company_id)
     user_b, headers_b = _create_user_and_headers(db, company_b.company_id)
 
@@ -34,7 +37,7 @@ def test_platform_services_tenant_isolation(client: TestClient, db: Session, com
     res_ann_a = client.post(
         "/api/v1/announcements",
         json={"title": "Tenant A Exclusive Announcement", "content": "Private notice"},
-        headers=headers_a
+        headers=headers_a,
     )
     assert res_ann_a.status_code == 201
     ann_id_a = res_ann_a.json()["id"]

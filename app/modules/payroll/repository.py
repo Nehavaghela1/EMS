@@ -126,15 +126,15 @@ class EmployeeSalaryRepository:
             )
         )
 
-    def get_latest(
-        self, employee_id: uuid.UUID, company_id: uuid.UUID
-    ) -> EmployeeSalary | None:
+    def get_latest(self, employee_id: uuid.UUID, company_id: uuid.UUID) -> EmployeeSalary | None:
         return self.db.scalar(
-            select(EmployeeSalary).where(
+            select(EmployeeSalary)
+            .where(
                 EmployeeSalary.employee_id == employee_id,
                 EmployeeSalary.company_id == company_id,
                 EmployeeSalary.deleted_at.is_(None),
-            ).order_by(EmployeeSalary.effective_from.desc())
+            )
+            .order_by(EmployeeSalary.effective_from.desc())
         )
 
     def get_overlapping(
@@ -194,6 +194,7 @@ class EmployeeSalaryRepository:
 
     def count_for_employee(self, employee_id: uuid.UUID, company_id: uuid.UUID) -> int:
         from sqlalchemy import func
+
         return (
             self.db.scalar(
                 select(func.count())
@@ -206,7 +207,6 @@ class EmployeeSalaryRepository:
             )
             or 0
         )
-
 
 
 class StatutoryConfigRepository:
@@ -350,7 +350,6 @@ class PayrollRunRepository:
         self.db.flush()
 
 
-
 class PayrollItemRepository:
     def __init__(self, db: Session):
         self.db = db
@@ -361,9 +360,7 @@ class PayrollItemRepository:
         self.db.flush()
         return item
 
-    def list_by_run_id(
-        self, run_id: uuid.UUID, company_id: uuid.UUID
-    ) -> list[PayrollItem]:
+    def list_by_run_id(self, run_id: uuid.UUID, company_id: uuid.UUID) -> list[PayrollItem]:
         return list(
             self.db.scalars(
                 select(PayrollItem).where(
@@ -428,10 +425,14 @@ class ReimbursementRepository:
         employee_ids: list[uuid.UUID] | None = None,
         status: ReimbursementStatus | None = None,
     ) -> tuple[list[Reimbursement], int, int]:
-        stmt = select(Reimbursement).where(
-            Reimbursement.company_id == company_id,
-            Reimbursement.deleted_at.is_(None),
-        ).order_by(Reimbursement.created_at.desc())
+        stmt = (
+            select(Reimbursement)
+            .where(
+                Reimbursement.company_id == company_id,
+                Reimbursement.deleted_at.is_(None),
+            )
+            .order_by(Reimbursement.created_at.desc())
+        )
 
         if employee_id is not None:
             stmt = stmt.where(Reimbursement.employee_id == employee_id)
@@ -454,5 +455,3 @@ class ReimbursementRepository:
             setattr(claim, key, value)
         self.db.flush()
         return claim
-
-

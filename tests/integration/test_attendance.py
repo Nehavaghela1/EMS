@@ -321,7 +321,9 @@ def test_regularize_with_timestamps_recomputes_hours_and_status(client, company_
     assert "Regularized by" in (body["notes"] or "")
 
 
-def test_employee_request_regularization_with_attachment_and_admin_adjust_approval(client, company_a, db):
+def test_employee_request_regularization_with_attachment_and_admin_adjust_approval(
+    client, company_a, db
+):
     """Test full split workflow:
     1. Employee submits regularization with requested times, reason, and attachment.
     2. Record switches to pending_regularization.
@@ -337,9 +339,7 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     out_time = utcnow().isoformat()
 
     # 1. Employee applies with multipart form and dummy attachment
-    files = {
-        "attachment": ("gate_pass.pdf", b"%PDF-1.4 gate pass content", "application/pdf")
-    }
+    files = {"attachment": ("gate_pass.pdf", b"%PDF-1.4 gate pass content", "application/pdf")}
     data = {
         "check_in": in_time,
         "check_out": out_time,
@@ -364,7 +364,9 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     assert att_resp.content == b"%PDF-1.4 gate pass content"
 
     # Verify attendance record has pending_regularization and active_regularization populated
-    att_record = client.get(f"/api/v1/attendance/{created['id']}", headers=company_a.hr_headers).json()
+    att_record = client.get(
+        f"/api/v1/attendance/{created['id']}", headers=company_a.hr_headers
+    ).json()
     assert att_record["status"] == "pending_regularization"
     assert att_record["active_regularization"] is not None
     assert att_record["active_regularization"]["id"] == req_data["id"]
@@ -386,7 +388,9 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     assert approved_data["admin_notes"] == "Adjusted to 5:00 PM per security gate slip"
 
     # 3. Verify attendance record is now present and reflects adjusted hours
-    updated_rec = client.get(f"/api/v1/attendance/{created['id']}", headers=company_a.hr_headers).json()
+    updated_rec = client.get(
+        f"/api/v1/attendance/{created['id']}", headers=company_a.hr_headers
+    ).json()
     assert updated_rec["status"] == "present"
     assert float(updated_rec["hours_worked"]) >= 7.9
     assert "HR: Adjusted to 5:00 PM per security gate slip" in (updated_rec["notes"] or "")
@@ -445,7 +449,9 @@ def test_self_approval_ban_prevents_user_from_approving_own_regularization(clien
 
 
 def test_attendance_exempt_calendar_shows_exempt_not_absent(client, company_a, db):
-    """Verifies that employees marked as attendance exempt (e.g. CEO/Owner) show exempt rather than absent."""
+    """Verifies that employees marked as attendance exempt (e.g. CEO/Owner)
+    show exempt rather than absent.
+    """
     employee = _create_employee(client, company_a.hr_headers, is_attendance_exempt=True)
     today = utcnow().date()
     cal_resp = client.get(
@@ -477,5 +483,3 @@ def test_company_deactivation_restricted_to_owner(client, company_a, super_admin
     )
     assert resp_sa.status_code == 200
     assert resp_sa.json()["message"] == "Company workspace has been deactivated."
-
-

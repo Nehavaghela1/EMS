@@ -47,7 +47,6 @@ class CompanyLocation(TenantBase):
     is_remote_exempt: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
-
 class CompanyStatus(str, enum.Enum):
     pending = "pending"
     active = "active"

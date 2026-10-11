@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 
 # --- Projects ---
 
+
 class ProjectBase(BaseModel):
     name: str = Field(..., max_length=255)
     code: str = Field(..., max_length=50)
@@ -17,8 +18,10 @@ class ProjectBase(BaseModel):
     manager_id: UUID | None = None
     client_name: str | None = None
 
+
 class ProjectCreate(ProjectBase):
     company_id: UUID | None = None
+
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(None, max_length=255)
@@ -31,6 +34,7 @@ class ProjectUpdate(BaseModel):
     manager_id: UUID | None = None
     client_name: str | None = None
 
+
 class ProjectResponse(ProjectBase):
     id: UUID
     company_id: UUID
@@ -41,12 +45,15 @@ class ProjectResponse(ProjectBase):
     class Config:
         from_attributes = True
 
+
 # --- Project Members ---
+
 
 class ProjectMemberCreate(BaseModel):
     employee_id: UUID
     role: str = Field("member", pattern="^(lead|member)$")
     joined_at: date | None = None
+
 
 class ProjectMemberResponse(BaseModel):
     id: UUID
@@ -66,7 +73,9 @@ class ProjectMemberResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 # --- Tasks ---
+
 
 class TaskBase(BaseModel):
     title: str = Field(..., max_length=255)
@@ -77,8 +86,10 @@ class TaskBase(BaseModel):
     due_date: date | None = None
     estimated_hours: Decimal | None = Field(None, ge=0)
 
+
 class TaskCreate(TaskBase):
     pass
+
 
 class TaskUpdate(BaseModel):
     title: str | None = Field(None, max_length=255)
@@ -88,6 +99,7 @@ class TaskUpdate(BaseModel):
     status: str | None = Field(None, pattern="^(todo|in_progress|review|done)$")
     due_date: date | None = None
     estimated_hours: Decimal | None = Field(None, ge=0)
+
 
 class TaskResponse(TaskBase):
     id: UUID
@@ -105,10 +117,13 @@ class TaskResponse(TaskBase):
     class Config:
         from_attributes = True
 
+
 # --- Task Comments ---
+
 
 class TaskCommentCreate(BaseModel):
     comment: str = Field(..., min_length=1)
+
 
 class TaskCommentResponse(BaseModel):
     id: UUID
@@ -121,7 +136,9 @@ class TaskCommentResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 # --- Time Entries ---
+
 
 class TimeEntryCreate(BaseModel):
     project_id: UUID
@@ -134,6 +151,7 @@ class TimeEntryCreate(BaseModel):
     is_overtime: bool = False
     overtime_multiplier: Decimal | None = None
 
+
 class TimeEntryUpdate(BaseModel):
     task_id: UUID | None = None
     date: date | None = None
@@ -143,6 +161,7 @@ class TimeEntryUpdate(BaseModel):
     status: str | None = Field(None, pattern="^(draft|submitted|approved|rejected)$")
     is_overtime: bool | None = None
     overtime_multiplier: Decimal | None = None
+
 
 class TimeEntryResponse(BaseModel):
     id: UUID
@@ -173,7 +192,9 @@ class TimeEntryResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 # --- Project Documents ---
+
 
 class ProjectDocumentCreate(BaseModel):
     file_id: UUID | None = None
@@ -198,6 +219,7 @@ class ProjectDocumentCreate(BaseModel):
             values["name"] = nm
         return values
 
+
 class ProjectDocumentResponse(BaseModel):
     id: UUID
     company_id: UUID
@@ -215,7 +237,9 @@ class ProjectDocumentResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 # --- Milestones ---
+
 
 class MilestoneBase(BaseModel):
     title: str = Field(..., max_length=255)
@@ -224,8 +248,10 @@ class MilestoneBase(BaseModel):
     status: str = Field("pending", pattern="^(pending|in_progress|completed|missed)$")
     completion_percentage: Decimal = Field(Decimal("0.00"), ge=0, le=100)
 
+
 class MilestoneCreate(MilestoneBase):
     pass
+
 
 class MilestoneUpdate(BaseModel):
     title: str | None = Field(None, max_length=255)
@@ -233,6 +259,7 @@ class MilestoneUpdate(BaseModel):
     due_date: date | None = None
     status: str | None = Field(None, pattern="^(pending|in_progress|completed|missed)$")
     completion_percentage: Decimal | None = Field(None, ge=0, le=100)
+
 
 class MilestoneResponse(MilestoneBase):
     id: UUID
@@ -245,7 +272,9 @@ class MilestoneResponse(MilestoneBase):
     class Config:
         from_attributes = True
 
+
 # --- Analytics / Summaries ---
+
 
 class ProjectSummaryResponse(BaseModel):
     project: ProjectResponse
@@ -263,4 +292,3 @@ class ProjectSummaryResponse(BaseModel):
     delivery_health: str = "Not Started"
     approved_billable_hours: Decimal = Decimal("0.00")
     approved_logged_hours: Decimal = Decimal("0.00")
-

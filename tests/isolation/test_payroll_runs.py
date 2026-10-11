@@ -18,7 +18,8 @@ def test_payroll_runs_are_tenant_isolated(
     assert res_a.status_code == 202
     run_a_id = res_a.json()["id"]
 
-    # Company B tries to view Company A's run detail -> 404 Not Found (due to RLS and tenant scoping)
+    # Company B tries to view Company A's run detail -> 404 Not Found
+    # (due to RLS and tenant scoping)
     res_b_get = client.get(
         f"/api/v1/payroll/runs/{run_a_id}",
         headers=company_b.hr_headers,

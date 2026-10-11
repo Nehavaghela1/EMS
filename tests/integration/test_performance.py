@@ -41,9 +41,7 @@ def _create_employee_with_user(
     db.commit()
     db.refresh(employee)
 
-    token = create_access_token(
-        sub=str(user.id), company_id=str(company_id), role=role.value
-    )
+    token = create_access_token(sub=str(user.id), company_id=str(company_id), role=role.value)
     return employee, {"Authorization": f"Bearer {token}"}
 
 

@@ -212,4 +212,3 @@ class FnFSettlementResponse(BaseModel):
     resignation_status: str = "none"
     is_active: bool = True
     total_settlement_amount: Decimal
-

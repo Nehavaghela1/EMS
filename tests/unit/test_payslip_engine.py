@@ -283,7 +283,9 @@ def test_payslip_lop_and_full_lop(
 
     half_out = calculate_payslip(half_lop_inp)
     assert half_out.gross_salary == Decimal("24100.00")  # Exactly 50% of 48,200
-    assert half_out.net_salary == half_out.gross_salary - half_out.total_deductions + Decimal("500.00")
+    assert half_out.net_salary == half_out.gross_salary - half_out.total_deductions + Decimal(
+        "500.00"
+    )
 
     # 2. Full LOP (30 days out of 30)
     full_lop_inp = PayslipInput(

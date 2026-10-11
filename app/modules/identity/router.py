@@ -218,7 +218,11 @@ def create_workspace(
         user.email, company.id, device_info=request.headers.get("user-agent")
     )
     _set_refresh_cookie(response, raw_refresh)
-    return CreateWorkspaceResponse(company=CompanyResponse.model_validate(company), access_token=token_response.access_token, token_type=token_response.token_type)
+    return CreateWorkspaceResponse(
+        company=CompanyResponse.model_validate(company),
+        access_token=token_response.access_token,
+        token_type=token_response.token_type,
+    )
 
 
 @companies_router.get("", response_model=Page[CompanyResponse])
@@ -287,7 +291,6 @@ def update_company(
     return CompanyService(db).update_company_by_admin(company_id, data)
 
 
-
 @companies_router.post("/{company_id}/approve", response_model=CompanyApproveResponse)
 def approve_company(
     company_id: uuid.UUID,
@@ -338,7 +341,6 @@ def deactivate_company(
     return {"message": "Company workspace has been deactivated."}
 
 
-
 # --- Locations ---
 @companies_router.get("/locations", response_model=list[CompanyLocationResponse])
 def list_locations(
@@ -356,8 +358,10 @@ def create_location(
 ):
     return LocationService(db).create_location(user.company_id, data)
 
+
 # --- Users ---
 users_router = APIRouter(prefix="/users", tags=["Users"])
+
 
 @users_router.patch("/{user_id}/role")
 def update_user_role(
@@ -368,16 +372,24 @@ def update_user_role(
 ):
     if user_id == current_user.id:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=400, detail="Cannot change your own role.")
-    
+
     if data.role not in [UserRole.employee, UserRole.hr_admin]:
         from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="Can only promote to hr_admin or demote to employee.")
-        
-    user = db.query(User).filter(User.id == user_id, User.company_id == current_user.company_id).first()
+
+        raise HTTPException(
+            status_code=400, detail="Can only promote to hr_admin or demote to employee."
+        )
+
+    user = (
+        db.query(User)
+        .filter(User.id == user_id, User.company_id == current_user.company_id)
+        .first()
+    )
     if not user:
         raise NotFoundError("User not found.")
-        
+
     user.role = data.role
     db.commit()
     return {"message": f"User role updated to {data.role.value}"}

@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from typing import Optional
+from decimal import Decimal
 
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import Session
@@ -10,6 +10,7 @@ from app.core.time import utcnow
 from app.modules.hr.models import Employee
 from app.modules.time_leave.models import (
     Attendance,
+    AttendanceRegularizationRequest,
     AttendanceSource,
     AttendanceStatus,
     EmployeeShift,
@@ -186,36 +187,47 @@ class AttendanceRepository:
         )
         self.db.execute(stmt)
 
-    def create_regularization_request(self, request: "AttendanceRegularizationRequest") -> "AttendanceRegularizationRequest":
+    def create_regularization_request(
+        self, request: AttendanceRegularizationRequest
+    ) -> AttendanceRegularizationRequest:
         self.db.add(request)
         self.db.flush()
         return request
 
-    def get_regularization_by_id(self, regularization_id: uuid.UUID, company_id: uuid.UUID) -> Optional["AttendanceRegularizationRequest"]:
-        from app.modules.time_leave.models import AttendanceRegularizationRequest
+    def get_regularization_by_id(
+        self, regularization_id: uuid.UUID, company_id: uuid.UUID
+    ) -> AttendanceRegularizationRequest | None:
         return self.db.scalar(
             select(AttendanceRegularizationRequest).where(
                 AttendanceRegularizationRequest.id == regularization_id,
                 AttendanceRegularizationRequest.company_id == company_id,
-                AttendanceRegularizationRequest.deleted_at.is_(None)
+                AttendanceRegularizationRequest.deleted_at.is_(None),
             )
         )
 
-    def get_latest_regularization_for_attendance(self, attendance_id: uuid.UUID, company_id: uuid.UUID) -> Optional["AttendanceRegularizationRequest"]:
-        from app.modules.time_leave.models import AttendanceRegularizationRequest
+    def get_latest_regularization_for_attendance(
+        self, attendance_id: uuid.UUID, company_id: uuid.UUID
+    ) -> AttendanceRegularizationRequest | None:
         return self.db.scalar(
-            select(AttendanceRegularizationRequest).where(
+            select(AttendanceRegularizationRequest)
+            .where(
                 AttendanceRegularizationRequest.attendance_id == attendance_id,
                 AttendanceRegularizationRequest.company_id == company_id,
-                AttendanceRegularizationRequest.deleted_at.is_(None)
-            ).order_by(AttendanceRegularizationRequest.created_at.desc()).limit(1)
+                AttendanceRegularizationRequest.deleted_at.is_(None),
+            )
+            .order_by(AttendanceRegularizationRequest.created_at.desc())
+            .limit(1)
         )
 
-    def update_regularization_request(self, request: "AttendanceRegularizationRequest", **kwargs) -> "AttendanceRegularizationRequest":
+    def update_regularization_request(
+        self, request: AttendanceRegularizationRequest, **kwargs
+    ) -> AttendanceRegularizationRequest:
         for key, value in kwargs.items():
             setattr(request, key, value)
         self.db.flush()
         return request
+
+
 class ShiftRepository:
     def __init__(self, db: Session):
         self.db = db
@@ -336,7 +348,6 @@ class EmployeeShiftRepository:
         self.db.add(employee_shift)
         self.db.flush()
         return employee_shift
-
 
 
 class HolidayRepository:
@@ -509,16 +520,13 @@ class LeaveRepository:
         employee_id: uuid.UUID,
         month_start: date,
         month_end: date,
-    ) -> "Decimal":
+    ) -> Decimal:
         """Sum of approved *unpaid* leave days that fall within [month_start, month_end].
 
         Uses GREATEST/LEAST to intersect each leave record's date range with the
         payroll month boundary — correctly handles cross-month leaves such as
         March 28 → April 3 (counts only the March portion in March's pay run).
         """
-        from decimal import Decimal as _Decimal
-
-
         stmt = (
             select(Leave)
             .join(LeaveType, Leave.leave_type_id == LeaveType.id)
@@ -535,7 +543,7 @@ class LeaveRepository:
         )
         leaves = list(self.db.scalars(stmt).all())
 
-        total = _Decimal("0.0")
+        total = Decimal("0.0")
         for leave in leaves:
             # Clamp each leave to the payroll month boundary
             clamped_start = max(leave.start_date, month_start)
@@ -546,8 +554,8 @@ class LeaveRepository:
             full_span = (leave.end_date - leave.start_date).days + 1
             clamped_span = (clamped_end - clamped_start).days + 1
             if full_span > 0:
-                ratio = _Decimal(clamped_span) / _Decimal(full_span)
-                total += (leave.total_days * ratio).quantize(_Decimal("0.5"))
+                ratio = Decimal(clamped_span) / Decimal(full_span)
+                total += (leave.total_days * ratio).quantize(Decimal("0.5"))
         return total
 
     def sum_approved_paid_leave_days(
@@ -556,13 +564,11 @@ class LeaveRepository:
         employee_id: uuid.UUID,
         month_start: date,
         month_end: date,
-    ) -> "Decimal":
+    ) -> Decimal:
         """Sum of approved *paid* leave days within [month_start, month_end].
 
         Uses the same cross-month intersection logic as sum_approved_lop_days.
         """
-        from decimal import Decimal as _Decimal
-
         stmt = (
             select(Leave)
             .join(LeaveType, Leave.leave_type_id == LeaveType.id)
@@ -578,7 +584,7 @@ class LeaveRepository:
         )
         leaves = list(self.db.scalars(stmt).all())
 
-        total = _Decimal("0.0")
+        total = Decimal("0.0")
         for leave in leaves:
             clamped_start = max(leave.start_date, month_start)
             clamped_end = min(leave.end_date, month_end)
@@ -587,8 +593,8 @@ class LeaveRepository:
             full_span = (leave.end_date - leave.start_date).days + 1
             clamped_span = (clamped_end - clamped_start).days + 1
             if full_span > 0:
-                ratio = _Decimal(clamped_span) / _Decimal(full_span)
-                total += (leave.total_days * ratio).quantize(_Decimal("0.5"))
+                ratio = Decimal(clamped_span) / Decimal(full_span)
+                total += (leave.total_days * ratio).quantize(Decimal("0.5"))
         return total
 
     def create(self, **kwargs) -> Leave:

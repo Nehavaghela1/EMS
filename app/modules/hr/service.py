@@ -130,7 +130,9 @@ class DepartmentService:
 CONTACT_FIELDS = {"last_name", "personal_email", "phone"}
 
 
-def get_policy_notice_days(level: str | None, is_probation: bool = False, custom_days: int | None = None) -> int:
+def get_policy_notice_days(
+    level: str | None, is_probation: bool = False, custom_days: int | None = None
+) -> int:
     """Calculate contractual notice period by level/band or probation according to policy:
     - Probation: 15 days
     - L1: 30 days
@@ -227,12 +229,14 @@ class EmployeeService:
 
         from app.modules.hr.models import Department
 
-        stmt = select(Employee, Department.name.label("dept_name")).outerjoin(
-            Department, Department.id == Employee.department_id
-        ).where(
-            Employee.company_id == company_id,
-            Employee.deleted_at.is_(None),
-            Employee.is_active.is_(True),
+        stmt = (
+            select(Employee, Department.name.label("dept_name"))
+            .outerjoin(Department, Department.id == Employee.department_id)
+            .where(
+                Employee.company_id == company_id,
+                Employee.deleted_at.is_(None),
+                Employee.is_active.is_(True),
+            )
         )
 
         if exclude_id is not None:
@@ -254,15 +258,17 @@ class EmployeeService:
 
         out = []
         for emp, dept_name in results:
-            out.append({
-                "id": emp.id,
-                "employee_code": emp.employee_code,
-                "first_name": emp.first_name,
-                "last_name": emp.last_name,
-                "email": emp.email,
-                "position": emp.position,
-                "department_name": dept_name,
-            })
+            out.append(
+                {
+                    "id": emp.id,
+                    "employee_code": emp.employee_code,
+                    "first_name": emp.first_name,
+                    "last_name": emp.last_name,
+                    "email": emp.email,
+                    "position": emp.position,
+                    "department_name": dept_name,
+                }
+            )
         return out
 
     def list_employees(
@@ -361,7 +367,9 @@ class EmployeeService:
             probation_end_date=data.probation_end_date,
             notice_period_days=get_policy_notice_days(
                 level=data.level,
-                is_probation=bool(data.probation_end_date and data.probation_end_date > data.hire_date),
+                is_probation=bool(
+                    data.probation_end_date and data.probation_end_date > data.hire_date
+                ),
                 custom_days=data.notice_period_days,
             ),
             is_attendance_exempt=data.is_attendance_exempt,
@@ -524,7 +532,9 @@ class EmployeeService:
         return employee, sent_to
 
     # ── Resignation & Full-and-Final (Routes 27-30) ─────────────────
-    def submit_resignation(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: ResignationSubmitRequest) -> Employee:
+    def submit_resignation(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, data: ResignationSubmitRequest
+    ) -> Employee:
         employee = self._get_or_404(company_id, employee_id)
         if employee.resignation_status == ResignationStatus.submitted:
             raise ConflictError("Resignation is already submitted.")
@@ -546,12 +556,18 @@ class EmployeeService:
         self.db.commit()
         return employee
 
-    def approve_resignation(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: ResignationApproveRequest, actor: User) -> Employee:
+    def approve_resignation(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        data: ResignationApproveRequest,
+        actor: User,
+    ) -> Employee:
         employee = self._get_or_404(company_id, employee_id)
 
         # Multi-tenant and Role Hierarchy verification
         if actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
-            # If actor is a Manager: check if they are the direct reporting manager or department head
+            # If actor is a Manager: check if direct reporting manager or department head
             actor_emp = self.repo.get_by_user_id(company_id, actor.id)
             if not actor_emp:
                 raise ForbiddenError("You do not have permission to approve this resignation.")
@@ -560,7 +576,7 @@ class EmployeeService:
             if actor_emp.id == employee.id:
                 raise ForbiddenError("Employees and managers cannot approve their own resignation.")
 
-            is_direct_manager = (employee.reporting_manager_id == actor_emp.id)
+            is_direct_manager = employee.reporting_manager_id == actor_emp.id
             is_dept_head = False
             if employee.department_id:
                 dept = self.dept_repo.get_by_id(employee.department_id, company_id)
@@ -569,7 +585,8 @@ class EmployeeService:
 
             if not (is_direct_manager or is_dept_head):
                 raise ForbiddenError(
-                    "Hierarchy Violation: Only the direct reporting manager, department head, or HR Admin can review this resignation."
+                    "Hierarchy Violation: Only the direct reporting manager, department head, "
+                    "or HR Admin can review this resignation."
                 )
 
         if not data.approved:
@@ -585,7 +602,9 @@ class EmployeeService:
         self.db.commit()
         return employee
 
-    def terminate_employee(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: TerminationRequest, actor: User) -> Employee:
+    def terminate_employee(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, data: TerminationRequest, actor: User
+    ) -> Employee:
         employee = self._get_or_404(company_id, employee_id)
         # Schedule separation / involuntary termination
         # Severance pay or notice pay in lieu can be configured
@@ -613,7 +632,11 @@ class EmployeeService:
             action="EMPLOYEE_TERMINATED",
             entity_type="employee",
             entity_id=employee.id,
-            details={"reason": data.reason, "termination_date": str(data.termination_date), "severance": str(total_severance)},
+            details={
+                "reason": data.reason,
+                "termination_date": str(data.termination_date),
+                "severance": str(total_severance),
+            },
         )
         self.db.commit()
         return employee
@@ -621,10 +644,14 @@ class EmployeeService:
     def calculate_fnf(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> FnFSettlementResponse:
         employee = self._get_or_404(company_id, employee_id)
         last_working = employee.last_working_date or utcnow().date()
-        
+
         # Calculate notice recovery / shortfall
         notice_required = employee.notice_period_days
-        notice_served = (last_working - (employee.resignation_date or last_working)).days if employee.resignation_date else notice_required
+        notice_served = (
+            (last_working - (employee.resignation_date or last_working)).days
+            if employee.resignation_date
+            else notice_required
+        )
         notice_recovery_days = employee.notice_recovery_days if not employee.notice_waived else 0
 
         # Calculate salary and daily rate from in-force salary assignment or latest payslip
@@ -640,6 +667,7 @@ class EmployeeService:
             SalaryStructureRepository,
             StatutoryConfigRepository,
         )
+
         salary_repo = EmployeeSalaryRepository(self.db)
         payroll_item_repo = PayrollItemRepository(self.db)
 
@@ -649,14 +677,16 @@ class EmployeeService:
             or salary_repo.get_open_ended(employee.id, company_id)
             or salary_repo.get_latest(employee.id, company_id)
         )
-        
+
         monthly_gross = Decimal("0.00")
         monthly_basic = Decimal("0.00")
         per_day_basic = Decimal("0.00")
         per_day_gross = Decimal("0.00")
 
         if active_sal:
-            struct = SalaryStructureRepository(self.db).get_by_id(active_sal.structure_id, company_id)
+            struct = SalaryStructureRepository(self.db).get_by_id(
+                active_sal.structure_id, company_id
+            )
             if struct:
                 stat_row = StatutoryConfigRepository(self.db).get_by_company(company_id)
                 stat_spec = StatutoryConfigSpec(
@@ -679,9 +709,13 @@ class EmployeeService:
                         code=c.code,
                         name=c.name,
                         type=c.type.value if hasattr(c.type, "value") else c.type,
-                        calculation_type=c.calculation_type.value if hasattr(c.calculation_type, "value") else c.calculation_type,
+                        calculation_type=c.calculation_type.value
+                        if hasattr(c.calculation_type, "value")
+                        else c.calculation_type,
                         value=c.value,
-                        percentage_of=c.percentage_of.value if hasattr(c.percentage_of, "value") and c.percentage_of else c.percentage_of,
+                        percentage_of=c.percentage_of.value
+                        if hasattr(c.percentage_of, "value") and c.percentage_of
+                        else c.percentage_of,
                         is_taxable=c.is_taxable,
                         is_statutory=c.is_statutory,
                         display_order=c.display_order,
@@ -696,7 +730,7 @@ class EmployeeService:
                     tax_slabs=[],
                     month=last_working.month,
                     year=last_working.year,
-                    financial_year=f"{last_working.year}-{last_working.year+1}",
+                    financial_year=f"{last_working.year}-{last_working.year + 1}",
                     working_days=Decimal("30"),
                     present_days=Decimal("30"),
                     paid_leave_days=Decimal("0"),
@@ -715,22 +749,33 @@ class EmployeeService:
                 monthly_gross = latest_slip.gross_salary
                 # Find basic from earnings_json if available
                 basic_in_slip = next(
-                    (Decimal(str(e.get("amount", 0))) for e in (latest_slip.earnings_json or []) if e.get("code") == "BASIC"),
+                    (
+                        Decimal(str(e.get("amount", 0)))
+                        for e in (latest_slip.earnings_json or [])
+                        if e.get("code") == "BASIC"
+                    ),
                     None,
                 )
-                monthly_basic = basic_in_slip if basic_in_slip is not None else monthly_gross * Decimal("0.40")
+                monthly_basic = (
+                    basic_in_slip if basic_in_slip is not None else monthly_gross * Decimal("0.40")
+                )
 
         # Daily rate calculation: monthly / 30
         if monthly_gross > Decimal("0.00"):
             per_day_gross = (monthly_gross / Decimal("30")).quantize(Decimal("0.01"))
             per_day_basic = (monthly_basic / Decimal("30")).quantize(Decimal("0.01"))
 
-        notice_recovery_amount = (Decimal(str(notice_recovery_days)) * per_day_gross).quantize(Decimal("0.01"))
+        notice_recovery_amount = (Decimal(str(notice_recovery_days)) * per_day_gross).quantize(
+            Decimal("0.01")
+        )
 
         # Encashable leave balance
         from app.modules.time_leave.repository import LeaveBalanceRepository, LeaveTypeRepository
+
         leave_type_repo = LeaveTypeRepository(self.db)
-        balances = LeaveBalanceRepository(self.db).list_for_employee_year(employee.id, last_working.year)
+        balances = LeaveBalanceRepository(self.db).list_for_employee_year(
+            employee.id, last_working.year
+        )
         encashable_days = Decimal("0.0")
         for b in balances:
             lt = leave_type_repo.get_by_id(b.leave_type_id, company_id)
@@ -741,22 +786,35 @@ class EmployeeService:
 
         leave_encashment_amount = (encashable_days * per_day_basic).quantize(Decimal("0.01"))
         unpaid_salary_days = last_working.day
-        unpaid_salary_amount = (Decimal(str(unpaid_salary_days)) * per_day_gross).quantize(Decimal("0.01"))
+        unpaid_salary_amount = (Decimal(str(unpaid_salary_days)) * per_day_gross).quantize(
+            Decimal("0.01")
+        )
 
         # Extra FnF components: severance, reimbursements, gratuity, asset deductions
         severance_pay = Decimal(str(employee.severance_pay or 0)).quantize(Decimal("0.01"))
-        pending_reimbursements = Decimal(str(employee.pending_reimbursements or 0)).quantize(Decimal("0.01"))
+        pending_reimbursements = Decimal(str(employee.pending_reimbursements or 0)).quantize(
+            Decimal("0.01")
+        )
         gratuity_bonus = Decimal(str(employee.gratuity_bonus or 0)).quantize(Decimal("0.01"))
         asset_deductions = Decimal(str(employee.asset_deductions or 0)).quantize(Decimal("0.01"))
 
         # Net Formula:
-        # FnF Net Payout = (Payable Days Salary + Encashable Leaves + Pending Reimbursements + Gratuity/Bonus + Severance)
+        # FnF Net Payout = (Payable Days Salary + Encashable Leaves + Pending Reimbursements
+        #                  + Gratuity/Bonus + Severance)
         #                  - (Notice Shortfall Recovery + Asset Damage/Deductions)
-        total_additions = unpaid_salary_amount + leave_encashment_amount + pending_reimbursements + gratuity_bonus + severance_pay
+        total_additions = (
+            unpaid_salary_amount
+            + leave_encashment_amount
+            + pending_reimbursements
+            + gratuity_bonus
+            + severance_pay
+        )
         total_deductions = notice_recovery_amount + asset_deductions
         total_settlement = (total_additions - total_deductions).quantize(Decimal("0.01"))
 
-        can_release = bool(employee.it_clearance and employee.hr_clearance and employee.finance_clearance)
+        can_release = bool(
+            employee.it_clearance and employee.hr_clearance and employee.finance_clearance
+        )
 
         return FnFSettlementResponse(
             employee_id=employee.id,
@@ -784,12 +842,20 @@ class EmployeeService:
             finance_clearance=employee.finance_clearance,
             can_release_settlement=can_release,
             fnf_settled_at=employee.fnf_settled_at,
-            resignation_status=employee.resignation_status.value if hasattr(employee.resignation_status, "value") else str(employee.resignation_status or "none"),
+            resignation_status=employee.resignation_status.value
+            if hasattr(employee.resignation_status, "value")
+            else str(employee.resignation_status or "none"),
             is_active=employee.is_active,
             total_settlement_amount=total_settlement,
         )
 
-    def update_fnf_clearance(self, company_id: uuid.UUID, employee_id: uuid.UUID, data: FnFClearanceUpdateRequest, actor: User) -> FnFSettlementResponse:
+    def update_fnf_clearance(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        data: FnFClearanceUpdateRequest,
+        actor: User,
+    ) -> FnFSettlementResponse:
         employee = self._get_or_404(company_id, employee_id)
         actor_emp = self.repo.get_by_user_id(company_id, actor.id)
 
@@ -806,52 +872,85 @@ class EmployeeService:
             if dept:
                 actor_dept_name = dept.name.strip().lower()
 
-        is_it_dept = ("it" in actor_dept_name) or ("tech" in actor_dept_name) or ("information technology" in actor_dept_name)
-        is_fin_dept = ("fin" in actor_dept_name) or ("account" in actor_dept_name) or ("payroll" in actor_dept_name)
-        is_hr_dept = ("hr" in actor_dept_name) or ("human" in actor_dept_name) or ("people" in actor_dept_name)
+        is_it_dept = (
+            ("it" in actor_dept_name)
+            or ("tech" in actor_dept_name)
+            or ("information technology" in actor_dept_name)
+        )
+        is_fin_dept = (
+            ("fin" in actor_dept_name)
+            or ("account" in actor_dept_name)
+            or ("payroll" in actor_dept_name)
+        )
+        is_hr_dept = (
+            ("hr" in actor_dept_name)
+            or ("human" in actor_dept_name)
+            or ("people" in actor_dept_name)
+        )
 
         updates = {}
 
         # 1. IT Clearance: IT Department leads or HR Admin/Owner
         if data.it_clearance is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_it_dept)):
-                raise ForbiddenError("Only IT Department Managers or HR Admin/Owner can sign off IT asset clearance.")
+                raise ForbiddenError(
+                    "Only IT Department Managers or HR Admin/Owner can sign off IT asset clearance."
+                )
             updates["it_clearance"] = data.it_clearance
 
         # 2. HR Clearance: HR Department leads or HR Admin/Owner
         if data.hr_clearance is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_hr_dept)):
-                raise ForbiddenError("Only HR Department Managers or HR Admin/Owner can sign off HR policy clearance.")
+                raise ForbiddenError(
+                    "Only HR Department Managers or HR Admin/Owner can sign off "
+                    "HR policy clearance."
+                )
             updates["hr_clearance"] = data.hr_clearance
 
         # 3. Finance Clearance: Finance Department leads or HR Admin/Owner
         if data.finance_clearance is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
-                raise ForbiddenError("Only Finance & Accounts Managers or HR Admin/Owner can sign off Finance clearance.")
+                raise ForbiddenError(
+                    "Only Finance & Accounts Managers or HR Admin/Owner can sign off "
+                    "Finance clearance."
+                )
             updates["finance_clearance"] = data.finance_clearance
 
         # 4. Financial Ledger Adjustments: Finance Manager or HR Admin/Owner
         if data.severance_pay is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
-                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust severance pay.")
+                raise ForbiddenError(
+                    "Only Finance Managers or HR Admin/Owner can adjust severance pay."
+                )
             updates["severance_pay"] = data.severance_pay
         if data.pending_reimbursements is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
-                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust reimbursements.")
+                raise ForbiddenError(
+                    "Only Finance Managers or HR Admin/Owner can adjust reimbursements."
+                )
             updates["pending_reimbursements"] = data.pending_reimbursements
         if data.gratuity_bonus is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
-                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust gratuity/bonus.")
+                raise ForbiddenError(
+                    "Only Finance Managers or HR Admin/Owner can adjust gratuity/bonus."
+                )
             updates["gratuity_bonus"] = data.gratuity_bonus
         if data.asset_deductions is not None:
-            if not (is_executive or (actor.role == UserRole.manager and (is_fin_dept or is_it_dept))):
-                raise ForbiddenError("Only Finance/IT Managers or HR Admin/Owner can adjust asset deductions.")
+            if not (
+                is_executive or (actor.role == UserRole.manager and (is_fin_dept or is_it_dept))
+            ):
+                raise ForbiddenError(
+                    "Only Finance/IT Managers or HR Admin/Owner can adjust asset deductions."
+                )
             updates["asset_deductions"] = data.asset_deductions
 
         # 5. Maker-Checker Final Settlement Release: strictly Executive (HR Admin & Owner)
         if data.mark_settled:
             if not is_executive:
-                raise ForbiddenError("Maker-Checker Enforcement: Only HR Admin or Company Owner can authorize final fund release.")
+                raise ForbiddenError(
+                    "Maker-Checker Enforcement: Only HR Admin or Company Owner "
+                    "can authorize final fund release."
+                )
             updates["fnf_settled_at"] = utcnow()
             # Ensure employee is marked inactive upon settlement
             updates["is_active"] = False

@@ -395,9 +395,12 @@ class AnnouncementService:
     def __init__(self, db: Session):
         self.db = db
         from app.modules.platform.repository import AnnouncementRepository
+
         self.repo = AnnouncementRepository(db)
 
-    def create(self, company_id: uuid.UUID, user_id: uuid.UUID, data: AnnouncementCreate) -> Announcement:
+    def create(
+        self, company_id: uuid.UUID, user_id: uuid.UUID, data: AnnouncementCreate
+    ) -> Announcement:
         announcement = self.repo.create(
             company_id=company_id,
             created_by=user_id,
@@ -425,15 +428,24 @@ class FileService:
     def __init__(self, db: Session):
         self.db = db
         from app.modules.platform.repository import FileRepository
+
         self.repo = FileRepository(db)
 
-    def upload_file(self, company_id: uuid.UUID, user_id: uuid.UUID, file_name: str, file_type: str, file_bytes: bytes) -> FileObject:
+    def upload_file(
+        self,
+        company_id: uuid.UUID,
+        user_id: uuid.UUID,
+        file_name: str,
+        file_type: str,
+        file_bytes: bytes,
+    ) -> FileObject:
         # 1. Validate Size (< 25MB)
         if len(file_bytes) > 25 * 1024 * 1024:
             raise AppError("File size exceeds the 25MB limit.")
 
         # 2. Store in local uploads folder
         import os
+
         upload_dir = os.path.join(os.getcwd(), "uploads", str(company_id))
         os.makedirs(upload_dir, exist_ok=True)
 
@@ -463,16 +475,19 @@ class FileService:
         # HMAC signed token valid for 3600 seconds
         import hashlib
         import hmac
+
         expires_at = int(datetime.now(UTC).timestamp()) + 3600
         signature_payload = f"{company_id}:{file_id}:{expires_at}".encode()
-        signature = hmac.new(settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256).hexdigest()
+        signature = hmac.new(
+            settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256
+        ).hexdigest()
 
         url = f"/api/v1/files/download/{file_id}?expires={expires_at}&signature={signature}"
         return SignedUrlResponse(
             file_object_id=file_obj.id,
             file_name=file_obj.file_name,
             url=url,
-            expires_in_seconds=3600
+            expires_in_seconds=3600,
         )
 
 
@@ -480,10 +495,14 @@ class EmployeeDocumentService:
     def __init__(self, db: Session):
         self.db = db
         from app.modules.platform.repository import EmployeeDocumentRepository
+
         self.repo = EmployeeDocumentRepository(db)
 
-    def attach_document(self, company_id: uuid.UUID, data: EmployeeDocumentCreate) -> EmployeeDocumentResponse:
+    def attach_document(
+        self, company_id: uuid.UUID, data: EmployeeDocumentCreate
+    ) -> EmployeeDocumentResponse:
         from app.modules.platform.repository import FileRepository
+
         file_obj = FileRepository(self.db).get_by_id(company_id, data.file_object_id)
         if not file_obj:
             raise NotFoundError("File object not found.")
@@ -499,7 +518,9 @@ class EmployeeDocumentService:
         self.db.refresh(doc)
         return EmployeeDocumentResponse.model_validate(doc)
 
-    def list_documents(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> list[EmployeeDocumentResponse]:
+    def list_documents(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID
+    ) -> list[EmployeeDocumentResponse]:
         docs = self.repo.list_for_employee(company_id, employee_id)
         file_service = FileService(self.db)
         results = []
@@ -515,6 +536,7 @@ class GlobalSearchService:
     def __init__(self, db: Session):
         self.db = db
         from app.modules.platform.repository import SearchRepository
+
         self.repo = SearchRepository(db)
 
     def search(self, company_id: uuid.UUID, query: str) -> GlobalSearchResponse:
@@ -523,8 +545,4 @@ class GlobalSearchService:
 
         raw_results = self.repo.search_all(company_id, query.strip())
         items = [SearchResultItem(**r) for r in raw_results]
-        return GlobalSearchResponse(
-            query=query,
-            total_results=len(items),
-            results=items
-        )
+        return GlobalSearchResponse(query=query, total_results=len(items), results=items)

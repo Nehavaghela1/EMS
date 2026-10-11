@@ -167,9 +167,7 @@ def test_list_and_get_salary_structures(client: TestClient, company_a: TenantCon
     assert "Band B" in names
 
     struct_id = items[0]["id"]
-    detail_res = client.get(
-        f"/api/v1/payroll/structures/{struct_id}", headers=company_a.hr_headers
-    )
+    detail_res = client.get(f"/api/v1/payroll/structures/{struct_id}", headers=company_a.hr_headers)
     assert detail_res.status_code == 200
     assert detail_res.json()["id"] == struct_id
 
@@ -208,9 +206,7 @@ def test_update_salary_structure(client: TestClient, company_a: TenantContext):
     assert data["components"][0]["code"] == "BASIC"
 
 
-def test_assign_and_get_employee_salary(
-    client: TestClient, company_a: TenantContext, db: Session
-):
+def test_assign_and_get_employee_salary(client: TestClient, company_a: TenantContext, db: Session):
     bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
     # Create employee record in company_a
     employee = Employee(
@@ -309,9 +305,7 @@ def test_assign_and_get_employee_salary(
     assert delete_res.json()["error"]["code"] == "conflict"
 
 
-def test_assign_salary_overlap_error(
-    client: TestClient, company_a: TenantContext, db: Session
-):
+def test_assign_salary_overlap_error(client: TestClient, company_a: TenantContext, db: Session):
     bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
     employee = Employee(
         company_id=company_a.company_id,

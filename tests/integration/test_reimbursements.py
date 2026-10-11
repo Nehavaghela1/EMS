@@ -50,9 +50,7 @@ def _create_employee_with_user(
     db.commit()
     db.refresh(employee)
 
-    token = create_access_token(
-        sub=str(user.id), company_id=str(company_id), role=role.value
-    )
+    token = create_access_token(sub=str(user.id), company_id=str(company_id), role=role.value)
     return employee, {"Authorization": f"Bearer {token}"}
 
 
@@ -86,9 +84,7 @@ def _setup_salary_structure(client: TestClient, company: TenantContext) -> str:
     return res.json()["id"]
 
 
-def test_submit_and_review_reimbursement(
-    client: TestClient, company_a: TenantContext, db: Session
-):
+def test_submit_and_review_reimbursement(client: TestClient, company_a: TenantContext, db: Session):
     emp, emp_headers = _create_employee_with_user(db, company_a.company_id)
 
     # 1. Employee submits a reimbursement claim

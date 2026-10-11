@@ -12,9 +12,11 @@ class JobStatusResponse(BaseModel):
     result: Any = None
     error: str | None = None
 
+
 class JobQueuedResponse(BaseModel):
     job_id: str
     status: Literal["queued"] = "queued"
+
 
 class AuditLogResponse(BaseModel):
     id: uuid.UUID
@@ -29,6 +31,7 @@ class AuditLogResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+
 class AuditLogExportRequest(BaseModel):
     action: str | None = None
     actor_email: str | None = None
@@ -36,10 +39,12 @@ class AuditLogExportRequest(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
 
+
 class DashboardResponse(BaseModel):
     role: str
     generated_at: datetime
     data: dict[str, Any]
+
 
 class NotificationResponse(BaseModel):
     id: uuid.UUID
@@ -55,6 +60,7 @@ class NotificationResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+
 class NotificationListResponse(BaseModel):
     items: list[NotificationResponse]
     page: int
@@ -63,6 +69,7 @@ class NotificationListResponse(BaseModel):
     pages: int
     has_next: bool
     unread_count: int
+
 
 class MarkAllReadResponse(BaseModel):
     marked_read: int
@@ -74,6 +81,7 @@ class AnnouncementCreate(BaseModel):
     content: str = Field(..., min_length=1)
     target_role: str = Field("all", pattern="^(all|employee|manager|hr_admin)$")
     expires_at: datetime | None = None
+
 
 class AnnouncementResponse(BaseModel):
     id: uuid.UUID
@@ -97,6 +105,7 @@ class FileUploadResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+
 class SignedUrlResponse(BaseModel):
     file_object_id: uuid.UUID
     file_name: str
@@ -110,6 +119,7 @@ class EmployeeDocumentCreate(BaseModel):
     file_object_id: uuid.UUID
     document_type: str = Field(..., max_length=100)
     name: str = Field(..., max_length=255)
+
 
 class EmployeeDocumentResponse(BaseModel):
     id: uuid.UUID
@@ -131,6 +141,7 @@ class SearchResultItem(BaseModel):
     title: str
     subtitle: str | None = None
     url: str
+
 
 class GlobalSearchResponse(BaseModel):
     query: str
