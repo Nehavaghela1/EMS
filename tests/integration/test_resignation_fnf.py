@@ -237,3 +237,89 @@ def test_department_clearance_function_authorization(client: TestClient, db: Ses
     )
     assert res_it_clear.status_code == 200
     assert res_it_clear.json()["it_clearance"] is True
+
+
+def test_department_head_can_review_resignation_using_department_repo(
+    client: TestClient, db: Session, company_a
+):
+    """Verifies that EmployeeService uses department_repo to check dept.head_employee_id
+    and authorizes a department head to approve a resignation.
+    """
+    from app.core.security import create_access_token, hash_password
+    from app.modules.hr.models import Employee
+    from app.modules.identity.models import User, UserRole
+
+    hr_headers = company_a.hr_headers
+
+    # 1. Create a department
+    dept_res = client.post(
+        "/api/v1/departments",
+        json={"name": "Engineering Operations", "description": "Eng Ops"},
+        headers=hr_headers,
+    )
+    assert dept_res.status_code == 201
+    dept_id = dept_res.json()["id"]
+
+    # 2. Create an employee to be Department Head
+    head_emp = _create_employee(
+        client,
+        hr_headers,
+        email="dept-head@example.com",
+        department_id=dept_id,
+    )
+    # Assign as head of the department
+    dept_upd = client.put(
+        f"/api/v1/departments/{dept_id}",
+        json={"head_employee_id": head_emp["id"]},
+        headers=hr_headers,
+    )
+    assert dept_upd.status_code == 200
+
+    head_user = User(
+        company_id=company_a.company_id,
+        email="dept-head-user@example.com",
+        hashed_password=hash_password("Test1234pass!"),
+        role=UserRole.manager,
+        is_active=True,
+    )
+    db.add(head_user)
+    db.flush()
+    db.query(Employee).filter(Employee.id == head_emp["id"]).update({"user_id": head_user.id})
+    db.commit()
+
+    head_token = create_access_token(
+        sub=str(head_user.id),
+        company_id=str(company_a.company_id),
+        role=UserRole.manager.value,
+    )
+    head_mgr_headers = {"Authorization": f"Bearer {head_token}"}
+
+    # 3. Create a member of the department (not directly reporting to head)
+    subordinate = _create_employee(
+        client,
+        hr_headers,
+        email="subordinate-dev@example.com",
+        department_id=dept_id,
+    )
+    sub_id = subordinate["id"]
+
+    # 4. Subordinate submits resignation
+    res_sub = client.post(
+        f"/api/v1/employees/{sub_id}/resignation",
+        json={
+            "resignation_date": "2026-09-20",
+            "last_working_date": "2026-10-20",
+            "reason": "Moving on",
+        },
+        headers=hr_headers,
+    )
+    assert res_sub.status_code == 200
+
+    # 5. Department Head approves resignation (exercises EmployeeService.department_repo.get_by_id)
+    app_res = client.put(
+        f"/api/v1/employees/{sub_id}/resignation/approve",
+        json={"approved": True, "notice_waived": True},
+        headers=head_mgr_headers,
+    )
+    assert app_res.status_code == 200
+    assert app_res.json()["resignation_status"] == "approved"
