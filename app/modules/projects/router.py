@@ -1,19 +1,31 @@
 from datetime import date
-from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, status, UploadFile, File, Form, Request
+
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_tenant_db, get_current_user, require_role
+from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.modules.identity.models import User, UserRole
 from app.modules.projects.schemas import (
-    ProjectCreate, ProjectUpdate, ProjectResponse, ProjectSummaryResponse,
-    ProjectMemberCreate, ProjectMemberResponse,
-    TaskCreate, TaskUpdate, TaskResponse,
-    TaskCommentCreate, TaskCommentResponse,
-    TimeEntryCreate, TimeEntryUpdate, TimeEntryResponse,
-    MilestoneCreate, MilestoneUpdate, MilestoneResponse,
-    ProjectDocumentCreate, ProjectDocumentResponse
+    MilestoneCreate,
+    MilestoneResponse,
+    MilestoneUpdate,
+    ProjectCreate,
+    ProjectDocumentCreate,
+    ProjectDocumentResponse,
+    ProjectMemberCreate,
+    ProjectMemberResponse,
+    ProjectResponse,
+    ProjectSummaryResponse,
+    ProjectUpdate,
+    TaskCommentCreate,
+    TaskCommentResponse,
+    TaskCreate,
+    TaskResponse,
+    TaskUpdate,
+    TimeEntryCreate,
+    TimeEntryResponse,
+    TimeEntryUpdate,
 )
 from app.modules.projects.service import ProjectService
 
@@ -30,10 +42,10 @@ def create_project(
     service = ProjectService(db)
     return service.create_project(current_user.company_id, data)
 
-@router.get("", response_model=List[ProjectResponse])
+@router.get("", response_model=list[ProjectResponse])
 def list_projects(
-    status: Optional[str] = Query(None, pattern="^(planning|active|on_hold|completed|cancelled)$"),
-    company_id: Optional[UUID] = Query(None),
+    status: str | None = Query(None, pattern="^(planning|active|on_hold|completed|cancelled)$"),
+    company_id: UUID | None = Query(None),
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -54,8 +66,8 @@ def create_time_entry(
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user)
 ):
-    from app.modules.hr.models import Employee
     from app.core.exceptions import AppError, NotFoundError
+    from app.modules.hr.models import Employee
 
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
     service = ProjectService(db)
@@ -98,13 +110,13 @@ def create_time_entry(
     is_admin_or_manager = current_user.role in (UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
     return service.create_time_entry(project.company_id, emp_id, data, is_admin_or_manager=is_admin_or_manager)
 
-@router.get("/time-entries", response_model=List[TimeEntryResponse])
+@router.get("/time-entries", response_model=list[TimeEntryResponse])
 def list_time_entries(
-    project_id: Optional[UUID] = Query(None),
-    employee_id: Optional[UUID] = Query(None),
-    status: Optional[str] = Query(None, pattern="^(draft|submitted|approved|rejected)$"),
-    start_date: Optional[date] = Query(None),
-    end_date: Optional[date] = Query(None),
+    project_id: UUID | None = Query(None),
+    employee_id: UUID | None = Query(None),
+    status: str | None = Query(None, pattern="^(draft|submitted|approved|rejected)$"),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -135,7 +147,7 @@ def update_time_entry(
 def approve_time_entry(
     entry_id: UUID,
     status_action: str = Query("approved", pattern="^(approved|rejected)$"),
-    rejection_reason: Optional[str] = Query(None),
+    rejection_reason: str | None = Query(None),
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager))
 ):
@@ -220,7 +232,7 @@ def add_task_comment(
     cid = current_user.company_id
     return service.add_comment(cid, task_id, current_user.id, data)
 
-@router.get("/tasks/{task_id}/comments", response_model=List[TaskCommentResponse])
+@router.get("/tasks/{task_id}/comments", response_model=list[TaskCommentResponse])
 def list_task_comments(
     task_id: UUID,
     db: Session = Depends(get_tenant_db),
@@ -309,7 +321,7 @@ def add_project_member(
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
     return service.add_member(cid, project_id, data)
 
-@router.get("/{project_id}/members", response_model=List[ProjectMemberResponse])
+@router.get("/{project_id}/members", response_model=list[ProjectMemberResponse])
 def list_project_members(
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
@@ -343,11 +355,11 @@ def create_task(
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
     return service.create_task(cid, project_id, current_user.id, data)
 
-@router.get("/{project_id}/tasks", response_model=List[TaskResponse])
+@router.get("/{project_id}/tasks", response_model=list[TaskResponse])
 def list_tasks(
     project_id: UUID,
-    status: Optional[str] = Query(None, pattern="^(todo|in_progress|review|done)$"),
-    assigned_to: Optional[UUID] = Query(None),
+    status: str | None = Query(None, pattern="^(todo|in_progress|review|done)$"),
+    assigned_to: UUID | None = Query(None),
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -368,7 +380,7 @@ def create_milestone(
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
     return service.create_milestone(cid, project_id, data)
 
-@router.get("/{project_id}/milestones", response_model=List[MilestoneResponse])
+@router.get("/{project_id}/milestones", response_model=list[MilestoneResponse])
 def list_milestones(
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
@@ -425,7 +437,7 @@ async def add_project_document(
         doc_create = ProjectDocumentCreate.model_validate(body)
         return service.add_document(cid, project_id, doc_create, current_user.id)
 
-@router.get("/{project_id}/documents", response_model=List[ProjectDocumentResponse])
+@router.get("/{project_id}/documents", response_model=list[ProjectDocumentResponse])
 def list_project_documents(
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
@@ -455,7 +467,9 @@ def download_project_document(
     current_user: User = Depends(get_current_user)
 ):
     import os
+
     from fastapi.responses import FileResponse
+
     from app.modules.platform.models import FileObject
 
     service = ProjectService(db)

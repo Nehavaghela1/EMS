@@ -1,19 +1,31 @@
-from datetime import datetime, date
+from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional
 from uuid import UUID
+
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
 
 from app.modules.projects.models import (
-    Project, ProjectMember, Task, TaskComment, TimeEntry, Milestone, ProjectDocument
+    Milestone,
+    Project,
+    ProjectDocument,
+    ProjectMember,
+    Task,
+    TaskComment,
+    TimeEntry,
 )
 from app.modules.projects.schemas import (
-    ProjectCreate, ProjectUpdate, ProjectMemberCreate,
-    TaskCreate, TaskUpdate, TaskCommentCreate,
-    TimeEntryCreate, TimeEntryUpdate, MilestoneCreate, MilestoneUpdate,
-    ProjectDocumentCreate
+    MilestoneCreate,
+    MilestoneUpdate,
+    ProjectCreate,
+    ProjectDocumentCreate,
+    ProjectMemberCreate,
+    ProjectUpdate,
+    TaskCreate,
+    TaskUpdate,
+    TimeEntryCreate,
+    TimeEntryUpdate,
 )
+
 
 class ProjectRepository:
     def __init__(self, db: Session):
@@ -31,19 +43,19 @@ class ProjectRepository:
         self.db.refresh(project)
         return project
 
-    def get_project_by_id(self, company_id: Optional[UUID], project_id: UUID) -> Optional[Project]:
+    def get_project_by_id(self, company_id: UUID | None, project_id: UUID) -> Project | None:
         query = self.db.query(Project).filter(Project.id == project_id)
         if company_id is not None:
             query = query.filter(Project.company_id == company_id)
         return query.first()
 
-    def get_project_by_code(self, company_id: UUID, code: str) -> Optional[Project]:
+    def get_project_by_code(self, company_id: UUID, code: str) -> Project | None:
         return self.db.query(Project).filter(
             Project.company_id == company_id,
             Project.code == code
         ).first()
 
-    def list_projects(self, company_id: Optional[UUID] = None, status: Optional[str] = None) -> List[Project]:
+    def list_projects(self, company_id: UUID | None = None, status: str | None = None) -> list[Project]:
         query = self.db.query(Project)
         if company_id is not None:
             query = query.filter(Project.company_id == company_id)
@@ -78,21 +90,21 @@ class ProjectRepository:
         self.db.refresh(member)
         return member
 
-    def get_member(self, company_id: UUID, project_id: UUID, employee_id: UUID) -> Optional[ProjectMember]:
+    def get_member(self, company_id: UUID, project_id: UUID, employee_id: UUID) -> ProjectMember | None:
         return self.db.query(ProjectMember).filter(
             ProjectMember.company_id == company_id,
             ProjectMember.project_id == project_id,
             ProjectMember.employee_id == employee_id
         ).first()
 
-    def list_members(self, company_id: UUID, project_id: UUID) -> List[ProjectMember]:
+    def list_members(self, company_id: UUID, project_id: UUID) -> list[ProjectMember]:
         return self.db.query(ProjectMember).filter(
             ProjectMember.company_id == company_id,
             ProjectMember.project_id == project_id
         ).all()
 
     def list_members_with_details(self, company_id: UUID, project_id: UUID):
-        from app.modules.hr.models import Employee, Department
+        from app.modules.hr.models import Department, Employee
         return (
             self.db.query(ProjectMember, Employee, Department.name.label("department_name"))
             .outerjoin(Employee, ProjectMember.employee_id == Employee.id)
@@ -109,7 +121,7 @@ class ProjectRepository:
         self.db.commit()
 
     # --- Tasks ---
-    def create_task(self, company_id: UUID, project_id: UUID, created_by: Optional[UUID], data: TaskCreate) -> Task:
+    def create_task(self, company_id: UUID, project_id: UUID, created_by: UUID | None, data: TaskCreate) -> Task:
         task = Task(
             company_id=company_id,
             project_id=project_id,
@@ -123,13 +135,13 @@ class ProjectRepository:
         self.db.refresh(task)
         return task
 
-    def get_task_by_id(self, company_id: Optional[UUID], task_id: UUID) -> Optional[Task]:
+    def get_task_by_id(self, company_id: UUID | None, task_id: UUID) -> Task | None:
         query = self.db.query(Task).filter(Task.id == task_id)
         if company_id is not None:
             query = query.filter(Task.company_id == company_id)
         return query.first()
 
-    def list_tasks(self, company_id: UUID, project_id: UUID, status: Optional[str] = None, assigned_to: Optional[UUID] = None) -> List[Task]:
+    def list_tasks(self, company_id: UUID, project_id: UUID, status: str | None = None, assigned_to: UUID | None = None) -> list[Task]:
         query = self.db.query(Task).filter(
             Task.company_id == company_id,
             Task.project_id == project_id
@@ -140,7 +152,7 @@ class ProjectRepository:
             query = query.filter(Task.assigned_to == assigned_to)
         return query.order_by(Task.created_at.desc()).all()
 
-    def list_tasks_with_details(self, company_id: UUID, project_id: UUID, status: Optional[str] = None, assigned_to: Optional[UUID] = None):
+    def list_tasks_with_details(self, company_id: UUID, project_id: UUID, status: str | None = None, assigned_to: UUID | None = None):
         from app.modules.hr.models import Employee
         query = (
             self.db.query(Task, Employee)
@@ -187,7 +199,7 @@ class ProjectRepository:
         self.db.refresh(tc)
         return tc
 
-    def list_comments(self, company_id: UUID, task_id: UUID) -> List[TaskComment]:
+    def list_comments(self, company_id: UUID, task_id: UUID) -> list[TaskComment]:
         return self.db.query(TaskComment).filter(
             TaskComment.company_id == company_id,
             TaskComment.task_id == task_id
@@ -206,7 +218,7 @@ class ProjectRepository:
         self.db.refresh(entry)
         return entry
 
-    def get_time_entry_by_id(self, company_id: UUID, entry_id: UUID) -> Optional[TimeEntry]:
+    def get_time_entry_by_id(self, company_id: UUID, entry_id: UUID) -> TimeEntry | None:
         return self.db.query(TimeEntry).filter(
             TimeEntry.company_id == company_id,
             TimeEntry.id == entry_id
@@ -215,12 +227,12 @@ class ProjectRepository:
     def list_time_entries(
         self,
         company_id: UUID,
-        project_id: Optional[UUID] = None,
-        employee_id: Optional[UUID] = None,
-        status: Optional[str] = None,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None
-    ) -> List[TimeEntry]:
+        project_id: UUID | None = None,
+        employee_id: UUID | None = None,
+        status: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None
+    ) -> list[TimeEntry]:
         query = self.db.query(TimeEntry).filter(TimeEntry.company_id == company_id)
         if project_id:
             query = query.filter(TimeEntry.project_id == project_id)
@@ -237,11 +249,11 @@ class ProjectRepository:
     def list_time_entries_with_details(
         self,
         company_id: UUID,
-        project_id: Optional[UUID] = None,
-        employee_id: Optional[UUID] = None,
-        status: Optional[str] = None,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None
+        project_id: UUID | None = None,
+        employee_id: UUID | None = None,
+        status: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None
     ):
         from app.modules.hr.models import Employee
         query = (
@@ -306,13 +318,13 @@ class ProjectRepository:
         self.db.refresh(milestone)
         return milestone
 
-    def get_milestone_by_id(self, company_id: Optional[UUID], milestone_id: UUID) -> Optional[Milestone]:
+    def get_milestone_by_id(self, company_id: UUID | None, milestone_id: UUID) -> Milestone | None:
         query = self.db.query(Milestone).filter(Milestone.id == milestone_id)
         if company_id is not None:
             query = query.filter(Milestone.company_id == company_id)
         return query.first()
 
-    def list_milestones(self, company_id: UUID, project_id: UUID) -> List[Milestone]:
+    def list_milestones(self, company_id: UUID, project_id: UUID) -> list[Milestone]:
         return self.db.query(Milestone).filter(
             Milestone.company_id == company_id,
             Milestone.project_id == project_id
@@ -343,7 +355,7 @@ class ProjectRepository:
         self.db.commit()
 
     # --- Project Documents ---
-    def create_project_document(self, company_id: UUID, project_id: UUID, data: ProjectDocumentCreate, uploaded_by: Optional[UUID] = None) -> ProjectDocument:
+    def create_project_document(self, company_id: UUID, project_id: UUID, data: ProjectDocumentCreate, uploaded_by: UUID | None = None) -> ProjectDocument:
         doc = ProjectDocument(
             company_id=company_id,
             project_id=project_id,
@@ -372,7 +384,7 @@ class ProjectRepository:
             .all()
         )
 
-    def get_project_document(self, company_id: UUID, document_id: UUID) -> Optional[ProjectDocument]:
+    def get_project_document(self, company_id: UUID, document_id: UUID) -> ProjectDocument | None:
         return self.db.query(ProjectDocument).filter(
             ProjectDocument.company_id == company_id,
             ProjectDocument.id == document_id

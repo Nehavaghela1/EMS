@@ -12,11 +12,8 @@ References:
 """
 
 import math
-import uuid
-from typing import NamedTuple
 
 from app.core.exceptions import AppError
-
 
 # ── Earth mean radius (m) ────────────────────────────────────────────────────
 _R_METERS = 6_371_000.0

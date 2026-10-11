@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from app.modules.time_leave.models import AttendanceStatus, LeaveStatus
 
 
-
 class AttendanceRegularizationResponse(BaseModel):
     id: uuid.UUID
     attendance_id: uuid.UUID

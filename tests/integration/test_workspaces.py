@@ -1,7 +1,6 @@
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.modules.identity.models import Company, User, UserRole
 from tests.conftest import TenantContext
 
 

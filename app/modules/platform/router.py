@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, date, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, UploadFile, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
@@ -12,31 +12,31 @@ from app.db.session import get_db
 from app.modules.identity.models import User, UserRole
 from app.modules.platform.models import AuditLog, Notification
 from app.modules.platform.schemas import (
+    AnnouncementCreate,
+    AnnouncementResponse,
     AuditLogExportRequest,
     AuditLogResponse,
     DashboardResponse,
+    EmployeeDocumentCreate,
+    EmployeeDocumentResponse,
+    FileUploadResponse,
+    GlobalSearchResponse,
     JobQueuedResponse,
     JobStatusResponse,
     MarkAllReadResponse,
     NotificationListResponse,
     NotificationResponse,
-    AnnouncementCreate,
-    AnnouncementResponse,
-    FileUploadResponse,
     SignedUrlResponse,
-    EmployeeDocumentCreate,
-    EmployeeDocumentResponse,
-    GlobalSearchResponse,
 )
 from app.modules.platform.service import (
+    AnnouncementService,
     AuditService,
     DashboardService,
+    EmployeeDocumentService,
+    FileService,
+    GlobalSearchService,
     IndustryPresetService,
     NotificationService,
-    AnnouncementService,
-    FileService,
-    EmployeeDocumentService,
-    GlobalSearchService,
 )
 from app.workers.celery_app import celery_app
 
@@ -261,10 +261,14 @@ def download_file(
     db: Session = Depends(get_db),
 ):
     # Verify HMAC Signature
-    import hmac, hashlib, os
+    import hashlib
+    import hmac
+    import os
+
+    from fastapi.responses import FileResponse
+
     from app.core.config import settings
     from app.modules.platform.models import FileObject
-    from fastapi.responses import FileResponse
 
     # 1. Check expiration
     if int(datetime.now(UTC).timestamp()) > expires:

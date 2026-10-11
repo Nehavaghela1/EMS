@@ -3,23 +3,18 @@ Generate Document 3: Data Dictionary for EMS Pro.
 Introspects all 38 SQLAlchemy models and writes comprehensive schema reference tables.
 Outputs to: /Users/apple/Downloads/EMS/document/3_Data_Dictionary.docx
 """
-import os
-import sys
-from docx.shared import Inches, Pt, RGBColor
-from scripts.docx_helper import (
-    create_styled_document, add_cover_page, add_header_1, add_header_2,
-    add_header_3, add_callout, add_styled_table, COLOR_DARK_TEXT
-)
+from docx.shared import Inches, RGBColor
 
 # Import all models to populate Base.metadata
 from app.db.base import Base
-import app.modules.identity.models
-import app.modules.hr.models
-import app.modules.time_leave.models
-import app.modules.payroll.models
-import app.modules.performance.models
-import app.modules.projects.models
-import app.modules.platform.models
+from scripts.docx_helper import (
+    add_callout,
+    add_cover_page,
+    add_header_1,
+    add_header_2,
+    add_styled_table,
+    create_styled_document,
+)
 
 TABLE_DOMAIN_MAPPING = {
     "Identity & Access Management": [

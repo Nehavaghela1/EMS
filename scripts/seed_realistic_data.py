@@ -15,7 +15,6 @@ from decimal import Decimal
 
 from app.core.security import hash_password
 from app.core.time import utcnow
-from app.db.base import tenant_table_names
 from app.db.rls import bind_tenant_to_session
 from app.db.session import SessionLocal
 from app.modules.hr.models import (
@@ -23,7 +22,6 @@ from app.modules.hr.models import (
     Employee,
     EmploymentType,
     InvitationStatus,
-    ResignationStatus,
 )
 from app.modules.identity.models import Company, CompanySettings, CompanyStatus, User, UserRole
 from app.modules.payroll.models import (
@@ -34,40 +32,26 @@ from app.modules.payroll.models import (
     PayrollRunStatus,
     PayrollRunType,
     PercentageOf,
-    Reimbursement,
-    ReimbursementStatus,
-    ReimbursementType,
     SalaryComponent,
     SalaryComponentType,
     SalaryStructure,
     StatutoryConfig,
 )
-from app.modules.performance.models import (
-    CycleStatus,
-    CycleType,
-    GoalStatus,
-    PerformanceCycle,
-    PerformanceGoal,
-    PerformanceReview,
-    ReviewerRole,
-)
 from app.modules.platform.models import (
     Announcement,
-    AuditLog,
-    EmployeeDocument,
-    FileObject,
-    Notification,
 )
-from app.modules.projects.models import Milestone, Project, ProjectMember, Task, TaskComment, TimeEntry
+from app.modules.projects.models import (
+    Project,
+    ProjectMember,
+    Task,
+    TimeEntry,
+)
 from app.modules.time_leave.models import (
     Attendance,
     AttendanceSource,
     AttendanceStatus,
     EmployeeShift,
-    Holiday,
-    Leave,
     LeaveBalance,
-    LeaveStatus,
     LeaveType,
     Shift,
 )

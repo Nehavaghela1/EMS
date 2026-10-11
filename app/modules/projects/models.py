@@ -1,13 +1,23 @@
-from datetime import datetime, date
 import uuid
-from typing import Optional, List
+from datetime import date, datetime
+
 from sqlalchemy import (
-    Column, String, Text, Numeric, Date, DateTime, Boolean, ForeignKey, UniqueConstraint, CheckConstraint, Index
+    Boolean,
+    CheckConstraint,
+    Column,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
 
-from app.db.base import Base, TenantBase
+from app.db.base import Base
+
 
 class Project(Base):
     __tablename__ = "projects"

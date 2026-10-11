@@ -1,6 +1,4 @@
 import uuid
-from datetime import date
-from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -8,7 +6,6 @@ from sqlalchemy.orm import Session
 from app.core.pagination import PageParams, paginate
 from app.modules.performance.models import (
     CycleStatus,
-    GoalStatus,
     PerformanceCycle,
     PerformanceGoal,
     PerformancePIP,

@@ -9,6 +9,7 @@ from app.core.email_templates import leave_decision_email
 from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.core.pagination import PageParams
 from app.core.time import utcnow
+from app.modules.hr.models import Employee
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
 from app.modules.identity.models import CompanySettings, LeaveYearType, User, UserRole
 from app.modules.identity.repository import CompanySettingsRepository
@@ -21,6 +22,7 @@ from app.modules.platform.service import (
 from app.modules.time_leave.geofence import verify_employee_geofence
 from app.modules.time_leave.models import (
     Attendance,
+    AttendanceRegularizationRequest,
     AttendanceSource,
     AttendanceStatus,
     EmployeeShift,
@@ -29,9 +31,8 @@ from app.modules.time_leave.models import (
     LeaveBalance,
     LeaveStatus,
     LeaveType,
-    Shift,
-    AttendanceRegularizationRequest,
     RegularizationStatus,
+    Shift,
 )
 from app.modules.time_leave.repository import (
     AttendanceRepository,
@@ -44,9 +45,9 @@ from app.modules.time_leave.repository import (
 )
 from app.modules.time_leave.schemas import (
     AttendanceExportRequest,
-    AttendanceRegularizeRequest,
-    AttendanceRegularizationCreate,
     AttendanceRegularizationApprove,
+    AttendanceRegularizationCreate,
+    AttendanceRegularizeRequest,
     CheckInRequest,
     HolidayCreateRequest,
     LeaveApplyRequest,
@@ -57,7 +58,6 @@ from app.modules.time_leave.schemas import (
     ShiftCreateRequest,
     ShiftUpdateRequest,
 )
-from app.modules.hr.models import Employee
 from app.workers.tasks.email import send_email_task
 
 logger = logging.getLogger(__name__)
@@ -966,8 +966,9 @@ class HolidayService:
     def import_regional_holidays(
         self, company_id: uuid.UUID, state: str = "Gujarat", year: int = 2026, country: str = "IN"
     ) -> tuple[int, list[Holiday]]:
-        from app.modules.time_leave.constants import get_regional_statutory_holidays
         from datetime import date as dt_date
+
+        from app.modules.time_leave.constants import get_regional_statutory_holidays
 
         holidays_data = get_regional_statutory_holidays(state=state, year=year, country=country)
         if not holidays_data:

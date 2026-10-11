@@ -1,9 +1,9 @@
 from decimal import Decimal
+
 import pytest
 
 from app.modules.payroll.payslip_engine import (
     ComponentSpec,
-    LineItem,
     PayslipInput,
     PTSlabSpec,
     StatutoryConfigSpec,

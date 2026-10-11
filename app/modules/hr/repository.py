@@ -250,6 +250,7 @@ class EmployeeRepository:
             stmt = stmt.where(Employee.company_id == company_id)
         if role and role.strip() and role.strip().lower() != "all":
             from sqlalchemy import String, cast
+
             from app.modules.identity.models import User
             role_clean = role.strip().lower().replace(" ", "_")
             stmt = stmt.join(User, Employee.user_id == User.id).where(

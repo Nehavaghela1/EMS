@@ -28,10 +28,16 @@ from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, InvitationStatus
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
-from app.modules.identity.models import Company, CompanyLocation, CompanySettings, CompanyStatus, User, UserRole
+from app.modules.identity.models import (
+    Company,
+    CompanySettings,
+    CompanyStatus,
+    User,
+    UserRole,
+)
 from app.modules.identity.repository import (
-    CompanyRepository,
     CompanyLocationRepository,
+    CompanyRepository,
     RefreshTokenRepository,
     UserRepository,
 )
@@ -654,9 +660,10 @@ class CompanyService:
             must_change_password=must_change,
         )
 
-        from app.modules.hr.repository import EmployeeRepository
-        from app.modules.hr.models import InvitationStatus
         from datetime import date
+
+        from app.modules.hr.models import InvitationStatus
+        from app.modules.hr.repository import EmployeeRepository
         
         # Provision Head Office
         location_repo = CompanyLocationRepository(self.db)
@@ -785,8 +792,9 @@ class CompanyService:
                 self.department_repo.create(company_id=company.id, name=dept_name)
 
         if data.seed_shift:
-            from app.modules.time_leave.repository import ShiftRepository
             from datetime import time
+
+            from app.modules.time_leave.repository import ShiftRepository
             shift_repo = ShiftRepository(self.db)
             shift_repo.create(
                 company_id=company.id,
@@ -804,9 +812,10 @@ class CompanyService:
             must_change_password=False,
         )
 
-        from app.modules.hr.repository import EmployeeRepository
-        from app.modules.hr.models import InvitationStatus
         from datetime import date
+
+        from app.modules.hr.models import InvitationStatus
+        from app.modules.hr.repository import EmployeeRepository
 
         # Provision Head Office
         location_repo = CompanyLocationRepository(self.db)

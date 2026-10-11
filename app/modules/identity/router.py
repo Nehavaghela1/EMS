@@ -6,37 +6,37 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.exceptions import ForbiddenError, NotFoundError
-from app.core.security import verify_password
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import limiter
+from app.core.security import verify_password
 from app.db.session import get_db
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.identity.schemas import (
     ActivateAccountRequest,
     ActivationPreviewResponse,
     AdminCompanyUpdateRequest,
+    AdminUserResponse,
     ChangePasswordRequest,
     CompanyApproveResponse,
+    CompanyDeactivateRequest,
     CompanyDetailResponse,
+    CompanyLocationCreate,
+    CompanyLocationResponse,
     CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
     CompanyRejectRequest,
-    CompanyDeactivateRequest,
     CompanyResponse,
-    UserRoleUpdateRequest,
+    CreateWorkspaceRequest,
+    CreateWorkspaceResponse,
     ForgotPasswordRequest,
     LoginRequest,
     MeResponse,
     ResetPasswordRequest,
+    SwitchWorkspaceRequest,
     TokenResponse,
     UsernameAvailabilityResponse,
-    CreateWorkspaceRequest,
-    SwitchWorkspaceRequest,
+    UserRoleUpdateRequest,
     UserWorkspaceResponse,
-    CreateWorkspaceResponse,
-    CompanyLocationCreate,
-    CompanyLocationResponse,
-    AdminUserResponse,
 )
 from app.modules.identity.service import AuthService, CompanyService, LocationService
 
@@ -391,8 +391,8 @@ def list_administrators(
     """Return all users in the tenant who hold an administrative role (owner or hr_admin).
     Used by the Settings > Manage Admins card. Accessible to owner and hr_admin.
     """
+
     from app.modules.hr.models import Employee as EmployeeModel
-    from sqlalchemy import select, outerjoin
 
     # Fetch all admin users in the tenant
     admin_users = (

@@ -1,4 +1,5 @@
 import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -6,7 +7,7 @@ from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
-from app.modules.performance.models import CycleStatus, GoalStatus
+from app.modules.performance.models import CycleStatus
 from app.modules.performance.schemas import (
     GoalsCreateRequest,
     GoalUpdateRequest,

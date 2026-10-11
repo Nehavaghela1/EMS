@@ -4,9 +4,9 @@ Pure function. No database. No ORM objects. No routes.
 All money is Decimal with explicit ROUND_HALF_UP quantization to 2 places.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Sequence
 
 TWO_PLACES = Decimal("0.01")
 

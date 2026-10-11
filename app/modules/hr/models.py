@@ -12,9 +12,11 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    Numeric as SANumeric,
     String,
     Text,
+)
+from sqlalchemy import (
+    Numeric as SANumeric,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column

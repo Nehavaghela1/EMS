@@ -37,7 +37,6 @@ def test_register_creates_a_pending_company_with_no_user(client, db):
 
 
 def test_register_with_password_subdomain_and_size_and_approval(client, db, super_admin_headers):
-    from app.modules.identity.models import Company, User
 
     payload = {
         "company_name": "Apex Cloud Tech",

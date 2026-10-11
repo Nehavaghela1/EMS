@@ -101,6 +101,7 @@ def delete_department(
 
 from app.modules.identity.models import Company
 
+
 def _to_employee_response(
     employee: Employee,
     company_map: dict[uuid.UUID, str] | None = None,
@@ -110,8 +111,8 @@ def _to_employee_response(
     resp = EmployeeResponse.model_validate(employee)
     if system_role is not None:
         resp.system_role = system_role
-    elif hasattr(employee, "system_role") and getattr(employee, "system_role") is not None:
-        val = getattr(employee, "system_role")
+    elif hasattr(employee, "system_role") and employee.system_role is not None:
+        val = employee.system_role
         resp.system_role = val.value if hasattr(val, "value") else str(val)
     resp.company_id = employee.company_id
     if company_map and employee.company_id in company_map:
@@ -322,12 +323,13 @@ def resend_invite(
 
 # ── Resignation & Full-and-Final (Routes 27-30) ─────────────────
 from app.modules.hr.schemas import (
-    ResignationSubmitRequest,
-    ResignationApproveRequest,
-    TerminationRequest,
     FnFClearanceUpdateRequest,
     FnFSettlementResponse,
+    ResignationApproveRequest,
+    ResignationSubmitRequest,
+    TerminationRequest,
 )
+
 
 @employees_router.post("/{employee_id}/resignation", response_model=EmployeeResponse)
 def submit_resignation(

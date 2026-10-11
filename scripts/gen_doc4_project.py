@@ -4,13 +4,16 @@ Covers Project Scope, Business Requirements, Work Packages (WP-01 to WP-29),
 Seeded Demo Data, Feature Inventories, and Deployment Handover.
 Outputs to: /Users/apple/Downloads/EMS/document/4_Project_Documentation.docx
 """
-import os
-import sys
-from docx.shared import Inches, Pt, RGBColor
+from docx.shared import Inches
+
 from scripts.docx_helper import (
-    create_styled_document, add_cover_page, add_header_1, add_header_2,
-    add_header_3, add_callout, add_styled_table, COLOR_DARK_TEXT
+    add_cover_page,
+    add_header_1,
+    add_header_2,
+    add_styled_table,
+    create_styled_document,
 )
+
 
 def build_project_documentation():
     doc = create_styled_document()

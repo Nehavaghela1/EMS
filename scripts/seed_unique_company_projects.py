@@ -3,13 +3,11 @@ import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from app.db.session import SessionLocal
 from app.db.rls import bind_tenant_to_session
-from app.modules.identity.models import Company, User, UserRole
+from app.db.session import SessionLocal
 from app.modules.hr.models import Employee
-from app.modules.projects.models import (
-    Project, ProjectMember, Task, Milestone, TimeEntry
-)
+from app.modules.identity.models import Company
+from app.modules.projects.models import Milestone, Project, ProjectMember, Task, TimeEntry
 
 COMPANIES_DATA = {
     "Infiria Systems": {

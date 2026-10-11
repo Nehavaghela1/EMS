@@ -518,7 +518,6 @@ class LeaveRepository:
         """
         from decimal import Decimal as _Decimal
 
-        from sqlalchemy import func as _func
 
         stmt = (
             select(Leave)

@@ -24,7 +24,6 @@ from app.modules.payroll.router import (
     tax_slabs_router,
 )
 from app.modules.performance.router import performance_router
-from app.modules.projects.router import router as projects_router
 from app.modules.platform.router import (
     announcements_router,
     audit_logs_router,
@@ -36,6 +35,7 @@ from app.modules.platform.router import (
     search_router,
 )
 from app.modules.platform.router import router as jobs_router
+from app.modules.projects.router import router as projects_router
 from app.modules.time_leave.router import (
     attendance_router,
     holidays_router,

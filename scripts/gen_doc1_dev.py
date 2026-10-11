@@ -2,13 +2,17 @@
 Generate Document 1: Development Documentation for EMS Pro.
 Outputs to: /Users/apple/Downloads/EMS/document/1_Development_Documentation.docx
 """
-import os
-import sys
-from docx.shared import Inches, Pt, RGBColor
+from docx.shared import Inches, Pt
+
 from scripts.docx_helper import (
-    create_styled_document, add_cover_page, add_header_1, add_header_2,
-    add_header_3, add_callout, add_styled_table, COLOR_DARK_TEXT
+    add_callout,
+    add_cover_page,
+    add_header_1,
+    add_header_2,
+    add_styled_table,
+    create_styled_document,
 )
+
 
 def build_dev_documentation():
     doc = create_styled_document()

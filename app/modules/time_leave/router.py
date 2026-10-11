@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -23,10 +23,10 @@ from app.modules.time_leave.models import (
 from app.modules.time_leave.schemas import (
     AssignedShiftDetailResponse,
     AttendanceExportRequest,
-    AttendanceRegularizeRequest,
-    AttendanceRegularizationCreate,
     AttendanceRegularizationApprove,
+    AttendanceRegularizationCreate,
     AttendanceRegularizationResponse,
+    AttendanceRegularizeRequest,
     AttendanceResponse,
     CalendarResponse,
     CheckInRequest,
@@ -237,7 +237,8 @@ async def request_regularization(
 
         file_url = None
         if attachment and hasattr(attachment, "filename") and attachment.filename:
-            import os, uuid as sys_uuid
+            import os
+            import uuid as sys_uuid
             upload_dir = os.path.join(os.getcwd(), "uploads", "regularizations")
             os.makedirs(upload_dir, exist_ok=True)
             safe_name = f"{sys_uuid.uuid4()}_{attachment.filename}"
@@ -264,6 +265,7 @@ async def request_regularization(
 @attendance_router.get("/regularizations/attachments/{filename}")
 def download_regularization_attachment(filename: str):
     import os
+
     from fastapi.responses import FileResponse
     upload_dir = os.path.join(os.getcwd(), "uploads", "regularizations")
     file_path = os.path.join(upload_dir, filename)

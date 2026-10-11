@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-import pytest
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
 from tests.conftest import TenantContext
+
 
 def _create_user_and_headers(db: Session, company_id: uuid.UUID) -> dict[str, str]:
     bind_tenant_to_session(db, company_id=company_id, is_platform_admin=False)

@@ -14,6 +14,7 @@ from app.modules.payroll.models import (
     TaxRegime,
     TaxSlab,
 )
+from app.modules.payroll.repository import PayrollItemRepository
 from app.modules.payroll.schemas import (
     EmployeeSalaryResponse,
     PayrollItemResponse,
@@ -35,7 +36,6 @@ from app.modules.payroll.schemas import (
     TaxSlabPostRequest,
     TaxSlabResponse,
 )
-from app.modules.payroll.repository import PayrollItemRepository
 from app.modules.payroll.service import (
     EmployeeSalaryService,
     PayrollRunService,

@@ -1,5 +1,6 @@
 import uuid
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,7 +11,6 @@ from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.performance.models import (
     CycleStatus,
-    CycleType,
     GoalStatus,
     PerformanceCycle,
     PerformanceGoal,

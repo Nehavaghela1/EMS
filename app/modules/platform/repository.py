@@ -8,7 +8,14 @@ from app.core.pagination import PageParams, paginate
 from app.core.time import utcnow
 from app.modules.hr.models import Department, Employee
 from app.modules.identity.models import Company, User
-from app.modules.platform.models import AuditLog, IndustryPreset, Notification, Announcement, FileObject, EmployeeDocument
+from app.modules.platform.models import (
+    Announcement,
+    AuditLog,
+    EmployeeDocument,
+    FileObject,
+    IndustryPreset,
+    Notification,
+)
 from app.modules.time_leave.models import (
     Attendance,
     AttendanceStatus,

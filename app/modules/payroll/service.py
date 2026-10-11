@@ -8,23 +8,29 @@ from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoun
 from app.core.pagination import PageParams
 from app.modules.hr.models import EmploymentType
 from app.modules.hr.repository import EmployeeRepository
-from app.modules.time_leave.repository import LeaveRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import (
     CalculationType,
     EmployeeSalary,
-    PercentageOf,
     PayrollItem,
     PayrollRun,
     PayrollRunStatus,
     PayrollRunType,
+    PercentageOf,
     Reimbursement,
     ReimbursementStatus,
-    ReimbursementType,
     SalaryComponent,
     SalaryComponentType,
     SalaryStructure,
     StatutoryConfig,
+)
+from app.modules.payroll.payslip_engine import (
+    ComponentSpec,
+    PayslipInput,
+    PTSlabSpec,
+    StatutoryConfigSpec,
+    TaxSlabSpec,
+    calculate_payslip,
 )
 from app.modules.payroll.repository import (
     EmployeeSalaryRepository,
@@ -50,15 +56,8 @@ from app.modules.payroll.schemas import (
     StatutoryConfigUpdateRequest,
     TaxSlabPostRequest,
 )
-from app.modules.payroll.payslip_engine import (
-    ComponentSpec,
-    PayslipInput,
-    PTSlabSpec,
-    StatutoryConfigSpec,
-    TaxSlabSpec,
-    calculate_payslip,
-)
 from app.modules.platform.service import AuditService
+from app.modules.time_leave.repository import LeaveRepository
 
 
 class InvalidStructureError(AppError):
@@ -658,7 +657,7 @@ class PayrollRunService:
         actor: User,
     ) -> PayrollRun:
         from sqlalchemy.exc import IntegrityError
-        from app.core.time import utcnow
+
 
         # 1. Idempotency Check (Spec 11.9 Step 2)
         existing = self.repo.get_by_idempotency_key(company_id, idempotency_key)
@@ -1023,8 +1022,9 @@ class PayrollRunService:
     def approve_run(
         self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User
     ) -> PayrollRun:
-        from app.core.time import utcnow
         from sqlalchemy import update
+
+        from app.core.time import utcnow
 
         run = self.repo.get_by_id(run_id, company_id)
         if run is None:

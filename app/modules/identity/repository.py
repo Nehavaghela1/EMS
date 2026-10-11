@@ -6,7 +6,14 @@ from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate, resolve_sort
 from app.core.time import utcnow
-from app.modules.identity.models import Company, CompanyLocation, CompanySettings, CompanyStatus, RefreshToken, User
+from app.modules.identity.models import (
+    Company,
+    CompanyLocation,
+    CompanySettings,
+    CompanyStatus,
+    RefreshToken,
+    User,
+)
 
 
 class CompanySettingsRepository:

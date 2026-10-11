@@ -11,18 +11,24 @@ from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoun
 from app.core.pagination import PageParams
 from app.core.security import generate_refresh_token, hash_token
 from app.core.time import utcnow
-from app.modules.hr.models import Department, Employee, EmploymentType, InvitationStatus, ResignationStatus
+from app.modules.hr.models import (
+    Department,
+    Employee,
+    EmploymentType,
+    InvitationStatus,
+    ResignationStatus,
+)
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
 from app.modules.hr.schemas import (
     DepartmentCreateRequest,
     DepartmentUpdateRequest,
     EmployeeCreateRequest,
     EmployeeUpdateRequest,
-    ResignationSubmitRequest,
-    ResignationApproveRequest,
-    TerminationRequest,
     FnFClearanceUpdateRequest,
     FnFSettlementResponse,
+    ResignationApproveRequest,
+    ResignationSubmitRequest,
+    TerminationRequest,
 )
 from app.modules.identity.models import User, UserRole
 from app.modules.identity.repository import CompanyRepository, UserRepository
@@ -218,6 +224,7 @@ class EmployeeService:
         limit: int = 15,
     ) -> list[dict]:
         from sqlalchemy import or_, select
+
         from app.modules.hr.models import Department
 
         stmt = select(Employee, Department.name.label("dept_name")).outerjoin(
@@ -621,8 +628,18 @@ class EmployeeService:
         notice_recovery_days = employee.notice_recovery_days if not employee.notice_waived else 0
 
         # Calculate salary and daily rate from in-force salary assignment or latest payslip
-        from app.modules.payroll.repository import EmployeeSalaryRepository, SalaryStructureRepository, PayrollItemRepository, StatutoryConfigRepository
-        from app.modules.payroll.payslip_engine import PayslipInput, StatutoryConfigSpec, ComponentSpec, calculate_payslip
+        from app.modules.payroll.payslip_engine import (
+            ComponentSpec,
+            PayslipInput,
+            StatutoryConfigSpec,
+            calculate_payslip,
+        )
+        from app.modules.payroll.repository import (
+            EmployeeSalaryRepository,
+            PayrollItemRepository,
+            SalaryStructureRepository,
+            StatutoryConfigRepository,
+        )
         salary_repo = EmployeeSalaryRepository(self.db)
         payroll_item_repo = PayrollItemRepository(self.db)
 

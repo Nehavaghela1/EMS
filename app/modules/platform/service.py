@@ -12,16 +12,25 @@ from app.core.pagination import PageParams
 from app.core.time import utcnow
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
-from app.modules.platform.models import AuditLog, Notification, Announcement, FileObject, EmployeeDocument
-from app.modules.platform.schemas import (
-    AnnouncementCreate, SignedUrlResponse, EmployeeDocumentCreate,
-    EmployeeDocumentResponse, GlobalSearchResponse, SearchResultItem
+from app.modules.platform.models import (
+    Announcement,
+    AuditLog,
+    FileObject,
+    Notification,
 )
 from app.modules.platform.repository import (
     AuditRepository,
     DashboardRepository,
     IndustryPresetRepository,
     NotificationRepository,
+)
+from app.modules.platform.schemas import (
+    AnnouncementCreate,
+    EmployeeDocumentCreate,
+    EmployeeDocumentResponse,
+    GlobalSearchResponse,
+    SearchResultItem,
+    SignedUrlResponse,
 )
 from app.modules.time_leave.repository import LeaveTypeRepository
 
@@ -452,7 +461,8 @@ class FileService:
             raise NotFoundError("File object not found.")
 
         # HMAC signed token valid for 3600 seconds
-        import hmac, hashlib
+        import hashlib
+        import hmac
         expires_at = int(datetime.now(UTC).timestamp()) + 3600
         signature_payload = f"{company_id}:{file_id}:{expires_at}".encode()
         signature = hmac.new(settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256).hexdigest()

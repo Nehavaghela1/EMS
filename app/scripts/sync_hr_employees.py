@@ -1,11 +1,12 @@
 import uuid
-from app.db.session import SessionLocal
-from app.modules.identity.models import User, UserRole
-from app.modules.hr.models import Employee, Department, InvitationStatus
-from app.modules.time_leave.models import Shift
 from datetime import date
 
 from app.db.rls import bind_tenant_to_session
+from app.db.session import SessionLocal
+from app.modules.hr.models import Department, Employee, InvitationStatus
+from app.modules.identity.models import User, UserRole
+from app.modules.time_leave.models import Shift
+
 
 def sync_employees():
     db = SessionLocal()
