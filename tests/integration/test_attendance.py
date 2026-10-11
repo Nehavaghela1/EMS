@@ -477,6 +477,55 @@ def test_attendance_exempt_calendar_shows_exempt_not_absent(client, company_a, d
     assert today_cell["badge_label"] == "Exempt"
 
 
+def test_calendar_shows_in_progress_for_sunday_active_clock_in(client, company_a, db, monkeypatch):
+    """Verifies that an active check-in on a Sunday shows 'in_progress' (punches beat weekend)."""
+    # Freeze time to a Sunday (2026-10-18 10:00:00 UTC)
+    sunday = datetime(2026, 10, 18, 10, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.core.time.utcnow", lambda: sunday)
+    monkeypatch.setattr("app.modules.time_leave.service.utcnow", lambda: sunday)
+    monkeypatch.setattr("app.modules.time_leave.router.utcnow", lambda: sunday)
+
+    employee = _create_employee(client, company_a.hr_headers)
+    own_headers = _link_user_to_employee(
+        db, company_a.company_id, employee["id"], UserRole.employee
+    )
+    # Check in on Sunday
+    res_punch = client.post("/api/v1/attendance/check-in", headers=own_headers)
+    assert res_punch.status_code == 201, res_punch.text
+
+    today = sunday.date()
+    cal_resp = client.get(
+        f"/api/v1/attendance/calendar?employee_id={employee['id']}&month={today.month}&year={today.year}",
+        headers=company_a.hr_headers,
+    )
+    assert cal_resp.status_code == 200, cal_resp.text
+    cal_data = cal_resp.json()
+    today_cell = next(d for d in cal_data["days"] if d["date"] == today.isoformat())
+    assert today_cell["status"] == "in_progress"
+    assert today_cell["badge_label"] == "Clocked In"
+
+
+def test_attendance_exempt_calendar_shows_weekend_on_sunday(client, company_a, db, monkeypatch):
+    """Verifies that an attendance-exempt employee with no punch on Sunday shows 'weekend'."""
+    # Freeze time to a Sunday (2026-10-18 10:00:00 UTC)
+    sunday = datetime(2026, 10, 18, 10, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.core.time.utcnow", lambda: sunday)
+    monkeypatch.setattr("app.modules.time_leave.service.utcnow", lambda: sunday)
+    monkeypatch.setattr("app.modules.time_leave.router.utcnow", lambda: sunday)
+
+    employee = _create_employee(client, company_a.hr_headers, is_attendance_exempt=True)
+    today = sunday.date()
+    cal_resp = client.get(
+        f"/api/v1/attendance/calendar?employee_id={employee['id']}&month={today.month}&year={today.year}",
+        headers=company_a.hr_headers,
+    )
+    assert cal_resp.status_code == 200, cal_resp.text
+    cal_data = cal_resp.json()
+    today_cell = next(d for d in cal_data["days"] if d["date"] == today.isoformat())
+    assert today_cell["status"] == "weekend"
+    assert today_cell["badge_label"] == "Weekend"
+
+
 def test_company_deactivation_restricted_to_owner(client, company_a, super_admin_headers, db):
     """Verifies that deactivating a workspace is strictly restricted to Owner / Super Admin."""
     # HR Admin caller should be rejected
