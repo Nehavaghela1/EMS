@@ -385,37 +385,23 @@ class EmployeeSalaryService:
         if structure is None:
             raise NotFoundError("Salary structure not found.")
 
-        # Check if this employee has any finalized / approved payroll runs (Locked Stage)
-        approved_payroll_items = self.payroll_item_repo.list_by_employee_id(
-            target_company_id, employee_id
-        )
-        has_approved_payroll = len(approved_payroll_items) > 0
-
         overlapping = self.repo.get_overlapping(employee_id, target_company_id, data.effective_from)
         open_ended = None
         for row in overlapping:
             if row.effective_to is None:
                 if row.effective_from >= data.effective_from:
-                    # If payroll has already been approved, enforce strict protection
-                    if has_approved_payroll:
-                        raise SalaryOverlapError(
-                            "Cannot backdate salary prior to approved/paid payroll periods. "
-                            "This employee already has a finalized salary starting on or "
-                            f"after {data.effective_from.isoformat()}."
-                        )
-                    # BEFORE Payroll is Run (DRAFT Stage) — Full Flexibility:
-                    # Allow backdating/updating the start date of initial open-ended salary
-                    open_ended = row
-                else:
-                    open_ended = row
-            else:
-                if has_approved_payroll:
                     raise SalaryOverlapError(
-                        f"This overlaps an existing finalized salary period "
-                        f"({row.effective_from} to {row.effective_to})."
+                        "Cannot assign salary with effective_from on or before "
+                        "existing open-ended salary. Existing salary starts on "
+                        f"{row.effective_from.isoformat()}."
                     )
-                # If unapproved, allow the existing closed row to be replaced or superseded
                 open_ended = row
+            else:
+                if row.effective_from <= data.effective_from <= row.effective_to:
+                    raise SalaryOverlapError(
+                        f"This overlaps an existing salary period "
+                        f"({row.effective_from.isoformat()} to {row.effective_to.isoformat()})."
+                    )
 
         # Validate the CTC actually covers the structure's fixed + percentage
         # earnings before committing anything (Spec 19 WP-16 gate): with a
