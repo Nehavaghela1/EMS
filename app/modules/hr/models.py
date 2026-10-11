@@ -2,6 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from sqlalchemy import (
     Boolean,
@@ -32,7 +33,9 @@ class Department(TenantBase):
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    clearance_function: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    clearance_function: Mapped[Literal["it", "finance", "hr"] | None] = mapped_column(
+        String(20), nullable=True
+    )
     # `employees` and `departments` reference each other (department_id on
     # employees, head_employee_id here) — a real FK cycle, same shape as the
     # companies/users cycle (7.2). departments is created first (WP-06) with
