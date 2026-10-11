@@ -109,24 +109,77 @@ export function ReimbursementsPage() {
     }
   }
 
+  // Calculate summary metrics for Zoho-style KPI cards
+  const totalApproved = claims
+    .filter((c) => c.status === "approved" || c.status === "paid")
+    .reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const totalPending = claims
+    .filter((c) => c.status === "pending")
+    .reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const totalPaidInPayroll = claims
+    .filter((c) => c.status === "paid")
+    .reduce((sum, c) => sum + Number(c.amount || 0), 0);
+
   return (
     <div className="container">
-      <div className="page-header flex justify-between align-center">
+      <div className="page-header flex justify-between align-center page-header-responsive">
         <div>
           <h1>Reimbursements</h1>
-          <p className="text-muted">Submit expense claims and manage approvals</p>
+          <p className="text-muted">Submit official business expense claims and track payroll payout approvals</p>
         </div>
         <button className="btn btn-primary" onClick={() => setShowSubmitModal(true)}>
           + Submit Claim
         </button>
       </div>
 
+      {/* Zoho Expense KPI Summary Cards */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: "12px",
+          marginBottom: "1rem",
+        }}
+      >
+        <div className="card p-3" style={{ background: "#f8fafc" }}>
+          <div className="text-muted text-xs uppercase font-semibold">Total Claims</div>
+          <div className="text-xl font-bold mt-1" style={{ color: "#0f172a" }}>
+            {claims.length}
+          </div>
+          <div className="text-xs text-muted mt-1">Submitted in record</div>
+        </div>
+
+        <div className="card p-3" style={{ background: "#fefce8", border: "1px solid #fef08a" }}>
+          <div className="text-xs uppercase font-semibold" style={{ color: "#854d0e" }}>⏳ Pending Approval</div>
+          <div className="text-xl font-bold mt-1" style={{ color: "#a16207" }}>
+            ₹{totalPending.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-xs text-muted mt-1">Awaiting manager/HR review</div>
+        </div>
+
+        <div className="card p-3" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+          <div className="text-xs uppercase font-semibold" style={{ color: "#166534" }}>✓ Approved / Disbursed</div>
+          <div className="text-xl font-bold mt-1 text-success">
+            ₹{totalApproved.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-xs text-muted mt-1">₹{totalPaidInPayroll.toLocaleString("en-IN")} credited in payslips</div>
+        </div>
+      </div>
+
       {/* Filter Tabs */}
-      <div className="flex gap-2 my-4">
+      <div
+        className="flex gap-2 my-4"
+        style={{
+          overflowX: "auto",
+          paddingBottom: "4px",
+          WebkitOverflowScrolling: "touch",
+        }}
+      >
         {(["all", "pending", "approved", "rejected", "paid"] as const).map((st) => (
           <button
             key={st}
             className={`btn btn-sm ${statusFilter === st ? "btn-primary" : "btn-outline"}`}
+            style={{ whiteSpace: "nowrap" }}
             onClick={() => setStatusFilter(st)}
           >
             {st.toUpperCase()}
@@ -134,84 +187,95 @@ export function ReimbursementsPage() {
         ))}
       </div>
 
-      <div className="card mt-4">
+      <div className="card mt-4" style={{ padding: "0" }}>
         {loading ? (
-          <p>Loading reimbursement claims...</p>
+          <div className="p-6 text-center text-muted">Loading reimbursement claims...</div>
         ) : claims.length === 0 ? (
-          <p className="text-muted">No reimbursement claims found for this filter.</p>
+          <div className="p-8 text-center text-muted">
+            <span style={{ fontSize: "2rem", display: "block", marginBottom: "8px" }}>🧾</span>
+            No reimbursement claims found for this filter.
+          </div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Description</th>
-                <th>Amount</th>
-                <th>Status</th>
-                {canReview && <th>Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {claims.map((c) => (
-                <tr
-                  key={c.id}
-                  onDoubleClick={() => setSelectedClaim(c)}
-                  style={{ cursor: "pointer" }}
-                  title="Double-click to view or review claim details"
-                >
-                  <td>{formatDate(c.expense_date)}</td>
-                  <td>
-                    <span className="badge badge-outline">{c.type}</span>
-                  </td>
-                  <td>{c.description}</td>
-                  <td className="fw-bold">₹{Number(c.amount).toLocaleString()}</td>
-                  <td>
-                    {/* 3-state reimbursement lifecycle badges */}
-                    {c.status === "paid" ? (
-                      <span className="badge badge-success" title="Included and paid in a finalised payroll run">
-                        ✅ Paid in Payroll
-                      </span>
-                    ) : c.status === "approved" && c.added_to_payroll_run_id ? (
-                      <span
-                        className="badge"
-                        style={{ backgroundColor: "#fef3c7", color: "#92400e", border: "1px solid #fcd34d" }}
-                        title="Locked into an active pay run — awaiting payroll finalization"
-                      >
-                        🔒 Locked in Pay Run
-                      </span>
-                    ) : c.status === "approved" ? (
-                      <span
-                        className="badge"
-                        style={{ backgroundColor: "#ecfdf5", color: "#065f46", border: "1px solid #6ee7b7" }}
-                        title="Approved — will roll into the next open pay run automatically"
-                      >
-                        ⏳ Pending Payroll
-                      </span>
-                    ) : c.status === "rejected" ? (
-                      <span className="badge badge-danger text-red">Rejected</span>
-                    ) : (
-                      <span className="badge badge-warning">Pending</span>
-                    )}
-                  </td>
-                  {canReview && (
-                    <td>
-                      {c.status === "pending" && (
-                        <button
-                          className="btn btn-sm btn-outline"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedClaim(c);
-                          }}
+          <div className="mobile-table-wrap">
+            <table className="table" style={{ margin: 0 }}>
+              <thead>
+                <tr style={{ background: "#f8fafc" }}>
+                  <th style={{ padding: "12px 16px" }}>Date</th>
+                  <th style={{ padding: "12px 16px" }}>Type</th>
+                  <th style={{ padding: "12px 16px" }}>Description</th>
+                  <th style={{ padding: "12px 16px" }}>Amount</th>
+                  <th style={{ padding: "12px 16px" }}>Status</th>
+                  {canReview && <th style={{ padding: "12px 16px" }}>Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {claims.map((c) => (
+                  <tr
+                    key={c.id}
+                    onClick={() => setSelectedClaim(c)}
+                    style={{ cursor: "pointer", transition: "background 0.15s ease" }}
+                    title="Click to view full receipt and audit details"
+                  >
+                    <td style={{ padding: "12px 16px", whiteSpace: "nowrap" }}>{formatDate(c.expense_date)}</td>
+                    <td style={{ padding: "12px 16px", whiteSpace: "nowrap" }}>
+                      <span className="badge badge-outline" style={{ textTransform: "capitalize" }}>{c.type}</span>
+                    </td>
+                    <td style={{ padding: "12px 16px", maxWidth: "260px" }}>
+                      <div style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {c.description}
+                      </div>
+                    </td>
+                    <td style={{ padding: "12px 16px", whiteSpace: "nowrap" }} className="fw-bold font-mono">
+                      ₹{Number(c.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: "12px 16px", whiteSpace: "nowrap" }}>
+                      {/* 3-state reimbursement lifecycle badges */}
+                      {c.status === "paid" ? (
+                        <span className="badge badge-success" title="Included and paid in a finalised payroll run">
+                          ✅ Paid in Payroll
+                        </span>
+                      ) : c.status === "approved" && c.added_to_payroll_run_id ? (
+                        <span
+                          className="badge"
+                          style={{ backgroundColor: "#fef3c7", color: "#92400e", border: "1px solid #fcd34d" }}
+                          title="Locked into an active pay run — awaiting payroll finalization"
                         >
-                          Review
-                        </button>
+                          🔒 Locked in Pay Run
+                        </span>
+                      ) : c.status === "approved" ? (
+                        <span
+                          className="badge"
+                          style={{ backgroundColor: "#ecfdf5", color: "#065f46", border: "1px solid #6ee7b7" }}
+                          title="Approved — will roll into the next open pay run automatically"
+                        >
+                          ⏳ Pending Payroll
+                        </span>
+                      ) : c.status === "rejected" ? (
+                        <span className="badge badge-danger text-red">Rejected</span>
+                      ) : (
+                        <span className="badge badge-warning">Pending Approval</span>
                       )}
                     </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    {canReview && (
+                      <td style={{ padding: "12px 16px", whiteSpace: "nowrap" }}>
+                        {c.status === "pending" && (
+                          <button
+                            className="btn btn-sm btn-outline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedClaim(c);
+                            }}
+                          >
+                            Review
+                          </button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

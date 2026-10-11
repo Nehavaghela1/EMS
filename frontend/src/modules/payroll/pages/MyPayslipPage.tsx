@@ -79,7 +79,7 @@ export function MyPayslipPage() {
 
   return (
     <div className="container">
-      <div className="page-header flex justify-between align-center no-print">
+      <div className="page-header flex justify-between align-center page-header-responsive no-print">
         <div>
           <h1>My Payslips & Statements</h1>
           <p className="text-muted">
@@ -438,6 +438,7 @@ export function MyPayslipPage() {
             <div className="card p-6 col-span-2 print-section stack gap-6" style={{ position: "relative" }}>
               {/* Tenant Branded Header */}
               <div
+                className="payslip-detail-header"
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
@@ -596,7 +597,7 @@ export function MyPayslipPage() {
                   </button>
                 </div>
 
-                <div className="grid grid-4 gap-4 p-3 bg-muted rounded text-sm" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+                <div className="grid grid-4 gap-4 p-3 bg-muted rounded text-sm payslip-summary-grid" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
                   <div>
                     <span className="text-muted block text-xs">Calendar Working Days</span>
                     <strong>{selectedPayslip.working_days}</strong>
