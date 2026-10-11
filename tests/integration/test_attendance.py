@@ -471,7 +471,7 @@ def test_company_deactivation_restricted_to_owner(client, company_a, super_admin
     resp_hr = client.post(
         f"/api/v1/companies/{company_a.company_id}/deactivate",
         headers=company_a.hr_headers,
-        json={"reason": "Business closure"},
+        json={"reason": "Business closure", "password": "Test1234pass!"},
     )
     assert resp_hr.status_code == 403
 
@@ -479,7 +479,7 @@ def test_company_deactivation_restricted_to_owner(client, company_a, super_admin
     resp_sa = client.post(
         f"/api/v1/companies/{company_a.company_id}/deactivate",
         headers=super_admin_headers,
-        json={"reason": "Workspace audit"},
+        json={"reason": "Workspace audit", "password": "Test1234pass!"},
     )
     assert resp_sa.status_code == 200
     assert resp_sa.json()["message"] == "Company workspace has been deactivated."
