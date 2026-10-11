@@ -1,6 +1,7 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr
 
@@ -10,12 +11,14 @@ from app.modules.hr.models import EmploymentType, InvitationStatus
 class DepartmentCreateRequest(BaseModel):
     name: str
     description: str | None = None
+    clearance_function: Literal["it", "finance", "hr"] | None = None
 
 
 class DepartmentUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     head_employee_id: uuid.UUID | None = None
+    clearance_function: Literal["it", "finance", "hr"] | None = None
 
 
 class DepartmentResponse(BaseModel):
@@ -23,6 +26,7 @@ class DepartmentResponse(BaseModel):
     name: str
     description: str | None
     head_employee_id: uuid.UUID | None
+    clearance_function: Literal["it", "finance", "hr"] | None = None
     employee_count: int
     created_at: datetime
 

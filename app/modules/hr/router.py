@@ -36,6 +36,7 @@ def _to_department_response(department: Department, employee_count: int) -> Depa
         name=department.name,
         description=department.description,
         head_employee_id=department.head_employee_id,
+        clearance_function=department.clearance_function,
         employee_count=employee_count,
         created_at=department.created_at,
     )

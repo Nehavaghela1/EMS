@@ -123,3 +123,117 @@ def test_resignation_and_fnf_workflow(client: TestClient, db: Session, company_a
     assert fnf_waived.status_code == 200
     assert fnf_waived.json()["notice_recovery_days"] == 0
     assert Decimal(str(fnf_waived.json()["notice_recovery_amount"])) == Decimal("0.00")
+
+
+def test_department_clearance_function_authorization(client: TestClient, db: Session, company_a):
+    from app.core.security import create_access_token, hash_password
+    from app.modules.hr.models import Employee
+    from app.modules.identity.models import User, UserRole
+
+    hr_headers = company_a.hr_headers
+
+    # 1. Create department "Audit" with null clearance_function
+    resp_audit_dept = client.post(
+        "/api/v1/departments",
+        json={"name": "Audit", "description": "Internal Audit"},
+        headers=hr_headers,
+    )
+    assert resp_audit_dept.status_code == 201
+    audit_dept_id = resp_audit_dept.json()["id"]
+    assert resp_audit_dept.json()["clearance_function"] is None
+
+    # 2. Create department "Tech Services" with clearance_function="it"
+    resp_it_dept = client.post(
+        "/api/v1/departments",
+        json={
+            "name": "Tech Services",
+            "description": "IT Dept",
+            "clearance_function": "it",
+        },
+        headers=hr_headers,
+    )
+    assert resp_it_dept.status_code == 201
+    it_dept_id = resp_it_dept.json()["id"]
+    assert resp_it_dept.json()["clearance_function"] == "it"
+
+    # 3. Create manager in Audit department
+    audit_emp = _create_employee(
+        client,
+        hr_headers,
+        email="audit-mgr@example.com",
+        department_id=audit_dept_id,
+    )
+    audit_user = User(
+        company_id=company_a.company_id,
+        email="audit-mgr-user@example.com",
+        hashed_password=hash_password("Test1234pass!"),
+        role=UserRole.manager,
+        is_active=True,
+    )
+    db.add(audit_user)
+    db.flush()
+    db.query(Employee).filter(Employee.id == audit_emp["id"]).update({"user_id": audit_user.id})
+    db.commit()
+    audit_token = create_access_token(
+        sub=str(audit_user.id),
+        company_id=str(company_a.company_id),
+        role=UserRole.manager.value,
+    )
+    audit_mgr_headers = {"Authorization": f"Bearer {audit_token}"}
+
+    # 4. Create manager in Tech Services (IT) department
+    it_emp = _create_employee(
+        client,
+        hr_headers,
+        email="it-mgr@example.com",
+        department_id=it_dept_id,
+    )
+    it_user = User(
+        company_id=company_a.company_id,
+        email="it-mgr-user@example.com",
+        hashed_password=hash_password("Test1234pass!"),
+        role=UserRole.manager,
+        is_active=True,
+    )
+    db.add(it_user)
+    db.flush()
+    db.query(Employee).filter(Employee.id == it_emp["id"]).update({"user_id": it_user.id})
+    db.commit()
+    it_token = create_access_token(
+        sub=str(it_user.id),
+        company_id=str(company_a.company_id),
+        role=UserRole.manager.value,
+    )
+    it_mgr_headers = {"Authorization": f"Bearer {it_token}"}
+
+    # 5. Create employee undergoing resignation
+    emp = _create_employee(client, hr_headers, email="target-resigning@example.com")
+    emp_id = emp["id"]
+    res_sub = client.post(
+        f"/api/v1/employees/{emp_id}/resignation",
+        json={
+            "resignation_date": "2026-09-17",
+            "last_working_date": "2026-10-01",
+            "reason": "Relocation",
+        },
+        headers=hr_headers,
+    )
+    assert res_sub.status_code == 200
+
+    # 6. Audit manager (null clearance_function) CANNOT sign off IT clearance -> 403
+    res_audit_clear = client.put(
+        f"/api/v1/employees/{emp_id}/fnf/clearance",
+        json={"it_clearance": True},
+        headers=audit_mgr_headers,
+    )
+    assert res_audit_clear.status_code == 403
+    assert "IT Department Managers" in res_audit_clear.json()["error"]["message"]
+
+    # 7. IT manager (clearance_function='it') CAN sign off IT clearance -> 200
+    res_it_clear = client.put(
+        f"/api/v1/employees/{emp_id}/fnf/clearance",
+        json={"it_clearance": True},
+        headers=it_mgr_headers,
+    )
+    assert res_it_clear.status_code == 200
+    assert res_it_clear.json()["it_clearance"] is True

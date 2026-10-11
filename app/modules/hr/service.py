@@ -76,7 +76,10 @@ class DepartmentService:
         if self.repo.get_by_name(company_id, data.name):
             raise ConflictError("A department with this name already exists.")
         department = self.repo.create(
-            company_id=company_id, name=data.name, description=data.description
+            company_id=company_id,
+            name=data.name,
+            description=data.description,
+            clearance_function=data.clearance_function,
         )
         self.db.commit()
         return department, 0
@@ -866,28 +869,16 @@ class EmployeeService:
 
         is_executive = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
 
-        # Resolve actor's department name if available
-        actor_dept_name = ""
+        # Resolve actor's department clearance function if available
+        dept_clearance_function: str | None = None
         if actor_emp and actor_emp.department_id:
             dept = self.department_repo.get_by_id(actor_emp.department_id, company_id)
             if dept:
-                actor_dept_name = dept.name.strip().lower()
+                dept_clearance_function = dept.clearance_function
 
-        is_it_dept = (
-            ("it" in actor_dept_name)
-            or ("tech" in actor_dept_name)
-            or ("information technology" in actor_dept_name)
-        )
-        is_fin_dept = (
-            ("fin" in actor_dept_name)
-            or ("account" in actor_dept_name)
-            or ("payroll" in actor_dept_name)
-        )
-        is_hr_dept = (
-            ("hr" in actor_dept_name)
-            or ("human" in actor_dept_name)
-            or ("people" in actor_dept_name)
-        )
+        is_it_dept = dept_clearance_function == "it"
+        is_fin_dept = dept_clearance_function == "finance"
+        is_hr_dept = dept_clearance_function == "hr"
 
         updates: dict[str, Any] = {}
 
