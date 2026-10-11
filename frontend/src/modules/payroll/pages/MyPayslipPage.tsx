@@ -15,6 +15,8 @@ export function MyPayslipPage() {
   const [company, setCompany] = useState<CompanyResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedPayslip, setSelectedPayslip] = useState<PayrollItem | null>(null);
+  const [showDaysAuditModal, setShowDaysAuditModal] = useState(false);
+  const [showFnfFormulaModal, setShowFnfFormulaModal] = useState(false);
 
   useEffect(() => {
     fetchPayslips();
@@ -63,15 +65,31 @@ export function MyPayslipPage() {
     window.print();
   }
 
+  // Determine whether FnF applies to this employee:
+  // In Zoho People & Payroll: FnF Statement is only relevant if employee is in exit/separation
+  // or has a settlement record. For active employees without separation, only regular payslips show.
+  const hasSeparationOrFnF = Boolean(
+    fnfData &&
+    (fnfData.fnf_settled_at ||
+     (fnfData.resignation_status && fnfData.resignation_status !== "none") ||
+     fnfData.is_active === false ||
+     Number(fnfData.notice_recovery_amount || 0) > 0 ||
+     Number(fnfData.severance_pay || 0) > 0)
+  );
+
   return (
     <div className="container">
       <div className="page-header flex justify-between align-center no-print">
         <div>
           <h1>My Payslips & Statements</h1>
-          <p className="text-muted">Monthly itemized payslip breakdowns and Full & Final (FnF) statements</p>
+          <p className="text-muted">
+            {hasSeparationOrFnF
+              ? "Monthly itemized payslip breakdowns and official exit settlement statements"
+              : "Monthly itemized salary breakdown, attendance credits, and statutory deductions"}
+          </p>
         </div>
         <div className="flex gap-2 no-print">
-          {(selectedPayslip || fnfData) && (
+          {(selectedPayslip || (activeTab === "fnf" && fnfData)) && (
             <button className="btn btn-primary no-print" onClick={handlePrint}>
               📥 Download Statement (PDF / Print)
             </button>
@@ -79,7 +97,7 @@ export function MyPayslipPage() {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs - In Zoho People, FnF Statement only shows when an employee has an active separation/settlement */}
       <div className="flex gap-4 border-b mb-4 no-print" style={{ borderColor: "var(--color-border)" }}>
         <button
           type="button"
@@ -95,20 +113,38 @@ export function MyPayslipPage() {
         >
           📄 Monthly Payslips ({payslips.length})
         </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          style={{
-            padding: "0.5rem 1rem",
-            fontWeight: activeTab === "fnf" ? 600 : 400,
-            borderBottom: activeTab === "fnf" ? "2px solid #16a34a" : "2px solid transparent",
-            color: activeTab === "fnf" ? "#16a34a" : "var(--color-text-muted)",
-            cursor: "pointer",
-          }}
-          onClick={() => setActiveTab("fnf")}
-        >
-          📑 Full & Final (FnF) Statement
-        </button>
+
+        {hasSeparationOrFnF ? (
+          <button
+            type="button"
+            className="btn-ghost"
+            style={{
+              padding: "0.5rem 1rem",
+              fontWeight: activeTab === "fnf" ? 600 : 400,
+              borderBottom: activeTab === "fnf" ? "2px solid #16a34a" : "2px solid transparent",
+              color: activeTab === "fnf" ? "#16a34a" : "var(--color-text-muted)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+            onClick={() => setActiveTab("fnf")}
+          >
+            <span>📑 Full & Final (FnF) Statement</span>
+            <span
+              style={{
+                fontSize: "0.7rem",
+                padding: "2px 6px",
+                borderRadius: "4px",
+                backgroundColor: fnfData?.fnf_settled_at ? "#dcfce7" : "#fef3c7",
+                color: fnfData?.fnf_settled_at ? "#15803d" : "#b45309",
+                fontWeight: 600,
+              }}
+            >
+              {fnfData?.fnf_settled_at ? "Settled" : "Exit In-Progress"}
+            </span>
+          </button>
+        ) : null}
       </div>
 
       {activeTab === "fnf" ? (
@@ -162,7 +198,7 @@ export function MyPayslipPage() {
             </div>
           ) : (
             <div className="stack gap-4">
-              {/* Formula Callout Banner */}
+              {/* Formula Callout Banner with Interactive Breakdown Modal Button */}
               <div
                 style={{
                   background: "#f8fafc",
@@ -170,10 +206,30 @@ export function MyPayslipPage() {
                   borderRadius: "8px",
                   border: "1px solid var(--color-border)",
                   fontSize: "0.85rem",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: "8px",
                 }}
               >
-                <strong>FnF Formula:</strong>{" "}
-                <code>Net Payout = (Unpaid Salary + Leave Encashment + Pending Reimbursements + Gratuity/Bonus + Severance) - (Notice Recovery + Asset Deductions)</code>
+                <div>
+                  <strong>FnF Formula:</strong>{" "}
+                  <code>Net = (Unpaid Salary + Leave Encashment + Reimbursements + Gratuity + Severance) - (Notice Shortfall + Asset Deductions)</code>
+                </div>
+                <button
+                  type="button"
+                  className="btn-ghost text-xs"
+                  style={{
+                    color: "var(--color-primary, #2563eb)",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    padding: "4px 8px",
+                  }}
+                  onClick={() => setShowFnfFormulaModal(true)}
+                >
+                  🔍 View Detailed Calculation Math
+                </button>
               </div>
 
               {/* Department Clearance Progress */}
@@ -519,47 +575,86 @@ export function MyPayslipPage() {
                 </div>
               </div>
 
-              {/* Attendance & Summary Stats */}
-              <div className="grid grid-4 gap-4 p-3 bg-muted rounded text-sm" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
-                <div>
-                  <span className="text-muted block text-xs">Working Days</span>
-                  <strong>{selectedPayslip.working_days}</strong>
+              {/* Attendance & Summary Stats with Calculation Breakdown Trigger */}
+              <div>
+                <div className="flex justify-between align-center mb-2">
+                  <span className="text-xs font-semibold uppercase text-muted">Attendance & Pay Days Summary</span>
+                  <button
+                    type="button"
+                    className="btn-ghost text-xs"
+                    style={{
+                      color: "var(--color-primary, #2563eb)",
+                      padding: "2px 8px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                    }}
+                    onClick={() => setShowDaysAuditModal(true)}
+                  >
+                    <span>ℹ️ How payable days & salary are calculated</span>
+                  </button>
                 </div>
-                <div>
-                  <span className="text-muted block text-xs">Present Days</span>
-                  <strong>{selectedPayslip.present_days}</strong>
-                </div>
-                <div>
-                  <span className="text-muted block text-xs">Paid Leave</span>
-                  <strong>{selectedPayslip.paid_leave_days}</strong>
-                </div>
-                <div>
-                  <span className="text-muted block text-xs">LOP Days</span>
-                  <strong style={{ color: Number(selectedPayslip.lop_days) > 0 ? "#dc2626" : undefined }}>
-                    {selectedPayslip.lop_days}
-                  </strong>
-                </div>
-                <div>
-                  <span className="text-muted block text-xs">Reimbursements</span>
-                  <strong style={{ color: Number(selectedPayslip.reimbursement_amount) > 0 ? "#15803d" : undefined }}>
-                    ₹{Number(selectedPayslip.reimbursement_amount).toLocaleString()}
-                  </strong>
+
+                <div className="grid grid-4 gap-4 p-3 bg-muted rounded text-sm" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+                  <div>
+                    <span className="text-muted block text-xs">Calendar Working Days</span>
+                    <strong>{selectedPayslip.working_days}</strong>
+                  </div>
+                  <div>
+                    <span className="text-muted block text-xs">Prorated Present Days</span>
+                    <strong className="text-success">{selectedPayslip.present_days}</strong>
+                  </div>
+                  <div>
+                    <span className="text-muted block text-xs">Paid Leaves</span>
+                    <strong>{selectedPayslip.paid_leave_days}</strong>
+                  </div>
+                  <div>
+                    <span className="text-muted block text-xs">Unpaid (LOP) Days</span>
+                    <strong style={{ color: Number(selectedPayslip.lop_days) > 0 ? "#dc2626" : undefined }}>
+                      {selectedPayslip.lop_days}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-muted block text-xs">Reimbursements</span>
+                    <strong style={{ color: Number(selectedPayslip.reimbursement_amount) > 0 ? "#15803d" : undefined }}>
+                      ₹{Number(selectedPayslip.reimbursement_amount).toLocaleString()}
+                    </strong>
+                  </div>
                 </div>
               </div>
-              {Number(selectedPayslip.lop_days) > 0 && (
+
+              {Number(selectedPayslip.lop_days) > 0 ? (
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: "6px",
+                    backgroundColor: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    fontSize: "0.825rem",
+                    color: "#7f1d1d",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: "2px" }}>
+                    ⚠️ Loss of Pay (LOP): {selectedPayslip.lop_days} Day(s) Deducted
+                  </div>
+                  <div>
+                    Your monthly fixed earnings were prorated: <code>Earned Gross = (Monthly Fixed Gross ÷ {selectedPayslip.working_days}) × {selectedPayslip.present_days}</code>.
+                    No statutory deductions (PF/ESI) were charged on unearned LOP days.
+                  </div>
+                </div>
+              ) : (
                 <div
                   style={{
                     padding: "8px 12px",
                     borderRadius: "6px",
-                    backgroundColor: "#fef2f2",
-                    border: "1px solid #fecaca",
+                    backgroundColor: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
                     fontSize: "0.8rem",
-                    color: "#7f1d1d",
+                    color: "#166534",
                   }}
                 >
-                  ⚠️ <strong>Loss of Pay</strong>: {selectedPayslip.lop_days} day(s) of unpaid leave were taken this month.
-                  Your gross earnings have been proportionally reduced (<em>Earned Gross = Monthly Gross × (Present Days / Working Days)</em>).
-                  Statutory deductions (EPF, ESI, PT) are calculated on earned gross only.
+                  ✓ <strong>Full Pay Period Credited:</strong> All {selectedPayslip.present_days} working days were served with 0 LOP deductions.
                 </div>
               )}
 
@@ -684,6 +779,198 @@ export function MyPayslipPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal 1: Attendance & Pay Days Audit Calculation Modal */}
+      {showDaysAuditModal && selectedPayslip && (
+        <div className="modal-backdrop no-print" onClick={() => setShowDaysAuditModal(false)}>
+          <div
+            className="card p-6"
+            style={{ maxWidth: "560px", width: "90%", margin: "auto", position: "relative" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between align-center border-b pb-3 mb-4">
+              <h3 style={{ margin: 0, fontSize: "1.15rem" }}>ℹ️ Attendance & Pay Days Calculation Audit</h3>
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ fontSize: "1.2rem", cursor: "pointer", border: "none", background: "none" }}
+                onClick={() => setShowDaysAuditModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="stack gap-3 text-sm">
+              <p className="text-muted" style={{ margin: 0 }}>
+                Here is the verified audit trail explaining how your payable days and monthly earnings were calculated for this pay cycle:
+              </p>
+
+              <div className="p-3 bg-muted rounded border stack gap-2">
+                <div className="flex justify-between">
+                  <span>1. Total Calendar Working Days in Month:</span>
+                  <strong>{selectedPayslip.working_days} days</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span>2. Actual Days Present & Punched:</span>
+                  <strong className="text-success">{selectedPayslip.present_days} days</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span>3. Approved Paid Leaves (Sick / Casual / Annual):</span>
+                  <strong>{selectedPayslip.paid_leave_days} days</strong>
+                </div>
+                <div className="flex justify-between border-t pt-2" style={{ color: Number(selectedPayslip.lop_days) > 0 ? "#dc2626" : undefined }}>
+                  <span>4. Unapproved / Loss of Pay (LOP) Days:</span>
+                  <strong>{selectedPayslip.lop_days} days</strong>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: "#eff6ff",
+                  padding: "12px",
+                  borderRadius: "6px",
+                  border: "1px solid #bfdbfe",
+                  fontSize: "0.85rem",
+                }}
+              >
+                <div style={{ fontWeight: 600, color: "#1e40af", marginBottom: "4px" }}>
+                  📐 Zoho Standard Salary Proration Formula:
+                </div>
+                <code>Earned Gross = Monthly Fixed CTC × (Present Days ÷ Calendar Working Days)</code>
+                <div style={{ marginTop: "6px", color: "#334155", fontSize: "0.8rem" }}>
+                  {Number(selectedPayslip.lop_days) > 0
+                    ? `Because you had ${selectedPayslip.lop_days} day(s) of Loss of Pay, your gross salary was proportionally computed for ${selectedPayslip.present_days} days.`
+                    : `No Loss of Pay (LOP) was recorded. You received 100% of your fixed gross CTC.`}
+                </div>
+              </div>
+
+              <div className="flex justify-end mt-2">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowDaysAuditModal(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: FnF Calculation Formula & Mathematics Audit Modal */}
+      {showFnfFormulaModal && fnfData && (
+        <div className="modal-backdrop no-print" onClick={() => setShowFnfFormulaModal(false)}>
+          <div
+            className="card p-6"
+            style={{ maxWidth: "620px", width: "92%", margin: "auto", position: "relative" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between align-center border-b pb-3 mb-4">
+              <div>
+                <h3 style={{ margin: 0, fontSize: "1.15rem" }}>📑 FnF Settlement Breakdown Audit</h3>
+                <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+                  Legal & financial calculation basis according to employment contract and statutory norms
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ fontSize: "1.2rem", cursor: "pointer", border: "none", background: "none" }}
+                onClick={() => setShowFnfFormulaModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="stack gap-3 text-sm">
+              <div className="stack gap-2 border p-3 rounded bg-muted">
+                <div className="font-semibold text-xs text-muted uppercase">Base Compensation Figures</div>
+                <div className="flex justify-between">
+                  <span>Monthly Gross Salary:</span>
+                  <strong className="font-mono">₹{Number(fnfData.monthly_gross_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span>Per-Day Salary Rate (Monthly Gross ÷ 30):</span>
+                  <strong className="font-mono text-primary">₹{Number(fnfData.per_day_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })} / day</strong>
+                </div>
+              </div>
+
+              <div className="stack gap-2 border p-3 rounded">
+                <div className="font-semibold text-xs text-success uppercase">1. Additions & Credits Breakdown</div>
+                <div className="flex justify-between">
+                  <span>• Prorated Unpaid Salary ({fnfData.unpaid_salary_days} days × ₹{Number(fnfData.per_day_salary || 0).toFixed(2)}):</span>
+                  <span className="font-mono text-success">+₹{Number(fnfData.unpaid_salary_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>• Leave Encashment ({fnfData.encashable_leave_days} balance leaves × Basic Daily Rate):</span>
+                  <span className="font-mono text-success">+₹{Number(fnfData.leave_encashment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>• Approved Expense Reimbursements:</span>
+                  <span className="font-mono text-success">+₹{Number(fnfData.pending_reimbursements).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                </div>
+                {Number(fnfData.severance_pay || 0) > 0 && (
+                  <div className="flex justify-between">
+                    <span>• Severance / Notice Pay in Lieu:</span>
+                    <span className="font-mono text-success">+₹{Number(fnfData.severance_pay).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="stack gap-2 border p-3 rounded">
+                <div className="font-semibold text-xs text-red uppercase">2. Deductions & Recoveries Breakdown</div>
+                <div className="flex justify-between">
+                  <div>
+                    <div>• Notice Shortfall Recovery:</div>
+                    <div className="text-xs text-muted">
+                      Required: {fnfData.notice_days_required}d | Served: {fnfData.notice_days_served}d | Shortfall: {fnfData.notice_recovery_days} days
+                      {fnfData.notice_waived ? " (Waived by Management)" : ` (${fnfData.notice_recovery_days}d × ₹${Number(fnfData.per_day_salary || 0).toFixed(2)})`}
+                    </div>
+                  </div>
+                  <span className="font-mono text-red">-₹{Number(fnfData.notice_recovery_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>• Asset Damage / Unreturned Assets / Advance Loans:</span>
+                  <span className="font-mono text-red">-₹{Number(fnfData.asset_deductions).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+
+              <div
+                className="p-3 rounded flex justify-between align-center"
+                style={{
+                  background: Number(fnfData.total_settlement_amount || 0) >= 0 ? "#eff6ff" : "#fef2f2",
+                  border: `1px solid ${Number(fnfData.total_settlement_amount || 0) >= 0 ? "#bfdbfe" : "#fecaca"}`,
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
+                    Net FnF Balance = Total Additions - Total Deductions
+                  </div>
+                  <div className="text-xs text-muted">
+                    {Number(fnfData.total_settlement_amount || 0) >= 0
+                      ? "Payable to employee upon complete department clearance sign-off"
+                      : "Payable by employee to company prior to issuance of Relieving Letter"}
+                  </div>
+                </div>
+                <div
+                  className="font-mono font-bold"
+                  style={{
+                    fontSize: "1.15rem",
+                    color: Number(fnfData.total_settlement_amount || 0) >= 0 ? "#1e40af" : "#dc2626",
+                  }}
+                >
+                  {Number(fnfData.total_settlement_amount || 0) >= 0
+                    ? `+₹${Number(fnfData.total_settlement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`
+                    : `-₹${Math.abs(Number(fnfData.total_settlement_amount)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                </div>
+              </div>
+
+              <div className="flex justify-end mt-2">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowFnfFormulaModal(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

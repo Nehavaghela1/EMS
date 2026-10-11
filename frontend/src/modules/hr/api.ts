@@ -273,6 +273,8 @@ export interface FnFSettlement {
   finance_clearance: boolean;
   can_release_settlement: boolean;
   fnf_settled_at: string | null;
+  resignation_status?: string;
+  is_active?: boolean;
   total_settlement_amount: string | number;
 }
 

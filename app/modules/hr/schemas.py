@@ -209,5 +209,7 @@ class FnFSettlementResponse(BaseModel):
     finance_clearance: bool = False
     can_release_settlement: bool = False
     fnf_settled_at: datetime | None = None
+    resignation_status: str = "none"
+    is_active: bool = True
     total_settlement_amount: Decimal
 

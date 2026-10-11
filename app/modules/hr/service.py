@@ -767,6 +767,8 @@ class EmployeeService:
             finance_clearance=employee.finance_clearance,
             can_release_settlement=can_release,
             fnf_settled_at=employee.fnf_settled_at,
+            resignation_status=employee.resignation_status.value if hasattr(employee.resignation_status, "value") else str(employee.resignation_status or "none"),
+            is_active=employee.is_active,
             total_settlement_amount=total_settlement,
         )
 
