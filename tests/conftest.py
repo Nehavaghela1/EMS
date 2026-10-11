@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,7 +77,7 @@ def _migrate_test_database() -> None:
     env = os.environ.copy()
     env["ALEMBIC_DATABASE_URL"] = settings.TEST_MIGRATION_URL
     result = subprocess.run(
-        ["alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
