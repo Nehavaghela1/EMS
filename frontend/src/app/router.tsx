@@ -232,6 +232,22 @@ export function AppRouter() {
           </Protected>
         }
       />
+      <Route
+        path="/performance/reviews"
+        element={
+          <Protected roles={["hr_admin", "manager", "super_admin", "owner"]}>
+            <PerformanceReviewPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/performance/review"
+        element={
+          <Protected roles={["hr_admin", "manager", "super_admin", "owner"]}>
+            <PerformanceReviewPage />
+          </Protected>
+        }
+      />
 
       <Route
         path="/projects"

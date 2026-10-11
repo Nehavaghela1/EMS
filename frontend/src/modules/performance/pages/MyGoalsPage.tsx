@@ -211,7 +211,7 @@ export function MyGoalsPage() {
 
   return (
     <div className="container">
-      <div className="page-header flex justify-between align-center">
+      <div className="page-header flex justify-between align-center page-header-responsive">
         <div>
           <h1>My Performance Goals</h1>
           <p className="text-muted">Set goals for the active performance cycle & submit self-evaluations</p>
@@ -248,7 +248,7 @@ export function MyGoalsPage() {
               </div>
             </div>
             {employees.length > 0 ? (
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                 <label className="text-xs text-muted">Switch Employee:</label>
                 <select
                   value={selectedEmployeeId}
@@ -323,7 +323,7 @@ export function MyGoalsPage() {
 
       {/* Active Cycle Banner */}
       {activeCycle ? (
-        <div className="p-4 bg-muted border rounded my-4 flex justify-between align-center">
+        <div className="p-4 bg-muted border rounded my-4 flex justify-between align-center performance-cycle-banner">
           <div>
             <span className="text-xs text-muted block">Active Appraisal Period</span>
             <strong>{activeCycle.name}</strong> ({formatDate(activeCycle.start_date)} to {formatDate(activeCycle.end_date)})
@@ -350,7 +350,7 @@ export function MyGoalsPage() {
 
       {/* Goals List */}
       <div className="card mt-4">
-        <div className="row-between align-center mb-3">
+        <div className="row-between align-center mb-3" style={{ flexWrap: "wrap", gap: "6px" }}>
           <h3 style={{ margin: 0, fontSize: "1rem" }}>Submitted Goals</h3>
           <span className="text-xs text-muted">💡 Tip: Double-click on any goal to edit its details</span>
         </div>
@@ -359,72 +359,74 @@ export function MyGoalsPage() {
         ) : goals.length === 0 ? (
           <p className="text-muted">No goals submitted yet for the current performance cycle.</p>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Goal Title</th>
-                <th>Target / Metric</th>
-                <th>Weightage</th>
-                <th>Status</th>
-                <th>Self Rating</th>
-                <th style={{ textAlign: "right" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {goals.map((g) => (
-                <tr
-                  key={g.id}
-                  onDoubleClick={() => openEditGoal(g)}
-                  style={{ cursor: "pointer" }}
-                  title="Double-click to edit goal"
-                >
-                  <td>
-                    <div className="fw-bold">{g.title}</div>
-                    <div className="text-xs text-muted">{g.description || "No description"}</div>
-                  </td>
-                  <td>{g.target_value || "—"}</td>
-                  <td className="fw-bold">{g.weightage}%</td>
-                  <td>
-                    <span className="badge badge-outline">{g.status}</span>
-                  </td>
-                  <td>
-                    {g.self_rating ? (
-                      <span className="badge badge-success font-mono">{g.self_rating} / 5.0</span>
-                    ) : (
-                      <span className="text-muted text-xs">Not submitted</span>
-                    )}
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    <div className="flex gap-2 justify-end">
-                      {!g.self_rating ? (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-primary"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedGoal(g);
-                          }}
-                        >
-                          Self Review
-                        </button>
-                      ) : (
-                        <span className="text-xs text-muted" style={{ fontStyle: "italic" }}>
-                          Reviewed (Double-click to edit)
-                        </span>
-                      )}
-                    </div>
-                  </td>
+          <div className="mobile-table-wrap">
+            <table className="table" style={{ minWidth: "600px" }}>
+              <thead>
+                <tr>
+                  <th>Goal Title</th>
+                  <th>Target / Metric</th>
+                  <th>Weightage</th>
+                  <th>Status</th>
+                  <th>Self Rating</th>
+                  <th style={{ textAlign: "right" }}>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {goals.map((g) => (
+                  <tr
+                    key={g.id}
+                    onDoubleClick={() => openEditGoal(g)}
+                    style={{ cursor: "pointer" }}
+                    title="Double-click to edit goal"
+                  >
+                    <td>
+                      <div className="fw-bold">{g.title}</div>
+                      <div className="text-xs text-muted">{g.description || "No description"}</div>
+                    </td>
+                    <td>{g.target_value || "—"}</td>
+                    <td className="fw-bold">{g.weightage}%</td>
+                    <td>
+                      <span className="badge badge-outline">{g.status}</span>
+                    </td>
+                    <td>
+                      {g.self_rating ? (
+                        <span className="badge badge-success font-mono">{g.self_rating} / 5.0</span>
+                      ) : (
+                        <span className="text-muted text-xs">Not submitted</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <div className="flex gap-2 justify-end">
+                        {!g.self_rating ? (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedGoal(g);
+                            }}
+                          >
+                            Self Review
+                          </button>
+                        ) : (
+                          <span className="text-xs text-muted" style={{ fontStyle: "italic" }}>
+                            Reviewed (Double-click to edit)
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
       {/* Modal: Set Goals */}
       {showSetModal && (
         <div className="modal-backdrop" onClick={() => setShowSetModal(false)}>
-          <div className="modal card" style={{ maxWidth: "640px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal card performance-goal-modal" style={{ maxWidth: "640px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Set Performance Goals</h2>
               <button
@@ -459,7 +461,7 @@ export function MyGoalsPage() {
                     </div>
 
                     <div className="stack gap-2">
-                      <div className="grid-2">
+                      <div className="grid-2 performance-grid-2-mobile">
                         <div className="field">
                           <label>Title *</label>
                           <input
@@ -493,7 +495,7 @@ export function MyGoalsPage() {
                         </div>
                       </div>
 
-                      <div className="grid-2">
+                      <div className="grid-2 performance-grid-2-mobile">
                         <div className="field">
                           <label>Target Metric</label>
                           <input
@@ -526,7 +528,7 @@ export function MyGoalsPage() {
                 ))}
               </div>
 
-              <div className="row-between p-3 bg-muted rounded border align-center">
+              <div className="row-between p-3 bg-muted rounded border align-center" style={{ flexWrap: "wrap", gap: "10px" }}>
                 <button type="button" className="btn btn-sm btn-outline" onClick={addGoalLine}>
                   + Add Goal
                 </button>
@@ -570,7 +572,7 @@ export function MyGoalsPage() {
       {/* Modal: Self Review */}
       {selectedGoal && (
         <div className="modal-backdrop" onClick={() => setSelectedGoal(null)}>
-          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+          <div className="modal card max-w-md performance-goal-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Self Evaluation: {selectedGoal.title}</h2>
               <button
@@ -653,7 +655,7 @@ export function MyGoalsPage() {
       {/* Modal: Edit Goal */}
       {editingGoal && (
         <div className="modal-backdrop" onClick={() => setEditingGoal(null)}>
-          <div className="modal card" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal card performance-goal-modal" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Edit Goal</h2>
               <button
@@ -687,7 +689,7 @@ export function MyGoalsPage() {
                 />
               </div>
 
-              <div className="grid-2">
+              <div className="grid-2 performance-grid-2-mobile">
                 <div className="field">
                   <label>Target Metric</label>
                   <input

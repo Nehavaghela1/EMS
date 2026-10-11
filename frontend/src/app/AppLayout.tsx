@@ -96,6 +96,7 @@ const NAV_SECTIONS: NavSection[] = [
     children: [
       { to: "/performance", label: "Cycles & Review", roles: ["hr_admin", "super_admin", "owner"] },
       { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/performance/reviews", label: "Team Reviews", roles: ["manager", "hr_admin", "super_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
