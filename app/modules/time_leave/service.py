@@ -789,7 +789,7 @@ class AttendanceService:
                 holiday_name = hol.name
                 leave_type_name = None
 
-            # Priority 3: Attendance Punches (even on weekends/holidays if worked)
+            # Priority 3: Attendance Punches (punches beat weekend)
             elif att is not None:
                 check_in_val = att.check_in
                 check_out_val = att.check_out
@@ -833,11 +833,7 @@ class AttendanceService:
                         badge = None
 
             # Priority 4: Attendance Exempt (e.g. CEO/Owner on today or past work days)
-            elif (
-                emp
-                and getattr(emp, "is_attendance_exempt", False)
-                and (not is_future and dow < 5 or is_today)
-            ):
+            elif emp and getattr(emp, "is_attendance_exempt", False) and dow < 5 and not is_future:
                 status = "exempt"
                 badge = "Exempt"
                 work_hours = None
@@ -866,14 +862,10 @@ class AttendanceService:
                 holiday_name = None
                 leave_type_name = None
 
-            # Priority 6: Past or Today Unpunched Working Day -> Absent (Unless Exempt)
+            # Priority 6: Past or Today Unpunched Working Day -> Absent
             else:
-                if emp and getattr(emp, "is_attendance_exempt", False):
-                    status = "exempt"
-                    badge = "Exempt"
-                else:
-                    status = "absent"
-                    badge = None
+                status = "absent"
+                badge = None
                 work_hours = None
                 check_in_val = None
                 check_out_val = None

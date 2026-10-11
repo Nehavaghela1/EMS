@@ -396,8 +396,14 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     assert "HR: Adjusted to 5:00 PM per security gate slip" in (updated_rec["notes"] or "")
 
 
-def test_calendar_shows_in_progress_for_today_active_clock_in(client, company_a, db):
+def test_calendar_shows_in_progress_for_today_active_clock_in(client, company_a, db, monkeypatch):
     """Verifies that an active check-in today shows 'in_progress' rather than 'absent'."""
+    # Freeze time to a Tuesday (2026-10-13 10:00:00 UTC)
+    tuesday = datetime(2026, 10, 13, 10, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.core.time.utcnow", lambda: tuesday)
+    monkeypatch.setattr("app.modules.time_leave.service.utcnow", lambda: tuesday)
+    monkeypatch.setattr("app.modules.time_leave.router.utcnow", lambda: tuesday)
+
     employee = _create_employee(client, company_a.hr_headers)
     own_headers = _link_user_to_employee(
         db, company_a.company_id, employee["id"], UserRole.employee
@@ -405,7 +411,7 @@ def test_calendar_shows_in_progress_for_today_active_clock_in(client, company_a,
     # Check in today
     client.post("/api/v1/attendance/check-in", headers=own_headers)
 
-    today = utcnow().date()
+    today = tuesday.date()
     cal_resp = client.get(
         f"/api/v1/attendance/calendar?employee_id={employee['id']}&month={today.month}&year={today.year}",
         headers=company_a.hr_headers,
@@ -448,12 +454,18 @@ def test_self_approval_ban_prevents_user_from_approving_own_regularization(clien
     assert "cannot approve your own" in err_msg.lower()
 
 
-def test_attendance_exempt_calendar_shows_exempt_not_absent(client, company_a, db):
+def test_attendance_exempt_calendar_shows_exempt_not_absent(client, company_a, db, monkeypatch):
     """Verifies that employees marked as attendance exempt (e.g. CEO/Owner)
     show exempt rather than absent.
     """
+    # Freeze time to a Tuesday (2026-10-13 10:00:00 UTC)
+    tuesday = datetime(2026, 10, 13, 10, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.core.time.utcnow", lambda: tuesday)
+    monkeypatch.setattr("app.modules.time_leave.service.utcnow", lambda: tuesday)
+    monkeypatch.setattr("app.modules.time_leave.router.utcnow", lambda: tuesday)
+
     employee = _create_employee(client, company_a.hr_headers, is_attendance_exempt=True)
-    today = utcnow().date()
+    today = tuesday.date()
     cal_resp = client.get(
         f"/api/v1/attendance/calendar?employee_id={employee['id']}&month={today.month}&year={today.year}",
         headers=company_a.hr_headers,
