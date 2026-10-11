@@ -1,6 +1,7 @@
 import uuid
 from datetime import timedelta
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -206,7 +207,7 @@ class EmployeeService:
             )
         # Anti-cycle check: traverse candidate manager's reporting hierarchy upwards
         if self_id is not None:
-            curr = mgr
+            curr: Employee | None = mgr
             visited = {self_id}
             while curr and curr.reporting_manager_id:
                 if curr.reporting_manager_id in visited:
@@ -579,7 +580,7 @@ class EmployeeService:
             is_direct_manager = employee.reporting_manager_id == actor_emp.id
             is_dept_head = False
             if employee.department_id:
-                dept = self.dept_repo.get_by_id(employee.department_id, company_id)
+                dept = self.department_repo.get_by_id(employee.department_id, company_id)
                 if dept and dept.head_employee_id == actor_emp.id:
                     is_dept_head = True
 
@@ -868,7 +869,7 @@ class EmployeeService:
         # Resolve actor's department name if available
         actor_dept_name = ""
         if actor_emp and actor_emp.department_id:
-            dept = self.dept_repo.get_by_id(actor_emp.department_id, company_id)
+            dept = self.department_repo.get_by_id(actor_emp.department_id, company_id)
             if dept:
                 actor_dept_name = dept.name.strip().lower()
 
@@ -888,7 +889,7 @@ class EmployeeService:
             or ("people" in actor_dept_name)
         )
 
-        updates = {}
+        updates: dict[str, Any] = {}
 
         # 1. IT Clearance: IT Department leads or HR Admin/Owner
         if data.it_clearance is not None:

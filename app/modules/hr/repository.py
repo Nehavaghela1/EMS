@@ -147,19 +147,19 @@ class EmployeeRepository:
         )
 
     def get_by_id_any_status(
-        self, employee_id: uuid.UUID, company_id: uuid.UUID
+        self, employee_id: uuid.UUID, company_id: uuid.UUID | None = None
     ) -> Employee | None:
         """Used by DELETE (must find a currently-active row to deactivate —
         the same as get_by_id) and by toggle-active (route 25, must find an
         already-deactivated row to reactivate, so it cannot filter on
-        is_active)."""
-        return self.db.scalar(
-            select(Employee).where(
-                Employee.id == employee_id,
-                Employee.company_id == company_id,
-                Employee.deleted_at.is_(None),
-            )
-        )
+        is_active). If company_id is None, finds across all companies (super_admin)."""
+        conditions = [
+            Employee.id == employee_id,
+            Employee.deleted_at.is_(None),
+        ]
+        if company_id is not None:
+            conditions.append(Employee.company_id == company_id)
+        return self.db.scalar(select(Employee).where(*conditions))
 
     def get_by_user_id(self, company_id: uuid.UUID, user_id: uuid.UUID) -> Employee | None:
         """Resolves "this caller's own employee record" (route 21's `/me`,

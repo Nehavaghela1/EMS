@@ -30,6 +30,7 @@ from app.modules.performance.schemas import (
     GoalsCreateRequest,
     ManagerReviewRequest,
     PerformanceCycleCreateRequest,
+    PerformanceCycleResponse,
     PerformanceCycleUpdateRequest,
     PerformancePIPResponse,
     PerformanceReportResponse,
@@ -338,7 +339,7 @@ class PerformanceService:
         )
 
         return PerformanceReportResponse(
-            active_cycle=active_cycle,
+            active_cycle=PerformanceCycleResponse.model_validate(active_cycle),
             total_employees=total_emp,
             completed_reviews=completed_count,
             completion_rate_percent=rate,

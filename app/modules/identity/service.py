@@ -250,9 +250,7 @@ class AuthService:
             # Same email AND same password at two companies. Only someone who
             # already proved the password reaches this branch, so the company
             # names leak nothing.
-            raise CompanyRequiredError(
-                companies=[{"name": u.company.name, "code": u.company.code} for u in matched]
-            )
+            raise CompanyRequiredError(companies=[u.company.name for u in matched])
 
         user = matched[0]
 
@@ -375,9 +373,7 @@ class AuthService:
             role=target_user.role.value,
         )
         refresh_token_str = self._create_refresh_token(target_user.id, device_info)
-        return TokenResponse(
-            access_token=access_token, token_type="bearer", refresh_token=refresh_token_str
-        ), device_info or "unknown"
+        return TokenResponse(access_token=access_token, token_type="bearer"), refresh_token_str
 
     def _create_refresh_token(self, user_id: uuid.UUID, device_info: str | None) -> str:
         raw_refresh = generate_refresh_token()

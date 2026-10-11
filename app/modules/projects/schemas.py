@@ -1,3 +1,4 @@
+import datetime as dt
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -144,7 +145,7 @@ class TimeEntryCreate(BaseModel):
     project_id: UUID
     task_id: UUID | None = None
     employee_id: UUID | None = None
-    date: date
+    date: dt.date
     hours: Decimal = Field(..., gt=0, le=24)
     description: str | None = None
     is_billable: bool = True
@@ -154,7 +155,7 @@ class TimeEntryCreate(BaseModel):
 
 class TimeEntryUpdate(BaseModel):
     task_id: UUID | None = None
-    date: date | None = None
+    date: dt.date | None = None
     hours: Decimal | None = Field(None, gt=0, le=24)
     description: str | None = None
     is_billable: bool | None = None
@@ -169,7 +170,7 @@ class TimeEntryResponse(BaseModel):
     project_id: UUID
     task_id: UUID | None = None
     employee_id: UUID
-    date: date
+    date: dt.date
     hours: Decimal
     description: str | None = None
     is_billable: bool

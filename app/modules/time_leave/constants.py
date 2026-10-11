@@ -1,5 +1,7 @@
 """Constants and pre-seeded templates for time and leave module."""
 
+from typing import Any
+
 STATUTORY_HOLIDAYS_INDIA = {
     "Gujarat": {
         2024: [
@@ -91,7 +93,7 @@ STATUTORY_HOLIDAYS_INDIA = {
 }
 
 
-COUNTRY_REGIONS_MAP: dict[str, dict[str, any]] = {
+COUNTRY_REGIONS_MAP: dict[str, dict[str, Any]] = {
     "IN": {
         "name": "India",
         "states": [

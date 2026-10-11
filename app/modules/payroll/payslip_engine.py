@@ -304,15 +304,17 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
         cess_percent = Decimal("4.000")
         if matching_tax_slabs:
             cess_percent = matching_tax_slabs[0].cess_percent
-            for slab in sorted(matching_tax_slabs, key=lambda s: s.min_income):
-                if taxable_annual_income > slab.min_income:
+            for tax_slab in sorted(matching_tax_slabs, key=lambda s: s.min_income):
+                if taxable_annual_income > tax_slab.min_income:
                     top = (
                         taxable_annual_income
-                        if slab.max_income is None
-                        else min(taxable_annual_income, slab.max_income)
+                        if tax_slab.max_income is None
+                        else min(taxable_annual_income, tax_slab.max_income)
                     )
-                    taxable_in_bracket = top - slab.min_income
-                    annual_tax += _round(taxable_in_bracket * slab.rate_percent / Decimal("100"))
+                    taxable_in_bracket = top - tax_slab.min_income
+                    annual_tax += _round(
+                        taxable_in_bracket * tax_slab.rate_percent / Decimal("100")
+                    )
 
         # Section 87A Rebate check
         if tax_regime == "new" and taxable_annual_income <= Decimal("1200000.00"):

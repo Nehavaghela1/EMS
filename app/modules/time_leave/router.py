@@ -4,6 +4,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
@@ -249,7 +250,7 @@ async def request_regularization(
                 return None
 
         file_url = None
-        if attachment and hasattr(attachment, "filename") and attachment.filename:
+        if isinstance(attachment, UploadFile) and attachment.filename:
             import os
             import uuid as sys_uuid
 

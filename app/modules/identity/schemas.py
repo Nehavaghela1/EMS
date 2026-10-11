@@ -80,7 +80,7 @@ class CompanyRejectRequest(BaseModel):
 
 class CompanyDeactivateRequest(BaseModel):
     reason: str
-    password: str
+    password: str | None = None
 
 
 class CompanyApproveResponse(BaseModel):

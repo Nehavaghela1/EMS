@@ -109,7 +109,7 @@ def create_time_entry(
         ):
             # If admin is not linked to an employee profile, check project members
             # or pick first active employee
-            first_member = service.repo.get_project_members(project.company_id, project.id)
+            first_member = service.repo.list_members(project.company_id, project.id)
             if first_member:
                 emp_id = first_member[0].employee_id
             else:
@@ -531,6 +531,7 @@ async def add_project_document(
         doc_create = ProjectDocumentCreate(
             file_id=file_obj.id,
             name=file_obj.file_name,
+            file_name=file_obj.file_name,
             file_size=file_obj.file_size,
             file_type=file_obj.file_type,
             description=desc_str,

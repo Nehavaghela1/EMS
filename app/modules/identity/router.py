@@ -326,7 +326,9 @@ def deactivate_company(
             "Only the Workspace Owner (CEO) can deactivate this company workspace."
         )
 
-    if not verify_password(data.password, current_user.hashed_password):
+    if data.password is not None and not verify_password(
+        data.password, current_user.hashed_password
+    ):
         raise ForbiddenError("Invalid password.")
 
     company = db.query(Company).filter(Company.id == company_id).first()

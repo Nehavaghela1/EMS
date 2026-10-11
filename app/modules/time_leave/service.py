@@ -789,17 +789,7 @@ class AttendanceService:
                 holiday_name = hol.name
                 leave_type_name = None
 
-            # Priority 3: Weekly Off / Weekend (Sat/Sun)
-            elif dow >= 5:
-                status = "weekend"
-                work_hours = att.hours_worked if att else None
-                check_in_val = att.check_in if att else None
-                check_out_val = att.check_out if att else None
-                badge = "Weekend"
-                holiday_name = None
-                leave_type_name = None
-
-            # Priority 4: Attendance Punches
+            # Priority 3: Attendance Punches (even on weekends/holidays if worked)
             elif att is not None:
                 check_in_val = att.check_in
                 check_out_val = att.check_out
@@ -841,6 +831,30 @@ class AttendanceService:
                     else:
                         status = att.status.value
                         badge = None
+
+            # Priority 4: Attendance Exempt (e.g. CEO/Owner on today or past work days)
+            elif (
+                emp
+                and getattr(emp, "is_attendance_exempt", False)
+                and (not is_future and dow < 5 or is_today)
+            ):
+                status = "exempt"
+                badge = "Exempt"
+                work_hours = None
+                check_in_val = None
+                check_out_val = None
+                holiday_name = None
+                leave_type_name = None
+
+            # Priority 5: Weekly Off / Weekend (Sat/Sun)
+            elif dow >= 5:
+                status = "weekend"
+                work_hours = None
+                check_in_val = None
+                check_out_val = None
+                badge = "Weekend"
+                holiday_name = None
+                leave_type_name = None
 
             # Priority 5: Future Work Days
             elif is_future:
