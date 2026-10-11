@@ -190,3 +190,44 @@ def test_daily_time_entry_hour_limit(client: TestClient, db: Session, company_a:
         headers=headers,
     )
     assert res_fail.status_code == 400
+
+
+def test_time_entry_fails_for_user_without_employee_profile(
+    client: TestClient, db: Session, company_a: TenantContext
+):
+    # Create project and member
+    emp, _ = _create_employee_with_user(db, company_a.company_id, UserRole.employee)
+    res_proj = client.post(
+        "/api/v1/projects",
+        json={
+            "name": "Member Project",
+            "code": f"MBR-{uuid.uuid4().hex[:4].upper()}",
+            "status": "active",
+            "start_date": str(date.today()),
+        },
+        headers=company_a.hr_headers,
+    )
+    assert res_proj.status_code == 201
+    proj_id = res_proj.json()["id"]
+
+    client.post(
+        f"/api/v1/projects/{proj_id}/members",
+        json={"employee_id": str(emp.id), "role": "developer"},
+        headers=company_a.hr_headers,
+    )
+
+    # hr_headers user has no employee profile linked:
+    # caller attempting to create time entry without employee profile must get 400,
+    # and MUST NOT silently log under first project member
+    res_entry = client.post(
+        "/api/v1/projects/time-entries",
+        json={
+            "project_id": proj_id,
+            "date": str(date.today()),
+            "hours": "4.00",
+            "description": "Logging as unlinked admin",
+        },
+        headers=company_a.hr_headers,
+    )
+    assert res_entry.status_code == 400
+    assert "employee profile" in res_entry.json()["error"]["message"]

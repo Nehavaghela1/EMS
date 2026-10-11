@@ -101,32 +101,14 @@ def create_time_entry(
         if current_user.role != UserRole.super_admin and current_user.company_id:
             query = query.filter(Employee.company_id == project.company_id)
         emp = query.first()
-
-        if not emp and current_user.role in (
-            UserRole.super_admin,
-            UserRole.hr_admin,
-            UserRole.manager,
-        ):
-            # If admin is not linked to an employee profile, check project members
-            # or pick first active employee
-            first_member = service.repo.list_members(project.company_id, project.id)
-            if first_member:
-                emp_id = first_member[0].employee_id
-            else:
-                any_emp = (
-                    db.query(Employee).filter(Employee.company_id == project.company_id).first()
-                )
-                if any_emp:
-                    emp_id = any_emp.id
-
-        elif emp:
-            emp_id = emp.id
-
-    if not emp_id:
-        raise AppError(
-            "No employee profile found to attach time log to. "
-            "Please select an employee or add a team member first."
-        )
+        if not emp:
+            raise AppError(
+                "You do not have an employee profile linked to your account. "
+                "Admins and managers must have an employee profile or explicitly "
+                "specify employee_id to log time.",
+                details={"reason": "no_employee_profile"},
+            )
+        emp_id = emp.id
 
     is_admin_or_manager = current_user.role in (
         UserRole.super_admin,
