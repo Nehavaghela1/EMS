@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import {
   listPerformanceCycles,
   listPerformanceGoals,
@@ -10,14 +10,17 @@ import {
   type PerformanceGoal,
   type PerformanceSummary,
 } from "../api";
-import { getEmployee, type Employee } from "../../hr/api";
+import { getEmployee, listEmployees, type Employee } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
 import { parseApiError } from "../../../shared/api/errors";
 
 export function PerformanceReviewPage() {
-  const { employeeId } = useParams<{ employeeId: string }>();
+  const { employeeId } = useParams<{ employeeId?: string }>();
+  const navigate = useNavigate();
   const { notify } = useToast();
 
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [selectedId, setSelectedId] = useState<string>(employeeId || "");
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [activeCycle, setActiveCycle] = useState<PerformanceCycle | null>(null);
   const [goals, setGoals] = useState<PerformanceGoal[]>([]);
@@ -37,10 +40,29 @@ export function PerformanceReviewPage() {
   const [finalizing, setFinalizing] = useState(false);
 
   useEffect(() => {
-    if (employeeId) {
-      fetchData(employeeId);
+    loadEmployees();
+  }, []);
+
+  async function loadEmployees() {
+    try {
+      const res = await listEmployees({ page: 1, limit: 100 });
+      setEmployees(res.items);
+      if (!employeeId && res.items.length > 0) {
+        setSelectedId(res.items[0].id);
+      }
+    } catch {
+      // Non-critical
     }
-  }, [employeeId]);
+  }
+
+  useEffect(() => {
+    const target = employeeId || selectedId;
+    if (target) {
+      fetchData(target);
+    } else {
+      setLoading(false);
+    }
+  }, [employeeId, selectedId]);
 
   async function fetchData(empId: string) {
     setLoading(true);
@@ -76,7 +98,8 @@ export function PerformanceReviewPage() {
       notify("Manager evaluation submitted successfully", "success");
       setSelectedGoal(null);
       setMgrComments("");
-      if (employeeId) fetchData(employeeId);
+      const target = employeeId || selectedId;
+      if (target) fetchData(target);
     } catch (err: unknown) {
       const parsed = parseApiError(err);
       notify(parsed.message || "Failed to submit manager rating", parsed.status === 409 ? "warning" : "error");
@@ -87,10 +110,11 @@ export function PerformanceReviewPage() {
 
   async function handleFinalizeSummary(e: React.FormEvent) {
     e.preventDefault();
-    if (!employeeId || !activeCycle) return;
+    const targetEmpId = employeeId || selectedId;
+    if (!targetEmpId || !activeCycle) return;
     setFinalizing(true);
     try {
-      const res = await finalizePerformanceSummary(employeeId, {
+      const res = await finalizePerformanceSummary(targetEmpId, {
         cycle_id: activeCycle.id,
         overall_comments: overallComments,
         salary_revision_recommended: salaryRevision,
@@ -108,17 +132,59 @@ export function PerformanceReviewPage() {
 
   return (
     <div className="container">
-      <div className="page-header">
-        <h1>Performance Review & Rating</h1>
-        <p className="text-muted">
-          Evaluating: <strong>{employee ? `${employee.first_name} ${employee.last_name || ""}` : "Employee"}</strong> ({employee?.employee_code})
-        </p>
+      <div className="page-header flex justify-between align-center page-header-responsive">
+        <div>
+          <h1>Performance Review & Rating</h1>
+          <p className="text-muted">
+            Evaluate team members and submit manager ratings for the active performance cycle
+          </p>
+        </div>
+        {employees.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <label className="text-xs text-muted" style={{ fontWeight: 600 }}>Select Team Member:</label>
+            <select
+              value={selectedId}
+              onChange={(e) => {
+                setSelectedId(e.target.value);
+                navigate(`/performance/review/${e.target.value}`);
+              }}
+              style={{ minWidth: "220px", padding: "6px 10px", fontSize: "0.85rem" }}
+            >
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.first_name} {emp.last_name || ""} ({emp.employee_code}) - {emp.position || "Staff"}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
+
+      {employee && (
+        <div className="card p-3 my-3" style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+          <div className="row-between align-center" style={{ flexWrap: "wrap", gap: "8px" }}>
+            <div>
+              <span className="text-xs text-muted block">Currently Reviewing</span>
+              <strong style={{ fontSize: "1rem" }}>
+                {employee.first_name} {employee.last_name || ""}
+              </strong>{" "}
+              <span className="text-xs text-muted">
+                ({employee.employee_code} • {employee.position || "Staff"} • {employee.department_name || "General"})
+              </span>
+            </div>
+            {activeCycle && (
+              <span className="badge badge-primary">
+                Active Cycle: {activeCycle.name}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <p className="mt-4">Loading appraisal review...</p>
       ) : (
-        <div className="grid grid-3 gap-6 mt-4">
+        <div className="grid grid-3 gap-6 mt-4 performance-review-grid">
           {/* Goals & Reviews Column */}
           <div className="col-span-2 stack gap-4">
             <div className="card">
@@ -241,7 +307,7 @@ export function PerformanceReviewPage() {
       {/* Modal: Rate Goal */}
       {selectedGoal && (
         <div className="modal-backdrop" onClick={() => setSelectedGoal(null)}>
-          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+          <div className="modal card max-w-md performance-goal-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Rate Goal: {selectedGoal.title}</h2>
               <button

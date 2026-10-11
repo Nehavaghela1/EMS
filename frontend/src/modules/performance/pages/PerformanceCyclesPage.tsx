@@ -236,12 +236,12 @@ export function PerformanceCyclesPage() {
 
   return (
     <div className="container">
-      <div className="page-header flex justify-between align-center">
+      <div className="page-header flex justify-between align-center page-header-responsive">
         <div>
           <h1>Performance & Evaluation</h1>
           <p className="text-muted">Appraisal cycles, review deadlines & Performance Improvement Plans (PIP)</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2" style={{ flexWrap: "wrap", width: "100%" }}>
           {viewTab === "cycles" ? (
             <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
               + Create Cycle
@@ -341,67 +341,69 @@ export function PerformanceCyclesPage() {
             ) : cycles.length === 0 ? (
               <p className="text-muted">No performance cycles created yet.</p>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Cycle Name</th>
-                    <th>Type</th>
-                    <th>Period</th>
-                    <th>Self Deadline</th>
-                    <th>Manager Deadline</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cycles
-                    .filter((c) => statusFilter === "all" || c.status === statusFilter)
-                    .map((c) => (
-                    <tr key={c.id}>
-                      <td className="fw-bold">{c.name}</td>
-                      <td>
-                        <span className="badge badge-outline">
-                          {CYCLE_TYPE_LABELS[c.cycle_type] || c.cycle_type}
-                        </span>
-                      </td>
-                      <td>{formatDate(c.start_date)} to {formatDate(c.end_date)}</td>
-                      <td>{formatDate(c.self_review_deadline)}</td>
-                      <td>{formatDate(c.manager_review_deadline)}</td>
-                      <td>
-                        <span
-                          className={`badge ${
-                            c.status === "active"
-                              ? "badge-success"
-                              : c.status === "closed"
-                              ? "badge-muted"
-                              : "badge-warning"
-                          }`}
-                        >
-                          {CYCLE_STATUS_LABELS[c.status] || c.status}
-                        </span>
-                      </td>
-                      <td>
-                        {c.status === "draft" && (
-                          <button
-                            className="btn btn-sm btn-success"
-                            onClick={() => handleStatusChange(c.id, "active")}
-                          >
-                            Activate
-                          </button>
-                        )}
-                        {c.status === "active" && (
-                          <button
-                            className="btn btn-sm btn-outline text-red"
-                            onClick={() => handleStatusChange(c.id, "closed")}
-                          >
-                            Close Cycle
-                          </button>
-                        )}
-                      </td>
+              <div className="mobile-table-wrap">
+                <table className="table" style={{ minWidth: "640px" }}>
+                  <thead>
+                    <tr>
+                      <th>Cycle Name</th>
+                      <th>Type</th>
+                      <th>Period</th>
+                      <th>Self Deadline</th>
+                      <th>Manager Deadline</th>
+                      <th>Status</th>
+                      <th>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {cycles
+                      .filter((c) => statusFilter === "all" || c.status === statusFilter)
+                      .map((c) => (
+                      <tr key={c.id}>
+                        <td className="fw-bold">{c.name}</td>
+                        <td>
+                          <span className="badge badge-outline">
+                            {CYCLE_TYPE_LABELS[c.cycle_type] || c.cycle_type}
+                          </span>
+                        </td>
+                        <td>{formatDate(c.start_date)} to {formatDate(c.end_date)}</td>
+                        <td>{formatDate(c.self_review_deadline)}</td>
+                        <td>{formatDate(c.manager_review_deadline)}</td>
+                        <td>
+                          <span
+                            className={`badge ${
+                              c.status === "active"
+                                ? "badge-success"
+                                : c.status === "closed"
+                                ? "badge-muted"
+                                : "badge-warning"
+                            }`}
+                          >
+                            {CYCLE_STATUS_LABELS[c.status] || c.status}
+                          </span>
+                        </td>
+                        <td>
+                          {c.status === "draft" && (
+                            <button
+                              className="btn btn-sm btn-success"
+                              onClick={() => handleStatusChange(c.id, "active")}
+                            >
+                              Activate
+                            </button>
+                          )}
+                          {c.status === "active" && (
+                            <button
+                              className="btn btn-sm btn-outline text-red"
+                              onClick={() => handleStatusChange(c.id, "closed")}
+                            >
+                              Close Cycle
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </>
@@ -527,7 +529,7 @@ export function PerformanceCyclesPage() {
       {/* MODAL: INITIATE PIP */}
       {showPipCreateModal && (
         <div className="modal-backdrop" onClick={() => setShowPipCreateModal(false)}>
-          <div className="modal card" style={{ maxWidth: "560px", width: "95%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal card performance-goal-modal" style={{ maxWidth: "560px", width: "95%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 style={{ margin: 0, color: "#d97706" }}>⚠️ Put Employee on Performance Improvement Plan (PIP)</h3>
               <button type="button" className="modal-close-btn" onClick={() => setShowPipCreateModal(false)}>✕</button>
@@ -638,7 +640,7 @@ export function PerformanceCyclesPage() {
       {/* MODAL: EVALUATE PIP */}
       {evaluatingPip && (
         <div className="modal-backdrop" onClick={() => setEvaluatingPip(null)}>
-          <div className="modal card" style={{ maxWidth: "520px", width: "95%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal card performance-goal-modal" style={{ maxWidth: "520px", width: "95%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 style={{ margin: 0 }}>Evaluate PIP: {evaluatingPip.employee_name || evaluatingPip.title}</h3>
               <button type="button" className="modal-close-btn" onClick={() => setEvaluatingPip(null)}>✕</button>
@@ -694,7 +696,7 @@ export function PerformanceCyclesPage() {
       {/* Modal: Create Cycle */}
       {showCreateModal && (
         <div className="modal-backdrop" onClick={() => setShowCreateModal(false)}>
-          <div className="modal card max-w-lg" onClick={(e) => e.stopPropagation()}>
+          <div className="modal card max-w-lg performance-goal-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Create Performance Cycle</h2>
               <button

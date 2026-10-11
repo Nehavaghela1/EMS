@@ -702,6 +702,33 @@ textarea:focus {
     -webkit-overflow-scrolling: touch !important;
     width: 100% !important;
   }
+
+  /* Performance Pages Mobile Responsiveness */
+  .performance-cycle-banner {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+  .performance-cycle-banner > div:last-child {
+    width: 100% !important;
+    border-top: 1px dashed var(--color-border, #e2e8f0) !important;
+    padding-top: 8px !important;
+  }
+
+  .performance-goal-modal {
+    max-width: 95vw !important;
+    width: 95vw !important;
+    margin: 8px !important;
+  }
+
+  .performance-review-grid {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .performance-grid-2-mobile {
+    grid-template-columns: 1fr !important;
+  }
 }
 
 .calendar-scroll-hint {
