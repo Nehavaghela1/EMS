@@ -2,6 +2,7 @@
 Generate Document 2: Architecture Documentation for EMS Pro.
 Outputs to: /Users/apple/Downloads/EMS/document/2_Architecture_Documentation.docx
 """
+
 from docx.shared import Inches, Pt
 
 from scripts.docx_helper import (
@@ -19,7 +20,7 @@ def build_architecture_documentation():
         doc,
         title="EMS Pro — Architecture Documentation",
         subtitle="System Topography, Multi-Tenancy Engine, Domain Boundaries & Security Framework",
-        doc_type="System & Enterprise Architecture Guide"
+        doc_type="System & Enterprise Architecture Guide",
     )
 
     # 1. Architectural Principles & Top-Level Design
@@ -31,11 +32,26 @@ def build_architecture_documentation():
     )
 
     core_principles = [
-        ("Zero-Trust Multi-Tenancy", "Every tenant query is constrained by PostgreSQL Row-Level Security at the database kernel level, preventing logical bugs in application code from crossing company boundaries."),
-        ("Stateless Micro-Modular Services", "Business capabilities are isolated into 7 clean modules sharing standard interfaces, allowing independent evolution and straightforward transition to distributed microservices if required."),
-        ("Strict Deterministic Financial Math", "No floating-point approximations in payroll or CTC calculations. Python Decimal and PostgreSQL Numeric(12,2) with round_half_up math ensure statutory compliance."),
-        ("Immutable Auditability", "Critical actions (payroll runs, salary changes, resignations, company approvals) write append-only audit log records with actor IDs, client IPs, and timestamp hashes."),
-        ("Asynchronous Decoupling", "Resource-intensive operations like batch payroll calculation, payslip PDF rendering, and bulk notifications execute asynchronously via Redis and Celery workers without blocking HTTP request threads."),
+        (
+            "Zero-Trust Multi-Tenancy",
+            "Every tenant query is constrained by PostgreSQL Row-Level Security at the database kernel level, preventing logical bugs in application code from crossing company boundaries.",
+        ),
+        (
+            "Stateless Micro-Modular Services",
+            "Business capabilities are isolated into 7 clean modules sharing standard interfaces, allowing independent evolution and straightforward transition to distributed microservices if required.",
+        ),
+        (
+            "Strict Deterministic Financial Math",
+            "No floating-point approximations in payroll or CTC calculations. Python Decimal and PostgreSQL Numeric(12,2) with round_half_up math ensure statutory compliance.",
+        ),
+        (
+            "Immutable Auditability",
+            "Critical actions (payroll runs, salary changes, resignations, company approvals) write append-only audit log records with actor IDs, client IPs, and timestamp hashes.",
+        ),
+        (
+            "Asynchronous Decoupling",
+            "Resource-intensive operations like batch payroll calculation, payslip PDF rendering, and bulk notifications execute asynchronously via Redis and Celery workers without blocking HTTP request threads.",
+        ),
     ]
     for p_name, p_desc in core_principles:
         p = doc.add_paragraph()
@@ -118,13 +134,34 @@ def build_architecture_documentation():
     )
 
     subsystems = [
-        ("Identity & Access Management", "Manages Companies (registration, approval, onboarding), Users (Argon2id auth, 2FA, password resets), Refresh Tokens (family rotation), and RBAC hierarchy (super_admin, hr_admin, manager, employee)."),
-        ("Core HR & Organization", "Maintains Employees (master profile, codes, levels L1-L6, hierarchy), Departments (hierarchical structure, department heads), Resignations, Offboarding workflows, and Full & Final (FnF) settlements."),
-        ("Time, Attendance & Leave", "Biometric web check-in/out, geofenced logs, Shift scheduling (rotational, night allowance calculation), Holiday calendars, Annual Leave balances, and Multi-tier Leave approval state machines."),
-        ("Statutory Payroll Engine", "Configures multi-tier Salary Structures (Basic, HRA, Allowances), Statutory rules (EPF 12% employee/employer, ESI 0.75%/3.25%, Professional Tax state slabs, Tax TDS), automated monthly Payroll Runs, and Reimbursements."),
-        ("Performance Management", "Quarterly & Annual Review Cycles, SMART Goal tracking (metrics, targets, progress), 360-degree Reviews (self, manager, HR), Reviewer scoring, and Bell curve performance distribution analysis."),
-        ("Projects & Workspace", "Project portfolio management, Team participation, Kanban Task boards (To Do, In Progress, Review, Done), Time Entry timesheets, billable hours tracking, and Project Milestone progression."),
-        ("Platform Services", "Broadcast Announcements, Secure File Storage (HMAC SHA-256 signed temporary download links), Encrypted Employee Document vaults, Audit Logs, and Global Multi-Entity Search."),
+        (
+            "Identity & Access Management",
+            "Manages Companies (registration, approval, onboarding), Users (Argon2id auth, 2FA, password resets), Refresh Tokens (family rotation), and RBAC hierarchy (super_admin, hr_admin, manager, employee).",
+        ),
+        (
+            "Core HR & Organization",
+            "Maintains Employees (master profile, codes, levels L1-L6, hierarchy), Departments (hierarchical structure, department heads), Resignations, Offboarding workflows, and Full & Final (FnF) settlements.",
+        ),
+        (
+            "Time, Attendance & Leave",
+            "Biometric web check-in/out, geofenced logs, Shift scheduling (rotational, night allowance calculation), Holiday calendars, Annual Leave balances, and Multi-tier Leave approval state machines.",
+        ),
+        (
+            "Statutory Payroll Engine",
+            "Configures multi-tier Salary Structures (Basic, HRA, Allowances), Statutory rules (EPF 12% employee/employer, ESI 0.75%/3.25%, Professional Tax state slabs, Tax TDS), automated monthly Payroll Runs, and Reimbursements.",
+        ),
+        (
+            "Performance Management",
+            "Quarterly & Annual Review Cycles, SMART Goal tracking (metrics, targets, progress), 360-degree Reviews (self, manager, HR), Reviewer scoring, and Bell curve performance distribution analysis.",
+        ),
+        (
+            "Projects & Workspace",
+            "Project portfolio management, Team participation, Kanban Task boards (To Do, In Progress, Review, Done), Time Entry timesheets, billable hours tracking, and Project Milestone progression.",
+        ),
+        (
+            "Platform Services",
+            "Broadcast Announcements, Secure File Storage (HMAC SHA-256 signed temporary download links), Encrypted Employee Document vaults, Audit Logs, and Global Multi-Entity Search.",
+        ),
     ]
     for s_name, s_desc in subsystems:
         add_header_2(doc, s_name)
@@ -155,13 +192,41 @@ def build_architecture_documentation():
     add_header_1(doc, "6. Security Architecture & Compliance Controls")
     sec_headers = ["Security Domain", "Threat Mitigated", "Architectural Control Implemented"]
     sec_data = [
-        ["Authentication", "Brute-force & Credential Stuffing", "Argon2id memory-hard hashing, 15-min JWT lifespan, 5-attempt login lockout"],
-        ["Token Hijacking", "XSS Access Token Theft", "Refresh token stored exclusively in HttpOnly, SameSite=Lax cookie with rotation"],
-        ["Cross-Tenant Leakage", "Tenant data exposure", "PostgreSQL FORCE ROW LEVEL SECURITY with company_id matching policies"],
-        ["IDOR / Direct Object Reference", "Unauthorized resource access", "Repository-level company_id ownership check alongside database RLS"],
-        ["File Injection / Snooping", "Malicious file execution", "Uploads validated for MIME type, stored in isolated directory with HMAC signed URLs"],
-        ["Audit Tampering", "Repudiation of sensitive actions", "Append-only audit_logs table; delete/update triggers blocked"],
-        ["Data at Rest", "Physical media compromise", "PostgreSQL database volume encryption, AES-256 for sensitive KYC fields"],
+        [
+            "Authentication",
+            "Brute-force & Credential Stuffing",
+            "Argon2id memory-hard hashing, 15-min JWT lifespan, 5-attempt login lockout",
+        ],
+        [
+            "Token Hijacking",
+            "XSS Access Token Theft",
+            "Refresh token stored exclusively in HttpOnly, SameSite=Lax cookie with rotation",
+        ],
+        [
+            "Cross-Tenant Leakage",
+            "Tenant data exposure",
+            "PostgreSQL FORCE ROW LEVEL SECURITY with company_id matching policies",
+        ],
+        [
+            "IDOR / Direct Object Reference",
+            "Unauthorized resource access",
+            "Repository-level company_id ownership check alongside database RLS",
+        ],
+        [
+            "File Injection / Snooping",
+            "Malicious file execution",
+            "Uploads validated for MIME type, stored in isolated directory with HMAC signed URLs",
+        ],
+        [
+            "Audit Tampering",
+            "Repudiation of sensitive actions",
+            "Append-only audit_logs table; delete/update triggers blocked",
+        ],
+        [
+            "Data at Rest",
+            "Physical media compromise",
+            "PostgreSQL database volume encryption, AES-256 for sensitive KYC fields",
+        ],
     ]
     add_styled_table(doc, sec_headers, sec_data, [Inches(1.5), Inches(2.2), Inches(2.8)])
 
@@ -177,6 +242,7 @@ def build_architecture_documentation():
     output_path = "/Users/apple/Downloads/EMS/document/2_Architecture_Documentation.docx"
     doc.save(output_path)
     print(f"✔ Successfully generated: {output_path}")
+
 
 if __name__ == "__main__":
     build_architecture_documentation()

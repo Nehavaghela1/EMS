@@ -2,6 +2,7 @@
 Shared Docx Styling Helper for EMS Pro Technical Documentation.
 Provides consistent styling, headers, callouts, tables, and page setup.
 """
+
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -10,17 +11,18 @@ from docx.oxml.ns import nsdecls
 from docx.shared import Inches, Pt, RGBColor
 
 # Color Palette
-COLOR_PRIMARY_HEX = "1E3A8A"      # Deep Navy
-COLOR_SECONDARY_HEX = "0D9488"    # Teal Accent
-COLOR_DARK_TEXT_HEX = "0F172A"    # Slate 900
-COLOR_MUTED_TEXT_HEX = "475569"   # Slate 600
-COLOR_LIGHT_BG_HEX = "F8FAFC"     # Slate 50
-COLOR_BORDER_HEX = "CBD5E1"       # Slate 300
+COLOR_PRIMARY_HEX = "1E3A8A"  # Deep Navy
+COLOR_SECONDARY_HEX = "0D9488"  # Teal Accent
+COLOR_DARK_TEXT_HEX = "0F172A"  # Slate 900
+COLOR_MUTED_TEXT_HEX = "475569"  # Slate 600
+COLOR_LIGHT_BG_HEX = "F8FAFC"  # Slate 50
+COLOR_BORDER_HEX = "CBD5E1"  # Slate 300
 
 COLOR_PRIMARY = RGBColor(0x1E, 0x3A, 0x8A)
 COLOR_SECONDARY = RGBColor(0x0D, 0x94, 0x88)
 COLOR_DARK_TEXT = RGBColor(0x0F, 0x17, 0x2A)
 COLOR_MUTED = RGBColor(0x47, 0x55, 0x69)
+
 
 def create_styled_document():
     doc = Document()
@@ -33,14 +35,15 @@ def create_styled_document():
         section.footer_distance = Inches(0.5)
 
     # Base Normal Style
-    normal_style = doc.styles['Normal']
-    normal_style.font.name = 'Arial'
+    normal_style = doc.styles["Normal"]
+    normal_style.font.name = "Arial"
     normal_style.font.size = Pt(10)
     normal_style.font.color.rgb = COLOR_DARK_TEXT
     normal_style.paragraph_format.line_spacing = 1.15
     normal_style.paragraph_format.space_after = Pt(4)
 
     return doc
+
 
 def add_cover_page(doc, title, subtitle, doc_type, version="2.0.0", date_str="September 2026"):
     p_pre = doc.add_paragraph()
@@ -97,17 +100,19 @@ def add_cover_page(doc, title, subtitle, doc_type, version="2.0.0", date_str="Se
 
     doc.add_page_break()
 
+
 def add_header_1(doc, text):
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(18)
     p.paragraph_format.space_after = Pt(6)
     p.paragraph_format.keep_with_next = True
     r = p.add_run(text)
-    r.font.name = 'Arial'
+    r.font.name = "Arial"
     r.font.bold = True
     r.font.size = Pt(16)
     r.font.color.rgb = COLOR_PRIMARY
     return p
+
 
 def add_header_2(doc, text):
     p = doc.add_paragraph()
@@ -115,11 +120,12 @@ def add_header_2(doc, text):
     p.paragraph_format.space_after = Pt(4)
     p.paragraph_format.keep_with_next = True
     r = p.add_run(text)
-    r.font.name = 'Arial'
+    r.font.name = "Arial"
     r.font.bold = True
     r.font.size = Pt(12.5)
     r.font.color.rgb = COLOR_SECONDARY
     return p
+
 
 def add_header_3(doc, text):
     p = doc.add_paragraph()
@@ -127,11 +133,12 @@ def add_header_3(doc, text):
     p.paragraph_format.space_after = Pt(2)
     p.paragraph_format.keep_with_next = True
     r = p.add_run(text)
-    r.font.name = 'Arial'
+    r.font.name = "Arial"
     r.font.bold = True
     r.font.size = Pt(10.5)
     r.font.color.rgb = COLOR_DARK_TEXT
     return p
+
 
 def add_callout(doc, text, title="NOTE"):
     tbl = doc.add_table(rows=1, cols=1)
@@ -141,7 +148,9 @@ def add_callout(doc, text, title="NOTE"):
     shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{COLOR_LIGHT_BG_HEX}"/>')
     cell._tc.get_or_add_tcPr().append(shd)
     # Left border highlight
-    borders = parse_xml(f'<w:tcBorders {nsdecls("w")}><w:left w:val="single" w:sz="24" w:space="0" w:color="{COLOR_SECONDARY_HEX}"/><w:top w:val="none"/><w:right w:val="none"/><w:bottom w:val="none"/></w:tcBorders>')
+    borders = parse_xml(
+        f'<w:tcBorders {nsdecls("w")}><w:left w:val="single" w:sz="24" w:space="0" w:color="{COLOR_SECONDARY_HEX}"/><w:top w:val="none"/><w:right w:val="none"/><w:bottom w:val="none"/></w:tcBorders>'
+    )
     cell._tc.get_or_add_tcPr().append(borders)
     set_cell_padding(cell, 120, 180, 120, 180)
     p = cell.paragraphs[0]
@@ -156,10 +165,14 @@ def add_callout(doc, text, title="NOTE"):
     p_spacer = doc.add_paragraph()
     p_spacer.paragraph_format.space_after = Pt(4)
 
+
 def set_cell_padding(cell, top=100, bottom=100, left=140, right=140):
     tcPr = cell._tc.get_or_add_tcPr()
-    tcMar = parse_xml(f'<w:tcMar {nsdecls("w")}><w:top w:w="{top}" w:type="dxa"/><w:bottom w:w="{bottom}" w:type="dxa"/><w:left w:w="{left}" w:type="dxa"/><w:right w:w="{right}" w:type="dxa"/></w:tcMar>')
+    tcMar = parse_xml(
+        f'<w:tcMar {nsdecls("w")}><w:top w:w="{top}" w:type="dxa"/><w:bottom w:w="{bottom}" w:type="dxa"/><w:left w:w="{left}" w:type="dxa"/><w:right w:w="{right}" w:type="dxa"/></w:tcMar>'
+    )
     tcPr.append(tcMar)
+
 
 def add_styled_table(doc, headers, data, col_widths=None):
     tbl = doc.add_table(rows=len(data) + 1, cols=len(headers))
@@ -168,7 +181,7 @@ def add_styled_table(doc, headers, data, col_widths=None):
     hdr_row = tbl.rows[0]
     # cantSplit & tblHeader
     trPr = hdr_row._tr.get_or_add_trPr()
-    trPr.append(parse_xml(f'<w:tblHeader {nsdecls("w")}/>'))
+    trPr.append(parse_xml(f"<w:tblHeader {nsdecls('w')}/>"))
 
     for col_idx, text in enumerate(headers):
         cell = hdr_row.cells[col_idx]
@@ -181,7 +194,7 @@ def add_styled_table(doc, headers, data, col_widths=None):
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         p.paragraph_format.space_after = Pt(0)
         r = p.add_run(text)
-        r.font.name = 'Arial'
+        r.font.name = "Arial"
         r.font.bold = True
         r.font.size = Pt(9)
         r.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
@@ -197,14 +210,16 @@ def add_styled_table(doc, headers, data, col_widths=None):
             shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{bg_hex}"/>')
             cell._tc.get_or_add_tcPr().append(shd)
             # Soft gray border
-            borders = parse_xml(f'<w:tcBorders {nsdecls("w")}><w:bottom w:val="single" w:sz="4" w:space="0" w:color="{COLOR_BORDER_HEX}"/><w:top w:val="none"/><w:left w:val="none"/><w:right w:val="none"/></w:tcBorders>')
+            borders = parse_xml(
+                f'<w:tcBorders {nsdecls("w")}><w:bottom w:val="single" w:sz="4" w:space="0" w:color="{COLOR_BORDER_HEX}"/><w:top w:val="none"/><w:left w:val="none"/><w:right w:val="none"/></w:tcBorders>'
+            )
             cell._tc.get_or_add_tcPr().append(borders)
             set_cell_padding(cell, 80, 80, 120, 120)
             p = cell.paragraphs[0]
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             p.paragraph_format.space_after = Pt(0)
             r = p.add_run(str(val))
-            r.font.name = 'Arial'
+            r.font.name = "Arial"
             r.font.size = Pt(8.5)
             r.font.color.rgb = COLOR_DARK_TEXT
 

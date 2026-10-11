@@ -2,6 +2,7 @@
 Generate Document 1: Development Documentation for EMS Pro.
 Outputs to: /Users/apple/Downloads/EMS/document/1_Development_Documentation.docx
 """
+
 from docx.shared import Inches, Pt
 
 from scripts.docx_helper import (
@@ -20,7 +21,7 @@ def build_dev_documentation():
         doc,
         title="EMS Pro — Development Documentation",
         subtitle="Developer Environment Setup, Codebase Conventions, API Architecture & Verification",
-        doc_type="Engineering & Development Guide"
+        doc_type="Engineering & Development Guide",
     )
 
     # 1. Executive Summary & Purpose
@@ -40,27 +41,84 @@ def build_dev_documentation():
         doc,
         "Every tenant table in PostgreSQL is governed by database-enforced Row Level Security (RLS). "
         "Developers MUST NEVER query tenant-scoped models using raw un-scoped sessions or bypass tenant context binding.",
-        title="CRITICAL SECURITY INVARIANT"
+        title="CRITICAL SECURITY INVARIANT",
     )
 
     # 2. Technology Stack
     add_header_1(doc, "2. Comprehensive Technology Stack")
     tech_headers = ["Layer", "Technology", "Version", "Key Purpose & Responsibility"]
     tech_data = [
-        ["Runtime", "Python", "3.12.x", "Core backend language leveraging modern typing and performance"],
-        ["Framework", "FastAPI", "0.115.x", "Asynchronous ASGI web framework with Pydantic v2 validation"],
-        ["ORM / DB Client", "SQLAlchemy", "2.0.x", "Mapped models with strict typing and unit-of-work transactions"],
-        ["Migrations", "Alembic", "1.14.x", "Version-controlled database schema migrations with RLS helpers"],
-        ["Database", "PostgreSQL", "16.x", "Relational database with Row-Level Security and transactional isolation"],
-        ["Caching / Broker", "Redis", "7.x", "In-memory cache for distributed locks, rate-limiting & Celery broker"],
-        ["Task Queue", "Celery", "5.4.x", "Asynchronous processing for payroll runs, report exports, and notifications"],
-        ["Frontend UI", "React", "18.3.x", "Component-driven SPA architecture with custom design system"],
-        ["Type Safety", "TypeScript", "5.x", "Strict type checking, end-to-end interface contracts"],
+        [
+            "Runtime",
+            "Python",
+            "3.12.x",
+            "Core backend language leveraging modern typing and performance",
+        ],
+        [
+            "Framework",
+            "FastAPI",
+            "0.115.x",
+            "Asynchronous ASGI web framework with Pydantic v2 validation",
+        ],
+        [
+            "ORM / DB Client",
+            "SQLAlchemy",
+            "2.0.x",
+            "Mapped models with strict typing and unit-of-work transactions",
+        ],
+        [
+            "Migrations",
+            "Alembic",
+            "1.14.x",
+            "Version-controlled database schema migrations with RLS helpers",
+        ],
+        [
+            "Database",
+            "PostgreSQL",
+            "16.x",
+            "Relational database with Row-Level Security and transactional isolation",
+        ],
+        [
+            "Caching / Broker",
+            "Redis",
+            "7.x",
+            "In-memory cache for distributed locks, rate-limiting & Celery broker",
+        ],
+        [
+            "Task Queue",
+            "Celery",
+            "5.4.x",
+            "Asynchronous processing for payroll runs, report exports, and notifications",
+        ],
+        [
+            "Frontend UI",
+            "React",
+            "18.3.x",
+            "Component-driven SPA architecture with custom design system",
+        ],
+        [
+            "Type Safety",
+            "TypeScript",
+            "5.x",
+            "Strict type checking, end-to-end interface contracts",
+        ],
         ["Build Tool", "Vite", "8.2.x", "Lightning fast HMR, bundling, and CSS asset pipeline"],
-        ["Password Security", "Argon2id (passlib)", "Latest", "Memory-hard password hashing resistant to GPU attacks"],
-        ["Token Auth", "PyJWT", "2.x", "Stateless short-lived access tokens with HttpOnly refresh cookies"],
+        [
+            "Password Security",
+            "Argon2id (passlib)",
+            "Latest",
+            "Memory-hard password hashing resistant to GPU attacks",
+        ],
+        [
+            "Token Auth",
+            "PyJWT",
+            "2.x",
+            "Stateless short-lived access tokens with HttpOnly refresh cookies",
+        ],
     ]
-    add_styled_table(doc, tech_headers, tech_data, [Inches(1.1), Inches(1.1), Inches(0.8), Inches(3.5)])
+    add_styled_table(
+        doc, tech_headers, tech_data, [Inches(1.1), Inches(1.1), Inches(0.8), Inches(3.5)]
+    )
 
     # 3. Codebase Organization
     add_header_1(doc, "3. Codebase Directory Structure & Conventions")
@@ -70,11 +128,31 @@ def build_dev_documentation():
     )
     mod_headers = ["File Name", "Role", "Rules & Architectural Guardrails"]
     mod_data = [
-        ["models.py", "SQLAlchemy Entities", "Table schema only. No business logic or queries. Inherits TenantBase or Base."],
-        ["schemas.py", "Pydantic DTOs", "Request/Response serialization schemas with regex, validators, and config."],
-        ["repository.py", "Data Access Layer", "SQLAlchemy queries only. No business validation or HTTP exceptions."],
-        ["service.py", "Business Domain Logic", "Orchestrates transactions, business invariants, security checks, and math."],
-        ["router.py", "FastAPI Endpoints", "HTTP route definitions, dependency injection, and HTTP status codes only."],
+        [
+            "models.py",
+            "SQLAlchemy Entities",
+            "Table schema only. No business logic or queries. Inherits TenantBase or Base.",
+        ],
+        [
+            "schemas.py",
+            "Pydantic DTOs",
+            "Request/Response serialization schemas with regex, validators, and config.",
+        ],
+        [
+            "repository.py",
+            "Data Access Layer",
+            "SQLAlchemy queries only. No business validation or HTTP exceptions.",
+        ],
+        [
+            "service.py",
+            "Business Domain Logic",
+            "Orchestrates transactions, business invariants, security checks, and math.",
+        ],
+        [
+            "router.py",
+            "FastAPI Endpoints",
+            "HTTP route definitions, dependency injection, and HTTP status codes only.",
+        ],
     ]
     add_styled_table(doc, mod_headers, mod_data, [Inches(1.4), Inches(1.8), Inches(3.3)])
 
@@ -194,12 +272,36 @@ def build_dev_documentation():
     )
     rules_headers = ["Domain Area", "Standard Requirement", "Implementation Pattern"]
     rules_data = [
-        ["Date Formatting", "All UI dates must render as DD/MM/YYYY", "shared/utils/date.ts -> formatDate(d)"],
-        ["Money / Salaries", "Precise financial calculations, no float math", "Python Decimal('100.00'), SQL Numeric(12,2)"],
-        ["Exception Handling", "Standardized JSON error envelope", "app.core.exceptions.AppError -> {error: {code, message}}"],
-        ["HTTP Statuses", "Predictable RESTful response codes", "201 Created, 200 OK, 204 No Content, 401, 403, 404, 409, 422"],
-        ["Audit Trail", "Immutable record for high-risk operations", "AuditLogRepository -> log_action(company_id, user_id, action, ...)"],
-        ["Forms & Validations", "Client validation + server-side Pydantic", "Pydantic Field(..., min_length=2, regex=...)"],
+        [
+            "Date Formatting",
+            "All UI dates must render as DD/MM/YYYY",
+            "shared/utils/date.ts -> formatDate(d)",
+        ],
+        [
+            "Money / Salaries",
+            "Precise financial calculations, no float math",
+            "Python Decimal('100.00'), SQL Numeric(12,2)",
+        ],
+        [
+            "Exception Handling",
+            "Standardized JSON error envelope",
+            "app.core.exceptions.AppError -> {error: {code, message}}",
+        ],
+        [
+            "HTTP Statuses",
+            "Predictable RESTful response codes",
+            "201 Created, 200 OK, 204 No Content, 401, 403, 404, 409, 422",
+        ],
+        [
+            "Audit Trail",
+            "Immutable record for high-risk operations",
+            "AuditLogRepository -> log_action(company_id, user_id, action, ...)",
+        ],
+        [
+            "Forms & Validations",
+            "Client validation + server-side Pydantic",
+            "Pydantic Field(..., min_length=2, regex=...)",
+        ],
     ]
     add_styled_table(doc, rules_headers, rules_data, [Inches(1.5), Inches(2.2), Inches(2.8)])
 
@@ -221,12 +323,13 @@ def build_dev_documentation():
         doc,
         "CI pipelines reject any pull request where test coverage drops or where test_rls_isolation "
         "fails to block cross-tenant read/write attempts.",
-        title="CI / CD GATEWAY"
+        title="CI / CD GATEWAY",
     )
 
     output_path = "/Users/apple/Downloads/EMS/document/1_Development_Documentation.docx"
     doc.save(output_path)
     print(f"✔ Successfully generated: {output_path}")
+
 
 if __name__ == "__main__":
     build_dev_documentation()

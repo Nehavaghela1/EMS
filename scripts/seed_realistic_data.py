@@ -131,16 +131,61 @@ def run_seed():
             "address": "Infiria Tower, Bodakdev",
             "hr_admin": ("Neha", "Vaghela", "neha@infiria.com", "neha"),
             "employees": [
-                ("Aarav", "Patel", "Engineering", "Lead Architect", UserRole.manager, Decimal("1800000")),
-                ("Diya", "Sharma", "Engineering", "Senior Backend Dev", UserRole.employee, Decimal("1200000")),
-                ("Rohan", "Mehta", "Product", "Product Manager", UserRole.manager, Decimal("1600000")),
+                (
+                    "Aarav",
+                    "Patel",
+                    "Engineering",
+                    "Lead Architect",
+                    UserRole.manager,
+                    Decimal("1800000"),
+                ),
+                (
+                    "Diya",
+                    "Sharma",
+                    "Engineering",
+                    "Senior Backend Dev",
+                    UserRole.employee,
+                    Decimal("1200000"),
+                ),
+                (
+                    "Rohan",
+                    "Mehta",
+                    "Product",
+                    "Product Manager",
+                    UserRole.manager,
+                    Decimal("1600000"),
+                ),
                 ("Pooja", "Shah", "Design", "UI/UX Designer", UserRole.employee, Decimal("900000")),
-                ("Kunal", "Verma", "Engineering", "DevOps Engineer", UserRole.employee, Decimal("1100000")),
-                ("Sneha", "Joshi", "Human Resources", "HR Specialist", UserRole.employee, Decimal("700000")),
+                (
+                    "Kunal",
+                    "Verma",
+                    "Engineering",
+                    "DevOps Engineer",
+                    UserRole.employee,
+                    Decimal("1100000"),
+                ),
+                (
+                    "Sneha",
+                    "Joshi",
+                    "Human Resources",
+                    "HR Specialist",
+                    UserRole.employee,
+                    Decimal("700000"),
+                ),
             ],
             "projects": [
-                ("EMS Enterprise 2.0", "EMS-V2", "Core platform upgrade and dashboard", Decimal("500000")),
-                ("Infiria Mobile Suite", "INF-MOB", "Cross-platform mobile apps", Decimal("350000")),
+                (
+                    "EMS Enterprise 2.0",
+                    "EMS-V2",
+                    "Core platform upgrade and dashboard",
+                    Decimal("500000"),
+                ),
+                (
+                    "Infiria Mobile Suite",
+                    "INF-MOB",
+                    "Cross-platform mobile apps",
+                    Decimal("350000"),
+                ),
             ],
         },
         {
@@ -154,15 +199,60 @@ def run_seed():
             "address": "BKC Finance Centre, Bandra East",
             "hr_admin": ("Vikram", "Malhotra", "hr@nexuspay.in", "vikram"),
             "employees": [
-                ("Amit", "Kulkarni", "Risk & Fraud", "Risk Director", UserRole.manager, Decimal("2200000")),
-                ("Priya", "Nair", "Engineering", "Payment Gateway Lead", UserRole.manager, Decimal("1900000")),
-                ("Siddharth", "Rao", "Engineering", "Full Stack Engineer", UserRole.employee, Decimal("1300000")),
-                ("Ananya", "Deshmukh", "Compliance", "KYC Officer", UserRole.employee, Decimal("850000")),
-                ("Tanvi", "Bansal", "Finance", "Treasury Analyst", UserRole.employee, Decimal("950000")),
+                (
+                    "Amit",
+                    "Kulkarni",
+                    "Risk & Fraud",
+                    "Risk Director",
+                    UserRole.manager,
+                    Decimal("2200000"),
+                ),
+                (
+                    "Priya",
+                    "Nair",
+                    "Engineering",
+                    "Payment Gateway Lead",
+                    UserRole.manager,
+                    Decimal("1900000"),
+                ),
+                (
+                    "Siddharth",
+                    "Rao",
+                    "Engineering",
+                    "Full Stack Engineer",
+                    UserRole.employee,
+                    Decimal("1300000"),
+                ),
+                (
+                    "Ananya",
+                    "Deshmukh",
+                    "Compliance",
+                    "KYC Officer",
+                    UserRole.employee,
+                    Decimal("850000"),
+                ),
+                (
+                    "Tanvi",
+                    "Bansal",
+                    "Finance",
+                    "Treasury Analyst",
+                    UserRole.employee,
+                    Decimal("950000"),
+                ),
             ],
             "projects": [
-                ("Instant UPI Payouts", "UPI-GATE", "High-throughput settlement gateway", Decimal("800000")),
-                ("Automated KYC Flow", "KYC-AUTO", "Real-time verification pipeline", Decimal("400000")),
+                (
+                    "Instant UPI Payouts",
+                    "UPI-GATE",
+                    "High-throughput settlement gateway",
+                    Decimal("800000"),
+                ),
+                (
+                    "Automated KYC Flow",
+                    "KYC-AUTO",
+                    "Real-time verification pipeline",
+                    Decimal("400000"),
+                ),
             ],
         },
         {
@@ -176,13 +266,46 @@ def run_seed():
             "address": "Indiranagar 100ft Road",
             "hr_admin": ("Aditi", "Saxena", "hr@aethercloud.io", "aditi"),
             "employees": [
-                ("Karthik", "Ranganathan", "Infrastructure", "Principal SRE", UserRole.manager, Decimal("2500000")),
-                ("Meera", "Swaminathan", "Infrastructure", "Cloud Architect", UserRole.employee, Decimal("1700000")),
-                ("Varun", "Pillai", "Platform", "Go Backend Engineer", UserRole.employee, Decimal("1400000")),
-                ("Shruti", "Iyer", "Security", "Security Analyst", UserRole.employee, Decimal("1250000")),
+                (
+                    "Karthik",
+                    "Ranganathan",
+                    "Infrastructure",
+                    "Principal SRE",
+                    UserRole.manager,
+                    Decimal("2500000"),
+                ),
+                (
+                    "Meera",
+                    "Swaminathan",
+                    "Infrastructure",
+                    "Cloud Architect",
+                    UserRole.employee,
+                    Decimal("1700000"),
+                ),
+                (
+                    "Varun",
+                    "Pillai",
+                    "Platform",
+                    "Go Backend Engineer",
+                    UserRole.employee,
+                    Decimal("1400000"),
+                ),
+                (
+                    "Shruti",
+                    "Iyer",
+                    "Security",
+                    "Security Analyst",
+                    UserRole.employee,
+                    Decimal("1250000"),
+                ),
             ],
             "projects": [
-                ("Kubernetes Auto-scaler", "K8S-SCALE", "Multi-tenant cluster optimization", Decimal("600000")),
+                (
+                    "Kubernetes Auto-scaler",
+                    "K8S-SCALE",
+                    "Multi-tenant cluster optimization",
+                    Decimal("600000"),
+                ),
             ],
         },
         {
@@ -196,13 +319,46 @@ def run_seed():
             "address": "Hitech City, Madhapur",
             "hr_admin": ("Rahul", "Reddy", "hr@zenithhealth.org", "rahul"),
             "employees": [
-                ("Suresh", "Goud", "Clinical Ops", "Medical Director", UserRole.manager, Decimal("2400000")),
-                ("Deepika", "Chowdary", "Engineering", "Telehealth Tech Lead", UserRole.manager, Decimal("1800000")),
-                ("Harish", "Teja", "Engineering", "React Native Developer", UserRole.employee, Decimal("1100000")),
-                ("Kavita", "Rao", "Quality Assurance", "Healthcare QA Lead", UserRole.employee, Decimal("900000")),
+                (
+                    "Suresh",
+                    "Goud",
+                    "Clinical Ops",
+                    "Medical Director",
+                    UserRole.manager,
+                    Decimal("2400000"),
+                ),
+                (
+                    "Deepika",
+                    "Chowdary",
+                    "Engineering",
+                    "Telehealth Tech Lead",
+                    UserRole.manager,
+                    Decimal("1800000"),
+                ),
+                (
+                    "Harish",
+                    "Teja",
+                    "Engineering",
+                    "React Native Developer",
+                    UserRole.employee,
+                    Decimal("1100000"),
+                ),
+                (
+                    "Kavita",
+                    "Rao",
+                    "Quality Assurance",
+                    "Healthcare QA Lead",
+                    UserRole.employee,
+                    Decimal("900000"),
+                ),
             ],
             "projects": [
-                ("Telehealth Video Consult", "TELE-MED", "HIPAA compliant video consults", Decimal("750000")),
+                (
+                    "Telehealth Video Consult",
+                    "TELE-MED",
+                    "HIPAA compliant video consults",
+                    Decimal("750000"),
+                ),
             ],
         },
         {
@@ -216,13 +372,46 @@ def run_seed():
             "address": "GIDC Industrial Estate, Makarpura",
             "hr_admin": ("Bhavin", "Pandya", "hr@solariaenergy.co", "bhavin"),
             "employees": [
-                ("Jayesh", "Trivedi", "Operations", "Plant Operations Head", UserRole.manager, Decimal("2000000")),
-                ("Maitri", "Doshi", "R&D", "Solar Cell Researcher", UserRole.employee, Decimal("1350000")),
-                ("Chirag", "Gohil", "Quality", "Field Test Engineer", UserRole.employee, Decimal("800000")),
-                ("Nirav", "Modi", "Supply Chain", "Procurement Lead", UserRole.employee, Decimal("1150000")),
+                (
+                    "Jayesh",
+                    "Trivedi",
+                    "Operations",
+                    "Plant Operations Head",
+                    UserRole.manager,
+                    Decimal("2000000"),
+                ),
+                (
+                    "Maitri",
+                    "Doshi",
+                    "R&D",
+                    "Solar Cell Researcher",
+                    UserRole.employee,
+                    Decimal("1350000"),
+                ),
+                (
+                    "Chirag",
+                    "Gohil",
+                    "Quality",
+                    "Field Test Engineer",
+                    UserRole.employee,
+                    Decimal("800000"),
+                ),
+                (
+                    "Nirav",
+                    "Modi",
+                    "Supply Chain",
+                    "Procurement Lead",
+                    UserRole.employee,
+                    Decimal("1150000"),
+                ),
             ],
             "projects": [
-                ("High-Efficiency Solar Inverter", "SOL-INV", "Next-gen bifacial inverter pilot", Decimal("900000")),
+                (
+                    "High-Efficiency Solar Inverter",
+                    "SOL-INV",
+                    "Next-gen bifacial inverter pilot",
+                    Decimal("900000"),
+                ),
             ],
         },
     ]
@@ -262,10 +451,13 @@ def run_seed():
 
         # HR Admin user
         hr_first, hr_last, hr_email, hr_user = cdata["hr_admin"]
-        hr_u = db.query(User).filter(
-            User.company_id == comp.id,
-            (User.email == hr_email) | (User.username == hr_user)
-        ).first()
+        hr_u = (
+            db.query(User)
+            .filter(
+                User.company_id == comp.id, (User.email == hr_email) | (User.username == hr_user)
+            )
+            .first()
+        )
         if not hr_u:
             hr_u = User(
                 id=uuid.uuid4(),
@@ -285,7 +477,11 @@ def run_seed():
             db.flush()
 
         # HR Admin Employee record
-        hr_emp = db.query(Employee).filter(Employee.company_id == comp.id, Employee.email == hr_email).first()
+        hr_emp = (
+            db.query(Employee)
+            .filter(Employee.company_id == comp.id, Employee.email == hr_email)
+            .first()
+        )
         if not hr_emp:
             hr_emp = Employee(
                 id=uuid.uuid4(),
@@ -309,10 +505,34 @@ def run_seed():
 
         # Departments
         dept_cache = {}
-        for dept_name in ["Engineering", "Product", "Design", "Human Resources", "Finance", "Operations", "Infrastructure", "Risk & Fraud", "Compliance", "Clinical Ops", "Quality Assurance", "R&D", "Supply Chain", "Quality"]:
-            d = db.query(Department).filter(Department.company_id == comp.id, Department.name == dept_name).first()
+        for dept_name in [
+            "Engineering",
+            "Product",
+            "Design",
+            "Human Resources",
+            "Finance",
+            "Operations",
+            "Infrastructure",
+            "Risk & Fraud",
+            "Compliance",
+            "Clinical Ops",
+            "Quality Assurance",
+            "R&D",
+            "Supply Chain",
+            "Quality",
+        ]:
+            d = (
+                db.query(Department)
+                .filter(Department.company_id == comp.id, Department.name == dept_name)
+                .first()
+            )
             if not d:
-                d = Department(id=uuid.uuid4(), company_id=comp.id, name=dept_name, description=f"{dept_name} Department")
+                d = Department(
+                    id=uuid.uuid4(),
+                    company_id=comp.id,
+                    name=dept_name,
+                    description=f"{dept_name} Department",
+                )
                 db.add(d)
                 db.flush()
             dept_cache[dept_name] = d
@@ -324,7 +544,11 @@ def run_seed():
             ("Earned / Privilege Leave", "EL", 18, True),
             ("Sick Leave", "SL", 10, False),
         ]:
-            lt = db.query(LeaveType).filter(LeaveType.company_id == comp.id, LeaveType.code == code).first()
+            lt = (
+                db.query(LeaveType)
+                .filter(LeaveType.company_id == comp.id, LeaveType.code == code)
+                .first()
+            )
             if not lt:
                 lt = LeaveType(
                     id=uuid.uuid4(),
@@ -342,7 +566,11 @@ def run_seed():
             leave_types[code] = lt
 
         # Standard Shift
-        reg_shift = db.query(Shift).filter(Shift.company_id == comp.id, Shift.name == "General Day Shift").first()
+        reg_shift = (
+            db.query(Shift)
+            .filter(Shift.company_id == comp.id, Shift.name == "General Day Shift")
+            .first()
+        )
         if not reg_shift:
             reg_shift = Shift(
                 id=uuid.uuid4(),
@@ -358,7 +586,14 @@ def run_seed():
             db.flush()
 
         # Salary Structure
-        sal_struct = db.query(SalaryStructure).filter(SalaryStructure.company_id == comp.id, SalaryStructure.name == "Standard Regular Structure").first()
+        sal_struct = (
+            db.query(SalaryStructure)
+            .filter(
+                SalaryStructure.company_id == comp.id,
+                SalaryStructure.name == "Standard Regular Structure",
+            )
+            .first()
+        )
         if not sal_struct:
             sal_struct = SalaryStructure(
                 id=uuid.uuid4(),
@@ -442,7 +677,9 @@ def run_seed():
         # Name tracking for duplicates within company
         first_names_seen = {}
 
-        for idx, (first_n, last_n, dept_name, pos, role, ctc) in enumerate(cdata["employees"], start=2):
+        for idx, (first_n, last_n, dept_name, pos, role, ctc) in enumerate(
+            cdata["employees"], start=2
+        ):
             # Email naming: first@domain, or first.last@domain if duplicate
             first_lower = first_n.lower()
             if first_lower in first_names_seen:
@@ -472,7 +709,11 @@ def run_seed():
                 u.is_active = True
                 db.flush()
 
-            e = db.query(Employee).filter(Employee.company_id == comp.id, Employee.email == user_email).first()
+            e = (
+                db.query(Employee)
+                .filter(Employee.company_id == comp.id, Employee.email == user_email)
+                .first()
+            )
             if not e:
                 # Find manager if available
                 mgr_id = None
@@ -507,7 +748,9 @@ def run_seed():
                 created_managers[dept_name] = e.id
 
             # Assign Shift
-            emp_shift = db.query(EmployeeShift).filter_by(company_id=comp.id, employee_id=e.id).first()
+            emp_shift = (
+                db.query(EmployeeShift).filter_by(company_id=comp.id, employee_id=e.id).first()
+            )
             if not emp_shift:
                 emp_shift = EmployeeShift(
                     id=uuid.uuid4(),
@@ -520,7 +763,11 @@ def run_seed():
 
             # Assign Leave Balances for 2026
             for lt in leave_types.values():
-                lb = db.query(LeaveBalance).filter_by(company_id=comp.id, employee_id=e.id, leave_type_id=lt.id, year=2026).first()
+                lb = (
+                    db.query(LeaveBalance)
+                    .filter_by(company_id=comp.id, employee_id=e.id, leave_type_id=lt.id, year=2026)
+                    .first()
+                )
                 if not lb:
                     lb = LeaveBalance(
                         id=uuid.uuid4(),
@@ -536,7 +783,9 @@ def run_seed():
                     db.add(lb)
 
             # Assign Salary
-            emp_sal = db.query(EmployeeSalary).filter_by(company_id=comp.id, employee_id=e.id).first()
+            emp_sal = (
+                db.query(EmployeeSalary).filter_by(company_id=comp.id, employee_id=e.id).first()
+            )
             if not emp_sal:
                 emp_sal = EmployeeSalary(
                     id=uuid.uuid4(),
@@ -553,7 +802,11 @@ def run_seed():
             for d_offset in range(4):
                 att_date = date.today() - timedelta(days=d_offset)
                 if att_date.weekday() < 5:  # Monday to Friday
-                    att = db.query(Attendance).filter_by(company_id=comp.id, employee_id=e.id, date=att_date).first()
+                    att = (
+                        db.query(Attendance)
+                        .filter_by(company_id=comp.id, employee_id=e.id, date=att_date)
+                        .first()
+                    )
                     if not att:
                         cin = datetime.combine(att_date, time(9, 30))
                         cout = datetime.combine(att_date, time(18, 30))
@@ -573,7 +826,11 @@ def run_seed():
         # Create 1 Payroll Run for current year/month
         cur_month = date.today().month
         cur_year = date.today().year
-        run = db.query(PayrollRun).filter_by(company_id=comp.id, month=cur_month, year=cur_year).first()
+        run = (
+            db.query(PayrollRun)
+            .filter_by(company_id=comp.id, month=cur_month, year=cur_year)
+            .first()
+        )
         if not run:
             run = PayrollRun(
                 id=uuid.uuid4(),
@@ -597,7 +854,11 @@ def run_seed():
 
             # Create payroll items for ALL employees in the company
             for emp in emp_records:
-                existing_item = db.query(PayrollItem).filter_by(company_id=comp.id, payroll_run_id=run.id, employee_id=emp.id).first()
+                existing_item = (
+                    db.query(PayrollItem)
+                    .filter_by(company_id=comp.id, payroll_run_id=run.id, employee_id=emp.id)
+                    .first()
+                )
                 if not existing_item:
                     item = PayrollItem(
                         id=uuid.uuid4(),
@@ -609,9 +870,17 @@ def run_seed():
                         total_deductions=Decimal("12000.00"),
                         net_salary=Decimal("88000.00"),
                         employer_cost=Decimal("105000.00"),
-                        earnings_json=[{"code": "BASIC", "name": "Basic Pay", "amount": 50000.0}, {"code": "HRA", "name": "House Rent Allowance", "amount": 25000.0}],
-                        deductions_json=[{"code": "EPF_EE", "name": "Employee PF", "amount": 1800.0}, {"code": "PT", "name": "Professional Tax", "amount": 200.0}],
-                        employer_contributions_json=[{"code": "EPF_ER", "name": "Employer PF", "amount": 1800.0}],
+                        earnings_json=[
+                            {"code": "BASIC", "name": "Basic Pay", "amount": 50000.0},
+                            {"code": "HRA", "name": "House Rent Allowance", "amount": 25000.0},
+                        ],
+                        deductions_json=[
+                            {"code": "EPF_EE", "name": "Employee PF", "amount": 1800.0},
+                            {"code": "PT", "name": "Professional Tax", "amount": 200.0},
+                        ],
+                        employer_contributions_json=[
+                            {"code": "EPF_ER", "name": "Employer PF", "amount": 1800.0}
+                        ],
                         working_days=Decimal("22.00"),
                         present_days=Decimal("22.00"),
                         absent_days=Decimal("0.00"),
@@ -624,7 +893,11 @@ def run_seed():
 
         # Projects & Tasks
         for p_name, p_code, p_desc, p_budget in cdata["projects"]:
-            p = db.query(Project).filter(Project.company_id == comp.id, Project.code == p_code).first()
+            p = (
+                db.query(Project)
+                .filter(Project.company_id == comp.id, Project.code == p_code)
+                .first()
+            )
             if not p:
                 lead_mgr = list(created_managers.values())[0] if created_managers else hr_emp.id
                 p = Project(
@@ -710,7 +983,9 @@ def run_seed():
             db.add(ann)
 
         db.commit()
-        print(f"✔ Successfully seeded company '{comp.name}' ({cdata['domain']}) with {len(emp_records)+1} employees!")
+        print(
+            f"✔ Successfully seeded company '{comp.name}' ({cdata['domain']}) with {len(emp_records) + 1} employees!"
+        )
 
     db.close()
     print("===> Data seeding complete!")
