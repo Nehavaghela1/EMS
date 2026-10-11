@@ -37,11 +37,18 @@ def test_create_workspace_and_switch(
     shifts = db.scalars(select(Shift).where(Shift.company_id == new_company_id)).all()
     assert len(shifts) == 1
 
-    # 3. Verify tenant isolation: employees should be 0 in the new company
+    # 3. Verify tenant isolation: only the creator's owner profile exists in the new company
     from app.modules.hr.models import Employee
 
     employees = db.scalars(select(Employee).where(Employee.company_id == new_company_id)).all()
-    assert len(employees) == 0
+    assert len(employees) == 1
+    creator_emp = employees[0]
+    assert str(creator_emp.company_id) == str(new_company_id)
+    assert creator_emp.employee_code == "ADMIN-001"
+    assert creator_emp.position == "HR Admin / Org Head"
+    assert creator_emp.user_id is not None
+    # User associated with creator_emp should have the same email as the creator
+    assert creator_emp.email == f"hr_admin@{company_a.company_id}.test"
 
     # 4. Verify user workspaces endpoint
     list_response = client.get("/api/v1/auth/workspaces", headers=company_a.hr_headers)
