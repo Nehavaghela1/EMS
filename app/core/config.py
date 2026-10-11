@@ -1,5 +1,6 @@
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -65,6 +66,7 @@ class Settings(BaseSettings):
     # console is the only backend ever exercised in dev/tests (Spec 13) —
     # switching to smtp or resend is this one line, never a code change.
     EMAIL_BACKEND: Literal["console", "smtp", "resend"] = "console"
+    DEV_EMAIL_COPY_TO: str = ""
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
     SMTP_USERNAME: str | None = None
@@ -107,6 +109,12 @@ class Settings(BaseSettings):
     DEFAULT_CURRENCY: str = "INR"
     DEFAULT_WORKING_WEEK_DAYS: int = 5
     DEFAULT_HALF_DAY_HOURS_THRESHOLD: float = 4
+
+    @model_validator(mode="after")
+    def validate_dev_email_copy(self) -> "Settings":
+        if self.ENVIRONMENT == "production" and bool(self.DEV_EMAIL_COPY_TO.strip()):
+            raise ValueError("DEV_EMAIL_COPY_TO must not be set in production environment.")
+        return self
 
 
 # mypy doesn't know pydantic-settings populates required fields from the

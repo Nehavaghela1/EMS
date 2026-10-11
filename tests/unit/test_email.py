@@ -242,3 +242,38 @@ def test_task_is_configured_to_retry_only_transient_errors():
     assert send_email_task.autoretry_for == (TransientEmailError,)
     assert send_email_task.retry_backoff is True
     assert send_email_task.max_retries == 3
+
+
+def test_dev_email_copy_honoured_only_in_development(monkeypatch):
+    monkeypatch.setattr(email_module.settings, "EMAIL_BACKEND", "console")
+    monkeypatch.setattr(email_module.settings, "DEV_EMAIL_COPY_TO", "dev-copy@example.com")
+
+    # When ENVIRONMENT is "development", copy should be sent
+    monkeypatch.setattr(email_module.settings, "ENVIRONMENT", "development")
+    email_module.console_outbox.clear()
+    send_email(to="user@example.com", subject="Hello", text_body="txt", html_body="<p>html</p>")
+    assert len(email_module.console_outbox) == 2
+    assert email_module.console_outbox[0]["to"] == "user@example.com"
+    assert email_module.console_outbox[1]["to"] == "dev-copy@example.com"
+
+    # When ENVIRONMENT is NOT "development" (e.g. staging), copy is not sent
+    monkeypatch.setattr(email_module.settings, "ENVIRONMENT", "staging")
+    email_module.console_outbox.clear()
+    send_email(to="user@example.com", subject="Hello", text_body="txt", html_body="<p>html</p>")
+    assert len(email_module.console_outbox) == 1
+    assert email_module.console_outbox[0]["to"] == "user@example.com"
+
+
+def test_dev_email_copy_refused_in_production(monkeypatch):
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    with pytest.raises((ValidationError, ValueError)):
+        Settings(
+            ENVIRONMENT="production",
+            DEV_EMAIL_COPY_TO="dev-copy@example.com",
+            DATABASE_URL="postgresql+psycopg2://fake:fake@localhost:5432/fake",
+            ALEMBIC_DATABASE_URL="postgresql+psycopg2://fake:fake@localhost:5432/fake",
+            SECRET_KEY="fake-secret-key-for-test",
+        )

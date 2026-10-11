@@ -46,18 +46,18 @@ class PermanentEmailError(Exception):
 console_outbox: list[dict[str, str]] = []
 
 
-SUPER_ADMIN_DEBUG_EMAIL = "neha@infiria.com"
-
-
 def send_email(*, to: str, subject: str, text_body: str, html_body: str) -> None:
     """The one function every backend hides behind.
-    Dispatches to the target recipient. If configured, also delivers a copy or fallback
-    to the super admin inbox (neha@infiria.com) so all OTPs, credentials, and notifications
-    are always accessible during development/testing.
+    Dispatches to the target recipient. If configured in development, also delivers
+    a copy to DEV_EMAIL_COPY_TO.
     """
     targets = [to]
-    if SUPER_ADMIN_DEBUG_EMAIL and to.lower().strip() != SUPER_ADMIN_DEBUG_EMAIL.lower().strip():
-        targets.append(SUPER_ADMIN_DEBUG_EMAIL)
+    if (
+        settings.ENVIRONMENT == "development"
+        and settings.DEV_EMAIL_COPY_TO
+        and to.lower().strip() != settings.DEV_EMAIL_COPY_TO.lower().strip()
+    ):
+        targets.append(settings.DEV_EMAIL_COPY_TO)
 
     primary_error: Exception | None = None
     sent_count = 0

@@ -47,6 +47,7 @@ if _database_name(settings.TEST_DATABASE_URL) == _database_name(settings.DATABAS
 # it just happened to be true until someone's .env said otherwise. This
 # forces it, unconditionally, before any test can run.
 settings.EMAIL_BACKEND = "console"
+settings.DEV_EMAIL_COPY_TO = ""
 
 
 def _ensure_test_database_exists() -> None:
