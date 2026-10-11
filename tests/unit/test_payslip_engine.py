@@ -308,3 +308,53 @@ def test_payslip_lop_and_full_lop(
     assert full_out.gross_salary == Decimal("0.00")
     assert full_out.total_deductions == Decimal("0.00")
     assert full_out.net_salary == Decimal("1000.00")  # Only reimbursement paid
+
+
+def test_reimbursement_does_not_affect_statutory_deductions_only_net_salary(
+    standard_components,
+    default_statutory,
+    gujarat_pt_slabs,
+    india_tax_slabs,
+):
+    """Verifies that adding reimbursement does not change PF, ESI, PT, or TDS,
+    and net_salary changes by exactly the reimbursement amount.
+    """
+    base_input_kwargs = dict(
+        ctc_annual=Decimal("600000.00"),
+        components=standard_components,
+        statutory=default_statutory,
+        pt_slabs=gujarat_pt_slabs,
+        tax_slabs=india_tax_slabs,
+        month=4,
+        year=2026,
+        financial_year="2026-2027",
+        working_days=Decimal("30"),
+        present_days=Decimal("30"),
+        paid_leave_days=Decimal("0"),
+        lop_days=Decimal("0"),
+    )
+
+    payslip_no_reimb = calculate_payslip(
+        PayslipInput(**base_input_kwargs, reimbursement_amount=Decimal("0"))
+    )
+    payslip_with_reimb = calculate_payslip(
+        PayslipInput(**base_input_kwargs, reimbursement_amount=Decimal("500.00"))
+    )
+
+    # Helper to extract statutory deduction lines by code
+    def get_line(lines, code):
+        return next((item for item in lines if item.code == code), None)
+
+    for code in ["EPF_EE", "ESI_EE", "PT", "TDS"]:
+        line_no = get_line(payslip_no_reimb.deductions, code)
+        line_with = get_line(payslip_with_reimb.deductions, code)
+        assert line_no == line_with, (
+            f"Deduction line mismatch for code {code}: {line_no} vs {line_with}"
+        )
+
+    # Total deductions and gross must be identical
+    assert payslip_no_reimb.gross_salary == payslip_with_reimb.gross_salary
+    assert payslip_no_reimb.total_deductions == payslip_with_reimb.total_deductions
+
+    # Only net salary changes, by exactly 500.00
+    assert payslip_with_reimb.net_salary - payslip_no_reimb.net_salary == Decimal("500.00")
