@@ -239,6 +239,152 @@ def test_department_clearance_function_authorization(client: TestClient, db: Ses
     assert res_it_clear.json()["it_clearance"] is True
 
 
+def test_put_department_clearance_function_and_authorization(
+    client: TestClient, db: Session, company_a
+):
+    """Verifies that PUT /departments/{id} accepts and validates clearance_function,
+    only HR admins can update it (employees and managers get 403),
+    and a manager in a department updated to 'finance' can sign off finance clearance.
+    """
+    from app.core.security import create_access_token, hash_password
+    from app.modules.hr.models import Employee
+    from app.modules.identity.models import User, UserRole
+
+    hr_headers = company_a.hr_headers
+
+    # 1. Create a generic department with null clearance_function
+    dept_res = client.post(
+        "/api/v1/departments",
+        json={"name": "Billing Services", "description": "Billing Operations"},
+        headers=hr_headers,
+    )
+    assert dept_res.status_code == 201
+    dept_id = dept_res.json()["id"]
+    assert dept_res.json()["clearance_function"] is None
+
+    # 2. Create a manager in Billing Services
+    mgr_emp = _create_employee(
+        client,
+        hr_headers,
+        email="billing-mgr@example.com",
+        department_id=dept_id,
+    )
+    mgr_user = User(
+        company_id=company_a.company_id,
+        email="billing-mgr-user@example.com",
+        hashed_password=hash_password("Test1234pass!"),
+        role=UserRole.manager,
+        is_active=True,
+    )
+    db.add(mgr_user)
+    db.flush()
+    db.query(Employee).filter(Employee.id == mgr_emp["id"]).update({"user_id": mgr_user.id})
+    db.commit()
+    mgr_token = create_access_token(
+        sub=str(mgr_user.id),
+        company_id=str(company_a.company_id),
+        role=UserRole.manager.value,
+    )
+    mgr_headers = {"Authorization": f"Bearer {mgr_token}"}
+
+    # 3. Create regular employee
+    reg_emp = _create_employee(
+        client,
+        hr_headers,
+        email="regular-emp@example.com",
+        department_id=dept_id,
+    )
+    reg_user = User(
+        company_id=company_a.company_id,
+        email="regular-emp-user@example.com",
+        hashed_password=hash_password("Test1234pass!"),
+        role=UserRole.employee,
+        is_active=True,
+    )
+    db.add(reg_user)
+    db.flush()
+    db.query(Employee).filter(Employee.id == reg_emp["id"]).update({"user_id": reg_user.id})
+    db.commit()
+    reg_token = create_access_token(
+        sub=str(reg_user.id),
+        company_id=str(company_a.company_id),
+        role=UserRole.employee.value,
+    )
+    reg_headers = {"Authorization": f"Bearer {reg_token}"}
+
+    # 4. Attempt update by employee -> 403 Forbidden
+    res_emp_put = client.put(
+        f"/api/v1/departments/{dept_id}",
+        json={"clearance_function": "finance"},
+        headers=reg_headers,
+    )
+    assert res_emp_put.status_code == 403
+
+    # 5. Attempt update by manager -> 403 Forbidden
+    res_mgr_put = client.put(
+        f"/api/v1/departments/{dept_id}",
+        json={"clearance_function": "finance"},
+        headers=mgr_headers,
+    )
+    assert res_mgr_put.status_code == 403
+
+    # 6. Invalid clearance_function value -> 422 Unprocessable Entity
+    res_inv_put = client.put(
+        f"/api/v1/departments/{dept_id}",
+        json={"clearance_function": "marketing"},
+        headers=hr_headers,
+    )
+    assert res_inv_put.status_code == 422
+
+    # 7. Resigning employee for clearance testing
+    target_emp = _create_employee(client, hr_headers, email="target-finance-clear@example.com")
+    target_id = target_emp["id"]
+    client.post(
+        f"/api/v1/employees/{target_id}/resignation",
+        json={
+            "resignation_date": "2026-09-17",
+            "last_working_date": "2026-10-01",
+            "reason": "New Offer",
+        },
+        headers=hr_headers,
+    )
+
+    # Before update, Billing manager has null clearance_function -> cannot sign finance clearance
+    res_clear_before = client.put(
+        f"/api/v1/employees/{target_id}/fnf/clearance",
+        json={"finance_clearance": True},
+        headers=mgr_headers,
+    )
+    assert res_clear_before.status_code == 403
+
+    # 8. HR Admin updates department to clearance_function = 'finance'
+    res_hr_put = client.put(
+        f"/api/v1/departments/{dept_id}",
+        json={"clearance_function": "finance"},
+        headers=hr_headers,
+    )
+    assert res_hr_put.status_code == 200
+    assert res_hr_put.json()["clearance_function"] == "finance"
+
+    # Now Billing manager has clearance_function = 'finance' -> can sign off finance clearance
+    res_clear_after = client.put(
+        f"/api/v1/employees/{target_id}/fnf/clearance",
+        json={"finance_clearance": True},
+        headers=mgr_headers,
+    )
+    assert res_clear_after.status_code == 200
+    assert res_clear_after.json()["finance_clearance"] is True
+
+    # 9. HR Admin can reset clearance_function to null
+    res_hr_reset = client.put(
+        f"/api/v1/departments/{dept_id}",
+        json={"clearance_function": None},
+        headers=hr_headers,
+    )
+    assert res_hr_reset.status_code == 200
+    assert res_hr_reset.json()["clearance_function"] is None
+
+
 def test_department_head_can_review_resignation_using_department_repo(
     client: TestClient, db: Session, company_a
 ):
