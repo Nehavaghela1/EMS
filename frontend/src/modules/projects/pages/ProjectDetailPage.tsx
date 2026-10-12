@@ -1472,6 +1472,7 @@ export function ProjectDetailPage() {
                 )}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       )}
