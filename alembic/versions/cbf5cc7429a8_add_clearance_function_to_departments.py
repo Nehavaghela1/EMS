@@ -36,6 +36,7 @@ def upgrade() -> None:
     # Finance -> finance
     # Human Resources, HR -> hr
     conn = op.get_bind()
+    conn.execute(sa.text("SELECT set_config('app.is_platform_admin', 'on', true)"))
     it_names = ("it", "information technology")
     fin_names = ("finance",)
     hr_names = ("human resources", "hr")
