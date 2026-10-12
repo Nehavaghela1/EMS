@@ -113,9 +113,9 @@ jobs:
       - name: ruff format --check
         run: ruff format --check .
 
-      # 5. Type check (advisory — allowed to fail early on, tightened later)
+      # 5. Type check (enforced)
       - name: mypy
-        run: mypy app/ || true
+        run: mypy app/
 
       # 6. Postgres + Redis are already up as service containers above.
       - name: Wait for Postgres and Redis
@@ -132,6 +132,9 @@ jobs:
       # migrating, which is why the audit_logs REVOKE now succeeds.
       - name: Set up database (scripts/setup.sh)
         run: scripts/setup.sh
+
+      - name: Check models match migrations
+        run: alembic check
 
       # 9. Tests as ems_app, so RLS is genuinely exercised once it exists (WP-04+).
       - name: pytest
