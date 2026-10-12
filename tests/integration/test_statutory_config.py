@@ -1,6 +1,3 @@
-import uuid
-from datetime import date
-from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -53,9 +50,7 @@ def test_get_and_update_statutory_config(client: TestClient, company_a: TenantCo
 
 def test_statutory_config_access_control(client: TestClient, company_a: TenantContext):
     # Non-HR user attempting to view or update statutory config gets 403 Forbidden
-    res_get = client.get(
-        "/api/v1/payroll/statutory-config", headers=company_a.employee_headers
-    )
+    res_get = client.get("/api/v1/payroll/statutory-config", headers=company_a.employee_headers)
     assert res_get.status_code == 403
 
     res_put = client.put(

@@ -1,4 +1,5 @@
 import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -6,7 +7,7 @@ from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
-from app.modules.performance.models import CycleStatus, GoalStatus
+from app.modules.performance.models import CycleStatus
 from app.modules.performance.schemas import (
     GoalsCreateRequest,
     GoalUpdateRequest,
@@ -30,6 +31,7 @@ performance_router = APIRouter(prefix="/performance", tags=["Performance Managem
 
 
 # --- Routes 67-69: Cycles --------------------------------------------------
+
 
 @performance_router.get("/cycles", response_model=Page[PerformanceCycleResponse])
 def list_performance_cycles(
@@ -76,6 +78,7 @@ def update_performance_cycle(
 
 # --- Route 77: Report (before {employee_id} wildcard) ----------------------
 
+
 @performance_router.get("/report", response_model=PerformanceReportResponse)
 def get_performance_report(
     db: Session = Depends(get_tenant_db),
@@ -86,6 +89,7 @@ def get_performance_report(
 
 
 # --- Routes 70-74: Goals & Reviews -----------------------------------------
+
 
 @performance_router.post("/goals", response_model=list[PerformanceGoalResponse], status_code=201)
 def set_performance_goals(
@@ -102,7 +106,9 @@ def set_performance_goals(
 def list_performance_goals(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager, UserRole.employee)),
+    user: User = Depends(
+        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager, UserRole.employee)
+    ),
 ):
     service = PerformanceService(db)
 
@@ -124,7 +130,6 @@ def list_performance_goals(
 
     goals = service.list_goals(user.company_id, target_emp_id, user)
     return [PerformanceGoalResponse.model_validate(g) for g in goals]
-
 
 
 @performance_router.put("/goals/{id}", response_model=PerformanceGoalResponse)
@@ -172,7 +177,9 @@ def submit_self_review(
     return PerformanceReviewResponse.model_validate(review)
 
 
-@performance_router.post("/goals/{goal_id}/manager-review", response_model=PerformanceReviewResponse)
+@performance_router.post(
+    "/goals/{goal_id}/manager-review", response_model=PerformanceReviewResponse
+)
 def submit_manager_review(
     goal_id: uuid.UUID,
     data: ManagerReviewRequest,
@@ -185,6 +192,7 @@ def submit_manager_review(
 
 
 # --- Routes 75-76: Summaries -----------------------------------------------
+
 
 @performance_router.get("/summary/{employee_id}", response_model=PerformanceSummaryResponse | None)
 def get_performance_summary(
@@ -222,6 +230,7 @@ def finalize_performance_summary(
 
 # --- Performance Improvement Plan (PIP) Endpoints ---
 
+
 @performance_router.post("/pips", response_model=PerformancePIPResponse, status_code=201)
 def initiate_pip(
     data: PIPCreateRequest,
@@ -230,7 +239,9 @@ def initiate_pip(
 ):
     service = PerformanceService(db)
     pip = service.create_pip(user.company_id, data, user)
-    return service.get_active_pip(user.company_id, pip.employee_id) or PerformancePIPResponse.model_validate(pip)
+    return service.get_active_pip(
+        user.company_id, pip.employee_id
+    ) or PerformancePIPResponse.model_validate(pip)
 
 
 @performance_router.get("/pips", response_model=list[PerformancePIPResponse])

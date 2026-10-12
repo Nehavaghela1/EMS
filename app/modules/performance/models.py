@@ -8,13 +8,14 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
-    Index,
-    Numeric as SANumeric,
     String,
     Text,
     UniqueConstraint,
 )
 from sqlalchemy import Enum as SAEnum
+from sqlalchemy import (
+    Numeric as SANumeric,
+)
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -101,7 +102,10 @@ class PerformanceReview(TenantBase):
     __tablename__ = "performance_reviews"
     __table_args__ = (
         UniqueConstraint(
-            "company_id", "goal_id", "reviewer_role", name="uq_performance_reviews_goal_reviewer_role"
+            "company_id",
+            "goal_id",
+            "reviewer_role",
+            name="uq_performance_reviews_goal_reviewer_role",
         ),
     )
 

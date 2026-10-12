@@ -1,5 +1,6 @@
 import uuid
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,7 +11,6 @@ from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.performance.models import (
     CycleStatus,
-    CycleType,
     GoalStatus,
     PerformanceCycle,
     PerformanceGoal,
@@ -30,6 +30,7 @@ from app.modules.performance.schemas import (
     GoalsCreateRequest,
     ManagerReviewRequest,
     PerformanceCycleCreateRequest,
+    PerformanceCycleResponse,
     PerformanceCycleUpdateRequest,
     PerformancePIPResponse,
     PerformanceReportResponse,
@@ -129,7 +130,8 @@ class PerformanceService:
             emp = self.employee_repo.get_by_user_id(company_id, actor.id)
             if emp is None:
                 raise NotFoundError(
-                    "Employee profile not found for current user. Admin or manager accounts must select an employee profile when creating goals."
+                    "Employee profile not found for current user. Admin or manager "
+                    "accounts must select an employee profile when creating goals."
                 )
 
         created = []
@@ -176,7 +178,8 @@ class PerformanceService:
         total_weightage = sum((g.weightage for g in emp_goals), Decimal("0.00"))
         if total_weightage != Decimal("100.00"):
             raise WeightageSumError(
-                f"Goal weightages for this cycle sum to {total_weightage}%, but must equal exactly 100.00% before self-review can be submitted."
+                f"Goal weightages for this cycle sum to {total_weightage}%, "
+                "but must equal exactly 100.00% before self-review can be submitted."
             )
 
         existing = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.self)
@@ -328,13 +331,15 @@ class PerformanceService:
                     distribution["4-5"] += 1
 
         rate = (
-            Decimal(completed_count * 100 / total_emp).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            Decimal(completed_count * 100 / total_emp).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
             if total_emp > 0
             else Decimal("0.00")
         )
 
         return PerformanceReportResponse(
-            active_cycle=active_cycle,
+            active_cycle=PerformanceCycleResponse.model_validate(active_cycle),
             total_employees=total_emp,
             completed_reviews=completed_count,
             completion_rate_percent=rate,
@@ -342,7 +347,9 @@ class PerformanceService:
         )
 
     # 6. Performance Improvement Plans (PIP)
-    def create_pip(self, company_id: uuid.UUID, data: PIPCreateRequest, actor: User) -> PerformancePIP:
+    def create_pip(
+        self, company_id: uuid.UUID, data: PIPCreateRequest, actor: User
+    ) -> PerformancePIP:
         emp = self.employee_repo.get_by_id(company_id, data.employee_id)
         if emp is None:
             raise NotFoundError("Employee not found.")
@@ -350,7 +357,9 @@ class PerformanceService:
         # Check if already has an active PIP
         existing = self.pip_repo.get_active_pip_for_employee(company_id, data.employee_id)
         if existing is not None:
-            raise ConflictError("Employee already has an active Performance Improvement Plan (PIP).")
+            raise ConflictError(
+                "Employee already has an active Performance Improvement Plan (PIP)."
+            )
 
         pip = self.pip_repo.create(
             company_id=company_id,
@@ -387,10 +396,14 @@ class PerformanceService:
                 PerformancePIPResponse(
                     id=p.id,
                     employee_id=p.employee_id,
-                    employee_name=f"{emp.first_name} {emp.last_name or ''}".strip() if emp else None,
+                    employee_name=f"{emp.first_name} {emp.last_name or ''}".strip()
+                    if emp
+                    else None,
                     employee_code=emp.employee_code if emp else None,
                     mentor_id=p.mentor_id,
-                    mentor_name=f"{mentor.first_name} {mentor.last_name or ''}".strip() if mentor else None,
+                    mentor_name=f"{mentor.first_name} {mentor.last_name or ''}".strip()
+                    if mentor
+                    else None,
                     title=p.title,
                     description=p.description,
                     milestones_kpis=p.milestones_kpis,
@@ -405,7 +418,9 @@ class PerformanceService:
             )
         return res
 
-    def get_active_pip(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> PerformancePIPResponse | None:
+    def get_active_pip(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID
+    ) -> PerformancePIPResponse | None:
         p = self.pip_repo.get_active_pip_for_employee(company_id, employee_id)
         if p is None:
             return None
@@ -450,6 +465,7 @@ class PerformanceService:
             emp = self.employee_repo.get_by_id(company_id, pip.employee_id)
             if emp:
                 from app.modules.hr.models import ResignationStatus
+
                 self.employee_repo.update(
                     emp,
                     is_active=False,
@@ -474,4 +490,6 @@ class PerformanceService:
             details={"outcome": data.outcome, "notes": data.outcome_notes},
         )
         self.db.commit()
-        return self.get_active_pip(company_id, pip.employee_id) or PerformancePIPResponse.model_validate(pip)
+        return self.get_active_pip(
+            company_id, pip.employee_id
+        ) or PerformancePIPResponse.model_validate(pip)

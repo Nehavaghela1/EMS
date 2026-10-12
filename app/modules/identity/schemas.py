@@ -102,6 +102,7 @@ class CompanyProfileUpdateRequest(BaseModel):
     website: str | None = None
     logo_url: str | None = None
 
+
 class UserRoleUpdateRequest(BaseModel):
     role: UserRole
     website: str | None = None
@@ -109,18 +110,17 @@ class UserRoleUpdateRequest(BaseModel):
 
 class AdminUserResponse(BaseModel):
     """A slim projection of a User row returned by GET /users/administrators."""
+
     id: uuid.UUID
     email: str
     role: UserRole
     first_name: str | None = None
     last_name: str | None = None
     employee_id: uuid.UUID | None = None
-    position: str | None = None   # Job title / designation from employees table
+    position: str | None = None  # Job title / designation from employees table
     hire_date: str | None = None  # ISO date — shown as "Assigned since" in the table
 
     model_config = {"from_attributes": True}
-
-
 
 
 class AdminCompanyUpdateRequest(CompanyProfileUpdateRequest):
@@ -266,6 +266,7 @@ class CompanyLocationCreate(BaseModel):
     postal_code: str | None = None
     is_primary: bool = False
 
+
 class CompanyLocationUpdate(BaseModel):
     name: str | None = None
     code: str | None = None
@@ -275,6 +276,7 @@ class CompanyLocationUpdate(BaseModel):
     country: str | None = None
     postal_code: str | None = None
     is_primary: bool | None = None
+
 
 class CompanyLocationResponse(BaseModel):
     id: uuid.UUID

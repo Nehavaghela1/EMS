@@ -1,15 +1,14 @@
 """Seed rich, realistic, company-unique projects and tasks for all 6 active companies."""
+
 import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from app.db.session import SessionLocal
 from app.db.rls import bind_tenant_to_session
-from app.modules.identity.models import Company, User, UserRole
+from app.db.session import SessionLocal
 from app.modules.hr.models import Employee
-from app.modules.projects.models import (
-    Project, ProjectMember, Task, Milestone, TimeEntry
-)
+from app.modules.identity.models import Company
+from app.modules.projects.models import Milestone, Project, ProjectMember, Task, TimeEntry
 
 COMPANIES_DATA = {
     "Infiria Systems": {
@@ -755,6 +754,7 @@ COMPANIES_DATA = {
     },
 }
 
+
 def seed_unique_projects():
     db = SessionLocal()
     bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
@@ -777,10 +777,11 @@ def seed_unique_projects():
 
         for proj_info in pdata["projects"]:
             # Check if project exists
-            project = db.query(Project).filter(
-                Project.company_id == comp.id,
-                Project.code == proj_info["code"]
-            ).first()
+            project = (
+                db.query(Project)
+                .filter(Project.company_id == comp.id, Project.code == proj_info["code"])
+                .first()
+            )
 
             if not project:
                 project = Project(
@@ -810,11 +811,15 @@ def seed_unique_projects():
 
             # Assign team members (up to 4)
             for emp in employees[:4]:
-                pm = db.query(ProjectMember).filter(
-                    ProjectMember.company_id == comp.id,
-                    ProjectMember.project_id == project.id,
-                    ProjectMember.employee_id == emp.id
-                ).first()
+                pm = (
+                    db.query(ProjectMember)
+                    .filter(
+                        ProjectMember.company_id == comp.id,
+                        ProjectMember.project_id == project.id,
+                        ProjectMember.employee_id == emp.id,
+                    )
+                    .first()
+                )
                 if not pm:
                     pm = ProjectMember(
                         id=uuid.uuid4(),
@@ -828,11 +833,15 @@ def seed_unique_projects():
 
             # Milestones
             for m_title, m_pct, m_status in proj_info.get("milestones", []):
-                ms = db.query(Milestone).filter(
-                    Milestone.company_id == comp.id,
-                    Milestone.project_id == project.id,
-                    Milestone.title == m_title
-                ).first()
+                ms = (
+                    db.query(Milestone)
+                    .filter(
+                        Milestone.company_id == comp.id,
+                        Milestone.project_id == project.id,
+                        Milestone.title == m_title,
+                    )
+                    .first()
+                )
                 if not ms:
                     ms = Milestone(
                         id=uuid.uuid4(),
@@ -849,11 +858,15 @@ def seed_unique_projects():
             # Tasks
             for t_idx, t_data in enumerate(proj_info.get("tasks", [])):
                 assignee = employees[t_idx % len(employees)]
-                task = db.query(Task).filter(
-                    Task.company_id == comp.id,
-                    Task.project_id == project.id,
-                    Task.title == t_data["title"]
-                ).first()
+                task = (
+                    db.query(Task)
+                    .filter(
+                        Task.company_id == comp.id,
+                        Task.project_id == project.id,
+                        Task.title == t_data["title"],
+                    )
+                    .first()
+                )
 
                 if not task:
                     task = Task(
@@ -892,8 +905,11 @@ def seed_unique_projects():
 
         db.commit()
 
-    print("\n🎉 Seeding complete! All companies now have unique, industry-tailored projects, tasks, milestones, and timesheets.")
+    print(
+        "\n🎉 Seeding complete! All companies now have unique, industry-tailored projects, tasks, milestones, and timesheets."
+    )
     db.close()
+
 
 if __name__ == "__main__":
     seed_unique_projects()

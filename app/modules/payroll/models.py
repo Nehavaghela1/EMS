@@ -302,7 +302,9 @@ class PayrollRun(TenantBase):
 
     __tablename__ = "payroll_runs"
     __table_args__ = (
-        UniqueConstraint("company_id", "idempotency_key", name="uq_payroll_runs_company_idempotency_key"),
+        UniqueConstraint(
+            "company_id", "idempotency_key", name="uq_payroll_runs_company_idempotency_key"
+        ),
         Index(
             "uq_payroll_runs_company_month_year_regular",
             "company_id",
@@ -376,11 +378,21 @@ class PayrollItem(TenantBase):
 
     working_days: Mapped[Decimal] = mapped_column(SANumeric(5, 1), nullable=False)
     present_days: Mapped[Decimal] = mapped_column(SANumeric(5, 1), nullable=False)
-    absent_days: Mapped[Decimal] = mapped_column(SANumeric(5, 1), nullable=False, default=Decimal("0.0"))
-    half_days: Mapped[Decimal] = mapped_column(SANumeric(5, 1), nullable=False, default=Decimal("0.0"))
-    paid_leave_days: Mapped[Decimal] = mapped_column(SANumeric(5, 1), nullable=False, default=Decimal("0.0"))
-    lop_days: Mapped[Decimal] = mapped_column(SANumeric(5, 1), nullable=False, default=Decimal("0.0"))
-    reimbursement_amount: Mapped[Decimal] = mapped_column(SANumeric(14, 2), nullable=False, default=Decimal("0.00"))
+    absent_days: Mapped[Decimal] = mapped_column(
+        SANumeric(5, 1), nullable=False, default=Decimal("0.0")
+    )
+    half_days: Mapped[Decimal] = mapped_column(
+        SANumeric(5, 1), nullable=False, default=Decimal("0.0")
+    )
+    paid_leave_days: Mapped[Decimal] = mapped_column(
+        SANumeric(5, 1), nullable=False, default=Decimal("0.0")
+    )
+    lop_days: Mapped[Decimal] = mapped_column(
+        SANumeric(5, 1), nullable=False, default=Decimal("0.0")
+    )
+    reimbursement_amount: Mapped[Decimal] = mapped_column(
+        SANumeric(14, 2), nullable=False, default=Decimal("0.00")
+    )
 
 
 class ReimbursementType(str, enum.Enum):
@@ -412,9 +424,7 @@ class Reimbursement(TenantBase):
     amount: Mapped[Decimal] = mapped_column(SANumeric(14, 2), nullable=False)
     expense_date: Mapped[date] = mapped_column(Date, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    file_object_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), nullable=True
-    )
+    file_object_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     status: Mapped[ReimbursementStatus] = mapped_column(
         SAEnum(ReimbursementStatus, name="reimbursement_status"),
         nullable=False,
@@ -428,5 +438,3 @@ class Reimbursement(TenantBase):
     added_to_payroll_run_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("payroll_runs.id"), nullable=True
     )
-
-

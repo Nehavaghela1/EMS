@@ -9,6 +9,7 @@ from app.core.email_templates import leave_decision_email
 from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.core.pagination import PageParams
 from app.core.time import utcnow
+from app.modules.hr.models import Employee
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
 from app.modules.identity.models import CompanySettings, LeaveYearType, User, UserRole
 from app.modules.identity.repository import CompanySettingsRepository
@@ -21,6 +22,7 @@ from app.modules.platform.service import (
 from app.modules.time_leave.geofence import verify_employee_geofence
 from app.modules.time_leave.models import (
     Attendance,
+    AttendanceRegularizationRequest,
     AttendanceSource,
     AttendanceStatus,
     EmployeeShift,
@@ -29,9 +31,8 @@ from app.modules.time_leave.models import (
     LeaveBalance,
     LeaveStatus,
     LeaveType,
-    Shift,
-    AttendanceRegularizationRequest,
     RegularizationStatus,
+    Shift,
 )
 from app.modules.time_leave.repository import (
     AttendanceRepository,
@@ -44,9 +45,9 @@ from app.modules.time_leave.repository import (
 )
 from app.modules.time_leave.schemas import (
     AttendanceExportRequest,
-    AttendanceRegularizeRequest,
-    AttendanceRegularizationCreate,
     AttendanceRegularizationApprove,
+    AttendanceRegularizationCreate,
+    AttendanceRegularizeRequest,
     CheckInRequest,
     HolidayCreateRequest,
     LeaveApplyRequest,
@@ -57,7 +58,6 @@ from app.modules.time_leave.schemas import (
     ShiftCreateRequest,
     ShiftUpdateRequest,
 )
-from app.modules.hr.models import Employee
 from app.workers.tasks.email import send_email_task
 
 logger = logging.getLogger(__name__)
@@ -73,12 +73,14 @@ def verify_approval_authority(
     for target_employee.
     """
     # Rule A: Anti-Self-Approval
-    # Exception: Company Owner / Super Admin has no reporting manager above them, so they can directly approve their own requests.
+    # Exception: Company Owner / Super Admin has no reporting manager above them,
+    # so they can directly approve their own requests.
     if target_employee.user_id == current_user.id:
         if current_user.role in [UserRole.owner, UserRole.super_admin]:
             return True
         raise ForbiddenError(
-            "Self-approval is forbidden. You cannot approve your own request. Your request must be approved by your reporting manager or CEO."
+            "Self-approval is forbidden. You cannot approve your own request. "
+            "Your request must be approved by your reporting manager or CEO."
         )
 
     # Rule B: Owner/CEO and HR Admin (plus Super Admin) have organization-wide override power
@@ -89,7 +91,10 @@ def verify_approval_authority(
     if target_employee.reporting_manager_id is not None:
         emp_repo = EmployeeRepository(db)
         caller_employee = emp_repo.get_by_user_id(current_user.company_id, current_user.id)
-        if caller_employee is not None and target_employee.reporting_manager_id == caller_employee.id:
+        if (
+            caller_employee is not None
+            and target_employee.reporting_manager_id == caller_employee.id
+        ):
             return True
 
     # Otherwise, reject
@@ -179,6 +184,7 @@ class AttendanceService:
         self.notify = NotificationService(db)
         # Imported lazily to avoid circular imports at module level
         from app.modules.identity.repository import CompanyLocationRepository
+
         self.location_repo = CompanyLocationRepository(db)
 
     def _resolve_scope(self, company_id: uuid.UUID, current_user: User) -> list[uuid.UUID] | None:
@@ -193,7 +199,9 @@ class AttendanceService:
             return self.employee_repo.list_direct_report_ids(company_id, caller_employee.id)
         return [caller_employee.id]
 
-    def check_in(self, company_id: uuid.UUID, current_user: User, body: CheckInRequest | None = None) -> Attendance:
+    def check_in(
+        self, company_id: uuid.UUID, current_user: User, body: CheckInRequest | None = None
+    ) -> Attendance:
         """Route 43. 409 if a record already exists for today — the
         database's `uq_attendance_employee_id_date` is the real backstop
         (11.5); this proactive check just gives a friendlier message.
@@ -220,28 +228,37 @@ class AttendanceService:
                     emp_lat=emp_lat,
                     emp_lon=emp_lon,
                     office_lat=float(location.latitude) if location.latitude is not None else None,
-                    office_lon=float(location.longitude) if location.longitude is not None else None,
+                    office_lon=float(location.longitude)
+                    if location.longitude is not None
+                    else None,
                     radius_m=location.geofence_radius_meters,
                     is_remote_exempt=location.is_remote_exempt,
                 )
                 if distance is not None and body is not None:
-                    accuracy_str = f", accuracy={body.device_accuracy:.0f}m" if body.device_accuracy else ""
+                    accuracy_str = (
+                        f", accuracy={body.device_accuracy:.0f}m" if body.device_accuracy else ""
+                    )
                     fence_notes = (
                         f"GPS check-in: {emp_lat:.6f},{emp_lon:.6f} — "
-                        f"{distance:.0f}m from office (limit {location.geofence_radius_meters}m{accuracy_str})"
+                        f"{distance:.0f}m from office "
+                        f"(limit {location.geofence_radius_meters}m{accuracy_str})"
                     )
 
         # Auto-flag past unclosed shifts as mispunch
-        past_open = self.repo.db.query(Attendance).filter(
-            Attendance.company_id == company_id,
-            Attendance.employee_id == employee.id,
-            Attendance.date < today,
-            Attendance.check_in.is_not(None),
-            Attendance.check_out.is_(None),
-            Attendance.deleted_at.is_(None),
-            Attendance.status != AttendanceStatus.mispunch,
-            Attendance.status != AttendanceStatus.pending_regularization
-        ).all()
+        past_open = (
+            self.repo.db.query(Attendance)
+            .filter(
+                Attendance.company_id == company_id,
+                Attendance.employee_id == employee.id,
+                Attendance.date < today,
+                Attendance.check_in.is_not(None),
+                Attendance.check_out.is_(None),
+                Attendance.deleted_at.is_(None),
+                Attendance.status != AttendanceStatus.mispunch,
+                Attendance.status != AttendanceStatus.pending_regularization,
+            )
+            .all()
+        )
         for po in past_open:
             po.status = AttendanceStatus.mispunch
         record = self.repo.create(
@@ -278,7 +295,7 @@ class AttendanceService:
         )
         settings_row = self.settings_repo.get_by_company(company_id)
         half_thresh = settings_row.half_day_hours_threshold if settings_row else Decimal("4")
-        # Rule B: Status thresholds. Total worked time < 1.0 hr (or very short punches like 4 seconds)
+        # Rule B: Status thresholds. Total worked time < 1.0 hr (e.g. short 4-second punch)
         # must never be marked as half day — it is absent / invalid punch.
         # 1.0 <= hours < half_thresh is half_day, and hours >= half_thresh is present.
         if hours < Decimal("1.0"):
@@ -375,13 +392,15 @@ class AttendanceService:
         eff_check_out = updates.get("check_out", record.check_out)
 
         if eff_check_in and eff_check_out and eff_check_out > eff_check_in:
-            calc_hours = (Decimal((eff_check_out - eff_check_in).total_seconds()) / Decimal(3600)).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
+            calc_hours = (
+                Decimal((eff_check_out - eff_check_in).total_seconds()) / Decimal(3600)
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             updates["hours_worked"] = calc_hours
             if "status" not in updates or updates["status"] is None:
                 settings_row = self.settings_repo.get_by_company(company_id)
-                half_thresh = settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+                half_thresh = (
+                    settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+                )
                 if calc_hours < Decimal("1.0"):
                     updates["status"] = AttendanceStatus.absent
                 elif calc_hours < half_thresh:
@@ -424,17 +443,21 @@ class AttendanceService:
         return record
 
     def request_regularization(
-        self, company_id: uuid.UUID, attendance_id: uuid.UUID, data: AttendanceRegularizationCreate, current_user: User
+        self,
+        company_id: uuid.UUID,
+        attendance_id: uuid.UUID,
+        data: AttendanceRegularizationCreate,
+        current_user: User,
     ) -> AttendanceRegularizationRequest:
         record = self.repo.get_by_id(attendance_id, company_id)
         if record is None:
             raise NotFoundError("Attendance record not found.")
         self._assert_can_view(company_id, record, current_user)
-        
+
         # Determine manager
         employee = self.employee_repo.get_by_id_any_status(record.employee_id, company_id)
         manager_id = employee.reporting_manager_id if employee else None
-        
+
         req = AttendanceRegularizationRequest(
             attendance_id=attendance_id,
             employee_id=record.employee_id,
@@ -444,17 +467,17 @@ class AttendanceService:
             reason=data.reason,
             attachment_url=data.attachment_url,
             status=RegularizationStatus.pending,
-            company_id=company_id
+            company_id=company_id,
         )
         self.repo.create_regularization_request(req)
-        
+
         # For Owner / Super Admin: Auto-approve immediately since no manager is above them
         if current_user.role in [UserRole.owner, UserRole.super_admin]:
             req.status = RegularizationStatus.approved
             req.approved_by = current_user.id
             req.approved_at = utcnow()
             req.admin_notes = "Auto-approved for Owner / Leadership"
-            
+
             eff_check_in = data.requested_check_in
             eff_check_out = data.requested_check_out
             if eff_check_in:
@@ -463,12 +486,15 @@ class AttendanceService:
                 record.check_out = eff_check_out
             if record.check_in and record.check_out and record.check_out > record.check_in:
                 from decimal import ROUND_HALF_UP
-                calc_hours = (Decimal((record.check_out - record.check_in).total_seconds()) / Decimal(3600)).quantize(
-                    Decimal("0.01"), rounding=ROUND_HALF_UP
-                )
+
+                calc_hours = (
+                    Decimal((record.check_out - record.check_in).total_seconds()) / Decimal(3600)
+                ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 record.hours_worked = calc_hours
                 settings_row = self.settings_repo.get_by_company(company_id)
-                half_thresh = settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+                half_thresh = (
+                    settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+                )
                 if calc_hours < Decimal("1.0"):
                     record.status = AttendanceStatus.absent
                 elif calc_hours < half_thresh:
@@ -489,7 +515,11 @@ class AttendanceService:
         if manager_id:
             mgr_employee = self.employee_repo.get_by_id_any_status(manager_id, company_id)
             if mgr_employee and mgr_employee.user_id:
-                emp_name = f"{employee.first_name} {employee.last_name or ''}".strip() if employee else "An employee"
+                emp_name = (
+                    f"{employee.first_name} {employee.last_name or ''}".strip()
+                    if employee
+                    else "An employee"
+                )
                 self.notify.notify(
                     company_id=company_id,
                     user_id=mgr_employee.user_id,
@@ -505,51 +535,68 @@ class AttendanceService:
         return req
 
     def approve_regularization(
-        self, company_id: uuid.UUID, regularization_id: uuid.UUID, data: AttendanceRegularizationApprove, current_user: User
+        self,
+        company_id: uuid.UUID,
+        regularization_id: uuid.UUID,
+        data: AttendanceRegularizationApprove,
+        current_user: User,
     ) -> AttendanceRegularizationRequest:
         req = self.repo.get_regularization_by_id(regularization_id, company_id)
         if req is None:
             raise NotFoundError("Regularization request not found.")
-            
+
         target_employee = self.employee_repo.get_by_id_any_status(req.employee_id, company_id)
         if target_employee is None:
             raise NotFoundError("Employee for this regularization request not found.")
-            
+
         verify_approval_authority(self.db, current_user, target_employee)
-                
+
         if data.status not in ("approved", "rejected"):
             raise AppError("Status must be approved or rejected")
 
-        if data.status == "rejected" and not (data.rejection_reason and data.rejection_reason.strip()):
+        if data.status == "rejected" and not (
+            data.rejection_reason and data.rejection_reason.strip()
+        ):
             raise AppError("Rejection reason is mandatory when rejecting a regularization request.")
-            
+
         req.status = RegularizationStatus(data.status)
         req.approved_by = current_user.id
         req.approved_at = utcnow()
         req.rejection_reason = data.rejection_reason.strip() if data.rejection_reason else None
         if data.admin_notes is not None:
             req.admin_notes = data.admin_notes.strip() or None
-        
+
         record = self.repo.get_by_id(req.attendance_id, company_id)
-        
+
         if req.status == RegularizationStatus.approved and record:
-            eff_check_in = data.adjusted_check_in if data.adjusted_check_in is not None else req.requested_check_in
-            eff_check_out = data.adjusted_check_out if data.adjusted_check_out is not None else req.requested_check_out
+            eff_check_in = (
+                data.adjusted_check_in
+                if data.adjusted_check_in is not None
+                else req.requested_check_in
+            )
+            eff_check_out = (
+                data.adjusted_check_out
+                if data.adjusted_check_out is not None
+                else req.requested_check_out
+            )
 
             if eff_check_in:
                 record.check_in = eff_check_in
             if eff_check_out:
                 record.check_out = eff_check_out
-                
+
             if record.check_in and record.check_out and record.check_out > record.check_in:
                 from decimal import ROUND_HALF_UP
-                calc_hours = (Decimal((record.check_out - record.check_in).total_seconds()) / Decimal(3600)).quantize(
-                    Decimal("0.01"), rounding=ROUND_HALF_UP
-                )
+
+                calc_hours = (
+                    Decimal((record.check_out - record.check_in).total_seconds()) / Decimal(3600)
+                ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 record.hours_worked = calc_hours
-                
+
                 settings_row = self.settings_repo.get_by_company(company_id)
-                half_thresh = settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+                half_thresh = (
+                    settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+                )
                 if calc_hours < Decimal("1.0"):
                     record.status = AttendanceStatus.absent
                 elif calc_hours < half_thresh:
@@ -571,17 +618,21 @@ class AttendanceService:
         emp = self.employee_repo.get_by_id_any_status(req.employee_id, company_id)
         if emp and emp.user_id:
             status_text = "approved" if req.status == RegularizationStatus.approved else "rejected"
+            message_text = (
+                f"Your attendance regularization request for "
+                f"{record.date if record else 'your shift'} has been {status_text}."
+            )
             self.notify.notify(
                 company_id=company_id,
                 user_id=emp.user_id,
                 type=f"regularization_{status_text}",
                 title=f"Attendance Regularization {status_text.capitalize()}",
-                message=f"Your attendance regularization request for {record.date if record else 'your shift'} has been {status_text}.",
+                message=message_text,
                 action_url="/attendance",
                 entity_type="attendance",
                 entity_id=record.id if record else None,
             )
-            
+
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
         return req
@@ -645,41 +696,56 @@ class AttendanceService:
         today = utcnow().date()
 
         # Index attendance rows by date
-        att_rows = self.repo.db.query(Attendance).filter(
-            Attendance.company_id == company_id,
-            Attendance.employee_id == employee_id,
-            Attendance.date >= start,
-            Attendance.date <= end,
-            Attendance.deleted_at.is_(None),
-        ).all()
+        att_rows = (
+            self.repo.db.query(Attendance)
+            .filter(
+                Attendance.company_id == company_id,
+                Attendance.employee_id == employee_id,
+                Attendance.date >= start,
+                Attendance.date <= end,
+                Attendance.deleted_at.is_(None),
+            )
+            .all()
+        )
         att_by_date: dict[date, Attendance] = {r.date: r for r in att_rows}
 
         # Index holidays by date (dept-specific or company-wide)
-        holiday_rows = self.repo.db.query(Holiday).filter(
-            Holiday.company_id == company_id,
-            Holiday.date >= start,
-            Holiday.date <= end,
-            Holiday.deleted_at.is_(None),
-        ).all()
+        holiday_rows = (
+            self.repo.db.query(Holiday)
+            .filter(
+                Holiday.company_id == company_id,
+                Holiday.date >= start,
+                Holiday.date <= end,
+                Holiday.deleted_at.is_(None),
+            )
+            .all()
+        )
         hol_by_date: dict[date, Holiday] = {}
         for h in holiday_rows:
-            if h.applies_to_department_id is None or h.applies_to_department_id == (emp.department_id if emp else None):
+            if h.applies_to_department_id is None or h.applies_to_department_id == (
+                emp.department_id if emp else None
+            ):
                 hol_by_date[h.date] = h
 
         # Index approved/pending leaves by their date range
-        leave_rows = self.repo.db.query(Leave).filter(
-            Leave.company_id == company_id,
-            Leave.employee_id == employee_id,
-            Leave.start_date <= end,
-            Leave.end_date >= start,
-            Leave.status.in_([LeaveStatus.approved, LeaveStatus.pending]),
-            Leave.deleted_at.is_(None),
-        ).all()
+        leave_rows = (
+            self.repo.db.query(Leave)
+            .filter(
+                Leave.company_id == company_id,
+                Leave.employee_id == employee_id,
+                Leave.start_date <= end,
+                Leave.end_date >= start,
+                Leave.status.in_([LeaveStatus.approved, LeaveStatus.pending]),
+                Leave.deleted_at.is_(None),
+            )
+            .all()
+        )
         # Build leave_type names cache
         leave_type_ids = {lv.leave_type_id for lv in leave_rows}
         lt_map: dict[uuid.UUID, str] = {}
         if leave_type_ids:
             from app.modules.time_leave.models import LeaveType as _LT
+
             lt_rows = self.repo.db.query(_LT).filter(_LT.id.in_(leave_type_ids)).all()
             lt_map = {r.id: r.name for r in lt_rows}
         leave_by_date: dict[date, Leave] = {}
@@ -723,17 +789,7 @@ class AttendanceService:
                 holiday_name = hol.name
                 leave_type_name = None
 
-            # Priority 3: Weekly Off / Weekend (Sat/Sun)
-            elif dow >= 5:
-                status = "weekend"
-                work_hours = att.hours_worked if att else None
-                check_in_val = att.check_in if att else None
-                check_out_val = att.check_out if att else None
-                badge = "Weekend"
-                holiday_name = None
-                leave_type_name = None
-
-            # Priority 4: Attendance Punches
+            # Priority 3: Attendance Punches (punches beat weekend)
             elif att is not None:
                 check_in_val = att.check_in
                 check_out_val = att.check_out
@@ -776,6 +832,26 @@ class AttendanceService:
                         status = att.status.value
                         badge = None
 
+            # Priority 4: Attendance Exempt (e.g. CEO/Owner on today or past work days)
+            elif emp and getattr(emp, "is_attendance_exempt", False) and dow < 5 and not is_future:
+                status = "exempt"
+                badge = "Exempt"
+                work_hours = None
+                check_in_val = None
+                check_out_val = None
+                holiday_name = None
+                leave_type_name = None
+
+            # Priority 5: Weekly Off / Weekend (Sat/Sun)
+            elif dow >= 5:
+                status = "weekend"
+                work_hours = None
+                check_in_val = None
+                check_out_val = None
+                badge = "Weekend"
+                holiday_name = None
+                leave_type_name = None
+
             # Priority 5: Future Work Days
             elif is_future:
                 status = "no_record"
@@ -786,14 +862,10 @@ class AttendanceService:
                 holiday_name = None
                 leave_type_name = None
 
-            # Priority 6: Past or Today Unpunched Working Day -> Absent (Unless Exempt)
+            # Priority 6: Past or Today Unpunched Working Day -> Absent
             else:
-                if emp and getattr(emp, "is_attendance_exempt", False):
-                    status = "exempt"
-                    badge = "Exempt"
-                else:
-                    status = "absent"
-                    badge = None
+                status = "absent"
+                badge = None
                 work_hours = None
                 check_in_val = None
                 check_out_val = None
@@ -801,19 +873,21 @@ class AttendanceService:
                 leave_type_name = None
 
             summary[status] = summary.get(status, 0) + 1
-            days.append({
-                "date": d,
-                "day_of_week": dow,
-                "status": status,
-                "work_duration_hours": work_hours,
-                "check_in": check_in_val,
-                "check_out": check_out_val,
-                "badge_label": badge,
-                "holiday_name": holiday_name,
-                "leave_type_name": leave_type_name,
-                "is_today": is_today,
-                "is_future": is_future,
-            })
+            days.append(
+                {
+                    "date": d,
+                    "day_of_week": dow,
+                    "status": status,
+                    "work_duration_hours": work_hours,
+                    "check_in": check_in_val,
+                    "check_out": check_out_val,
+                    "badge_label": badge,
+                    "holiday_name": holiday_name,
+                    "leave_type_name": leave_type_name,
+                    "is_today": is_today,
+                    "is_future": is_future,
+                }
+            )
 
         return {
             "employee_id": employee_id,
@@ -966,12 +1040,15 @@ class HolidayService:
     def import_regional_holidays(
         self, company_id: uuid.UUID, state: str = "Gujarat", year: int = 2026, country: str = "IN"
     ) -> tuple[int, list[Holiday]]:
-        from app.modules.time_leave.constants import get_regional_statutory_holidays
         from datetime import date as dt_date
+
+        from app.modules.time_leave.constants import get_regional_statutory_holidays
 
         holidays_data = get_regional_statutory_holidays(state=state, year=year, country=country)
         if not holidays_data:
-            raise NotFoundError(f"No statutory holidays found for region '{state}' ({country}) in year {year}.")
+            raise NotFoundError(
+                f"No statutory holidays found for region '{state}' ({country}) in year {year}."
+            )
 
         # Fetch existing active holidays for this company and year to avoid duplicates
         existing_holidays = self.repo.list_by_year(company_id, year)
@@ -998,7 +1075,6 @@ class HolidayService:
         self.db.commit()
         all_year_holidays = self.repo.list_by_year(company_id, year)
         return imported_count, all_year_holidays
-
 
 
 class LeaveTypeService:
@@ -1261,12 +1337,16 @@ class LeaveService:
             if mgr and mgr.user_id:
                 emp_name = f"{employee.first_name} {employee.last_name or ''}".strip()
                 lt_name = leave_type.name if leave_type else "Leave"
+                message_text = (
+                    f"{emp_name} requested {total_days} day(s) {lt_name} "
+                    f"from {data.start_date} to {data.end_date}."
+                )
                 self.notify.notify(
                     company_id=company_id,
                     user_id=mgr.user_id,
                     type="leave_requested",
                     title="New Leave Request",
-                    message=f"{emp_name} requested {total_days} day(s) {lt_name} from {data.start_date} to {data.end_date}.",
+                    message=message_text,
                     action_url="/leave",
                     entity_type="leave",
                     entity_id=leave.id,

@@ -1,9 +1,10 @@
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
@@ -23,10 +24,10 @@ from app.modules.time_leave.models import (
 from app.modules.time_leave.schemas import (
     AssignedShiftDetailResponse,
     AttendanceExportRequest,
-    AttendanceRegularizeRequest,
-    AttendanceRegularizationCreate,
     AttendanceRegularizationApprove,
+    AttendanceRegularizationCreate,
     AttendanceRegularizationResponse,
+    AttendanceRegularizeRequest,
     AttendanceResponse,
     CalendarResponse,
     CheckInRequest,
@@ -81,7 +82,10 @@ def _to_attendance_response(record: Attendance, db: Session | None = None) -> At
 
         # Include latest regularization if pending or recently regularized
         from app.modules.time_leave.repository import AttendanceRepository
-        latest_reg = AttendanceRepository(db).get_latest_regularization_for_attendance(record.id, record.company_id)
+
+        latest_reg = AttendanceRepository(db).get_latest_regularization_for_attendance(
+            record.id, record.company_id
+        )
         if latest_reg:
             res.active_regularization = AttendanceRegularizationResponse.model_validate(latest_reg)
 
@@ -200,17 +204,26 @@ def regularize_attendance(
     record = AttendanceService(db).regularize(user.company_id, attendance_id, data, user)
     return _to_attendance_response(record, db)
 
-@attendance_router.get("/{attendance_id}/regularization", response_model=AttendanceRegularizationResponse | None)
+
+@attendance_router.get(
+    "/{attendance_id}/regularization", response_model=AttendanceRegularizationResponse | None
+)
 def get_attendance_regularization(
     attendance_id: uuid.UUID,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
     from app.modules.time_leave.repository import AttendanceRepository
-    reg = AttendanceRepository(db).get_latest_regularization_for_attendance(attendance_id, user.company_id)
+
+    reg = AttendanceRepository(db).get_latest_regularization_for_attendance(
+        attendance_id, user.company_id
+    )
     return reg
 
-@attendance_router.post("/{attendance_id}/regularize", response_model=AttendanceRegularizationResponse)
+
+@attendance_router.post(
+    "/{attendance_id}/regularize", response_model=AttendanceRegularizationResponse
+)
 async def request_regularization(
     attendance_id: uuid.UUID,
     request: Request,
@@ -226,6 +239,7 @@ async def request_regularization(
         attachment = form.get("attachment")
 
         from datetime import datetime
+
         def parse_dt(dt_str):
             if not dt_str:
                 return None
@@ -236,8 +250,10 @@ async def request_regularization(
                 return None
 
         file_url = None
-        if attachment and hasattr(attachment, "filename") and attachment.filename:
-            import os, uuid as sys_uuid
+        if isinstance(attachment, UploadFile) and attachment.filename:
+            import os
+            import uuid as sys_uuid
+
             upload_dir = os.path.join(os.getcwd(), "uploads", "regularizations")
             os.makedirs(upload_dir, exist_ok=True)
             safe_name = f"{sys_uuid.uuid4()}_{attachment.filename}"
@@ -258,29 +274,41 @@ async def request_regularization(
         json_body = await request.json()
         data = AttendanceRegularizationCreate.model_validate(json_body)
 
-    record = AttendanceService(db).request_regularization(user.company_id, attendance_id, data, user)
+    record = AttendanceService(db).request_regularization(
+        user.company_id, attendance_id, data, user
+    )
     return record
+
 
 @attendance_router.get("/regularizations/attachments/{filename}")
 def download_regularization_attachment(filename: str):
     import os
+
     from fastapi.responses import FileResponse
+
     upload_dir = os.path.join(os.getcwd(), "uploads", "regularizations")
     file_path = os.path.join(upload_dir, filename)
     if not os.path.exists(file_path):
         from app.core.exceptions import NotFoundError
+
         raise NotFoundError("Attachment not found.")
     return FileResponse(file_path)
 
-@attendance_router.put("/regularizations/{regularization_id}/approve", response_model=AttendanceRegularizationResponse)
+
+@attendance_router.put(
+    "/regularizations/{regularization_id}/approve", response_model=AttendanceRegularizationResponse
+)
 def approve_regularization(
     regularization_id: uuid.UUID,
     data: AttendanceRegularizationApprove,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    record = AttendanceService(db).approve_regularization(user.company_id, regularization_id, data, user)
+    record = AttendanceService(db).approve_regularization(
+        user.company_id, regularization_id, data, user
+    )
     return record
+
 
 @attendance_router.delete("/{attendance_id}", status_code=204)
 def delete_attendance(
@@ -366,7 +394,6 @@ def get_assigned_shift(
     )
 
 
-
 # --- Holidays (routes 55-57) ------------------------------------------------
 
 
@@ -408,7 +435,9 @@ def delete_holiday(
 def get_supported_holiday_regions(
     user: User = Depends(get_current_user),
 ) -> dict:
-    """Returns all supported countries and regional states/territories for statutory holiday import."""
+    """Returns all supported countries and regional states/territories
+    for statutory holiday import.
+    """
     from app.modules.time_leave.constants import COUNTRY_REGIONS_MAP
 
     return COUNTRY_REGIONS_MAP
@@ -421,7 +450,9 @@ def preview_regional_holidays(
     year: int = 2026,
     user: User = Depends(get_current_user),
 ) -> list[dict]:
-    """Returns the statutory public holiday list for a given country, state & year from the regional database."""
+    """Returns the statutory public holiday list for a given country,
+    state & year from the regional database.
+    """
     from app.modules.time_leave.constants import get_regional_statutory_holidays
 
     return get_regional_statutory_holidays(state=state, year=year, country=country)
@@ -442,7 +473,10 @@ def import_regional_holidays(
     )
     country_name = req_data.country.upper()
     return HolidayImportResponse(
-        message=f"Successfully imported {imported_count} statutory holidays for {req_data.state} ({country_name}, {req_data.year}).",
+        message=(
+            f"Successfully imported {imported_count} statutory holidays for "
+            f"{req_data.state} ({country_name}, {req_data.year})."
+        ),
         imported_count=imported_count,
         total_holidays=len(all_holidays),
         holidays=[_to_holiday_response(h) for h in all_holidays],
@@ -610,6 +644,7 @@ def seed_leave_balances(
     Resolves the 'No balances yet' UX problem for newly onboarded employees.
     """
     from app.core.time import utcnow as _utcnow
+
     target_year = data.year if data.year is not None else _utcnow().date().year
     results = LeaveService(db).allocate_balances_for_employee(
         user.company_id, data.employee_id, target_year, user
@@ -627,4 +662,3 @@ def seed_leave_balances(
         )
         for b, name in results
     ]
-

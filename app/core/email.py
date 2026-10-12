@@ -46,18 +46,18 @@ class PermanentEmailError(Exception):
 console_outbox: list[dict[str, str]] = []
 
 
-SUPER_ADMIN_DEBUG_EMAIL = "neha@infiria.com"
-
-
 def send_email(*, to: str, subject: str, text_body: str, html_body: str) -> None:
     """The one function every backend hides behind.
-    Dispatches to the target recipient. If configured, also delivers a copy or fallback
-    to the super admin inbox (neha@infiria.com) so all OTPs, credentials, and notifications
-    are always accessible during development/testing.
+    Dispatches to the target recipient. If configured in development, also delivers
+    a copy to DEV_EMAIL_COPY_TO.
     """
     targets = [to]
-    if SUPER_ADMIN_DEBUG_EMAIL and to.lower().strip() != SUPER_ADMIN_DEBUG_EMAIL.lower().strip():
-        targets.append(SUPER_ADMIN_DEBUG_EMAIL)
+    if (
+        settings.ENVIRONMENT == "development"
+        and settings.DEV_EMAIL_COPY_TO
+        and to.lower().strip() != settings.DEV_EMAIL_COPY_TO.lower().strip()
+    ):
+        targets.append(settings.DEV_EMAIL_COPY_TO)
 
     primary_error: Exception | None = None
     sent_count = 0
@@ -67,11 +67,17 @@ def send_email(*, to: str, subject: str, text_body: str, html_body: str) -> None
         cur_subject = f"[Copy: To {to}] {subject}" if is_copy else subject
         try:
             if settings.EMAIL_BACKEND == "console":
-                _send_via_console(to=target, subject=cur_subject, text_body=text_body, html_body=html_body)
+                _send_via_console(
+                    to=target, subject=cur_subject, text_body=text_body, html_body=html_body
+                )
             elif settings.EMAIL_BACKEND == "smtp":
-                _send_via_smtp(to=target, subject=cur_subject, text_body=text_body, html_body=html_body)
+                _send_via_smtp(
+                    to=target, subject=cur_subject, text_body=text_body, html_body=html_body
+                )
             elif settings.EMAIL_BACKEND == "resend":
-                _send_via_resend(to=target, subject=cur_subject, text_body=text_body, html_body=html_body)
+                _send_via_resend(
+                    to=target, subject=cur_subject, text_body=text_body, html_body=html_body
+                )
             else:
                 raise PermanentEmailError(f"Unknown EMAIL_BACKEND: {settings.EMAIL_BACKEND!r}")
             sent_count += 1
@@ -112,6 +118,7 @@ def _send_via_smtp(*, to: str, subject: str, text_body: str, html_body: str) -> 
     try:
         try:
             import certifi
+
             ssl_ctx = ssl.create_default_context(cafile=certifi.where())
         except Exception:
             ssl_ctx = ssl.create_default_context()

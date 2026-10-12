@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, date, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, UploadFile, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
@@ -12,31 +12,31 @@ from app.db.session import get_db
 from app.modules.identity.models import User, UserRole
 from app.modules.platform.models import AuditLog, Notification
 from app.modules.platform.schemas import (
+    AnnouncementCreate,
+    AnnouncementResponse,
     AuditLogExportRequest,
     AuditLogResponse,
     DashboardResponse,
+    EmployeeDocumentCreate,
+    EmployeeDocumentResponse,
+    FileUploadResponse,
+    GlobalSearchResponse,
     JobQueuedResponse,
     JobStatusResponse,
     MarkAllReadResponse,
     NotificationListResponse,
     NotificationResponse,
-    AnnouncementCreate,
-    AnnouncementResponse,
-    FileUploadResponse,
     SignedUrlResponse,
-    EmployeeDocumentCreate,
-    EmployeeDocumentResponse,
-    GlobalSearchResponse,
 )
 from app.modules.platform.service import (
+    AnnouncementService,
     AuditService,
     DashboardService,
+    EmployeeDocumentService,
+    FileService,
+    GlobalSearchService,
     IndustryPresetService,
     NotificationService,
-    AnnouncementService,
-    FileService,
-    EmployeeDocumentService,
-    GlobalSearchService,
 )
 from app.workers.celery_app import celery_app
 
@@ -203,12 +203,14 @@ def mark_notification_read(
 # ── Announcements (routes 122-124) ──────────────────────────────
 announcements_router = APIRouter(prefix="/announcements", tags=["Announcements"])
 
+
 @announcements_router.get("", response_model=list[AnnouncementResponse])
 def list_announcements(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
     return AnnouncementService(db).list_active(user.company_id, user.role.value)
+
 
 @announcements_router.post("", response_model=AnnouncementResponse, status_code=201)
 def create_announcement(
@@ -217,6 +219,7 @@ def create_announcement(
     user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)),
 ):
     return AnnouncementService(db).create(user.company_id, user.id, data)
+
 
 @announcements_router.delete("/{announcement_id}", status_code=204)
 def delete_announcement(
@@ -230,6 +233,7 @@ def delete_announcement(
 # ── File Uploads & Signed URLs (routes 130-131) ─────────────────
 files_router = APIRouter(prefix="/files", tags=["Files"])
 
+
 @files_router.post("/upload", response_model=FileUploadResponse, status_code=201)
 async def upload_file(
     file: UploadFile = File(...),
@@ -237,13 +241,20 @@ async def upload_file(
     user: User = Depends(get_current_user),
 ):
     file_bytes = await file.read()
-    file_obj = FileService(db).upload_file(user.company_id, user.id, file.filename or "file", file.content_type or "application/octet-stream", file_bytes)
+    file_obj = FileService(db).upload_file(
+        user.company_id,
+        user.id,
+        file.filename or "file",
+        file.content_type or "application/octet-stream",
+        file_bytes,
+    )
     return FileUploadResponse(
         file_object_id=file_obj.id,
         file_name=file_obj.file_name,
         file_type=file_obj.file_type,
-        file_size=file_obj.file_size
+        file_size=file_obj.file_size,
     )
+
 
 @files_router.get("/{file_id}/url", response_model=SignedUrlResponse)
 def get_file_signed_url(
@@ -253,6 +264,7 @@ def get_file_signed_url(
 ):
     return FileService(db).generate_signed_url(user.company_id, file_id)
 
+
 @files_router.get("/download/{file_id}")
 def download_file(
     file_id: uuid.UUID,
@@ -261,14 +273,19 @@ def download_file(
     db: Session = Depends(get_db),
 ):
     # Verify HMAC Signature
-    import hmac, hashlib, os
+    import hashlib
+    import hmac
+    import os
+
+    from fastapi.responses import FileResponse
+
     from app.core.config import settings
     from app.modules.platform.models import FileObject
-    from fastapi.responses import FileResponse
 
     # 1. Check expiration
     if int(datetime.now(UTC).timestamp()) > expires:
         from app.core.exceptions import ForbiddenError
+
         raise ForbiddenError("Signed URL has expired.")
 
     # 2. Get file object from db directly (public signed route)
@@ -278,19 +295,25 @@ def download_file(
 
     # 3. Verify signature
     signature_payload = f"{file_obj.company_id}:{file_id}:{expires}".encode()
-    expected_sig = hmac.new(settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256).hexdigest()
+    expected_sig = hmac.new(
+        settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256
+    ).hexdigest()
     if not hmac.compare_digest(expected_sig, signature):
         from app.core.exceptions import ForbiddenError
+
         raise ForbiddenError("Invalid file signature.")
 
     if not os.path.exists(file_obj.storage_path):
         raise NotFoundError("File not found on disk.")
 
-    return FileResponse(path=file_obj.storage_path, filename=file_obj.file_name, media_type=file_obj.file_type)
+    return FileResponse(
+        path=file_obj.storage_path, filename=file_obj.file_name, media_type=file_obj.file_type
+    )
 
 
 # ── Employee Documents (routes 132-133) ─────────────────────────
 documents_router = APIRouter(prefix="/documents", tags=["Employee Documents"])
+
 
 @documents_router.get("/{employee_id}", response_model=list[EmployeeDocumentResponse])
 def list_employee_documents(
@@ -299,6 +322,7 @@ def list_employee_documents(
     user: User = Depends(get_current_user),
 ):
     return EmployeeDocumentService(db).list_documents(user.company_id, employee_id)
+
 
 @documents_router.post("", response_model=EmployeeDocumentResponse, status_code=201)
 def attach_employee_document(
@@ -311,6 +335,7 @@ def attach_employee_document(
 
 # ── Global Search (route 134) ───────────────────────────────────
 search_router = APIRouter(prefix="/search", tags=["Global Search"])
+
 
 @search_router.get("", response_model=GlobalSearchResponse)
 def global_search(

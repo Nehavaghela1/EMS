@@ -6,7 +6,14 @@ from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate, resolve_sort
 from app.core.time import utcnow
-from app.modules.identity.models import Company, CompanyLocation, CompanySettings, CompanyStatus, RefreshToken, User
+from app.modules.identity.models import (
+    Company,
+    CompanyLocation,
+    CompanySettings,
+    CompanyStatus,
+    RefreshToken,
+    User,
+)
 
 
 class CompanySettingsRepository:
@@ -273,8 +280,7 @@ class CompanyLocationRepository:
     def get_by_id(self, location_id: uuid.UUID, company_id: uuid.UUID) -> CompanyLocation | None:
         return self.db.scalar(
             select(CompanyLocation).where(
-                CompanyLocation.id == location_id,
-                CompanyLocation.company_id == company_id
+                CompanyLocation.id == location_id, CompanyLocation.company_id == company_id
             )
         )
 

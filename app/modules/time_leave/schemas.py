@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from app.modules.time_leave.models import AttendanceStatus, LeaveStatus
 
 
-
 class AttendanceRegularizationResponse(BaseModel):
     id: uuid.UUID
     attendance_id: uuid.UUID
@@ -59,18 +58,21 @@ class AttendanceRegularizeRequest(BaseModel):
     notes: str | None = None
     reason: str
 
+
 class AttendanceRegularizationCreate(BaseModel):
     requested_check_in: datetime | None = None
     requested_check_out: datetime | None = None
     reason: str
     attachment_url: str | None = None
 
+
 class AttendanceRegularizationApprove(BaseModel):
-    status: str # "approved" or "rejected"
+    status: str  # "approved" or "rejected"
     adjusted_check_in: datetime | None = None
     adjusted_check_out: datetime | None = None
     admin_notes: str | None = None
     rejection_reason: str | None = None
+
 
 class AttendanceExportRequest(BaseModel):
     employee_id: uuid.UUID | None = None
@@ -136,7 +138,6 @@ class AssignedShiftDetailResponse(BaseModel):
     shift: ShiftResponse
     effective_from: date
     effective_to: date | None = None
-
 
 
 # Holidays (routes 55-57)
@@ -279,7 +280,7 @@ class CalendarDayResponse(BaseModel):
     work_duration_hours: Decimal | None = None
     check_in: datetime | None = None
     check_out: datetime | None = None
-    badge_label: str | None = None   # "On Leave", "Diwali", etc.
+    badge_label: str | None = None  # "On Leave", "Diwali", etc.
     holiday_name: str | None = None
     leave_type_name: str | None = None
     is_today: bool = False

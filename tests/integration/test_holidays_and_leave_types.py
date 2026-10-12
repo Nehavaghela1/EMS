@@ -145,4 +145,3 @@ def test_import_regional_holidays_seeds_and_skips_duplicates(client, company_a):
     data2 = resp2.json()
     assert data2["imported_count"] == 0
     assert data2["total_holidays"] == 15
-

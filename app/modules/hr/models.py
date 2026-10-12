@@ -2,6 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from sqlalchemy import (
     Boolean,
@@ -12,9 +13,11 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    Numeric as SANumeric,
     String,
     Text,
+)
+from sqlalchemy import (
+    Numeric as SANumeric,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -26,10 +29,18 @@ class Department(TenantBase):
     """RLS: Yes (Spec 7.3)."""
 
     __tablename__ = "departments"
-    __table_args__ = (Index("uq_departments_company_id_name", "company_id", "name", unique=True),)
-
+    __table_args__ = (
+        Index("uq_departments_company_id_name", "company_id", "name", unique=True),
+        CheckConstraint(
+            "clearance_function IN ('it', 'finance', 'hr')",
+            name="ck_departments_clearance_function",
+        ),
+    )
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    clearance_function: Mapped[Literal["it", "finance", "hr"] | None] = mapped_column(
+        String(20), nullable=True
+    )
     # `employees` and `departments` reference each other (department_id on
     # employees, head_employee_id here) — a real FK cycle, same shape as the
     # companies/users cycle (7.2). departments is created first (WP-06) with
@@ -149,12 +160,22 @@ class Employee(TenantBase):
     notice_recovery_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # Separation / Involuntary Termination & FnF settlement tracking
-    separation_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # voluntary, involuntary, pip_failed
+    separation_type: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # voluntary, involuntary, pip_failed
     termination_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    severance_pay: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True, default=Decimal("0.00"))
-    pending_reimbursements: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True, default=Decimal("0.00"))
-    gratuity_bonus: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True, default=Decimal("0.00"))
-    asset_deductions: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True, default=Decimal("0.00"))
+    severance_pay: Mapped[Decimal | None] = mapped_column(
+        SANumeric(14, 2), nullable=True, default=Decimal("0.00")
+    )
+    pending_reimbursements: Mapped[Decimal | None] = mapped_column(
+        SANumeric(14, 2), nullable=True, default=Decimal("0.00")
+    )
+    gratuity_bonus: Mapped[Decimal | None] = mapped_column(
+        SANumeric(14, 2), nullable=True, default=Decimal("0.00")
+    )
+    asset_deductions: Mapped[Decimal | None] = mapped_column(
+        SANumeric(14, 2), nullable=True, default=Decimal("0.00")
+    )
     it_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     hr_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     finance_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

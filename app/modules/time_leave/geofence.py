@@ -12,11 +12,8 @@ References:
 """
 
 import math
-import uuid
-from typing import NamedTuple
 
 from app.core.exceptions import AppError
-
 
 # ── Earth mean radius (m) ────────────────────────────────────────────────────
 _R_METERS = 6_371_000.0
@@ -56,9 +53,7 @@ class GeolocationPermissionError(AppError):
         )
 
 
-def haversine_distance_meters(
-    lat1: float, lon1: float, lat2: float, lon2: float
-) -> float:
+def haversine_distance_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Return the great-circle distance in metres between two WGS-84 points.
 
     Args:

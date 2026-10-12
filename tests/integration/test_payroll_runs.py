@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from decimal import Decimal
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -9,7 +9,7 @@ from app.db.rls import bind_tenant_to_session
 from app.db.seed.pt_slabs import seed_pt_slabs
 from app.db.seed.tax_slabs import seed_tax_slabs
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
-from app.modules.payroll.models import PayrollRun, PayrollRunStatus
+from app.modules.payroll.models import PayrollRun
 from tests.conftest import TenantContext
 
 
@@ -82,7 +82,9 @@ def test_payroll_run_idempotency_gate(client: TestClient, company_a: TenantConte
     structure_id = _setup_salary_structure(client, company_a)
 
     # Create employee and assign salary
-    emp = _create_employee(db, company_a.company_id, email=f"idempotent-{uuid.uuid4().hex[:6]}@comp-a.com")
+    emp = _create_employee(
+        db, company_a.company_id, email=f"idempotent-{uuid.uuid4().hex[:6]}@comp-a.com"
+    )
     assign_res = client.post(
         f"/api/v1/payroll/employees/{emp.id}/assign",
         json={
@@ -122,11 +124,15 @@ def test_payroll_run_idempotency_gate(client: TestClient, company_a: TenantConte
     assert len(db_runs) == 1
 
 
-def test_payroll_run_calculation_end_to_end(client: TestClient, company_a: TenantContext, db: Session):
+def test_payroll_run_calculation_end_to_end(
+    client: TestClient, company_a: TenantContext, db: Session
+):
     structure_id = _setup_salary_structure(client, company_a)
 
     # Employee 1: Below ESI ceiling (CTC 216,000 / yr = 18,000 / mo)
-    emp1 = _create_employee(db, company_a.company_id, email=f"emp1-{uuid.uuid4().hex[:6]}@comp-a.com")
+    emp1 = _create_employee(
+        db, company_a.company_id, email=f"emp1-{uuid.uuid4().hex[:6]}@comp-a.com"
+    )
     client.post(
         f"/api/v1/payroll/employees/{emp1.id}/assign",
         json={"structure_id": structure_id, "ctc": "216000.00", "effective_from": "2026-01-01"},
@@ -134,7 +140,9 @@ def test_payroll_run_calculation_end_to_end(client: TestClient, company_a: Tenan
     )
 
     # Employee 2: Above ESI ceiling (CTC 600,000 / yr = 50,000 / mo)
-    emp2 = _create_employee(db, company_a.company_id, email=f"emp2-{uuid.uuid4().hex[:6]}@comp-a.com")
+    emp2 = _create_employee(
+        db, company_a.company_id, email=f"emp2-{uuid.uuid4().hex[:6]}@comp-a.com"
+    )
     client.post(
         f"/api/v1/payroll/employees/{emp2.id}/assign",
         json={"structure_id": structure_id, "ctc": "600000.00", "effective_from": "2026-01-01"},
@@ -174,9 +182,13 @@ def test_payroll_run_calculation_end_to_end(client: TestClient, company_a: Tenan
     assert item2["net_salary"] == "46200.00"
 
 
-def test_payroll_run_approval_workflow_gate(client: TestClient, company_a: TenantContext, db: Session):
+def test_payroll_run_approval_workflow_gate(
+    client: TestClient, company_a: TenantContext, db: Session
+):
     structure_id = _setup_salary_structure(client, company_a)
-    emp = _create_employee(db, company_a.company_id, email=f"approval-{uuid.uuid4().hex[:6]}@comp-a.com")
+    emp = _create_employee(
+        db, company_a.company_id, email=f"approval-{uuid.uuid4().hex[:6]}@comp-a.com"
+    )
     client.post(
         f"/api/v1/payroll/employees/{emp.id}/assign",
         json={"structure_id": structure_id, "ctc": "600000.00", "effective_from": "2026-01-01"},
@@ -194,11 +206,15 @@ def test_payroll_run_approval_workflow_gate(client: TestClient, company_a: Tenan
     run_id = run_res.json()["id"]
 
     # 2. GATE ASSERTION: Employee attempts to view payslip BEFORE approval -> 403 Forbidden
-    emp_res_before = client.get(f"/api/v1/payroll/runs/{run_id}", headers=company_a.employee_headers)
+    emp_res_before = client.get(
+        f"/api/v1/payroll/runs/{run_id}", headers=company_a.employee_headers
+    )
     assert emp_res_before.status_code == 403
 
     # 3. HR approves the run
-    approve_res = client.post(f"/api/v1/payroll/runs/{run_id}/approve", headers=company_a.hr_headers)
+    approve_res = client.post(
+        f"/api/v1/payroll/runs/{run_id}/approve", headers=company_a.hr_headers
+    )
     assert approve_res.status_code == 200
     assert approve_res.json()["status"] == "approved"
 
@@ -231,7 +247,9 @@ def test_duplicate_regular_run_prevention(client: TestClient, company_a: TenantC
 
 
 def test_delete_draft_payroll_run(client: TestClient, db: Session, company_a: TenantContext):
-    emp = _create_employee(db, company_a.company_id, f"draft-del-{uuid.uuid4().hex[:6]}@example.com")
+    emp = _create_employee(
+        db, company_a.company_id, f"draft-del-{uuid.uuid4().hex[:6]}@example.com"
+    )
     struct_id = _setup_salary_structure(client, company_a)
     assign_res = client.post(
         f"/api/v1/payroll/employees/{emp.id}/assign",
@@ -268,7 +286,9 @@ def test_delete_draft_payroll_run(client: TestClient, db: Session, company_a: Te
     assert get_res.status_code == 404
 
 
-def test_cannot_delete_approved_payroll_run(client: TestClient, db: Session, company_a: TenantContext):
+def test_cannot_delete_approved_payroll_run(
+    client: TestClient, db: Session, company_a: TenantContext
+):
     emp = _create_employee(db, company_a.company_id, f"appr-del-{uuid.uuid4().hex[:6]}@example.com")
     struct_id = _setup_salary_structure(client, company_a)
     assign_res = client.post(
@@ -288,11 +308,11 @@ def test_cannot_delete_approved_payroll_run(client: TestClient, db: Session, com
     run_id = run_res.json()["id"]
 
     # Approve run
-    approve_res = client.post(f"/api/v1/payroll/runs/{run_id}/approve", headers=company_a.hr_headers)
+    approve_res = client.post(
+        f"/api/v1/payroll/runs/{run_id}/approve", headers=company_a.hr_headers
+    )
     assert approve_res.status_code == 200
 
     # Attempt delete on approved run -> 409 Conflict
     del_res = client.delete(f"/api/v1/payroll/runs/{run_id}", headers=company_a.hr_headers)
     assert del_res.status_code == 409
-
-

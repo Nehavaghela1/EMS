@@ -230,10 +230,12 @@ class LeaveBalance(TenantBase):
     used: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False, default=Decimal("0"))
     encashed: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False, default=Decimal("0"))
 
+
 class RegularizationStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
+
 
 class AttendanceRegularizationRequest(TenantBase):
     """RLS: Yes. Request by employee to fix mispunches (Missing Check-out)"""
@@ -253,11 +255,17 @@ class AttendanceRegularizationRequest(TenantBase):
     manager_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True
     )
-    requested_check_in: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    requested_check_out: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requested_check_in: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    requested_check_out: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[RegularizationStatus] = mapped_column(
-        Enum(RegularizationStatus, name="regularization_status"), nullable=False, default=RegularizationStatus.pending
+        Enum(RegularizationStatus, name="regularization_status"),
+        nullable=False,
+        default=RegularizationStatus.pending,
     )
     approved_by: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True

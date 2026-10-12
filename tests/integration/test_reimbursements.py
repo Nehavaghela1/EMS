@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from decimal import Decimal
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -11,7 +11,6 @@ from app.db.seed.pt_slabs import seed_pt_slabs
 from app.db.seed.tax_slabs import seed_tax_slabs
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
-from app.modules.payroll.models import ReimbursementStatus
 from tests.conftest import TenantContext
 
 
@@ -51,9 +50,7 @@ def _create_employee_with_user(
     db.commit()
     db.refresh(employee)
 
-    token = create_access_token(
-        sub=str(user.id), company_id=str(company_id), role=role.value
-    )
+    token = create_access_token(sub=str(user.id), company_id=str(company_id), role=role.value)
     return employee, {"Authorization": f"Bearer {token}"}
 
 
@@ -87,9 +84,7 @@ def _setup_salary_structure(client: TestClient, company: TenantContext) -> str:
     return res.json()["id"]
 
 
-def test_submit_and_review_reimbursement(
-    client: TestClient, company_a: TenantContext, db: Session
-):
+def test_submit_and_review_reimbursement(client: TestClient, company_a: TenantContext, db: Session):
     emp, emp_headers = _create_employee_with_user(db, company_a.company_id)
 
     # 1. Employee submits a reimbursement claim

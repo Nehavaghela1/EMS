@@ -28,10 +28,16 @@ from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, InvitationStatus
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
-from app.modules.identity.models import Company, CompanyLocation, CompanySettings, CompanyStatus, User, UserRole
+from app.modules.identity.models import (
+    Company,
+    CompanySettings,
+    CompanyStatus,
+    User,
+    UserRole,
+)
 from app.modules.identity.repository import (
-    CompanyRepository,
     CompanyLocationRepository,
+    CompanyRepository,
     RefreshTokenRepository,
     UserRepository,
 )
@@ -42,6 +48,7 @@ from app.modules.identity.schemas import (
     CompanyLocationCreate,
     CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
+    CreateWorkspaceRequest,
     EmployeeSummary,
     LoginRequest,
     MeResponse,
@@ -128,7 +135,8 @@ class CompanyPendingApprovalError(AppError):
 
     def __init__(self, company_name: str) -> None:
         super().__init__(
-            f"Your registration for '{company_name}' is currently pending review and approval by the platform administrator. You will be able to sign in once approved."
+            f"Your registration for '{company_name}' is currently pending review and approval "
+            "by the platform administrator. You will be able to sign in once approved."
         )
 
 
@@ -215,13 +223,17 @@ class AuthService:
                 self.db.commit()
                 raise InvalidCredentialsError()
 
-            # If no active/candidate user was found, check if this email belongs to a pending or rejected company
+            # If no active/candidate user was found, check if this email belongs
+            # to a pending or rejected company
             pending_or_unapproved = self.company_repo.get_by_email(payload.email)
             if pending_or_unapproved:
                 if pending_or_unapproved.status == CompanyStatus.pending:
-                    # If an admin password was chosen at registration, verify it if possible, or inform them of pending approval
+                    # If an admin password was chosen at registration, verify it if
+                    # possible, or inform them of pending approval
                     if pending_or_unapproved.admin_password_hash:
-                        if verify_password(payload.password, pending_or_unapproved.admin_password_hash):
+                        if verify_password(
+                            payload.password, pending_or_unapproved.admin_password_hash
+                        ):
                             raise CompanyPendingApprovalError(pending_or_unapproved.name)
                         else:
                             raise InvalidCredentialsError()
@@ -238,9 +250,7 @@ class AuthService:
             # Same email AND same password at two companies. Only someone who
             # already proved the password reaches this branch, so the company
             # names leak nothing.
-            raise CompanyRequiredError(
-                companies=[{"name": u.company.name, "code": u.company.code} for u in matched]
-            )
+            raise CompanyRequiredError(companies=[u.company.name for u in matched])
 
         user = matched[0]
 
@@ -363,9 +373,7 @@ class AuthService:
             role=target_user.role.value,
         )
         refresh_token_str = self._create_refresh_token(target_user.id, device_info)
-        return TokenResponse(
-            access_token=access_token, token_type="bearer", refresh_token=refresh_token_str
-        ), device_info or "unknown"
+        return TokenResponse(access_token=access_token, token_type="bearer"), refresh_token_str
 
     def _create_refresh_token(self, user_id: uuid.UUID, device_info: str | None) -> str:
         raw_refresh = generate_refresh_token()
@@ -548,7 +556,7 @@ class CompanyService:
         """Route 12: company self-registration with status = pending."""
         if self.company_repo.get_by_email(data.company_email):
             raise ConflictError("A company with this email already exists.")
-        
+
         password_hash = hash_password(data.password) if data.password else None
 
         company = self.company_repo.create(
@@ -654,10 +662,11 @@ class CompanyService:
             must_change_password=must_change,
         )
 
-        from app.modules.hr.repository import EmployeeRepository
-        from app.modules.hr.models import InvitationStatus
         from datetime import date
-        
+
+        from app.modules.hr.models import InvitationStatus
+        from app.modules.hr.repository import EmployeeRepository
+
         # Provision Head Office
         location_repo = CompanyLocationRepository(self.db)
         head_office = location_repo.create(
@@ -754,9 +763,7 @@ class CompanyService:
         self.db.commit()
         return company
 
-    def create_workspace(
-        self, current_user: User, data: "CreateWorkspaceRequest"
-    ) -> Company:
+    def create_workspace(self, current_user: User, data: CreateWorkspaceRequest) -> Company:
         """Create a new workspace, seed defaults, and make the current user the owner."""
         email = data.company_email or current_user.email
         if self.company_repo.get_by_email(email):
@@ -785,8 +792,10 @@ class CompanyService:
                 self.department_repo.create(company_id=company.id, name=dept_name)
 
         if data.seed_shift:
-            from app.modules.time_leave.repository import ShiftRepository
             from datetime import time
+
+            from app.modules.time_leave.repository import ShiftRepository
+
             shift_repo = ShiftRepository(self.db)
             shift_repo.create(
                 company_id=company.id,
@@ -804,9 +813,10 @@ class CompanyService:
             must_change_password=False,
         )
 
-        from app.modules.hr.repository import EmployeeRepository
-        from app.modules.hr.models import InvitationStatus
         from datetime import date
+
+        from app.modules.hr.models import InvitationStatus
+        from app.modules.hr.repository import EmployeeRepository
 
         # Provision Head Office
         location_repo = CompanyLocationRepository(self.db)
@@ -837,6 +847,7 @@ class CompanyService:
         self.db.commit()
         return company
 
+
 class LocationService:
     def __init__(self, db: Session):
         self.db = db
@@ -857,4 +868,3 @@ class LocationService:
             postal_code=data.postal_code,
             is_primary=data.is_primary,
         )
-

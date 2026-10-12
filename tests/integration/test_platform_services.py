@@ -1,15 +1,17 @@
 import uuid
-import pytest
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
-from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
 from tests.conftest import TenantContext
 
-def _create_user_and_headers(db: Session, company_id: uuid.UUID, role: UserRole = UserRole.super_admin) -> tuple[User, dict[str, str]]:
+
+def _create_user_and_headers(
+    db: Session, company_id: uuid.UUID, role: UserRole = UserRole.super_admin
+) -> tuple[User, dict[str, str]]:
     bind_tenant_to_session(db, company_id=company_id, is_platform_admin=False)
     user = User(
         company_id=company_id,
@@ -21,10 +23,9 @@ def _create_user_and_headers(db: Session, company_id: uuid.UUID, role: UserRole 
     db.add(user)
     db.commit()
 
-    token = create_access_token(
-        sub=str(user.id), company_id=str(company_id), role=role.value
-    )
+    token = create_access_token(sub=str(user.id), company_id=str(company_id), role=role.value)
     return user, {"Authorization": f"Bearer {token}"}
+
 
 def test_announcements_lifecycle(client: TestClient, db: Session, company_a: TenantContext):
     user, headers = _create_user_and_headers(db, company_a.company_id, UserRole.super_admin)
@@ -35,9 +36,9 @@ def test_announcements_lifecycle(client: TestClient, db: Session, company_a: Ten
         json={
             "title": "Annual Company Retreat 2026",
             "content": "Pack your bags for Goa next month!",
-            "target_role": "all"
+            "target_role": "all",
         },
-        headers=headers
+        headers=headers,
     )
     assert res.status_code == 201, res.text
     ann_id = res.json()["id"]
@@ -52,7 +53,10 @@ def test_announcements_lifecycle(client: TestClient, db: Session, company_a: Ten
     res_del = client.delete(f"/api/v1/announcements/{ann_id}", headers=headers)
     assert res_del.status_code == 204
 
-def test_file_upload_signed_url_and_documents(client: TestClient, db: Session, company_a: TenantContext):
+
+def test_file_upload_signed_url_and_documents(
+    client: TestClient, db: Session, company_a: TenantContext
+):
     user, headers = _create_user_and_headers(db, company_a.company_id, UserRole.super_admin)
 
     # 1. Upload File
@@ -71,6 +75,7 @@ def test_file_upload_signed_url_and_documents(client: TestClient, db: Session, c
     res_dl = client.get(download_url)
     assert res_dl.status_code == 200
     assert res_dl.content == b"%PDF-1.4 test content"
+
 
 def test_global_tenant_search(client: TestClient, db: Session, company_a: TenantContext):
     user, headers = _create_user_and_headers(db, company_a.company_id, UserRole.super_admin)

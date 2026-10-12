@@ -1,5 +1,7 @@
 """Constants and pre-seeded templates for time and leave module."""
 
+from typing import Any
+
 STATUTORY_HOLIDAYS_INDIA = {
     "Gujarat": {
         2024: [
@@ -91,7 +93,7 @@ STATUTORY_HOLIDAYS_INDIA = {
 }
 
 
-COUNTRY_REGIONS_MAP: dict[str, dict[str, any]] = {
+COUNTRY_REGIONS_MAP: dict[str, dict[str, Any]] = {
     "IN": {
         "name": "India",
         "states": [
@@ -281,14 +283,30 @@ def get_regional_statutory_holidays(state: str, year: int, country: str = "IN") 
             h_list = list(guj_list)
             if norm_state in ("Maharashtra", "Goa"):
                 return [
-                    {"name": "Maharashtra Day" if norm_state == "Maharashtra" else "Goa Liberation Day", "date": f"{year:04d}-05-01" if norm_state == "Maharashtra" else f"{year:04d}-12-19", "is_optional": False}
+                    {
+                        "name": "Maharashtra Day"
+                        if norm_state == "Maharashtra"
+                        else "Goa Liberation Day",
+                        "date": f"{year:04d}-05-01"
+                        if norm_state == "Maharashtra"
+                        else f"{year:04d}-12-19",
+                        "is_optional": False,
+                    }
                     if h["name"] == "Makar Sankranti / Uttarayan"
                     else h
                     for h in h_list
                 ]
             elif norm_state in ("Karnataka", "Andhra Pradesh", "Telangana"):
                 return [
-                    {"name": "Kannada Rajyotsava" if norm_state == "Karnataka" else "Ugadi / Telugu New Year", "date": f"{year:04d}-11-01" if norm_state == "Karnataka" else f"{year:04d}-03-30", "is_optional": False}
+                    {
+                        "name": "Kannada Rajyotsava"
+                        if norm_state == "Karnataka"
+                        else "Ugadi / Telugu New Year",
+                        "date": f"{year:04d}-11-01"
+                        if norm_state == "Karnataka"
+                        else f"{year:04d}-03-30",
+                        "is_optional": False,
+                    }
                     if h["name"] == "Gujarati New Year (Bestu Varas)"
                     else h
                     for h in h_list
@@ -298,7 +316,11 @@ def get_regional_statutory_holidays(state: str, year: int, country: str = "IN") 
                     {"name": "Pongal", "date": f"{year:04d}-01-15", "is_optional": False}
                     if h["name"] == "Makar Sankranti / Uttarayan"
                     else (
-                        {"name": "Tamil New Year (Puthandu)", "date": f"{year:04d}-04-14", "is_optional": False}
+                        {
+                            "name": "Tamil New Year (Puthandu)",
+                            "date": f"{year:04d}-04-14",
+                            "is_optional": False,
+                        }
                         if h["name"] == "Gujarati New Year (Bestu Varas)"
                         else h
                     )
@@ -317,10 +339,18 @@ def get_regional_statutory_holidays(state: str, year: int, country: str = "IN") 
                 ]
             elif norm_state in ("West Bengal", "Odisha", "Tripura", "Assam"):
                 return [
-                    {"name": "Durga Puja (Maha Ashtami / Nabami)", "date": f"{year:04d}-10-21", "is_optional": False}
+                    {
+                        "name": "Durga Puja (Maha Ashtami / Nabami)",
+                        "date": f"{year:04d}-10-21",
+                        "is_optional": False,
+                    }
                     if h["name"] == "Dussehra"
                     else (
-                        {"name": "Poila Boishakh / Bohag Bihu", "date": f"{year:04d}-04-15", "is_optional": False}
+                        {
+                            "name": "Poila Boishakh / Bohag Bihu",
+                            "date": f"{year:04d}-04-15",
+                            "is_optional": False,
+                        }
                         if h["name"] == "Gujarati New Year (Bestu Varas)"
                         else h
                     )
@@ -331,7 +361,11 @@ def get_regional_statutory_holidays(state: str, year: int, country: str = "IN") 
                     {"name": "Baisakhi", "date": f"{year:04d}-04-14", "is_optional": False}
                     if h["name"] == "Gujarati New Year (Bestu Varas)"
                     else (
-                        {"name": "Guru Nanak Jayanti", "date": f"{year:04d}-11-24", "is_optional": False}
+                        {
+                            "name": "Guru Nanak Jayanti",
+                            "date": f"{year:04d}-11-24",
+                            "is_optional": False,
+                        }
                         if h["name"] == "Bhai Dooj"
                         else h
                     )
@@ -358,7 +392,11 @@ def get_regional_statutory_holidays(state: str, year: int, country: str = "IN") 
             {"name": "Mahatma Gandhi Jayanti", "date": f"{year:04d}-10-02", "is_optional": False},
             {"name": "Dussehra (Vijayadashami)", "date": f"{year:04d}-10-15", "is_optional": False},
             {"name": "Diwali (Laxmi Pujan)", "date": f"{year:04d}-11-02", "is_optional": False},
-            {"name": "Govardhan Puja / New Year", "date": f"{year:04d}-11-03", "is_optional": False},
+            {
+                "name": "Govardhan Puja / New Year",
+                "date": f"{year:04d}-11-03",
+                "is_optional": False,
+            },
             {"name": "Bhai Dooj", "date": f"{year:04d}-11-04", "is_optional": False},
             {"name": "Christmas", "date": f"{year:04d}-12-25", "is_optional": False},
         ]
@@ -367,22 +405,54 @@ def get_regional_statutory_holidays(state: str, year: int, country: str = "IN") 
     if norm_country in ("US", "USA", "UNITED STATES"):
         base_us = [
             {"name": "New Year's Day", "date": f"{year:04d}-01-01", "is_optional": False},
-            {"name": "Martin Luther King Jr. Day", "date": f"{year:04d}-01-19", "is_optional": False},
-            {"name": "Presidents' Day (Washington's Birthday)", "date": f"{year:04d}-02-16", "is_optional": False},
+            {
+                "name": "Martin Luther King Jr. Day",
+                "date": f"{year:04d}-01-19",
+                "is_optional": False,
+            },
+            {
+                "name": "Presidents' Day (Washington's Birthday)",
+                "date": f"{year:04d}-02-16",
+                "is_optional": False,
+            },
             {"name": "Memorial Day", "date": f"{year:04d}-05-25", "is_optional": False},
-            {"name": "Juneteenth National Independence Day", "date": f"{year:04d}-06-19", "is_optional": False},
-            {"name": "Independence Day (4th of July)", "date": f"{year:04d}-07-04", "is_optional": False},
+            {
+                "name": "Juneteenth National Independence Day",
+                "date": f"{year:04d}-06-19",
+                "is_optional": False,
+            },
+            {
+                "name": "Independence Day (4th of July)",
+                "date": f"{year:04d}-07-04",
+                "is_optional": False,
+            },
             {"name": "Labor Day", "date": f"{year:04d}-09-07", "is_optional": False},
-            {"name": "Columbus Day / Indigenous Peoples' Day", "date": f"{year:04d}-10-12", "is_optional": False},
+            {
+                "name": "Columbus Day / Indigenous Peoples' Day",
+                "date": f"{year:04d}-10-12",
+                "is_optional": False,
+            },
             {"name": "Veterans Day", "date": f"{year:04d}-11-11", "is_optional": False},
             {"name": "Thanksgiving Day", "date": f"{year:04d}-11-26", "is_optional": False},
-            {"name": "Day After Thanksgiving (Black Friday)", "date": f"{year:04d}-11-27", "is_optional": True},
+            {
+                "name": "Day After Thanksgiving (Black Friday)",
+                "date": f"{year:04d}-11-27",
+                "is_optional": True,
+            },
             {"name": "Christmas Day", "date": f"{year:04d}-12-25", "is_optional": False},
         ]
         if "California" in norm_state:
-            base_us.append({"name": "Cesar Chavez Day", "date": f"{year:04d}-03-31", "is_optional": False})
+            base_us.append(
+                {"name": "Cesar Chavez Day", "date": f"{year:04d}-03-31", "is_optional": False}
+            )
         elif "Texas" in norm_state:
-            base_us.append({"name": "Texas Independence Day", "date": f"{year:04d}-03-02", "is_optional": False})
+            base_us.append(
+                {
+                    "name": "Texas Independence Day",
+                    "date": f"{year:04d}-03-02",
+                    "is_optional": False,
+                }
+            )
         return base_us
 
     # 3. United Kingdom (Bank Holidays)
@@ -408,7 +478,11 @@ def get_regional_statutory_holidays(state: str, year: int, country: str = "IN") 
             {"name": "Eid Al Adha (Day 1)", "date": f"{year:04d}-05-27", "is_optional": False},
             {"name": "Eid Al Adha (Day 2)", "date": f"{year:04d}-05-28", "is_optional": False},
             {"name": "Islamic New Year", "date": f"{year:04d}-06-16", "is_optional": False},
-            {"name": "Prophet Muhammad's Birthday", "date": f"{year:04d}-08-25", "is_optional": False},
+            {
+                "name": "Prophet Muhammad's Birthday",
+                "date": f"{year:04d}-08-25",
+                "is_optional": False,
+            },
             {"name": "Commemoration Day", "date": f"{year:04d}-12-01", "is_optional": False},
             {"name": "National Day (54th)", "date": f"{year:04d}-12-02", "is_optional": False},
             {"name": "National Day Holiday", "date": f"{year:04d}-12-03", "is_optional": False},
@@ -440,7 +514,11 @@ def get_regional_statutory_holidays(state: str, year: int, country: str = "IN") 
             {"name": "Canada Day", "date": f"{year:04d}-07-01", "is_optional": False},
             {"name": "Civic Holiday", "date": f"{year:04d}-08-03", "is_optional": True},
             {"name": "Labour Day", "date": f"{year:04d}-09-07", "is_optional": False},
-            {"name": "National Day for Truth and Reconciliation", "date": f"{year:04d}-09-30", "is_optional": False},
+            {
+                "name": "National Day for Truth and Reconciliation",
+                "date": f"{year:04d}-09-30",
+                "is_optional": False,
+            },
             {"name": "Thanksgiving Day", "date": f"{year:04d}-10-12", "is_optional": False},
             {"name": "Remembrance Day", "date": f"{year:04d}-11-11", "is_optional": False},
             {"name": "Christmas Day", "date": f"{year:04d}-12-25", "is_optional": False},

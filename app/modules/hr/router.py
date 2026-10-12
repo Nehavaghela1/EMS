@@ -16,10 +16,15 @@ from app.modules.hr.schemas import (
     EmployeeInviteInfo,
     EmployeeResponse,
     EmployeeUpdateRequest,
+    FnFClearanceUpdateRequest,
+    FnFSettlementResponse,
     ManagerSearchResponse,
+    ResignationApproveRequest,
+    ResignationSubmitRequest,
+    TerminationRequest,
 )
 from app.modules.hr.service import DepartmentService, EmployeeService
-from app.modules.identity.models import User, UserRole
+from app.modules.identity.models import Company, User, UserRole
 
 departments_router = APIRouter(prefix="/departments", tags=["Departments"])
 employees_router = APIRouter(prefix="/employees", tags=["Employees"])
@@ -31,6 +36,7 @@ def _to_department_response(department: Department, employee_count: int) -> Depa
         name=department.name,
         description=department.description,
         head_employee_id=department.head_employee_id,
+        clearance_function=department.clearance_function,
         employee_count=employee_count,
         created_at=department.created_at,
     )
@@ -99,8 +105,6 @@ def delete_department(
     DepartmentService(db).delete_department(user.company_id, department_id)
 
 
-from app.modules.identity.models import Company
-
 def _to_employee_response(
     employee: Employee,
     company_map: dict[uuid.UUID, str] | None = None,
@@ -110,8 +114,8 @@ def _to_employee_response(
     resp = EmployeeResponse.model_validate(employee)
     if system_role is not None:
         resp.system_role = system_role
-    elif hasattr(employee, "system_role") and getattr(employee, "system_role") is not None:
-        val = getattr(employee, "system_role")
+    elif hasattr(employee, "system_role") and employee.system_role is not None:
+        val = employee.system_role
         resp.system_role = val.value if hasattr(val, "value") else str(val)
     resp.company_id = employee.company_id
     if company_map and employee.company_id in company_map:
@@ -188,16 +192,19 @@ def list_employees(
         company_ids = {e.company_id for e in items if e.company_id}
         if company_ids:
             from sqlalchemy import select
-            rows = db.execute(select(Company.id, Company.name).where(Company.id.in_(company_ids))).all()
+
+            rows = db.execute(
+                select(Company.id, Company.name).where(Company.id.in_(company_ids))
+            ).all()
             company_map = {r[0]: r[1] for r in rows}
 
         user_ids = {e.user_id for e in items if e.user_id}
         if user_ids:
             from sqlalchemy import select
+
             user_rows = db.execute(select(User.id, User.role).where(User.id.in_(user_ids))).all()
             user_role_map = {
-                r[0]: (r[1].value if hasattr(r[1], "value") else str(r[1]))
-                for r in user_rows
+                r[0]: (r[1].value if hasattr(r[1], "value") else str(r[1])) for r in user_rows
             }
 
     return Page(
@@ -254,7 +261,11 @@ def list_resignations(
         sort=None,
         page_params=PageParams(page=1, limit=100),
     )
-    return [_to_employee_response(e) for e in items if str(e.resignation_status) not in ("none", "ResignationStatus.none")]
+    return [
+        _to_employee_response(e)
+        for e in items
+        if str(e.resignation_status) not in ("none", "ResignationStatus.none")
+    ]
 
 
 @employees_router.get("/{employee_id}", response_model=EmployeeResponse)
@@ -272,7 +283,9 @@ def get_employee(
     manager = None
     if employee.reporting_manager_id:
         manager = db.scalar(
-            select(Employee).where(Employee.id == employee.reporting_manager_id, Employee.deleted_at.is_(None))
+            select(Employee).where(
+                Employee.id == employee.reporting_manager_id, Employee.deleted_at.is_(None)
+            )
         )
     system_role = None
     if employee.user_id:
@@ -321,13 +334,7 @@ def resend_invite(
 
 
 # ── Resignation & Full-and-Final (Routes 27-30) ─────────────────
-from app.modules.hr.schemas import (
-    ResignationSubmitRequest,
-    ResignationApproveRequest,
-    TerminationRequest,
-    FnFClearanceUpdateRequest,
-    FnFSettlementResponse,
-)
+
 
 @employees_router.post("/{employee_id}/resignation", response_model=EmployeeResponse)
 def submit_resignation(
@@ -339,6 +346,7 @@ def submit_resignation(
     employee = EmployeeService(db).submit_resignation(user.company_id, employee_id, data)
     return _to_employee_response(employee)
 
+
 @employees_router.put("/{employee_id}/resignation/approve", response_model=EmployeeResponse)
 def approve_resignation(
     employee_id: uuid.UUID,
@@ -348,6 +356,7 @@ def approve_resignation(
 ):
     employee = EmployeeService(db).approve_resignation(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
+
 
 @employees_router.post("/{employee_id}/terminate", response_model=EmployeeResponse)
 def terminate_employee(
@@ -359,6 +368,7 @@ def terminate_employee(
     employee = EmployeeService(db).terminate_employee(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
 
+
 @employees_router.get("/{employee_id}/fnf", response_model=FnFSettlementResponse)
 def get_fnf_settlement(
     employee_id: uuid.UUID,
@@ -366,6 +376,7 @@ def get_fnf_settlement(
     user: User = Depends(get_current_user),
 ):
     return EmployeeService(db).calculate_fnf(user.company_id, employee_id)
+
 
 @employees_router.put("/{employee_id}/fnf/clearance", response_model=FnFSettlementResponse)
 def update_fnf_clearance(

@@ -1,6 +1,4 @@
 import uuid
-from datetime import date
-from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -8,7 +6,6 @@ from sqlalchemy.orm import Session
 from app.core.pagination import PageParams, paginate
 from app.modules.performance.models import (
     CycleStatus,
-    GoalStatus,
     PerformanceCycle,
     PerformanceGoal,
     PerformancePIP,
@@ -43,10 +40,14 @@ class PerformanceCycleRepository:
     def list_cycles(
         self, company_id: uuid.UUID, page_params: PageParams, status: CycleStatus | None = None
     ) -> tuple[list[PerformanceCycle], int, int]:
-        stmt = select(PerformanceCycle).where(
-            PerformanceCycle.company_id == company_id,
-            PerformanceCycle.deleted_at.is_(None),
-        ).order_by(PerformanceCycle.created_at.desc())
+        stmt = (
+            select(PerformanceCycle)
+            .where(
+                PerformanceCycle.company_id == company_id,
+                PerformanceCycle.deleted_at.is_(None),
+            )
+            .order_by(PerformanceCycle.created_at.desc())
+        )
 
         if status is not None:
             stmt = stmt.where(PerformanceCycle.status == status)
@@ -168,10 +169,14 @@ class PerformancePIPRepository:
     def list_pips(
         self, company_id: uuid.UUID, employee_id: uuid.UUID | None = None, status: str | None = None
     ) -> list[PerformancePIP]:
-        stmt = select(PerformancePIP).where(
-            PerformancePIP.company_id == company_id,
-            PerformancePIP.deleted_at.is_(None),
-        ).order_by(PerformancePIP.created_at.desc())
+        stmt = (
+            select(PerformancePIP)
+            .where(
+                PerformancePIP.company_id == company_id,
+                PerformancePIP.deleted_at.is_(None),
+            )
+            .order_by(PerformancePIP.created_at.desc())
+        )
 
         if employee_id is not None:
             stmt = stmt.where(PerformancePIP.employee_id == employee_id)

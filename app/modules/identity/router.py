@@ -6,37 +6,37 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.exceptions import ForbiddenError, NotFoundError
-from app.core.security import verify_password
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import limiter
+from app.core.security import verify_password
 from app.db.session import get_db
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.identity.schemas import (
     ActivateAccountRequest,
     ActivationPreviewResponse,
     AdminCompanyUpdateRequest,
+    AdminUserResponse,
     ChangePasswordRequest,
     CompanyApproveResponse,
+    CompanyDeactivateRequest,
     CompanyDetailResponse,
+    CompanyLocationCreate,
+    CompanyLocationResponse,
     CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
     CompanyRejectRequest,
-    CompanyDeactivateRequest,
     CompanyResponse,
-    UserRoleUpdateRequest,
+    CreateWorkspaceRequest,
+    CreateWorkspaceResponse,
     ForgotPasswordRequest,
     LoginRequest,
     MeResponse,
     ResetPasswordRequest,
+    SwitchWorkspaceRequest,
     TokenResponse,
     UsernameAvailabilityResponse,
-    CreateWorkspaceRequest,
-    SwitchWorkspaceRequest,
+    UserRoleUpdateRequest,
     UserWorkspaceResponse,
-    CreateWorkspaceResponse,
-    CompanyLocationCreate,
-    CompanyLocationResponse,
-    AdminUserResponse,
 )
 from app.modules.identity.service import AuthService, CompanyService, LocationService
 
@@ -218,7 +218,11 @@ def create_workspace(
         user.email, company.id, device_info=request.headers.get("user-agent")
     )
     _set_refresh_cookie(response, raw_refresh)
-    return CreateWorkspaceResponse(company=CompanyResponse.model_validate(company), access_token=token_response.access_token, token_type=token_response.token_type)
+    return CreateWorkspaceResponse(
+        company=CompanyResponse.model_validate(company),
+        access_token=token_response.access_token,
+        token_type=token_response.token_type,
+    )
 
 
 @companies_router.get("", response_model=Page[CompanyResponse])
@@ -287,7 +291,6 @@ def update_company(
     return CompanyService(db).update_company_by_admin(company_id, data)
 
 
-
 @companies_router.post("/{company_id}/approve", response_model=CompanyApproveResponse)
 def approve_company(
     company_id: uuid.UUID,
@@ -338,7 +341,6 @@ def deactivate_company(
     return {"message": "Company workspace has been deactivated."}
 
 
-
 # --- Locations ---
 @companies_router.get("/locations", response_model=list[CompanyLocationResponse])
 def list_locations(
@@ -356,8 +358,10 @@ def create_location(
 ):
     return LocationService(db).create_location(user.company_id, data)
 
+
 # --- Users ---
 users_router = APIRouter(prefix="/users", tags=["Users"])
+
 
 @users_router.patch("/{user_id}/role")
 def update_user_role(
@@ -368,16 +372,24 @@ def update_user_role(
 ):
     if user_id == current_user.id:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=400, detail="Cannot change your own role.")
-    
+
     if data.role not in [UserRole.employee, UserRole.hr_admin]:
         from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="Can only promote to hr_admin or demote to employee.")
-        
-    user = db.query(User).filter(User.id == user_id, User.company_id == current_user.company_id).first()
+
+        raise HTTPException(
+            status_code=400, detail="Can only promote to hr_admin or demote to employee."
+        )
+
+    user = (
+        db.query(User)
+        .filter(User.id == user_id, User.company_id == current_user.company_id)
+        .first()
+    )
     if not user:
         raise NotFoundError("User not found.")
-        
+
     user.role = data.role
     db.commit()
     return {"message": f"User role updated to {data.role.value}"}
@@ -391,8 +403,8 @@ def list_administrators(
     """Return all users in the tenant who hold an administrative role (owner or hr_admin).
     Used by the Settings > Manage Admins card. Accessible to owner and hr_admin.
     """
+
     from app.modules.hr.models import Employee as EmployeeModel
-    from sqlalchemy import select, outerjoin
 
     # Fetch all admin users in the tenant
     admin_users = (

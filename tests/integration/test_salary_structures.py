@@ -1,12 +1,12 @@
 import uuid
 from datetime import date, timedelta
-from decimal import Decimal
-import pytest
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
+from app.modules.payroll.models import EmployeeSalary
 from tests.conftest import TenantContext
 
 
@@ -168,9 +168,7 @@ def test_list_and_get_salary_structures(client: TestClient, company_a: TenantCon
     assert "Band B" in names
 
     struct_id = items[0]["id"]
-    detail_res = client.get(
-        f"/api/v1/payroll/structures/{struct_id}", headers=company_a.hr_headers
-    )
+    detail_res = client.get(f"/api/v1/payroll/structures/{struct_id}", headers=company_a.hr_headers)
     assert detail_res.status_code == 200
     assert detail_res.json()["id"] == struct_id
 
@@ -209,9 +207,7 @@ def test_update_salary_structure(client: TestClient, company_a: TenantContext):
     assert data["components"][0]["code"] == "BASIC"
 
 
-def test_assign_and_get_employee_salary(
-    client: TestClient, company_a: TenantContext, db: Session
-):
+def test_assign_and_get_employee_salary(client: TestClient, company_a: TenantContext, db: Session):
     bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
     # Create employee record in company_a
     employee = Employee(
@@ -310,9 +306,7 @@ def test_assign_and_get_employee_salary(
     assert delete_res.json()["error"]["code"] == "conflict"
 
 
-def test_assign_salary_overlap_error(
-    client: TestClient, company_a: TenantContext, db: Session
-):
+def test_assign_salary_overlap_error(client: TestClient, company_a: TenantContext, db: Session):
     bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
     employee = Employee(
         company_id=company_a.company_id,
@@ -369,3 +363,125 @@ def test_assign_salary_overlap_error(
     )
     assert res.status_code == 409
     assert res.json()["error"]["code"] == "salary_overlap"
+
+
+def test_salary_assignment_revision_and_overlap_scenarios(
+    client: TestClient, company_a: TenantContext, db: Session
+):
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+    employee = Employee(
+        company_id=company_a.company_id,
+        employee_code=f"EMP{uuid.uuid4().hex[:6].upper()}",
+        first_name="Revision",
+        last_name="Emp",
+        email=f"revision-{uuid.uuid4().hex[:6]}@example.test",
+        employment_type=EmploymentType.full_time,
+        hire_date=date.today(),
+        is_active=True,
+        invitation_status=InvitationStatus.activated,
+    )
+    db.add(employee)
+    db.commit()
+
+    struct_res = client.post(
+        "/api/v1/payroll/structures",
+        json={
+            "name": "Revision Structure",
+            "components": [
+                {
+                    "name": "Special Allowance",
+                    "code": "SPECIAL",
+                    "type": "earning",
+                    "calculation_type": "balance",
+                }
+            ],
+        },
+        headers=company_a.hr_headers,
+    )
+    struct_id = struct_res.json()["id"]
+
+    base_date = date(2026, 1, 1)
+
+    # 1. Initial assignment
+    res_initial = client.post(
+        f"/api/v1/payroll/employees/{employee.id}/assign",
+        json={
+            "structure_id": struct_id,
+            "ctc": "600000.00",
+            "effective_from": base_date.isoformat(),
+            "revision_reason": "Initial Offer",
+        },
+        headers=company_a.hr_headers,
+    )
+    assert res_initial.status_code == 201
+
+    # 2. Same-date duplicate rejected
+    res_same_date = client.post(
+        f"/api/v1/payroll/employees/{employee.id}/assign",
+        json={
+            "structure_id": struct_id,
+            "ctc": "650000.00",
+            "effective_from": base_date.isoformat(),
+            "revision_reason": "Same date revision attempt",
+        },
+        headers=company_a.hr_headers,
+    )
+    assert res_same_date.status_code == 409
+    assert res_same_date.json()["error"]["code"] == "salary_overlap"
+
+    # 3. Backdated overlap rejected
+    res_backdated = client.post(
+        f"/api/v1/payroll/employees/{employee.id}/assign",
+        json={
+            "structure_id": struct_id,
+            "ctc": "650000.00",
+            "effective_from": (base_date - timedelta(days=10)).isoformat(),
+            "revision_reason": "Backdated revision attempt",
+        },
+        headers=company_a.hr_headers,
+    )
+    assert res_backdated.status_code == 409
+    assert res_backdated.json()["error"]["code"] == "salary_overlap"
+
+    # 4. Normal revision works: later effective_from closes previous open row
+    revision_date = date(2026, 6, 1)
+    res_revision = client.post(
+        f"/api/v1/payroll/employees/{employee.id}/assign",
+        json={
+            "structure_id": struct_id,
+            "ctc": "750000.00",
+            "effective_from": revision_date.isoformat(),
+            "revision_reason": "Mid-year Appraisal",
+        },
+        headers=company_a.hr_headers,
+    )
+    assert res_revision.status_code == 201
+
+    # Verify in DB: previous row is closed (effective_to = revision_date - 1 day),
+    # new row is open (effective_to is None)
+    salary_rows = (
+        db.query(EmployeeSalary)
+        .filter(EmployeeSalary.employee_id == employee.id)
+        .order_by(EmployeeSalary.effective_from.asc())
+        .all()
+    )
+    assert len(salary_rows) == 2
+    assert salary_rows[0].effective_from == base_date
+    assert salary_rows[0].effective_to == revision_date - timedelta(days=1)
+    assert salary_rows[1].effective_from == revision_date
+    assert salary_rows[1].effective_to is None
+
+    # 5. Overlap inside closed range is rejected
+    inside_date = date(2026, 3, 1)
+    res_inside = client.post(
+        f"/api/v1/payroll/employees/{employee.id}/assign",
+        json={
+            "structure_id": struct_id,
+            "ctc": "700000.00",
+            "effective_from": inside_date.isoformat(),
+            "revision_reason": "Inside closed period attempt",
+        },
+        headers=company_a.hr_headers,
+    )
+    assert res_inside.status_code == 409
+    assert res_inside.json()["error"]["code"] == "salary_overlap"

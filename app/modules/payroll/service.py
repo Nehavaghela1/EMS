@@ -8,23 +8,29 @@ from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoun
 from app.core.pagination import PageParams
 from app.modules.hr.models import EmploymentType
 from app.modules.hr.repository import EmployeeRepository
-from app.modules.time_leave.repository import LeaveRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import (
     CalculationType,
     EmployeeSalary,
-    PercentageOf,
     PayrollItem,
     PayrollRun,
     PayrollRunStatus,
     PayrollRunType,
+    PercentageOf,
     Reimbursement,
     ReimbursementStatus,
-    ReimbursementType,
     SalaryComponent,
     SalaryComponentType,
     SalaryStructure,
     StatutoryConfig,
+)
+from app.modules.payroll.payslip_engine import (
+    ComponentSpec,
+    PayslipInput,
+    PTSlabSpec,
+    StatutoryConfigSpec,
+    TaxSlabSpec,
+    calculate_payslip,
 )
 from app.modules.payroll.repository import (
     EmployeeSalaryRepository,
@@ -50,15 +56,8 @@ from app.modules.payroll.schemas import (
     StatutoryConfigUpdateRequest,
     TaxSlabPostRequest,
 )
-from app.modules.payroll.payslip_engine import (
-    ComponentSpec,
-    PayslipInput,
-    PTSlabSpec,
-    StatutoryConfigSpec,
-    TaxSlabSpec,
-    calculate_payslip,
-)
 from app.modules.platform.service import AuditService
+from app.modules.time_leave.repository import LeaveRepository
 
 
 class InvalidStructureError(AppError):
@@ -386,34 +385,23 @@ class EmployeeSalaryService:
         if structure is None:
             raise NotFoundError("Salary structure not found.")
 
-        # Check if this employee has any finalized / approved payroll runs (Locked Stage)
-        approved_payroll_items = self.payroll_item_repo.list_by_employee_id(target_company_id, employee_id)
-        has_approved_payroll = len(approved_payroll_items) > 0
-
         overlapping = self.repo.get_overlapping(employee_id, target_company_id, data.effective_from)
         open_ended = None
         for row in overlapping:
             if row.effective_to is None:
                 if row.effective_from >= data.effective_from:
-                    # If payroll has already been approved, enforce strict protection
-                    if has_approved_payroll:
-                        raise SalaryOverlapError(
-                            "Cannot backdate salary prior to approved/paid payroll periods. "
-                            f"This employee already has a finalized salary starting on or after {data.effective_from.isoformat()}."
-                        )
-                    # BEFORE Payroll is Run (DRAFT Stage) — Full Flexibility:
-                    # Allow backdating or updating the starting date of the initial open-ended salary
-                    open_ended = row
-                else:
-                    open_ended = row
-            else:
-                if has_approved_payroll:
                     raise SalaryOverlapError(
-                        f"This overlaps an existing finalized salary period "
-                        f"({row.effective_from} to {row.effective_to})."
+                        "Cannot assign salary with effective_from on or before "
+                        "existing open-ended salary. Existing salary starts on "
+                        f"{row.effective_from.isoformat()}."
                     )
-                # If unapproved, allow the existing closed row to be replaced or superseded
                 open_ended = row
+            else:
+                if row.effective_from <= data.effective_from <= row.effective_to:
+                    raise SalaryOverlapError(
+                        f"This overlaps an existing salary period "
+                        f"({row.effective_from.isoformat()} to {row.effective_to.isoformat()})."
+                    )
 
         # Validate the CTC actually covers the structure's fixed + percentage
         # earnings before committing anything (Spec 19 WP-16 gate): with a
@@ -647,6 +635,7 @@ class PayrollRunService:
         self.employee_repo = EmployeeRepository(db)
         self.leave_repo = LeaveRepository(db)
         from app.modules.projects.repository import ProjectRepository
+
         self.project_repo = ProjectRepository(db)
         self.audit = AuditService(db)
 
@@ -658,7 +647,6 @@ class PayrollRunService:
         actor: User,
     ) -> PayrollRun:
         from sqlalchemy.exc import IntegrityError
-        from app.core.time import utcnow
 
         # 1. Idempotency Check (Spec 11.9 Step 2)
         existing = self.repo.get_by_idempotency_key(company_id, idempotency_key)
@@ -668,6 +656,7 @@ class PayrollRunService:
         # 2. Check regular run uniqueness per company/month/year
         if data.run_type == "regular":
             from sqlalchemy import select
+
             existing_regular = self.db.scalar(
                 select(PayrollRun).where(
                     PayrollRun.company_id == company_id,
@@ -745,7 +734,6 @@ class PayrollRunService:
             for s in db_pt_slabs
         ]
 
-
         # Financial year key (April to March)
         if data.month >= 4:
             fy_str = f"{data.year}-{data.year + 1}"
@@ -795,11 +783,12 @@ class PayrollRunService:
 
         for emp in employees:
             from calendar import monthrange
+
             _, last_day = monthrange(data.year, data.month)
             month_start = date(data.year, data.month, 1)
             month_end = date(data.year, data.month, last_day)
 
-            # Check if salary was active at any point in this pay period (effective_from <= month_end)
+            # Check if salary was active in this pay period (effective_from <= month_end)
             salary_record = self.salary_repo.get_in_force(emp.id, company_id, month_end)
             if salary_record is None:
                 # Fallback to run_date (month_start) or latest open-ended salary
@@ -914,14 +903,16 @@ class PayrollRunService:
                 for e in payslip_out.earnings
             ]
             if is_hourly and project_hours_pay > Decimal("0.00"):
-                earnings_json.append({
-                    "code": "PROJECT_HOURS",
-                    "name": (
-                        f"Hourly Pay — {total_approved_project_hours} hrs"
-                        f" @ ₹{hourly_rate}/hr (approved project timesheets)"
-                    ),
-                    "amount": str(project_hours_pay),
-                })
+                earnings_json.append(
+                    {
+                        "code": "PROJECT_HOURS",
+                        "name": (
+                            f"Hourly Pay — {total_approved_project_hours} hrs"
+                            f" @ ₹{hourly_rate}/hr (approved project timesheets)"
+                        ),
+                        "amount": str(project_hours_pay),
+                    }
+                )
 
             # deductions_json: statutory lines only (EPF, ESI, PT, TDS, LWF).
             # LOP is NOT a subtracted deduction line — it is already reflected in
@@ -981,7 +972,9 @@ class PayrollRunService:
 
         self.repo.update(
             run,
-            status=PayrollRunStatus.pending_approval if processed_count > 0 else PayrollRunStatus.draft,
+            status=PayrollRunStatus.pending_approval
+            if processed_count > 0
+            else PayrollRunStatus.draft,
             total_employees=processed_count,
             total_gross=total_gross,
             total_deductions=total_deductions,
@@ -1020,11 +1013,10 @@ class PayrollRunService:
         items = self.item_repo.list_by_run_id(run.id, company_id)
         return run, items
 
-    def approve_run(
-        self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User
-    ) -> PayrollRun:
-        from app.core.time import utcnow
+    def approve_run(self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User) -> PayrollRun:
         from sqlalchemy import update
+
+        from app.core.time import utcnow
 
         run = self.repo.get_by_id(run_id, company_id)
         if run is None:
@@ -1064,17 +1056,18 @@ class PayrollRunService:
         self.db.commit()
         return run
 
-    def delete_run(
-        self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User
-    ) -> None:
-        """Delete/cancel a payroll run. Allowed only if status in ('draft', 'processing', 'pending_approval') and not 'approved'/'paid'."""
+    def delete_run(self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User) -> None:
+        """Delete/cancel a payroll run. Allowed only if status in
+        ('draft', 'processing', 'pending_approval') and not 'approved'/'paid'.
+        """
         run = self.repo.get_by_id(run_id, company_id)
         if run is None:
             raise NotFoundError("Payroll run not found.")
 
         if run.status in (PayrollRunStatus.approved, PayrollRunStatus.paid):
             raise ConflictError(
-                f"Cannot delete a payroll run with status '{run.status.value}'. Only draft/unapproved runs can be deleted."
+                f"Cannot delete a payroll run with status '{run.status.value}'. "
+                "Only draft/unapproved runs can be deleted."
             )
 
         # Phase 3 of 3: Unlink all reimbursements that were locked into this
@@ -1082,6 +1075,7 @@ class PayrollRunService:
         # their status is still APPROVED (not PAID). Clear the run reference so
         # they roll forward into the next pay cycle automatically.
         from sqlalchemy import update
+
         self.db.execute(
             update(Reimbursement)
             .where(
@@ -1106,7 +1100,6 @@ class PayrollRunService:
 
 
 class ReimbursementService:
-
     """Routes 97-99 (Spec 10.6)."""
 
     def __init__(self, db: Session):
@@ -1158,12 +1151,16 @@ class ReimbursementService:
                 return [], 0, 0
             team_ids = self.employee_repo.list_direct_report_ids(company_id, mgr_emp.id)
             team_ids.append(mgr_emp.id)
-            return self.repo.list_claims(company_id, page_params, employee_ids=team_ids, status=status)
+            return self.repo.list_claims(
+                company_id, page_params, employee_ids=team_ids, status=status
+            )
         else:
             own_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
             if not own_emp:
                 return [], 0, 0
-            return self.repo.list_claims(company_id, page_params, employee_id=own_emp.id, status=status)
+            return self.repo.list_claims(
+                company_id, page_params, employee_id=own_emp.id, status=status
+            )
 
     def review_claim(
         self,
@@ -1193,7 +1190,9 @@ class ReimbursementService:
                 raise ForbiddenError("Manager profile not found.")
             team_ids = self.employee_repo.list_direct_report_ids(company_id, mgr_emp.id)
             if claim.employee_id not in team_ids:
-                raise ForbiddenError("Managers can only review reimbursement claims for their direct reports.")
+                raise ForbiddenError(
+                    "Managers can only review reimbursement claims for their direct reports."
+                )
 
         # Block anyone from approving a claim already locked into a pay run
         if claim.added_to_payroll_run_id is not None:
@@ -1202,7 +1201,9 @@ class ReimbursementService:
             )
 
         new_status = (
-            ReimbursementStatus.approved if data.action == "approve" else ReimbursementStatus.rejected
+            ReimbursementStatus.approved
+            if data.action == "approve"
+            else ReimbursementStatus.rejected
         )
 
         self.repo.update(
@@ -1210,7 +1211,9 @@ class ReimbursementService:
             status=new_status,
             approved_by=actor.id,
             approved_at=utcnow() if new_status == ReimbursementStatus.approved else None,
-            rejection_reason=data.rejection_reason if new_status == ReimbursementStatus.rejected else None,
+            rejection_reason=data.rejection_reason
+            if new_status == ReimbursementStatus.rejected
+            else None,
         )
 
         self.audit.record(
@@ -1223,5 +1226,3 @@ class ReimbursementService:
         )
         self.db.commit()
         return claim
-
-

@@ -321,7 +321,9 @@ def test_regularize_with_timestamps_recomputes_hours_and_status(client, company_
     assert "Regularized by" in (body["notes"] or "")
 
 
-def test_employee_request_regularization_with_attachment_and_admin_adjust_approval(client, company_a, db):
+def test_employee_request_regularization_with_attachment_and_admin_adjust_approval(
+    client, company_a, db
+):
     """Test full split workflow:
     1. Employee submits regularization with requested times, reason, and attachment.
     2. Record switches to pending_regularization.
@@ -337,9 +339,7 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     out_time = utcnow().isoformat()
 
     # 1. Employee applies with multipart form and dummy attachment
-    files = {
-        "attachment": ("gate_pass.pdf", b"%PDF-1.4 gate pass content", "application/pdf")
-    }
+    files = {"attachment": ("gate_pass.pdf", b"%PDF-1.4 gate pass content", "application/pdf")}
     data = {
         "check_in": in_time,
         "check_out": out_time,
@@ -364,7 +364,9 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     assert att_resp.content == b"%PDF-1.4 gate pass content"
 
     # Verify attendance record has pending_regularization and active_regularization populated
-    att_record = client.get(f"/api/v1/attendance/{created['id']}", headers=company_a.hr_headers).json()
+    att_record = client.get(
+        f"/api/v1/attendance/{created['id']}", headers=company_a.hr_headers
+    ).json()
     assert att_record["status"] == "pending_regularization"
     assert att_record["active_regularization"] is not None
     assert att_record["active_regularization"]["id"] == req_data["id"]
@@ -386,14 +388,22 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     assert approved_data["admin_notes"] == "Adjusted to 5:00 PM per security gate slip"
 
     # 3. Verify attendance record is now present and reflects adjusted hours
-    updated_rec = client.get(f"/api/v1/attendance/{created['id']}", headers=company_a.hr_headers).json()
+    updated_rec = client.get(
+        f"/api/v1/attendance/{created['id']}", headers=company_a.hr_headers
+    ).json()
     assert updated_rec["status"] == "present"
     assert float(updated_rec["hours_worked"]) >= 7.9
     assert "HR: Adjusted to 5:00 PM per security gate slip" in (updated_rec["notes"] or "")
 
 
-def test_calendar_shows_in_progress_for_today_active_clock_in(client, company_a, db):
+def test_calendar_shows_in_progress_for_today_active_clock_in(client, company_a, db, monkeypatch):
     """Verifies that an active check-in today shows 'in_progress' rather than 'absent'."""
+    # Freeze time to a Tuesday (2026-10-13 10:00:00 UTC)
+    tuesday = datetime(2026, 10, 13, 10, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.core.time.utcnow", lambda: tuesday)
+    monkeypatch.setattr("app.modules.time_leave.service.utcnow", lambda: tuesday)
+    monkeypatch.setattr("app.modules.time_leave.router.utcnow", lambda: tuesday)
+
     employee = _create_employee(client, company_a.hr_headers)
     own_headers = _link_user_to_employee(
         db, company_a.company_id, employee["id"], UserRole.employee
@@ -401,7 +411,7 @@ def test_calendar_shows_in_progress_for_today_active_clock_in(client, company_a,
     # Check in today
     client.post("/api/v1/attendance/check-in", headers=own_headers)
 
-    today = utcnow().date()
+    today = tuesday.date()
     cal_resp = client.get(
         f"/api/v1/attendance/calendar?employee_id={employee['id']}&month={today.month}&year={today.year}",
         headers=company_a.hr_headers,
@@ -444,10 +454,18 @@ def test_self_approval_ban_prevents_user_from_approving_own_regularization(clien
     assert "cannot approve your own" in err_msg.lower()
 
 
-def test_attendance_exempt_calendar_shows_exempt_not_absent(client, company_a, db):
-    """Verifies that employees marked as attendance exempt (e.g. CEO/Owner) show exempt rather than absent."""
+def test_attendance_exempt_calendar_shows_exempt_not_absent(client, company_a, db, monkeypatch):
+    """Verifies that employees marked as attendance exempt (e.g. CEO/Owner)
+    show exempt rather than absent.
+    """
+    # Freeze time to a Tuesday (2026-10-13 10:00:00 UTC)
+    tuesday = datetime(2026, 10, 13, 10, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.core.time.utcnow", lambda: tuesday)
+    monkeypatch.setattr("app.modules.time_leave.service.utcnow", lambda: tuesday)
+    monkeypatch.setattr("app.modules.time_leave.router.utcnow", lambda: tuesday)
+
     employee = _create_employee(client, company_a.hr_headers, is_attendance_exempt=True)
-    today = utcnow().date()
+    today = tuesday.date()
     cal_resp = client.get(
         f"/api/v1/attendance/calendar?employee_id={employee['id']}&month={today.month}&year={today.year}",
         headers=company_a.hr_headers,
@@ -459,13 +477,62 @@ def test_attendance_exempt_calendar_shows_exempt_not_absent(client, company_a, d
     assert today_cell["badge_label"] == "Exempt"
 
 
+def test_calendar_shows_in_progress_for_sunday_active_clock_in(client, company_a, db, monkeypatch):
+    """Verifies that an active check-in on a Sunday shows 'in_progress' (punches beat weekend)."""
+    # Freeze time to a Sunday (2026-10-18 10:00:00 UTC)
+    sunday = datetime(2026, 10, 18, 10, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.core.time.utcnow", lambda: sunday)
+    monkeypatch.setattr("app.modules.time_leave.service.utcnow", lambda: sunday)
+    monkeypatch.setattr("app.modules.time_leave.router.utcnow", lambda: sunday)
+
+    employee = _create_employee(client, company_a.hr_headers)
+    own_headers = _link_user_to_employee(
+        db, company_a.company_id, employee["id"], UserRole.employee
+    )
+    # Check in on Sunday
+    res_punch = client.post("/api/v1/attendance/check-in", headers=own_headers)
+    assert res_punch.status_code == 201, res_punch.text
+
+    today = sunday.date()
+    cal_resp = client.get(
+        f"/api/v1/attendance/calendar?employee_id={employee['id']}&month={today.month}&year={today.year}",
+        headers=company_a.hr_headers,
+    )
+    assert cal_resp.status_code == 200, cal_resp.text
+    cal_data = cal_resp.json()
+    today_cell = next(d for d in cal_data["days"] if d["date"] == today.isoformat())
+    assert today_cell["status"] == "in_progress"
+    assert today_cell["badge_label"] == "Clocked In"
+
+
+def test_attendance_exempt_calendar_shows_weekend_on_sunday(client, company_a, db, monkeypatch):
+    """Verifies that an attendance-exempt employee with no punch on Sunday shows 'weekend'."""
+    # Freeze time to a Sunday (2026-10-18 10:00:00 UTC)
+    sunday = datetime(2026, 10, 18, 10, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr("app.core.time.utcnow", lambda: sunday)
+    monkeypatch.setattr("app.modules.time_leave.service.utcnow", lambda: sunday)
+    monkeypatch.setattr("app.modules.time_leave.router.utcnow", lambda: sunday)
+
+    employee = _create_employee(client, company_a.hr_headers, is_attendance_exempt=True)
+    today = sunday.date()
+    cal_resp = client.get(
+        f"/api/v1/attendance/calendar?employee_id={employee['id']}&month={today.month}&year={today.year}",
+        headers=company_a.hr_headers,
+    )
+    assert cal_resp.status_code == 200, cal_resp.text
+    cal_data = cal_resp.json()
+    today_cell = next(d for d in cal_data["days"] if d["date"] == today.isoformat())
+    assert today_cell["status"] == "weekend"
+    assert today_cell["badge_label"] == "Weekend"
+
+
 def test_company_deactivation_restricted_to_owner(client, company_a, super_admin_headers, db):
     """Verifies that deactivating a workspace is strictly restricted to Owner / Super Admin."""
     # HR Admin caller should be rejected
     resp_hr = client.post(
         f"/api/v1/companies/{company_a.company_id}/deactivate",
         headers=company_a.hr_headers,
-        json={"reason": "Business closure"},
+        json={"reason": "Business closure", "password": "Test1234pass!"},
     )
     assert resp_hr.status_code == 403
 
@@ -473,9 +540,7 @@ def test_company_deactivation_restricted_to_owner(client, company_a, super_admin
     resp_sa = client.post(
         f"/api/v1/companies/{company_a.company_id}/deactivate",
         headers=super_admin_headers,
-        json={"reason": "Workspace audit"},
+        json={"reason": "Workspace audit", "password": "Test1234pass!"},
     )
     assert resp_sa.status_code == 200
     assert resp_sa.json()["message"] == "Company workspace has been deactivated."
-
-

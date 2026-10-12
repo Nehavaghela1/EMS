@@ -75,11 +75,24 @@ def hr_admin_credentials_email(
     """Route 15 (company approval) — sent upon company approval."""
     subject = f"Your EMS admin account for {company_name} is ready"
     if temporary_password:
-        pw_text = f"  Temporary password: {temporary_password}\n\nYou'll be asked to change this password the first time you sign in."
-        pw_html = f"<p>Email: {email}<br>Temporary password: <strong>{temporary_password}</strong></p><p>You'll be asked to change this password the first time you sign in.</p>"
+        pw_text = (
+            f"  Temporary password: {temporary_password}\n\n"
+            "You'll be asked to change this password the first time you sign in."
+        )
+        pw_html = (
+            f"<p>Email: {email}<br>Temporary password: <strong>{temporary_password}</strong></p>"
+            "<p>You'll be asked to change this password the first time you sign in.</p>"
+        )
     else:
-        pw_text = "  Password: [The password chosen during company registration]\n\nYou can log in directly with the password you created."
-        pw_html = f"<p>Email: {email}<br>Password: <em>(The password chosen during company registration)</em></p><p>You can sign in immediately with your account password.</p>"
+        pw_text = (
+            "  Password: [The password chosen during company registration]\n\n"
+            "You can log in directly with the password you created."
+        )
+        pw_html = (
+            f"<p>Email: {email}<br>"
+            "Password: <em>(The password chosen during company registration)</em></p>"
+            "<p>You can sign in immediately with your account password.</p>"
+        )
 
     text = (
         f"{company_name} has been approved on EMS.\n\n"

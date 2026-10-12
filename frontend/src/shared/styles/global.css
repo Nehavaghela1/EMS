@@ -729,6 +729,42 @@ textarea:focus {
   .performance-grid-2-mobile {
     grid-template-columns: 1fr !important;
   }
+
+  /* Projects & Kanban Mobile Responsiveness */
+  .project-tab-bar-mobile {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    white-space: nowrap !important;
+    width: 100% !important;
+    padding-bottom: 4px !important;
+  }
+
+  .project-stat-grid-mobile {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+  }
+  .project-stat-grid-mobile .card {
+    padding: 10px 12px !important;
+  }
+  .project-stat-grid-mobile .stat-value {
+    font-size: 1.35rem !important;
+  }
+
+  .project-kanban-mobile {
+    display: flex !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    gap: 12px !important;
+    padding-bottom: 12px !important;
+    scroll-snap-type: x mandatory !important;
+  }
+  .project-kanban-mobile .kanban-col {
+    min-width: 82vw !important;
+    max-width: 85vw !important;
+    height: auto !important;
+    min-height: 440px !important;
+    scroll-snap-align: start !important;
+  }
 }
 
 .calendar-scroll-hint {
