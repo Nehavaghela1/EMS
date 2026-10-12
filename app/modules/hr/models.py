@@ -29,8 +29,13 @@ class Department(TenantBase):
     """RLS: Yes (Spec 7.3)."""
 
     __tablename__ = "departments"
-    __table_args__ = (Index("uq_departments_company_id_name", "company_id", "name", unique=True),)
-
+    __table_args__ = (
+        Index("uq_departments_company_id_name", "company_id", "name", unique=True),
+        CheckConstraint(
+            "clearance_function IN ('it', 'finance', 'hr')",
+            name="ck_departments_clearance_function",
+        ),
+    )
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     clearance_function: Mapped[Literal["it", "finance", "hr"] | None] = mapped_column(
