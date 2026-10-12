@@ -497,9 +497,9 @@ export function ProjectDetailPage() {
       </div>
 
       {/* Page Header */}
-      <div className="row-between align-center">
+      <div className="row-between align-center page-header-responsive">
         <div>
-          <div className="row gap-2 align-center mb-1">
+          <div className="row gap-2 align-center mb-1" style={{ flexWrap: "wrap" }}>
             <span className="badge badge-muted font-mono" style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.5px" }}>
               {project.code}
             </span>
@@ -551,7 +551,7 @@ export function ProjectDetailPage() {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
           {canManage && (
             <button
               type="button"
@@ -632,7 +632,7 @@ export function ProjectDetailPage() {
       </div>
 
       {/* Analytics Stats Grid - Standalone Cards */}
-      <div className="stat-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem" }}>
+      <div className="stat-grid project-stat-grid-mobile" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem" }}>
         <div className="card">
           <span className="stat-label" style={{ fontWeight: 600, letterSpacing: "0.04em", fontSize: "11px" }}>TASKS PROGRESS</span>
           <div className="row-between align-center mt-1">
@@ -678,7 +678,7 @@ export function ProjectDetailPage() {
       </div>
 
       {/* Zoho Style Tabs Bar */}
-      <div className="tab-bar flex justify-between items-center" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+      <div className="tab-bar project-tab-bar-mobile flex justify-between items-center" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
         <div className="flex gap-2">
           <button
             type="button"
@@ -796,7 +796,7 @@ export function ProjectDetailPage() {
             </div>
           </div>
 
-          <div className="kanban-board">
+          <div className="kanban-board project-kanban-mobile">
             {kanbanColumns.map((col) => {
               const visibleTasks = taskFilter === "my"
                 ? tasks.filter((t) => t.assigned_to === user?.employee?.id)
@@ -1280,7 +1280,8 @@ export function ProjectDetailPage() {
           </div>
 
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <table className="table">
+            <div className="mobile-table-wrap">
+              <table className="table" style={{ minWidth: "640px" }}>
               <thead>
                 <tr>
                   <th>Team Member</th>
@@ -1375,6 +1376,7 @@ export function ProjectDetailPage() {
                 )}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       )}
@@ -1395,7 +1397,8 @@ export function ProjectDetailPage() {
           </div>
 
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <table className="table text-sm">
+            <div className="mobile-table-wrap">
+              <table className="table text-sm" style={{ minWidth: "640px" }}>
               <thead>
                 <tr>
                   <th>Date</th>

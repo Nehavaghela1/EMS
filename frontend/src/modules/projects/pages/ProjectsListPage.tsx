@@ -199,7 +199,7 @@ export function ProjectsListPage() {
           </div>
         )}
 
-        <div className="tab-bar">
+        <div className="tab-bar project-tab-bar-mobile">
           {(["all", "planning", "active", "on_hold", "completed", "cancelled"] as const).map((st) => (
             <button
               key={st}
@@ -365,7 +365,7 @@ export function ProjectsListPage() {
       {/* Create Modal */}
       {showModal && (
         <div className="modal-backdrop" onClick={() => setShowModal(false)}>
-          <div className="modal card stack" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal card stack performance-goal-modal" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
               <h3>{editingProjectId ? "Edit Project" : "+ Create New Project"}</h3>
               <button
