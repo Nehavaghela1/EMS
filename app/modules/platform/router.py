@@ -321,7 +321,7 @@ def list_employee_documents(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    return EmployeeDocumentService(db).list_documents(user.company_id, employee_id)
+    return EmployeeDocumentService(db).list_documents(user.company_id, employee_id, user)
 
 
 @documents_router.post("", response_model=EmployeeDocumentResponse, status_code=201)
