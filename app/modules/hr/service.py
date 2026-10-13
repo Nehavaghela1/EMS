@@ -537,8 +537,17 @@ class EmployeeService:
 
     # ── Resignation & Full-and-Final (Routes 27-30) ─────────────────
     def submit_resignation(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID, data: ResignationSubmitRequest
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        data: ResignationSubmitRequest,
+        actor: User,
     ) -> Employee:
+        if actor.role not in (UserRole.super_admin, UserRole.hr_admin):
+            actor_emp = self.repo.get_by_user_id(company_id, actor.id)
+            if actor_emp is None or employee_id != actor_emp.id:
+                raise ForbiddenError("You do not have permission to submit this resignation.")
+
         employee = self._get_or_404(company_id, employee_id)
         if employee.resignation_status == ResignationStatus.submitted:
             raise ConflictError("Resignation is already submitted.")
@@ -645,7 +654,9 @@ class EmployeeService:
         self.db.commit()
         return employee
 
-    def calculate_fnf(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> FnFSettlementResponse:
+    def _calculate_fnf(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID
+    ) -> FnFSettlementResponse:
         employee = self._get_or_404(company_id, employee_id)
         last_working = employee.last_working_date or utcnow().date()
 
@@ -853,6 +864,13 @@ class EmployeeService:
             total_settlement_amount=total_settlement,
         )
 
+    def calculate_fnf(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
+    ) -> FnFSettlementResponse:
+        if actor.role not in (UserRole.super_admin, UserRole.hr_admin):
+            raise ForbiddenError("You do not have permission to view full-and-final settlement.")
+        return self._calculate_fnf(company_id, employee_id)
+
     def update_fnf_clearance(
         self,
         company_id: uuid.UUID,
@@ -951,4 +969,4 @@ class EmployeeService:
             self.repo.update(employee, **updates)
             self.db.commit()
 
-        return self.calculate_fnf(company_id, employee_id)
+        return self._calculate_fnf(company_id, employee_id)

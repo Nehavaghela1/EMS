@@ -343,7 +343,7 @@ def submit_resignation(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    employee = EmployeeService(db).submit_resignation(user.company_id, employee_id, data)
+    employee = EmployeeService(db).submit_resignation(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
 
 
@@ -375,7 +375,7 @@ def get_fnf_settlement(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    return EmployeeService(db).calculate_fnf(user.company_id, employee_id)
+    return EmployeeService(db).calculate_fnf(user.company_id, employee_id, user)
 
 
 @employees_router.put("/{employee_id}/fnf/clearance", response_model=FnFSettlementResponse)
