@@ -998,8 +998,21 @@ class ShiftService:
         return assignment
 
     def get_assigned_shift(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID, as_of_date: date | None = None
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        actor: User,
+        as_of_date: date | None = None,
     ) -> tuple[EmployeeShift, Shift] | None:
+        if actor.role == UserRole.employee:
+            actor_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if actor_emp is None or employee_id != actor_emp.id:
+                raise ForbiddenError("You do not have permission to view this shift assignment.")
+        elif actor.role in (UserRole.hr_admin, UserRole.super_admin):
+            emp = self.employee_repo.get_by_id(employee_id, company_id)
+            if emp is None:
+                raise NotFoundError("Employee not found.")
+
         target_date = as_of_date or utcnow().date()
         return self.employee_shift_repo.get_assigned_shift(
             company_id=company_id,
