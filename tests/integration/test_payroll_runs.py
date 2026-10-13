@@ -1,5 +1,6 @@
 import uuid
 from datetime import date
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,7 +10,12 @@ from app.db.rls import bind_tenant_to_session
 from app.db.seed.pt_slabs import seed_pt_slabs
 from app.db.seed.tax_slabs import seed_tax_slabs
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
-from app.modules.payroll.models import PayrollRun
+from app.modules.payroll.models import (
+    PayrollRun,
+    PayrollRunStatus,
+    PayrollRunType,
+)
+from app.modules.payroll.repository import PayrollItemRepository
 from tests.conftest import TenantContext
 
 
@@ -316,3 +322,343 @@ def test_cannot_delete_approved_payroll_run(
     # Attempt delete on approved run -> 409 Conflict
     del_res = client.delete(f"/api/v1/payroll/runs/{run_id}", headers=company_a.hr_headers)
     assert del_res.status_code == 409
+
+
+def test_repository_get_ytd_gross_for_employee(db: Session, company_a: TenantContext):
+    """Integration test for PayrollItemRepository.get_ytd_gross_for_employee.
+    Tests:
+    - creates items in approved, paid, and draft runs
+    - includes an approved run in a different financial year (e.g. FY 2025-2026)
+    - excludes the specified current run (rebuild exclusion)
+    - asserts only approved and paid runs within the target FY are summed
+    """
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+    email = f"ytd-gross-{uuid.uuid4().hex[:6]}@example.com"
+    emp = _create_employee(db, company_a.company_id, email)
+    item_repo = PayrollItemRepository(db)
+
+    token = company_a.hr_headers["Authorization"].split(" ")[1]
+    from app.core.security import decode_access_token
+
+    actor_id = uuid.UUID(decode_access_token(token)["sub"])
+
+    # 1. Approved run in target FY 2026-2027 (Month 4 / 2026) -> included: 50,000.00
+    run_approved = PayrollRun(
+        company_id=company_a.company_id,
+        month=4,
+        year=2026,
+        status=PayrollRunStatus.approved,
+        run_type=PayrollRunType.regular,
+        idempotency_key=f"ytd-g-appr-{uuid.uuid4()}",
+        run_by=actor_id,
+    )
+    db.add(run_approved)
+    db.flush()
+    item_repo.create(
+        company_id=company_a.company_id,
+        payroll_run_id=run_approved.id,
+        employee_id=emp.id,
+        ctc_snapshot=Decimal("600000.00"),
+        gross_salary=Decimal("50000.00"),
+        total_deductions=Decimal("5000.00"),
+        net_salary=Decimal("45000.00"),
+        employer_cost=Decimal("55000.00"),
+        earnings_json=[],
+        deductions_json=[],
+        employer_contributions_json=[],
+        working_days=Decimal("30"),
+        present_days=Decimal("30"),
+    )
+
+    # 2. Paid run in target FY 2026-2027 (Month 5 / 2026) -> included: 55,000.00
+    run_paid = PayrollRun(
+        company_id=company_a.company_id,
+        month=5,
+        year=2026,
+        status=PayrollRunStatus.paid,
+        run_type=PayrollRunType.regular,
+        idempotency_key=f"ytd-g-paid-{uuid.uuid4()}",
+        run_by=actor_id,
+    )
+    db.add(run_paid)
+    db.flush()
+    item_repo.create(
+        company_id=company_a.company_id,
+        payroll_run_id=run_paid.id,
+        employee_id=emp.id,
+        ctc_snapshot=Decimal("600000.00"),
+        gross_salary=Decimal("55000.00"),
+        total_deductions=Decimal("5000.00"),
+        net_salary=Decimal("50000.00"),
+        employer_cost=Decimal("60000.00"),
+        earnings_json=[],
+        deductions_json=[],
+        employer_contributions_json=[],
+        working_days=Decimal("31"),
+        present_days=Decimal("31"),
+    )
+
+    # 3. Draft run in target FY 2026-2027 (Month 6 / 2026) -> EXCLUDED: 60,000.00
+    run_draft = PayrollRun(
+        company_id=company_a.company_id,
+        month=6,
+        year=2026,
+        status=PayrollRunStatus.draft,
+        run_type=PayrollRunType.regular,
+        idempotency_key=f"ytd-g-draft-{uuid.uuid4()}",
+        run_by=actor_id,
+    )
+    db.add(run_draft)
+    db.flush()
+    item_repo.create(
+        company_id=company_a.company_id,
+        payroll_run_id=run_draft.id,
+        employee_id=emp.id,
+        ctc_snapshot=Decimal("600000.00"),
+        gross_salary=Decimal("60000.00"),
+        total_deductions=Decimal("5000.00"),
+        net_salary=Decimal("55000.00"),
+        employer_cost=Decimal("65000.00"),
+        earnings_json=[],
+        deductions_json=[],
+        employer_contributions_json=[],
+        working_days=Decimal("30"),
+        present_days=Decimal("30"),
+    )
+
+    # 4. Approved run in DIFFERENT FY (Month 3 / 2026 = FY 2025-2026) -> EXCLUDED: 40,000.00
+    run_prior_fy = PayrollRun(
+        company_id=company_a.company_id,
+        month=3,
+        year=2026,
+        status=PayrollRunStatus.approved,
+        run_type=PayrollRunType.regular,
+        idempotency_key=f"ytd-g-prior-{uuid.uuid4()}",
+        run_by=actor_id,
+    )
+    db.add(run_prior_fy)
+    db.flush()
+    item_repo.create(
+        company_id=company_a.company_id,
+        payroll_run_id=run_prior_fy.id,
+        employee_id=emp.id,
+        ctc_snapshot=Decimal("600000.00"),
+        gross_salary=Decimal("40000.00"),
+        total_deductions=Decimal("4000.00"),
+        net_salary=Decimal("36000.00"),
+        employer_cost=Decimal("44000.00"),
+        earnings_json=[],
+        deductions_json=[],
+        employer_contributions_json=[],
+        working_days=Decimal("31"),
+        present_days=Decimal("31"),
+    )
+
+    # 5. Approved run in target FY that is the current run (exclude_run_id) -> EXCLUDED
+    run_current = PayrollRun(
+        company_id=company_a.company_id,
+        month=7,
+        year=2026,
+        status=PayrollRunStatus.approved,
+        run_type=PayrollRunType.regular,
+        idempotency_key=f"ytd-g-curr-{uuid.uuid4()}",
+        run_by=actor_id,
+    )
+    db.add(run_current)
+    db.flush()
+    item_repo.create(
+        company_id=company_a.company_id,
+        payroll_run_id=run_current.id,
+        employee_id=emp.id,
+        ctc_snapshot=Decimal("600000.00"),
+        gross_salary=Decimal("70000.00"),
+        total_deductions=Decimal("7000.00"),
+        net_salary=Decimal("63000.00"),
+        employer_cost=Decimal("77000.00"),
+        earnings_json=[],
+        deductions_json=[],
+        employer_contributions_json=[],
+        working_days=Decimal("31"),
+        present_days=Decimal("31"),
+    )
+    db.commit()
+
+    # Query FY 2026-2027 (start_year=2026) excluding run_current:
+    # Included: run_approved (50,000.00) + run_paid (55,000.00) = 105,000.00
+    ytd_gross = item_repo.get_ytd_gross_for_employee(
+        company_id=company_a.company_id,
+        employee_id=emp.id,
+        start_year=2026,
+        exclude_run_id=run_current.id,
+    )
+    assert ytd_gross == Decimal("105000.00")
+
+
+def test_repository_get_ytd_tds_for_employee(db: Session, company_a: TenantContext):
+    """Integration test for PayrollItemRepository.get_ytd_tds_for_employee.
+    Tests:
+    - creates items with TDS in deductions_json in approved, paid, and draft runs
+    - includes an approved run in a different financial year
+    - excludes the specified current run (rebuild exclusion)
+    - asserts only approved and paid runs within target FY are summed
+    """
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+    emp = _create_employee(db, company_a.company_id, f"ytd-tds-{uuid.uuid4().hex[:6]}@example.com")
+    item_repo = PayrollItemRepository(db)
+
+    token = company_a.hr_headers["Authorization"].split(" ")[1]
+    from app.core.security import decode_access_token
+
+    actor_id = uuid.UUID(decode_access_token(token)["sub"])
+
+    # 1. Approved run in FY 2026-2027 (Month 4) -> TDS: 2,500.00
+
+    run_approved = PayrollRun(
+        company_id=company_a.company_id,
+        month=4,
+        year=2026,
+        status=PayrollRunStatus.approved,
+        run_type=PayrollRunType.regular,
+        idempotency_key=f"ytd-t-appr-{uuid.uuid4()}",
+        run_by=actor_id,
+    )
+    db.add(run_approved)
+    db.flush()
+    item_repo.create(
+        company_id=company_a.company_id,
+        payroll_run_id=run_approved.id,
+        employee_id=emp.id,
+        ctc_snapshot=Decimal("600000.00"),
+        gross_salary=Decimal("50000.00"),
+        total_deductions=Decimal("2500.00"),
+        net_salary=Decimal("47500.00"),
+        employer_cost=Decimal("55000.00"),
+        earnings_json=[],
+        deductions_json=[{"code": "TDS", "name": "Income Tax (Estimated)", "amount": "2500.00"}],
+        employer_contributions_json=[],
+        working_days=Decimal("30"),
+        present_days=Decimal("30"),
+    )
+
+    # 2. Paid run in FY 2026-2027 (Month 5) -> TDS: 3,000.00
+    run_paid = PayrollRun(
+        company_id=company_a.company_id,
+        month=5,
+        year=2026,
+        status=PayrollRunStatus.paid,
+        run_type=PayrollRunType.regular,
+        idempotency_key=f"ytd-t-paid-{uuid.uuid4()}",
+        run_by=actor_id,
+    )
+    db.add(run_paid)
+    db.flush()
+    item_repo.create(
+        company_id=company_a.company_id,
+        payroll_run_id=run_paid.id,
+        employee_id=emp.id,
+        ctc_snapshot=Decimal("600000.00"),
+        gross_salary=Decimal("50000.00"),
+        total_deductions=Decimal("3000.00"),
+        net_salary=Decimal("47000.00"),
+        employer_cost=Decimal("55000.00"),
+        earnings_json=[],
+        deductions_json=[{"code": "TDS", "name": "Income Tax (Estimated)", "amount": "3000.00"}],
+        employer_contributions_json=[],
+        working_days=Decimal("31"),
+        present_days=Decimal("31"),
+    )
+
+    # 3. Draft run in FY 2026-2027 (Month 6) -> EXCLUDED (draft status): 4,000.00
+    run_draft = PayrollRun(
+        company_id=company_a.company_id,
+        month=6,
+        year=2026,
+        status=PayrollRunStatus.draft,
+        run_type=PayrollRunType.regular,
+        idempotency_key=f"ytd-t-draft-{uuid.uuid4()}",
+        run_by=actor_id,
+    )
+    db.add(run_draft)
+    db.flush()
+    item_repo.create(
+        company_id=company_a.company_id,
+        payroll_run_id=run_draft.id,
+        employee_id=emp.id,
+        ctc_snapshot=Decimal("600000.00"),
+        gross_salary=Decimal("50000.00"),
+        total_deductions=Decimal("4000.00"),
+        net_salary=Decimal("46000.00"),
+        employer_cost=Decimal("55000.00"),
+        earnings_json=[],
+        deductions_json=[{"code": "TDS", "name": "Income Tax (Estimated)", "amount": "4000.00"}],
+        employer_contributions_json=[],
+        working_days=Decimal("30"),
+        present_days=Decimal("30"),
+    )
+
+    # 4. Approved run in DIFFERENT FY (Month 3 / 2026 = FY 2025-2026) -> EXCLUDED: 1,500.00
+    run_prior = PayrollRun(
+        company_id=company_a.company_id,
+        month=3,
+        year=2026,
+        status=PayrollRunStatus.approved,
+        run_type=PayrollRunType.regular,
+        idempotency_key=f"ytd-t-prior-{uuid.uuid4()}",
+        run_by=actor_id,
+    )
+    db.add(run_prior)
+    db.flush()
+    item_repo.create(
+        company_id=company_a.company_id,
+        payroll_run_id=run_prior.id,
+        employee_id=emp.id,
+        ctc_snapshot=Decimal("600000.00"),
+        gross_salary=Decimal("50000.00"),
+        total_deductions=Decimal("1500.00"),
+        net_salary=Decimal("48500.00"),
+        employer_cost=Decimal("55000.00"),
+        earnings_json=[],
+        deductions_json=[{"code": "TDS", "name": "Income Tax (Estimated)", "amount": "1500.00"}],
+        employer_contributions_json=[],
+        working_days=Decimal("31"),
+        present_days=Decimal("31"),
+    )
+
+    # 5. Current run in target FY (exclude_run_id) -> EXCLUDED
+    run_current = PayrollRun(
+        company_id=company_a.company_id,
+        month=7,
+        year=2026,
+        status=PayrollRunStatus.approved,
+        run_type=PayrollRunType.regular,
+        idempotency_key=f"ytd-t-curr-{uuid.uuid4()}",
+        run_by=actor_id,
+    )
+    db.add(run_current)
+    db.flush()
+    item_repo.create(
+        company_id=company_a.company_id,
+        payroll_run_id=run_current.id,
+        employee_id=emp.id,
+        ctc_snapshot=Decimal("600000.00"),
+        gross_salary=Decimal("50000.00"),
+        total_deductions=Decimal("5000.00"),
+        net_salary=Decimal("45000.00"),
+        employer_cost=Decimal("55000.00"),
+        earnings_json=[],
+        deductions_json=[{"code": "TDS", "name": "Income Tax (Estimated)", "amount": "5000.00"}],
+        employer_contributions_json=[],
+        working_days=Decimal("31"),
+        present_days=Decimal("31"),
+    )
+    db.commit()
+
+    # Query FY 2026-2027 (start_year=2026) excluding run_current:
+    # Included: run_approved (2500.00) + run_paid (3000.00) = 5500.00
+    ytd_tds = item_repo.get_ytd_tds_for_employee(
+        company_id=company_a.company_id,
+        employee_id=emp.id,
+        start_year=2026,
+        exclude_run_id=run_current.id,
+    )
+    assert ytd_tds == Decimal("5500.00")
