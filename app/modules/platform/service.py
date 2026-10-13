@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import delete_by_prefix, get_json, set_json
 from app.core.config import settings
-from app.core.exceptions import AppError, NotFoundError
+from app.core.exceptions import AppError, ForbiddenError, NotFoundError
 from app.core.pagination import PageParams
 from app.core.time import utcnow
 from app.modules.hr.repository import EmployeeRepository
@@ -519,8 +519,23 @@ class EmployeeDocumentService:
         return EmployeeDocumentResponse.model_validate(doc)
 
     def list_documents(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, caller: User
     ) -> list[EmployeeDocumentResponse]:
+        if caller.role not in (UserRole.super_admin, UserRole.hr_admin):
+            caller_employee = EmployeeRepository(self.db).get_by_user_id(company_id, caller.id)
+            if caller_employee is None or employee_id != caller_employee.id:
+                raise ForbiddenError(
+                    "You do not have permission to view this employee's documents."
+                )
+
+        target_employee = EmployeeRepository(self.db).get_by_id_any_status(employee_id, company_id)
+        if target_employee is None:
+            if caller.role not in (UserRole.super_admin, UserRole.hr_admin):
+                raise ForbiddenError(
+                    "You do not have permission to view this employee's documents."
+                )
+            raise NotFoundError("Employee not found.")
+
         docs = self.repo.list_for_employee(company_id, employee_id)
         file_service = FileService(self.db)
         results = []
