@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
 TWO_PLACES = Decimal("0.01")
+SECTION_87A_NEW_REGIME_THRESHOLD = Decimal("1200000.00")
+SECTION_87A_NEW_REGIME_MAX_REBATE = Decimal("60000.00")
+SECTION_87A_OLD_REGIME_THRESHOLD = Decimal("500000.00")
+SECTION_87A_OLD_REGIME_MAX_REBATE = Decimal("12500.00")
 
 
 def _round(value: Decimal) -> Decimal:
@@ -85,6 +89,7 @@ class PayslipInput:
     paid_leave_days: Decimal
     lop_days: Decimal
     tds_paid_ytd: Decimal = Decimal("0")
+    gross_earned_ytd: Decimal = Decimal("0.00")
     reimbursement_amount: Decimal = Decimal("0")
 
 
@@ -285,7 +290,17 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
 
     # TDS (Income Tax) Calculation
     if data.statutory.tds_enabled and full_gross > 0:
-        projected_annual_gross = full_gross * Decimal("12")
+        # Financial year is April (month 4) to March (month 3)
+        # Months remaining in FY including current month:
+        # April (4) -> 12, May (5) -> 11, ..., March (3) -> 1
+        if data.month >= 4:
+            months_remaining = 16 - data.month
+        else:
+            months_remaining = 4 - data.month
+        months_remaining = max(1, months_remaining)
+
+        # Fix 2: Projected annual gross incorporates actual gross earned in FY so far
+        projected_annual_gross = data.gross_earned_ytd + full_gross * Decimal(str(months_remaining))
         tax_regime = data.statutory.default_tax_regime
 
         # Filter tax slabs for matching regime
@@ -316,23 +331,19 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
                         taxable_in_bracket * tax_slab.rate_percent / Decimal("100")
                     )
 
-        # Section 87A Rebate check
-        if tax_regime == "new" and taxable_annual_income <= Decimal("1200000.00"):
-            annual_tax = Decimal("0.00")
-        elif tax_regime == "old" and taxable_annual_income <= Decimal("500000.00"):
+        # Section 87A Rebate & Marginal Relief check
+        # Fix 1: Marginal relief for new regime above 12,00,000 threshold
+        if tax_regime == "new":
+            if taxable_annual_income <= SECTION_87A_NEW_REGIME_THRESHOLD:
+                annual_tax = Decimal("0.00")
+            else:
+                marginal_tax_limit = taxable_annual_income - SECTION_87A_NEW_REGIME_THRESHOLD
+                annual_tax = min(annual_tax, marginal_tax_limit)
+        elif tax_regime == "old" and taxable_annual_income <= SECTION_87A_OLD_REGIME_THRESHOLD:
             annual_tax = Decimal("0.00")
 
         annual_cess = _round(annual_tax * cess_percent / Decimal("100"))
         projected_annual_tax = annual_tax + annual_cess
-
-        # Financial year is April (month 4) to March (month 3)
-        # Months remaining in FY including current month:
-        # April (4) -> 12, May (5) -> 11, ..., March (3) -> 1
-        if data.month >= 4:
-            months_remaining = 16 - data.month
-        else:
-            months_remaining = 4 - data.month
-        months_remaining = max(1, months_remaining)
 
         monthly_tds = _round(
             max(

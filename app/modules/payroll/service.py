@@ -870,6 +870,23 @@ class PayrollRunService:
                 project_hours_pay = Decimal("0.00")
                 hourly_rate = Decimal("0.00")
 
+            # ── Year-to-date gross & TDS in the financial year so far ─────────
+            # Computed from approved/paid runs in the same FY, excluding the current run
+            # to prevent double-counting on draft rebuilds.
+            fy_start_year = data.year if data.month >= 4 else data.year - 1
+            gross_earned_ytd = self.item_repo.get_ytd_gross_for_employee(
+                company_id=company_id,
+                employee_id=emp.id,
+                start_year=fy_start_year,
+                exclude_run_id=run.id,
+            )
+            tds_paid_ytd = self.item_repo.get_ytd_tds_for_employee(
+                company_id=company_id,
+                employee_id=emp.id,
+                start_year=fy_start_year,
+                exclude_run_id=run.id,
+            )
+
             # ── Engine: compute earned_gross and statutory deductions ──────────
             # The engine applies the LOP ratio (paid_days/working_days) to scale
             # earned_gross down. Statutory deductions (EPF, ESI, PT) are then
@@ -887,6 +904,8 @@ class PayrollRunService:
                 present_days=present_days,
                 paid_leave_days=paid_leave_days,
                 lop_days=lop_days,
+                gross_earned_ytd=gross_earned_ytd,
+                tds_paid_ytd=tds_paid_ytd,
                 # reimbursement_amount fed to engine so net_salary is correct.
                 # Engine formula: net = earned_gross - deductions + reimbursement_amount
                 reimbursement_amount=reimbursement_amount,

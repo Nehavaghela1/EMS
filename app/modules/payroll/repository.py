@@ -1,7 +1,8 @@
 import uuid
 from datetime import date
+from decimal import Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.pagination import PageParams, paginate
@@ -387,6 +388,75 @@ class PayrollItemRepository:
                 .order_by(PayrollRun.year.desc(), PayrollRun.month.desc())
             ).all()
         )
+
+    def get_ytd_gross_for_employee(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        start_year: int,
+        exclude_run_id: uuid.UUID | None = None,
+    ) -> Decimal:
+        """Sums gross_salary for the employee across approved/paid runs in the financial year
+        (April of start_year through March of start_year + 1), excluding the specified run
+        if provided (e.g. current rebuild).
+        """
+        stmt = (
+            select(func.coalesce(func.sum(PayrollItem.gross_salary), Decimal("0.00")))
+            .join(PayrollRun, PayrollItem.payroll_run_id == PayrollRun.id)
+            .where(
+                PayrollItem.company_id == company_id,
+                PayrollItem.employee_id == employee_id,
+                PayrollRun.status.in_([PayrollRunStatus.approved, PayrollRunStatus.paid]),
+                PayrollItem.deleted_at.is_(None),
+                PayrollRun.deleted_at.is_(None),
+                or_(
+                    and_(PayrollRun.year == start_year, PayrollRun.month >= 4),
+                    and_(PayrollRun.year == start_year + 1, PayrollRun.month <= 3),
+                ),
+            )
+        )
+        if exclude_run_id is not None:
+            stmt = stmt.where(PayrollItem.payroll_run_id != exclude_run_id)
+        result = self.db.scalar(stmt)
+        return Decimal(str(result or "0.00"))
+
+    def get_ytd_tds_for_employee(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        start_year: int,
+        exclude_run_id: uuid.UUID | None = None,
+    ) -> Decimal:
+        """Sums TDS deducted for the employee across approved/paid runs in the financial year
+        (April of start_year through March of start_year + 1), reading from deductions_json,
+        and excluding the specified run if provided.
+        """
+        stmt = (
+            select(PayrollItem.deductions_json)
+            .join(PayrollRun, PayrollItem.payroll_run_id == PayrollRun.id)
+            .where(
+                PayrollItem.company_id == company_id,
+                PayrollItem.employee_id == employee_id,
+                PayrollRun.status.in_([PayrollRunStatus.approved, PayrollRunStatus.paid]),
+                PayrollItem.deleted_at.is_(None),
+                PayrollRun.deleted_at.is_(None),
+                or_(
+                    and_(PayrollRun.year == start_year, PayrollRun.month >= 4),
+                    and_(PayrollRun.year == start_year + 1, PayrollRun.month <= 3),
+                ),
+            )
+        )
+        if exclude_run_id is not None:
+            stmt = stmt.where(PayrollItem.payroll_run_id != exclude_run_id)
+
+        rows = self.db.scalars(stmt).all()
+        total_tds = Decimal("0.00")
+        for deductions in rows:
+            if isinstance(deductions, list):
+                for d in deductions:
+                    if isinstance(d, dict) and d.get("code") == "TDS":
+                        total_tds += Decimal(str(d.get("amount", "0.00")))
+        return total_tds
 
 
 class ReimbursementRepository:
