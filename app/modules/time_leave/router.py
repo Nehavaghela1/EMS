@@ -383,7 +383,7 @@ def get_assigned_shift(
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    result = ShiftService(db).get_assigned_shift(user.company_id, employee_id)
+    result = ShiftService(db).get_assigned_shift(user.company_id, employee_id, actor=user)
     if not result:
         return None
     emp_shift, shift = result
