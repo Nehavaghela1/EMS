@@ -175,6 +175,7 @@ def approve_time_entry(
         entry_id,
         status_action,
         current_user.id,
+        actor=current_user,
         rejection_reason=rejection_reason,
     )
 

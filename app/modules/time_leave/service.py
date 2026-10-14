@@ -68,39 +68,12 @@ def verify_approval_authority(
     current_user: User,
     target_employee: Employee,
 ) -> bool:
+    """Validates if current_user can approve/reject leaves or regularizations
+    for target_employee using shared approval authority.
     """
-    Validates if current_user can approve/reject leaves or regularizations
-    for target_employee.
-    """
-    # Rule A: Anti-Self-Approval
-    # Exception: Company Owner / Super Admin has no reporting manager above them,
-    # so they can directly approve their own requests.
-    if target_employee.user_id == current_user.id:
-        if current_user.role in [UserRole.owner, UserRole.super_admin]:
-            return True
-        raise ForbiddenError(
-            "Self-approval is forbidden. You cannot approve your own request. "
-            "Your request must be approved by your reporting manager or CEO."
-        )
+    from app.core.approval_authority import can_approve_for
 
-    # Rule B: Owner/CEO and HR Admin (plus Super Admin) have organization-wide override power
-    if current_user.role in [UserRole.owner, UserRole.hr_admin, UserRole.super_admin]:
-        return True
-
-    # Rule C: Relational Manager Authority (Direct Reports)
-    if target_employee.reporting_manager_id is not None:
-        emp_repo = EmployeeRepository(db)
-        caller_employee = emp_repo.get_by_user_id(current_user.company_id, current_user.id)
-        if (
-            caller_employee is not None
-            and target_employee.reporting_manager_id == caller_employee.id
-        ):
-            return True
-
-    # Otherwise, reject
-    raise ForbiddenError(
-        "Unauthorized: You are not the designated reporting manager for this employee."
-    )
+    return can_approve_for(db, current_user, target_employee, allow_owner_super_admin_self=True)
 
 
 logger = logging.getLogger("app")
@@ -544,12 +517,16 @@ class AttendanceService:
         req = self.repo.get_regularization_by_id(regularization_id, company_id)
         if req is None:
             raise NotFoundError("Regularization request not found.")
-
         target_employee = self.employee_repo.get_by_id_any_status(req.employee_id, company_id)
         if target_employee is None:
             raise NotFoundError("Employee for this regularization request not found.")
 
         verify_approval_authority(self.db, current_user, target_employee)
+
+        if req.status != RegularizationStatus.pending:
+            raise ConflictError(
+                f"Regularization request is not pending (current status: {req.status.value})."
+            )
 
         if data.status not in ("approved", "rejected"):
             raise AppError("Status must be approved or rejected")
@@ -1480,13 +1457,13 @@ class LeaveService:
         leave = self.repo.get_by_id(leave_id, company_id)
         if leave is None:
             raise NotFoundError("Leave not found.")
-        if leave.status != LeaveStatus.pending:
-            raise ConflictError(f"Leave is not pending (current status: {leave.status.value}).")
-
         employee = self.employee_repo.get_by_id_any_status(leave.employee_id, company_id)
         if employee is None:
             raise NotFoundError("Employee for this leave request not found.")
         verify_approval_authority(self.db, actor, employee)
+
+        if leave.status != LeaveStatus.pending:
+            raise ConflictError(f"Leave is not pending (current status: {leave.status.value}).")
 
         if data.status == "approved":
             leave_type = self.leave_type_repo.get_by_id(leave.leave_type_id, company_id)

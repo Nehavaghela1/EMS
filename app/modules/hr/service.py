@@ -577,30 +577,44 @@ class EmployeeService:
         actor: User,
     ) -> Employee:
         employee = self._get_or_404(company_id, employee_id)
+        if employee.user_id == actor.id:
+            if actor.role not in (UserRole.owner, UserRole.super_admin):
+                msg = "Self-approval is forbidden. You cannot approve your own resignation."
+                raise ForbiddenError(msg)
 
         # Multi-tenant and Role Hierarchy verification
         if actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
-            # If actor is a Manager: check if direct reporting manager or department head
-            actor_emp = self.repo.get_by_user_id(company_id, actor.id)
-            if not actor_emp:
-                raise ForbiddenError("You do not have permission to approve this resignation.")
-
-            # Prevent self-approval
-            if actor_emp.id == employee.id:
-                raise ForbiddenError("Employees and managers cannot approve their own resignation.")
-
-            is_direct_manager = employee.reporting_manager_id == actor_emp.id
+            # Check if actor is Department Head
             is_dept_head = False
-            if employee.department_id:
+            actor_emp = self.repo.get_by_user_id(company_id, actor.id)
+            if actor_emp and employee.department_id:
                 dept = self.department_repo.get_by_id(employee.department_id, company_id)
                 if dept and dept.head_employee_id == actor_emp.id:
                     is_dept_head = True
 
-            if not (is_direct_manager or is_dept_head):
-                raise ForbiddenError(
-                    "Hierarchy Violation: Only the direct reporting manager, department head, "
-                    "or HR Admin can review this resignation."
-                )
+            if not is_dept_head:
+                from app.core.approval_authority import can_approve_for
+
+                can_approve_for(self.db, actor, employee)
+
+        # State checks:
+        # 1. If already approved and actor is hr_admin, owner, or super_admin: allow as amendment
+        is_admin_role = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        if employee.resignation_status == ResignationStatus.approved and is_admin_role:
+            self.repo.update(
+                employee,
+                resignation_status=ResignationStatus.approved,
+                last_working_date=data.last_working_date or employee.last_working_date,
+                notice_waived=data.notice_waived,
+                notice_recovery_days=data.notice_recovery_days if not data.notice_waived else 0,
+            )
+            self.db.commit()
+            return employee
+
+        # 2. For non-submitted status (including approved for non-admin, rejected, none): 409
+        if employee.resignation_status != ResignationStatus.submitted:
+            st = employee.resignation_status.value
+            raise ConflictError(f"Resignation is not pending decision (current status: {st}).")
 
         if not data.approved:
             self.repo.update(employee, resignation_status=ResignationStatus.rejected)

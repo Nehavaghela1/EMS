@@ -1193,25 +1193,15 @@ class ReimbursementService:
         claim = self.repo.get_by_id(reimbursement_id, company_id)
         if claim is None:
             raise NotFoundError("Reimbursement claim not found.")
+        target_emp = self.employee_repo.get_by_id_any_status(claim.employee_id, company_id)
+        from app.core.approval_authority import can_approve_for
 
-        # Only HR Admins and Super Admins may approve/reject claims.
-        # Managers may approve only their direct reports' claims.
-        # Employees (including the submitter) are never allowed to self-approve.
-        if actor.role not in (UserRole.hr_admin, UserRole.super_admin, UserRole.manager):
-            raise ForbiddenError(
-                "You do not have permission to perform this action. "
-                "Only HR Admins can approve or reject reimbursement claims."
+        can_approve_for(self.db, actor, target_emp)
+
+        if claim.status != ReimbursementStatus.pending:
+            raise ConflictError(
+                f"Reimbursement claim is not pending (current status: {claim.status.value})."
             )
-
-        if actor.role == UserRole.manager:
-            mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
-            if not mgr_emp:
-                raise ForbiddenError("Manager profile not found.")
-            team_ids = self.employee_repo.list_direct_report_ids(company_id, mgr_emp.id)
-            if claim.employee_id not in team_ids:
-                raise ForbiddenError(
-                    "Managers can only review reimbursement claims for their direct reports."
-                )
 
         # Block anyone from approving a claim already locked into a pay run
         if claim.added_to_payroll_run_id is not None:
