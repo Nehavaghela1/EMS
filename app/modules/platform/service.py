@@ -9,6 +9,7 @@ from app.core.cache import delete_by_prefix, get_json, set_json
 from app.core.config import settings
 from app.core.exceptions import AppError, ForbiddenError, NotFoundError
 from app.core.pagination import PageParams
+from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
@@ -521,7 +522,7 @@ class EmployeeDocumentService:
     def list_documents(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, caller: User
     ) -> list[EmployeeDocumentResponse]:
-        if caller.role not in (UserRole.super_admin, UserRole.hr_admin):
+        if caller.role not in HR_LEVEL_ROLES:
             caller_employee = EmployeeRepository(self.db).get_by_user_id(company_id, caller.id)
             if caller_employee is None or employee_id != caller_employee.id:
                 raise ForbiddenError(
@@ -530,7 +531,7 @@ class EmployeeDocumentService:
 
         target_employee = EmployeeRepository(self.db).get_by_id_any_status(employee_id, company_id)
         if target_employee is None:
-            if caller.role not in (UserRole.super_admin, UserRole.hr_admin):
+            if caller.role not in HR_LEVEL_ROLES:
                 raise ForbiddenError(
                     "You do not have permission to view this employee's documents."
                 )
