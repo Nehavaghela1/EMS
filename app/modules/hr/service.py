@@ -909,6 +909,27 @@ class EmployeeService:
             if dept:
                 dept_clearance_function = dept.clearance_function
 
+        # A manager whose department has no clearance_function cannot access clearance
+        if actor.role == UserRole.manager and not dept_clearance_function:
+            if data.it_clearance is not None:
+                raise ForbiddenError(
+                    "Only IT Department Managers or HR Admin/Owner can sign off IT asset clearance."
+                )
+            if data.hr_clearance is not None:
+                raise ForbiddenError(
+                    "Only HR Department Managers or HR Admin/Owner can sign off "
+                    "HR policy clearance."
+                )
+            if data.finance_clearance is not None:
+                raise ForbiddenError(
+                    "Only Finance & Accounts Managers or HR Admin/Owner can sign off "
+                    "Finance clearance."
+                )
+            raise ForbiddenError(
+                "Only department managers with a designated clearance function "
+                "can access clearance."
+            )
+
         is_it_dept = dept_clearance_function == "it"
         is_fin_dept = dept_clearance_function == "finance"
         is_hr_dept = dept_clearance_function == "hr"

@@ -113,7 +113,8 @@ def list_performance_goals(
 ):
     service = PerformanceService(db)
 
-    # Scoping check: employees can only view their own goals
+    # Scoping check: employees can only view their own goals;
+    # managers can view their own goals or goals of employees in their reporting chain.
     target_emp_id = employee_id
     if user.role == UserRole.employee:
         emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
@@ -123,6 +124,22 @@ def list_performance_goals(
                 detail="Employees can only view their own performance goals.",
             )
         target_emp_id = emp.id
+    elif user.role == UserRole.manager:
+        emp_repo = EmployeeRepository(db)
+        # If employee_id passed was user.id, resolve to employee record
+        target_emp = emp_repo.get_by_user_id(user.company_id, employee_id)
+        if not target_emp:
+            target_emp = emp_repo.get_by_id(employee_id, user.company_id)
+        if target_emp is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Employee not found.",
+            )
+        target_emp_id = target_emp.id
+        if target_emp.user_id != user.id:
+            from app.core.approval_authority import can_approve_for
+
+            can_approve_for(db, user, target_emp)
     else:
         # If employee_id passed was actually user.id, resolve to employee record if matching
         emp_by_user = EmployeeRepository(db).get_by_user_id(user.company_id, employee_id)
