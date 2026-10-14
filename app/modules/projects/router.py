@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.exceptions import AppError, NotFoundError
+from app.core.roles import HR_OR_MANAGER_ROLES
 from app.modules.identity.models import User, UserRole
 from app.modules.projects.schemas import (
     MilestoneCreate,
@@ -83,11 +84,7 @@ def create_time_entry(
 
     emp_id = None
     # If admin/manager provided an employee_id explicitly, use it
-    if data.employee_id and current_user.role in (
-        UserRole.super_admin,
-        UserRole.hr_admin,
-        UserRole.manager,
-    ):
+    if data.employee_id and current_user.role in HR_OR_MANAGER_ROLES:
         target_emp = (
             db.query(Employee)
             .filter(Employee.id == data.employee_id, Employee.company_id == project.company_id)
@@ -110,11 +107,7 @@ def create_time_entry(
             )
         emp_id = emp.id
 
-    is_admin_or_manager = current_user.role in (
-        UserRole.super_admin,
-        UserRole.hr_admin,
-        UserRole.manager,
-    )
+    is_admin_or_manager = current_user.role in HR_OR_MANAGER_ROLES
     return service.create_time_entry(
         project.company_id, emp_id, data, is_admin_or_manager=is_admin_or_manager
     )
@@ -219,11 +212,7 @@ def update_task(
 ):
     service = ProjectService(db)
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    is_admin_or_manager = current_user.role in (
-        UserRole.super_admin,
-        UserRole.hr_admin,
-        UserRole.manager,
-    )
+    is_admin_or_manager = current_user.role in HR_OR_MANAGER_ROLES
     current_emp_id = None
     if not is_admin_or_manager:
         from app.modules.hr.repository import EmployeeRepository
