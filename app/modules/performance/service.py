@@ -359,6 +359,14 @@ class PerformanceService:
 
         can_approve_for(self.db, actor, emp)
 
+        # Validate mentor if provided: must exist in same company and be active
+        if data.mentor_id is not None:
+            mentor = self.employee_repo.get_by_id_any_status(data.mentor_id, company_id)
+            if mentor is None:
+                raise NotFoundError("Mentor employee not found.")
+            if not mentor.is_active:
+                raise ConflictError("Mentor employee is inactive.")
+
         # Check if already has an active PIP
         existing = self.pip_repo.get_active_pip_for_employee(company_id, data.employee_id)
         if existing is not None:
