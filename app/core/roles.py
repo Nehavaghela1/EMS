@@ -5,3 +5,5 @@ HR_LEVEL_ROLES: tuple[UserRole, ...] = (
     UserRole.owner,
     UserRole.super_admin,
 )
+
+HR_OR_MANAGER_ROLES: tuple[UserRole, ...] = (*HR_LEVEL_ROLES, UserRole.manager)
