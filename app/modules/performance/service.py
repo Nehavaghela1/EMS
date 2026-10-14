@@ -350,9 +350,14 @@ class PerformanceService:
     def create_pip(
         self, company_id: uuid.UUID, data: PIPCreateRequest, actor: User
     ) -> PerformancePIP:
-        emp = self.employee_repo.get_by_id(company_id, data.employee_id)
+        emp = self.employee_repo.get_by_id(data.employee_id, company_id)
         if emp is None:
             raise NotFoundError("Employee not found.")
+
+        # Authority check before checking active PIP state
+        from app.core.approval_authority import can_approve_for
+
+        can_approve_for(self.db, actor, emp)
 
         # Check if already has an active PIP
         existing = self.pip_repo.get_active_pip_for_employee(company_id, data.employee_id)
