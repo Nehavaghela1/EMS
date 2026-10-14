@@ -452,6 +452,15 @@ class PerformanceService:
         if pip is None:
             raise NotFoundError("PIP record not found.")
 
+        from app.core.approval_authority import can_approve_for
+
+        emp = self.employee_repo.get_by_id_any_status(pip.employee_id, company_id)
+        if not emp or not can_approve_for(self.db, actor, emp):
+            raise ForbiddenError("Not authorized to approve this request.")
+
+        if pip.status in ("passed", "failed", "cancelled"):
+            raise ConflictError(f"PIP has already been evaluated (current status: {pip.status}).")
+
         self.pip_repo.update(
             pip,
             status=data.outcome,

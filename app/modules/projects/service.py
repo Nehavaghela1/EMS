@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
+from app.modules.identity.models import User
 from app.modules.payroll.models import EmployeeSalary
 from app.modules.projects.repository import ProjectRepository
 from app.modules.projects.schemas import (
@@ -493,6 +494,7 @@ class ProjectService:
         entry_id: UUID,
         status: str,
         approver_user_id: UUID,
+        actor: User,
         rejection_reason: str | None = None,
     ) -> TimeEntryResponse:
         if status not in ("approved", "rejected"):
@@ -502,6 +504,16 @@ class ProjectService:
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
             raise NotFoundError("Time entry not found.")
+
+        from app.core.approval_authority import can_approve_for
+        from app.modules.hr.models import Employee
+
+        target_emp = self.repo.db.get(Employee, entry.employee_id)
+        if not target_emp or not can_approve_for(self.repo.db, actor, target_emp):
+            raise ForbiddenError("Not authorized to approve this request.")
+
+        if entry.status in ("approved", "rejected"):
+            raise ConflictError(f"Time entry is already {entry.status}.")
 
         if status == "approved" and entry.is_overtime:
             # Calculate overtime amount

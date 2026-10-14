@@ -117,7 +117,8 @@ def test_project_lifecycle_and_analytics(client: TestClient, db: Session, compan
 
     # Approve Time Entry
     res_app = client.post(
-        f"/api/v1/projects/time-entries/{entry_id}/approve?status_action=approved", headers=headers
+        f"/api/v1/projects/time-entries/{entry_id}/approve?status_action=approved",
+        headers=company_a.hr_headers,
     )
     assert res_app.status_code == 200, res_app.text
     assert res_app.json()["status"] == "approved"
