@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.email_templates import leave_decision_email
 from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.core.pagination import PageParams
+from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.models import Employee
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
@@ -60,7 +61,7 @@ from app.modules.time_leave.schemas import (
 )
 from app.workers.tasks.email import send_email_task
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app")
 
 
 def verify_approval_authority(
@@ -76,9 +77,7 @@ def verify_approval_authority(
     return can_approve_for(db, current_user, target_employee, allow_owner_super_admin_self=True)
 
 
-logger = logging.getLogger("app")
-
-_SEES_EVERYONE = (UserRole.hr_admin, UserRole.super_admin)
+_SEES_EVERYONE = HR_LEVEL_ROLES
 
 
 class AlreadyCheckedInError(ConflictError):
@@ -985,7 +984,7 @@ class ShiftService:
             actor_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
             if actor_emp is None or employee_id != actor_emp.id:
                 raise ForbiddenError("You do not have permission to view this shift assignment.")
-        elif actor.role in (UserRole.hr_admin, UserRole.super_admin):
+        elif actor.role in HR_LEVEL_ROLES:
             emp = self.employee_repo.get_by_id(employee_id, company_id)
             if emp is None:
                 raise NotFoundError("Employee not found.")
@@ -1194,7 +1193,7 @@ class LeaveService:
             raise NotFoundError("Employee not found.")
 
         # 2. The caller is that employee, HR, or that employee's manager.
-        is_hr = current_user.role == UserRole.hr_admin
+        is_hr = current_user.role in HR_LEVEL_ROLES
         is_own = employee.user_id == current_user.id
         is_manager = False
         if current_user.role == UserRole.manager:
@@ -1346,7 +1345,7 @@ class LeaveService:
         return leave
 
     def _assert_can_view(self, company_id: uuid.UUID, employee, current_user: User) -> None:
-        if current_user.role == UserRole.hr_admin:
+        if current_user.role in HR_LEVEL_ROLES:
             return
         if employee is not None and employee.user_id == current_user.id:
             return
@@ -1570,7 +1569,7 @@ class LeaveService:
         if leave is None:
             raise NotFoundError("Leave not found.")
         employee = self.employee_repo.get_by_id_any_status(leave.employee_id, company_id)
-        is_hr = actor.role == UserRole.hr_admin
+        is_hr = actor.role in HR_LEVEL_ROLES
         is_own = employee is not None and employee.user_id == actor.id
 
         if leave.status == LeaveStatus.pending:
@@ -1603,16 +1602,25 @@ class LeaveService:
     ) -> list[tuple[LeaveBalance, str]]:
         """Route 66: Own, HR. Returns (balance, leave_type_name) pairs — the
         router maps each to a LeaveBalanceResponse with `available` computed."""
-        employee = self.employee_repo.get_by_id(employee_id, company_id)
-        if employee is None:
-            raise NotFoundError("Employee not found.")
-        is_hr = current_user.role == UserRole.hr_admin
-        is_own = employee.user_id == current_user.id
-        if not (is_hr or is_own):
-            raise ForbiddenError("You do not have permission to view this balance.")
+        lookup_company_id = company_id
+        if current_user.role == UserRole.super_admin:
+            employee = self.employee_repo.get_by_id_any_status(employee_id, None)
+            if employee is None:
+                raise NotFoundError("Employee not found.")
+            lookup_company_id = employee.company_id
+        else:
+            employee = self.employee_repo.get_by_id(employee_id, lookup_company_id)
+            if employee is None:
+                raise NotFoundError("Employee not found.")
+            is_hr = current_user.role in HR_LEVEL_ROLES
+            is_own = employee.user_id == current_user.id
+            if not (is_hr or is_own):
+                raise ForbiddenError("You do not have permission to view this balance.")
 
         balances = self.balance_repo.list_for_employee_year(employee_id, year)
-        leave_type_names = {lt.id: lt.name for lt in self.leave_type_repo.list_all(company_id)}
+        leave_type_names = {
+            lt.id: lt.name for lt in self.leave_type_repo.list_all(lookup_company_id)
+        }
         return [(b, leave_type_names.get(b.leave_type_id, "Unknown")) for b in balances]
 
     def allocate_balances_for_employee(

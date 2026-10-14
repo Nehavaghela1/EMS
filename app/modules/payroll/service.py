@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.core.pagination import PageParams
+from app.core.roles import HR_LEVEL_ROLES
 from app.modules.hr.models import EmploymentType
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
@@ -480,7 +481,7 @@ class EmployeeSalaryService:
             employee = self.employee_repo.get_by_id_any_status(employee_id, lookup_company_id)
             if employee is None:
                 raise NotFoundError("Employee not found.")
-            is_hr = current_user.role == UserRole.hr_admin
+            is_hr = current_user.role in HR_LEVEL_ROLES
             is_own = employee.user_id == current_user.id
             if not (is_hr or is_own):
                 raise ForbiddenError("You do not have permission to view this employee's salary.")
@@ -1162,7 +1163,7 @@ class ReimbursementService:
         page_params: PageParams,
         status: ReimbursementStatus | None = None,
     ) -> tuple[list[Reimbursement], int, int]:
-        if actor.role in (UserRole.hr_admin, UserRole.super_admin):
+        if actor.role in HR_LEVEL_ROLES:
             return self.repo.list_claims(company_id, page_params, status=status)
         elif actor.role == UserRole.manager:
             mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)

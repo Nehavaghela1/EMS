@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.email_templates import employee_invitation_email
 from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from app.core.pagination import PageParams
+from app.core.roles import HR_LEVEL_ROLES
 from app.core.security import generate_refresh_token, hash_token
 from app.core.time import utcnow
 from app.modules.hr.models import (
@@ -543,7 +544,7 @@ class EmployeeService:
         data: ResignationSubmitRequest,
         actor: User,
     ) -> Employee:
-        if actor.role not in (UserRole.super_admin, UserRole.hr_admin):
+        if actor.role not in HR_LEVEL_ROLES:
             actor_emp = self.repo.get_by_user_id(company_id, actor.id)
             if actor_emp is None or employee_id != actor_emp.id:
                 raise ForbiddenError("You do not have permission to submit this resignation.")
@@ -881,7 +882,7 @@ class EmployeeService:
     def calculate_fnf(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
     ) -> FnFSettlementResponse:
-        if actor.role not in (UserRole.super_admin, UserRole.hr_admin):
+        if actor.role not in HR_LEVEL_ROLES:
             raise ForbiddenError("You do not have permission to view full-and-final settlement.")
         return self._calculate_fnf(company_id, employee_id)
 

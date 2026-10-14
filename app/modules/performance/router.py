@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
+from app.core.roles import HR_LEVEL_ROLES
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.performance.models import CycleStatus
@@ -146,7 +147,7 @@ def update_performance_goal(
 
     emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
     is_owner = emp and goal.employee_id == emp.id
-    is_admin = user.role in (UserRole.super_admin, UserRole.hr_admin)
+    is_admin = user.role in HR_LEVEL_ROLES
     if not (is_owner or is_admin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
