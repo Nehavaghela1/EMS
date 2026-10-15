@@ -1,3 +1,4 @@
+import os
 import uuid
 from datetime import date
 
@@ -62,6 +63,10 @@ shifts_router = APIRouter(prefix="/shifts", tags=["Shifts"])
 holidays_router = APIRouter(prefix="/holidays", tags=["Holidays"])
 leave_types_router = APIRouter(prefix="/leave-types", tags=["Leave Types"])
 leaves_router = APIRouter(prefix="/leaves", tags=["Leaves"])
+
+
+def get_regularizations_upload_dir() -> str:
+    return os.path.join(os.getcwd(), "uploads", "regularizations")
 
 
 def _to_attendance_response(record: Attendance, db: Session | None = None) -> AttendanceResponse:
@@ -251,17 +256,20 @@ async def request_regularization(
 
         file_url = None
         if isinstance(attachment, UploadFile) and attachment.filename:
-            import os
+            import re
             import uuid as sys_uuid
 
-            upload_dir = os.path.join(os.getcwd(), "uploads", "regularizations")
+            upload_dir = get_regularizations_upload_dir()
             os.makedirs(upload_dir, exist_ok=True)
-            safe_name = f"{sys_uuid.uuid4()}_{attachment.filename}"
+
+            base_name = os.path.basename(attachment.filename)
+            sanitized_name = re.sub(r"[^A-Za-z0-9._-]", "_", base_name)
+            safe_name = f"{sys_uuid.uuid4()}_{sanitized_name}"
             storage_path = os.path.join(upload_dir, safe_name)
             content = await attachment.read()
             with open(storage_path, "wb") as f:
                 f.write(content)
-            # URL accessible via static /files download
+            # Stored attachment_url matches what is saved on disk
             file_url = f"/api/v1/attendance/regularizations/attachments/{safe_name}"
 
         data = AttendanceRegularizationCreate(
@@ -281,18 +289,63 @@ async def request_regularization(
 
 
 @attendance_router.get("/regularizations/attachments/{filename}")
-def download_regularization_attachment(filename: str):
+def download_regularization_attachment(
+    filename: str,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
     import os
 
     from fastapi.responses import FileResponse
 
-    upload_dir = os.path.join(os.getcwd(), "uploads", "regularizations")
-    file_path = os.path.join(upload_dir, filename)
-    if not os.path.exists(file_path):
-        from app.core.exceptions import NotFoundError
+    from app.core.approval_authority import can_approve_for
+    from app.core.exceptions import ForbiddenError, NotFoundError
+    from app.core.roles import HR_LEVEL_ROLES
+    from app.modules.time_leave.models import AttendanceRegularizationRequest
 
+    # 4. Path safety: reject any filename that is not equal to os.path.basename(filename)
+    if filename != os.path.basename(filename):
         raise NotFoundError("Attachment not found.")
-    return FileResponse(file_path)
+
+    upload_dir = os.path.abspath(get_regularizations_upload_dir())
+    resolved_path = os.path.abspath(os.path.join(upload_dir, filename))
+
+    # Confirm the resolved path is inside the upload directory and exists
+    if not (
+        resolved_path == upload_dir or resolved_path.startswith(upload_dir + os.sep)
+    ) or not os.path.exists(resolved_path):
+        raise NotFoundError("Attachment not found.")
+
+    # 2. Look up the regularization row by attachment_url within the caller's company
+    expected_url = f"/api/v1/attendance/regularizations/attachments/{filename}"
+    reg = (
+        db.query(AttendanceRegularizationRequest)
+        .filter(
+            AttendanceRegularizationRequest.company_id == user.company_id,
+            AttendanceRegularizationRequest.attachment_url == expected_url,
+        )
+        .first()
+    )
+    if not reg:
+        raise NotFoundError("Attachment not found.")
+
+    # 3. Allow only: requester, someone who passes can_approve_for, HR-level roles, super_admin.
+    # Check requester FIRST because can_approve_for blocks self-approval.
+    req_employee = db.query(Employee).filter(Employee.id == reg.employee_id).first()
+    if req_employee and req_employee.user_id == user.id:
+        return FileResponse(resolved_path)
+
+    if user.role == UserRole.super_admin or user.role in HR_LEVEL_ROLES:
+        return FileResponse(resolved_path)
+
+    if req_employee:
+        try:
+            if can_approve_for(db, user, req_employee):
+                return FileResponse(resolved_path)
+        except ForbiddenError:
+            pass
+
+    raise ForbiddenError("You do not have permission to access this attachment.")
 
 
 @attendance_router.put(
