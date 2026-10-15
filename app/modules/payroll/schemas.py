@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.modules.payroll.models import (
     CalculationType,
@@ -116,6 +116,14 @@ class EmployeeSalaryResponse(BaseModel):
     gross_earnings: Decimal
 
 
+def mask_payout_account_number(v: str | None) -> str | None:
+    if v is None:
+        return None
+    if len(v) <= 4:
+        return "*" * len(v)
+    return "*" * (len(v) - 4) + v[-4:]
+
+
 class StatutoryConfigResponse(BaseModel):
     country: str
     pf_enabled: bool
@@ -140,6 +148,11 @@ class StatutoryConfigResponse(BaseModel):
     payout_enabled: bool = False
 
     model_config = {"from_attributes": True}
+
+    @field_validator("payout_account_number", mode="after")
+    @classmethod
+    def mask_account_number(cls, v: str | None) -> str | None:
+        return mask_payout_account_number(v)
 
 
 class StatutoryConfigUpdateRequest(BaseModel):

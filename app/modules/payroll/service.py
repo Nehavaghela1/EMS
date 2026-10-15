@@ -56,6 +56,7 @@ from app.modules.payroll.schemas import (
     SalaryStructureUpdateRequest,
     StatutoryConfigUpdateRequest,
     TaxSlabPostRequest,
+    mask_payout_account_number,
 )
 from app.modules.platform.service import AuditService
 from app.modules.time_leave.repository import LeaveRepository
@@ -543,6 +544,15 @@ class StatutoryConfigService:
     ) -> StatutoryConfig:
         config = self.get_or_create(company_id)
         updates = data.model_dump(exclude_unset=True)
+        # If payout_account_number is provided in its masked form, do not overwrite the stored value
+        if "payout_account_number" in updates:
+            submitted_val = updates["payout_account_number"]
+            if (
+                submitted_val is not None
+                and config.payout_account_number is not None
+                and submitted_val == mask_payout_account_number(config.payout_account_number)
+            ):
+                del updates["payout_account_number"]
         if updates:
             self.repo.update(config, **updates, updated_by=actor.id)
             self.audit.record(
