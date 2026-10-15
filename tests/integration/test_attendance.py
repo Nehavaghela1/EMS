@@ -2,6 +2,7 @@
 11.5), role-scoped list, HR regularization, delete.
 """
 
+import os
 import uuid
 from datetime import UTC, datetime, time, timedelta
 
@@ -358,8 +359,8 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     assert req_data["attachment_url"] is not None
     assert "gate_pass.pdf" in req_data["attachment_url"]
 
-    # Verify attachment is downloadable
-    att_resp = client.get(req_data["attachment_url"])
+    # Verify attachment is downloadable by employee
+    att_resp = client.get(req_data["attachment_url"], headers=own_headers)
     assert att_resp.status_code == 200
     assert att_resp.content == b"%PDF-1.4 gate pass content"
 
@@ -394,6 +395,12 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     assert updated_rec["status"] == "present"
     assert float(updated_rec["hours_worked"]) >= 7.9
     assert "HR: Adjusted to 5:00 PM per security gate slip" in (updated_rec["notes"] or "")
+
+    # Clean up attachment file so nothing remains in uploads/
+    stored_name = req_data["attachment_url"].split("/")[-1]
+    file_path = os.path.join(os.getcwd(), "uploads", "regularizations", stored_name)
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
 
 def test_calendar_shows_in_progress_for_today_active_clock_in(client, company_a, db, monkeypatch):

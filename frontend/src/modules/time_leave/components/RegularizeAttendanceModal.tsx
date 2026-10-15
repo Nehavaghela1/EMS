@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { formatDate } from "../../../shared/utils/date";
 import { parseApiError } from "../../../shared/api/errors";
+import { apiClient } from "../../../app/api-client";
 
 export interface Props {
   isOpen: boolean;
@@ -62,6 +63,36 @@ export const RegularizeAttendanceModal: React.FC<Props> = ({
   const [rejectionReason, setRejectionReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingAttachment, setDownloadingAttachment] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+
+  const handleViewAttachment = async (url: string) => {
+    setAttachmentError(null);
+    // Open new tab synchronously to prevent popup blockers
+    const newTab = window.open("about:blank", "_blank");
+    setDownloadingAttachment(true);
+
+    try {
+      // Strip leading /api/v1 if present so baseURL (/api/v1) is not doubled
+      const requestPath = url.startsWith("/api/v1") ? url.slice("/api/v1".length) : url;
+      const response = await apiClient.get<Blob>(requestPath, {
+        responseType: "blob",
+      });
+      const blobUrl = URL.createObjectURL(response.data);
+      if (newTab) {
+        newTab.location.href = blobUrl;
+      } else {
+        window.open(blobUrl, "_blank");
+      }
+    } catch (err) {
+      if (newTab) {
+        newTab.close();
+      }
+      setAttachmentError(parseApiError(err).message);
+    } finally {
+      setDownloadingAttachment(false);
+    }
+  };
 
   // Live calculated duration
   const { computedHours, durationLabel, durationColor } = useMemo(() => {
@@ -460,27 +491,38 @@ export const RegularizeAttendanceModal: React.FC<Props> = ({
                         paddingTop: "8px",
                         borderTop: "1px solid #e2e8f0",
                         display: "flex",
-                        alignItems: "center",
+                        flexDirection: "column",
                         gap: "6px",
                       }}
                     >
-                      <span style={{ fontSize: "0.9rem" }}>📎</span>
-                      <a
-                        href={existingAttachmentUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{
-                          fontSize: "0.82rem",
-                          fontWeight: 600,
-                          color: "#2563eb",
-                          textDecoration: "underline",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "4px",
-                        }}
-                      >
-                        View Supporting Document ↗
-                      </a>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span style={{ fontSize: "0.9rem" }}>📎</span>
+                        <button
+                          type="button"
+                          disabled={downloadingAttachment}
+                          onClick={() => handleViewAttachment(existingAttachmentUrl)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            padding: 0,
+                            cursor: downloadingAttachment ? "not-allowed" : "pointer",
+                            fontSize: "0.82rem",
+                            fontWeight: 600,
+                            color: "#2563eb",
+                            textDecoration: "underline",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                          }}
+                        >
+                          {downloadingAttachment ? "Opening document..." : "View Supporting Document ↗"}
+                        </button>
+                      </div>
+                      {attachmentError && (
+                        <div style={{ fontSize: "0.78rem", color: "#dc2626", marginTop: "2px" }}>
+                          Failed to load document: {attachmentError}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
