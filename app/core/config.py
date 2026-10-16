@@ -116,6 +116,14 @@ class Settings(BaseSettings):
             raise ValueError("DEV_EMAIL_COPY_TO must not be set in production environment.")
         return self
 
+    @model_validator(mode="after")
+    def validate_secret_key(self) -> "Settings":
+        if self.ENVIRONMENT != "development" and len(self.SECRET_KEY) < 32:
+            raise ValueError(
+                "SECRET_KEY must be at least 32 characters in non-development environments."
+            )
+        return self
+
 
 # mypy doesn't know pydantic-settings populates required fields from the
 # environment, so it sees a no-arg call to a class with required fields.

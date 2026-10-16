@@ -9,6 +9,7 @@ import jwt
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
+import app.modules.identity.service as id_service
 from app.core.config import Settings, settings
 from app.core.security import create_access_token, hash_password, hash_token
 from app.core.time import utcnow
@@ -62,7 +63,21 @@ def test_P03_unknown_email_identical_to_P02(client, db, company_a):
     assert resp_unknown.json()["error"]["details"] == resp_p02.json()["error"]["details"]
 
 
-@pytest.mark.xfail(strict=True, reason="P04 not met yet")
+def test_P03b_unknown_email_triggers_dummy_verify(client, monkeypatch):
+    call_count = 0
+    real_verify = id_service.verify_password
+
+    def spy_verify(plain: str, hashed: str) -> bool:
+        nonlocal call_count
+        call_count += 1
+        return real_verify(plain, hashed)
+
+    monkeypatch.setattr(id_service, "verify_password", spy_verify)
+    resp = _login(client, f"unknown-{uuid.uuid4().hex[:8]}@example.com", "SomePassword123!")
+    assert resp.status_code == 401
+    assert call_count >= 1
+
+
 def test_P04_pending_company_admin_email_identical_to_P03(client, db):
     # Base reference response from unknown email (P03)
     resp_p03 = _login(client, f"unknown-{uuid.uuid4().hex[:8]}@example.com", "SomePassword123!")
@@ -104,7 +119,25 @@ def test_P04_pending_company_admin_email_identical_to_P03(client, db):
     assert resp_b.json()["error"]["details"] == resp_p03.json()["error"]["details"]
 
 
-@pytest.mark.xfail(strict=True, reason="P05 not met yet")
+def test_P04b_pending_company_correct_password_shows_pending(client, db):
+    email = f"pending-correct-{uuid.uuid4().hex[:8]}@example.com"
+    comp = Company(
+        name="Pending Corp Live",
+        code=f"PCL-{uuid.uuid4().hex[:4].upper()}",
+        email=email,
+        status=CompanyStatus.pending,
+        admin_password_hash=hash_password("CorrectSecret123!"),
+    )
+    db.add(comp)
+    db.commit()
+
+    resp = _login(client, email, "CorrectSecret123!")
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"]["code"] == "company_pending_approval"
+    assert "Pending Corp Live" in body["error"]["message"]
+
+
 def test_P05_rejected_company_wrong_password_identical_to_P03(client, db):
     resp_p03 = _login(client, f"unknown-{uuid.uuid4().hex[:8]}@example.com", "SomePassword123!")
 
@@ -130,6 +163,50 @@ def test_P05_rejected_company_wrong_password_identical_to_P03(client, db):
     body_text = resp.text
     assert "Rejected Corp" not in body_text
     assert "Duplicate registration attempt" not in body_text
+
+
+def test_P05b_rejected_company_correct_password_shows_rejected(client, db):
+    email = f"rejected-correct-{uuid.uuid4().hex[:8]}@example.com"
+    comp = Company(
+        name="Rejected Corp Live",
+        code=f"RCL-{uuid.uuid4().hex[:4].upper()}",
+        email=email,
+        status=CompanyStatus.rejected,
+        rejection_reason="Invalid registration documents",
+        admin_password_hash=hash_password("CorrectSecret123!"),
+    )
+    db.add(comp)
+    db.commit()
+
+    resp = _login(client, email, "CorrectSecret123!")
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"]["code"] == "company_rejected"
+    assert "Rejected Corp Live" in body["error"]["message"]
+    assert "Invalid registration documents" in body["error"]["message"]
+
+
+def test_P05c_rejected_company_no_password_hash_identical_to_P03(client, db):
+    resp_p03 = _login(client, f"unknown-{uuid.uuid4().hex[:8]}@example.com", "SomePassword123!")
+
+    email_rej = f"rejected-nohash-{uuid.uuid4().hex[:8]}@example.com"
+    comp_rej = Company(
+        name="Rejected Corp NoHash",
+        code=f"RCN-{uuid.uuid4().hex[:4].upper()}",
+        email=email_rej,
+        status=CompanyStatus.rejected,
+        rejection_reason="Unverified submission",
+        admin_password_hash=None,
+    )
+    db.add(comp_rej)
+    db.commit()
+
+    resp = _login(client, email_rej, "AnyPassword123!")
+    assert resp.status_code == resp_p03.status_code
+    assert resp.json()["error"]["code"] == resp_p03.json()["error"]["code"]
+    assert resp.json()["error"]["message"] == resp_p03.json()["error"]["message"]
+    assert resp.json()["error"]["details"] == resp_p03.json()["error"]["details"]
+    assert "Rejected Corp NoHash" not in resp.text
 
 
 def test_P06_max_login_attempts_locks_account(client, db, company_a):
@@ -362,12 +439,32 @@ def test_S07_cookie_secure_in_non_development(client, monkeypatch, db, company_a
     assert "Secure" in set_cookie or "secure" in set_cookie.lower()
 
 
-@pytest.mark.xfail(strict=True, reason="S08 not met yet")
 def test_S08_secret_key_shorter_than_32_chars_raises_in_non_dev():
-    with pytest.raises(PydanticValidationError):
+    with pytest.raises(PydanticValidationError, match="SECRET_KEY"):
         Settings(
             ENVIRONMENT="production",
             SECRET_KEY="too-short",
             DATABASE_URL="postgresql://user:pass@localhost/db",
             ALEMBIC_DATABASE_URL="postgresql://user:pass@localhost/db",
         )
+
+
+def test_S08b_secret_key_validations_prod_vs_dev():
+    # Production with a 32-character key is accepted
+    valid_prod_key = "a" * 32
+    prod_settings = Settings(
+        ENVIRONMENT="production",
+        SECRET_KEY=valid_prod_key,
+        DATABASE_URL="postgresql://user:pass@localhost/db",
+        ALEMBIC_DATABASE_URL="postgresql://user:pass@localhost/db",
+    )
+    assert prod_settings.SECRET_KEY == valid_prod_key
+
+    # Development with a short key is accepted
+    dev_settings = Settings(
+        ENVIRONMENT="development",
+        SECRET_KEY="short",
+        DATABASE_URL="postgresql://user:pass@localhost/db",
+        ALEMBIC_DATABASE_URL="postgresql://user:pass@localhost/db",
+    )
+    assert dev_settings.SECRET_KEY == "short"

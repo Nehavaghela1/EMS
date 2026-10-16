@@ -228,8 +228,7 @@ class AuthService:
             pending_or_unapproved = self.company_repo.get_by_email(payload.email)
             if pending_or_unapproved:
                 if pending_or_unapproved.status == CompanyStatus.pending:
-                    # If an admin password was chosen at registration, verify it if
-                    # possible, or inform them of pending approval
+                    # Status is revealed only after the password is proven
                     if pending_or_unapproved.admin_password_hash:
                         if verify_password(
                             payload.password, pending_or_unapproved.admin_password_hash
@@ -238,11 +237,22 @@ class AuthService:
                         else:
                             raise InvalidCredentialsError()
                     else:
-                        raise CompanyPendingApprovalError(pending_or_unapproved.name)
+                        verify_password(payload.password, DUMMY_HASH)
+                        raise InvalidCredentialsError()
                 elif pending_or_unapproved.status == CompanyStatus.rejected:
-                    raise CompanyRejectedError(
-                        pending_or_unapproved.name, pending_or_unapproved.rejection_reason
-                    )
+                    # Status is revealed only after the password is proven
+                    if pending_or_unapproved.admin_password_hash:
+                        if verify_password(
+                            payload.password, pending_or_unapproved.admin_password_hash
+                        ):
+                            raise CompanyRejectedError(
+                                pending_or_unapproved.name, pending_or_unapproved.rejection_reason
+                            )
+                        else:
+                            raise InvalidCredentialsError()
+                    else:
+                        verify_password(payload.password, DUMMY_HASH)
+                        raise InvalidCredentialsError()
 
             raise InvalidCredentialsError()
 
