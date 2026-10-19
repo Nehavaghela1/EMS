@@ -773,8 +773,10 @@ def test_S03_company_deactivation_and_reactivation(client, db, super_admin_heade
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
 
     # 1. Positive control: refresh works before deactivation
-    ref_pos = client.post("/api/v1/auth/refresh")
+    old_refresh = login_resp.cookies["refresh_token"]
+    ref_pos = client.post("/api/v1/auth/refresh", cookies={"refresh_token": old_refresh})
     assert ref_pos.status_code == 200
+    new_refresh = ref_pos.cookies["refresh_token"]
 
     # Deactivate company via super_admin
     deact_resp = client.post(
@@ -799,7 +801,7 @@ def test_S03_company_deactivation_and_reactivation(client, db, super_admin_heade
     assert login_wrong.status_code == 401
 
     # (d) Refresh with the cookie returned by the first refresh -> 401
-    refresh_resp = client.post("/api/v1/auth/refresh")
+    refresh_resp = client.post("/api/v1/auth/refresh", cookies={"refresh_token": new_refresh})
     assert refresh_resp.status_code == 401
 
     # (e) After reactivate: login -> 200 and the new token works on /auth/me
