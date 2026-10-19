@@ -623,6 +623,10 @@ def test_A08_approve_atomicity_on_failure(client, db, super_admin_headers, monke
 
 # ── S01: Audit log created for approve, reject, deactivate, reactivate ───────
 def test_S01_audit_log_created_for_approve_and_reject(client, db, super_admin_headers):
+    me_resp = client.get("/api/v1/auth/me", headers=super_admin_headers)
+    assert me_resp.status_code == 200
+    sa_user_id = uuid.UUID(me_resp.json()["id"])
+
     # 1. Approve audit log
     reg_app = client.post(
         "/api/v1/companies/register",
@@ -635,17 +639,15 @@ def test_S01_audit_log_created_for_approve_and_reject(client, db, super_admin_he
     app_id = uuid.UUID(reg_app.json()["id"])
     client.post(f"/api/v1/companies/{app_id}/approve", headers=super_admin_headers)
 
-    sa_user = db.scalar(select(User).where(User.role == UserRole.super_admin))
-    assert sa_user is not None
-
-    log_app = db.scalar(
+    logs_app = db.scalars(
         select(AuditLog).where(
             AuditLog.entity_id == app_id,
             AuditLog.action == "COMPANY_APPROVED",
         )
-    )
-    assert log_app is not None
-    assert log_app.actor_user_id == sa_user.id
+    ).all()
+    assert len(logs_app) == 1
+    log_app = logs_app[0]
+    assert log_app.actor_user_id == sa_user_id
     assert log_app.created_at is not None
 
     # 2. Reject audit log
@@ -664,14 +666,15 @@ def test_S01_audit_log_created_for_approve_and_reject(client, db, super_admin_he
         json={"reason": "Fraudulent"},
     )
 
-    log_rej = db.scalar(
+    logs_rej = db.scalars(
         select(AuditLog).where(
             AuditLog.entity_id == rej_id,
             AuditLog.action == "COMPANY_REJECTED",
         )
-    )
-    assert log_rej is not None
-    assert log_rej.actor_user_id == sa_user.id
+    ).all()
+    assert len(logs_rej) == 1
+    log_rej = logs_rej[0]
+    assert log_rej.actor_user_id == sa_user_id
     assert log_rej.created_at is not None
 
     # 3. Deactivate audit log
@@ -680,26 +683,28 @@ def test_S01_audit_log_created_for_approve_and_reject(client, db, super_admin_he
         headers=super_admin_headers,
         json={"reason": "Test deactivation", "password": "Test1234pass!"},
     )
-    log_deact = db.scalar(
+    logs_deact = db.scalars(
         select(AuditLog).where(
             AuditLog.entity_id == app_id,
             AuditLog.action == "COMPANY_DEACTIVATED",
         )
-    )
-    assert log_deact is not None
-    assert log_deact.actor_user_id == sa_user.id
+    ).all()
+    assert len(logs_deact) == 1
+    log_deact = logs_deact[0]
+    assert log_deact.actor_user_id == sa_user_id
     assert log_deact.created_at is not None
 
     # 4. Reactivate audit log
     client.post(f"/api/v1/companies/{app_id}/reactivate", headers=super_admin_headers)
-    log_react = db.scalar(
+    logs_react = db.scalars(
         select(AuditLog).where(
             AuditLog.entity_id == app_id,
             AuditLog.action == "COMPANY_REACTIVATED",
         )
-    )
-    assert log_react is not None
-    assert log_react.actor_user_id == sa_user.id
+    ).all()
+    assert len(logs_react) == 1
+    log_react = logs_react[0]
+    assert log_react.actor_user_id == sa_user_id
     assert log_react.created_at is not None
 
 
@@ -767,6 +772,10 @@ def test_S03_company_deactivation_and_reactivation(client, db, super_admin_heade
     headers = {"Authorization": f"Bearer {token}"}
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
 
+    # 1. Positive control: refresh works before deactivation
+    ref_pos = client.post("/api/v1/auth/refresh")
+    assert ref_pos.status_code == 200
+
     # Deactivate company via super_admin
     deact_resp = client.post(
         f"/api/v1/companies/{comp_id}/deactivate",
@@ -789,7 +798,7 @@ def test_S03_company_deactivation_and_reactivation(client, db, super_admin_heade
     )
     assert login_wrong.status_code == 401
 
-    # (d) Refresh with an existing cookie -> 401
+    # (d) Refresh with the cookie returned by the first refresh -> 401
     refresh_resp = client.post("/api/v1/auth/refresh")
     assert refresh_resp.status_code == 401
 
@@ -834,6 +843,8 @@ def test_S04_admin_password_hash_never_in_company_responses(client, super_admin_
     )
     assert list_resp.status_code == 200
     _assert_no_hash(list_resp.json())
+    pending_ids = [item["id"] for item in list_resp.json()["items"]]
+    assert comp_id in pending_ids
 
     # 3. Approve response
     app_resp = client.post(f"/api/v1/companies/{comp_id}/approve", headers=super_admin_headers)
@@ -871,3 +882,35 @@ def test_S04_admin_password_hash_never_in_company_responses(client, super_admin_
     )
     assert rej_resp.status_code == 200
     _assert_no_hash(rej_resp.json())
+
+
+# ── A09: Owner deactivates own company with password ──────────────────────────
+def test_A09_owner_deactivates_own_company(client, db, super_admin_headers):
+    email = f"own-deact-{uuid.uuid4().hex[:6]}@example.com"
+    pw = "OwnerPass123!"
+    reg = client.post(
+        "/api/v1/companies/register",
+        json={"company_name": "Own Deact Co", "company_email": email, "password": pw},
+    )
+    assert reg.status_code == 201
+    comp_id = reg.json()["id"]
+    app_res = client.post(f"/api/v1/companies/{comp_id}/approve", headers=super_admin_headers)
+    assert app_res.status_code == 200
+
+    # Log in as owner
+    login_resp = client.post("/api/v1/auth/login", json={"email": email, "password": pw})
+    assert login_resp.status_code == 200
+    token = login_resp.json()["access_token"]
+    owner_headers = {"Authorization": f"Bearer {token}"}
+    assert client.get("/api/v1/auth/me", headers=owner_headers).status_code == 200
+
+    # Deactivate OWN company with correct password -> 200
+    deact_resp = client.post(
+        f"/api/v1/companies/{comp_id}/deactivate",
+        headers=owner_headers,
+        json={"reason": "Closing business", "password": pw},
+    )
+    assert deact_resp.status_code == 200
+
+    # Owner's old token -> 401 on /auth/me
+    assert client.get("/api/v1/auth/me", headers=owner_headers).status_code == 401

@@ -45,8 +45,9 @@ class CompanyRegisterRequest(BaseModel):
     @field_validator("company_name", mode="before")
     @classmethod
     def _validate_name(cls, v: str) -> str:
-        if isinstance(v, str):
-            v = v.strip()
+        if not isinstance(v, str):
+            raise ValueError("Company name must be text.")
+        v = v.strip()
         if not v or len(v) < 1 or len(v) > 255:
             raise ValueError("Company name must be between 1 and 255 characters.")
         return v
@@ -96,8 +97,9 @@ class CompanyRejectRequest(BaseModel):
     @field_validator("reason", mode="before")
     @classmethod
     def _validate_reason(cls, v: str) -> str:
-        if isinstance(v, str):
-            v = v.strip()
+        if not isinstance(v, str):
+            raise ValueError("Rejection reason must be text.")
+        v = v.strip()
         if not v or len(v) < 1 or len(v) > 500:
             raise ValueError("Rejection reason must be between 1 and 500 characters.")
         return v
