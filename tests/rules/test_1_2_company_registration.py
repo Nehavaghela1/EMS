@@ -914,3 +914,31 @@ def test_A09_owner_deactivates_own_company(client, db, super_admin_headers):
 
     # Owner's old token -> 401 on /auth/me
     assert client.get("/api/v1/auth/me", headers=owner_headers).status_code == 401
+def test_R10_non_text_company_name_returns_422(client):
+    response = client.post(
+        "/api/v1/companies/register",
+        json={
+            "company_name": 123,
+            "company_email": f"r10-{uuid.uuid4().hex[:6]}@example.com",
+            "password": "ValidPassword123!",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_R10b_non_text_reject_reason_returns_422(client, super_admin_headers):
+    reg = client.post(
+        "/api/v1/companies/register",
+        json={
+            "company_name": "R10b Co",
+            "company_email": f"r10b-{uuid.uuid4().hex[:6]}@example.com",
+            "password": "ValidPassword123!",
+        },
+    )
+    company_id = reg.json()["id"]
+    response = client.post(
+        f"/api/v1/companies/{company_id}/reject",
+        headers=super_admin_headers,
+        json={"reason": 123},
+    )
+    assert response.status_code == 422
