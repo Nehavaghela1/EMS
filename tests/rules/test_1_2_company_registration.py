@@ -914,6 +914,8 @@ def test_A09_owner_deactivates_own_company(client, db, super_admin_headers):
 
     # Owner's old token -> 401 on /auth/me
     assert client.get("/api/v1/auth/me", headers=owner_headers).status_code == 401
+
+
 def test_R10_non_text_company_name_returns_422(client):
     response = client.post(
         "/api/v1/companies/register",
