@@ -45,6 +45,8 @@ def get_current_user(
     user = UserRepository(db).get_by_id(user_id, company_id)
     if user is None or not user.is_active:
         raise UnauthorizedError(INVALID_TOKEN_MESSAGE)
+    if user.company is None or not user.company.is_active:
+        raise UnauthorizedError(INVALID_TOKEN_MESSAGE)
     return user
 
 

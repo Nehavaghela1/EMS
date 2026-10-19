@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import func, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.pagination import PageParams, paginate, resolve_sort
 from app.core.time import utcnow
@@ -161,10 +161,16 @@ class UserRepository:
         Not one of the three lookups named in 7.2, but the same shape and the same
         justification: unreachable without the corresponding secret.
         """
-        return self.db.scalar(select(User).where(User.id == user_id))
+        return self.db.scalar(
+            select(User).options(joinedload(User.company)).where(User.id == user_id)
+        )
 
     def get_by_id(self, user_id: uuid.UUID, company_id: uuid.UUID) -> User | None:
-        return self.db.scalar(select(User).where(User.id == user_id, User.company_id == company_id))
+        return self.db.scalar(
+            select(User)
+            .options(joinedload(User.company))
+            .where(User.id == user_id, User.company_id == company_id)
+        )
 
     def get_by_username(self, company_id: uuid.UUID, username: str) -> User | None:
         """Company-scoped, matching `uq_users_company_id_username`'s actual
