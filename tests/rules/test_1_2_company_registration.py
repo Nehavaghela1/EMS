@@ -91,7 +91,6 @@ def test_R03_argon2_prefix_and_no_plaintext(client, db):
 
 
 # ── R04: Email trimmed, lowercased, and duplicate rejection ───────────────────
-@pytest.mark.xfail(strict=True, reason="R04 not met yet")
 def test_R04_email_trimmed_lowercased_and_duplicate_rejected(client, db):
     email_base = f"duptest-{uuid.uuid4().hex[:8]}@example.com"
     email_variant = f"  {email_base.upper()}  "
@@ -200,7 +199,6 @@ def test_R06_extra_fields_cannot_privilege_escalate(client, db):
 
 
 # ── R07: Name and email input validation ──────────────────────────────────────
-@pytest.mark.xfail(strict=True, reason="R07 not met yet")
 def test_R07_name_and_email_input_validation(client, db):
     # Missing email -> 422
     assert (
@@ -301,7 +299,6 @@ def test_R08_same_company_name_generates_different_codes(client):
 
 
 # ── R09: Rate limiting on registration ────────────────────────────────────────
-@pytest.mark.xfail(strict=True, reason="R09 not met yet")
 def test_R09_registration_rate_limiting(client):
     limiter.enabled = True
     try:
@@ -347,6 +344,7 @@ def test_A01_role_guards_on_company_endpoints(client, db, company_a):
         ).status_code
         == 401
     )
+    assert client.post(f"/api/v1/companies/{comp_id}/reactivate").status_code == 401
 
     # 2. Non-super_admin roles on list-pending (GET /api/v1/companies), approve, reject -> 403
     for role, headers in roles_headers.items():
@@ -371,12 +369,30 @@ def test_A01_role_guards_on_company_endpoints(client, db, company_a):
         )
         assert res.status_code == 403, f"{role} deactivate"
 
-    # Reactivate endpoint does not exist -> assert 404/405
-    assert client.post(f"/api/v1/companies/{comp_id}/reactivate").status_code in (404, 405)
+    # Owner of ANOTHER company -> 404
+    other_comp = Company(
+        name="Other Company",
+        code=f"OTH{uuid.uuid4().hex[:5].upper()}",
+        email=f"other-{uuid.uuid4().hex[:6]}@example.com",
+        status=CompanyStatus.active,
+    )
+    db.add(other_comp)
+    db.commit()
+    other_owner_headers = _make_headers_for_role(db, other_comp.id, UserRole.owner)
+    other_deact_res = client.post(
+        f"/api/v1/companies/{comp_id}/deactivate",
+        headers=other_owner_headers,
+        json={"reason": "malicious", "password": "Test1234pass!"},
+    )
+    assert other_deact_res.status_code == 404
+
+    # 4. Reactivate company: super_admin only; owner, hr_admin, manager, employee -> 403
+    for role, headers in roles_headers.items():
+        res = client.post(f"/api/v1/companies/{comp_id}/reactivate", headers=headers)
+        assert res.status_code == 403, f"{role} reactivate"
 
 
 # ── A02: super_admin approves pending company ─────────────────────────────────
-@pytest.mark.xfail(strict=True, reason="A02 not met yet")
 def test_A02_super_admin_approves_creates_owner(client, db, super_admin_headers):
     email = f"approve-owner-{uuid.uuid4().hex[:8]}@example.com"
     reg_resp = client.post(
@@ -471,7 +487,6 @@ def test_A04_invalid_state_transitions_return_409(client, db, super_admin_header
 
 
 # ── A05: Reject validation and outcome ────────────────────────────────────────
-@pytest.mark.xfail(strict=True, reason="A05 not met yet")
 def test_A05_reject_validation_and_outcome(client, db, super_admin_headers):
     email = f"reject-flow-{uuid.uuid4().hex[:8]}@example.com"
     reg = client.post(
@@ -606,10 +621,9 @@ def test_A08_approve_atomicity_on_failure(client, db, super_admin_headers, monke
     assert user is None
 
 
-# ── S01: Audit log created for approve and reject ──────────────────────────────
-@pytest.mark.xfail(strict=True, reason="S01 not met yet")
+# ── S01: Audit log created for approve, reject, deactivate, reactivate ───────
 def test_S01_audit_log_created_for_approve_and_reject(client, db, super_admin_headers):
-    # Approve audit log
+    # 1. Approve audit log
     reg_app = client.post(
         "/api/v1/companies/register",
         json={
@@ -618,18 +632,23 @@ def test_S01_audit_log_created_for_approve_and_reject(client, db, super_admin_he
             "password": "Password123!",
         },
     )
-    app_id = reg_app.json()["id"]
+    app_id = uuid.UUID(reg_app.json()["id"])
     client.post(f"/api/v1/companies/{app_id}/approve", headers=super_admin_headers)
+
+    sa_user = db.scalar(select(User).where(User.role == UserRole.super_admin))
+    assert sa_user is not None
 
     log_app = db.scalar(
         select(AuditLog).where(
-            AuditLog.company_id == uuid.UUID(app_id),
-            AuditLog.action.in_(["COMPANY_APPROVED", "APPROVE_COMPANY", "COMPANY_APPROVE"]),
+            AuditLog.entity_id == app_id,
+            AuditLog.action == "COMPANY_APPROVED",
         )
     )
     assert log_app is not None
+    assert log_app.actor_user_id == sa_user.id
+    assert log_app.created_at is not None
 
-    # Reject audit log
+    # 2. Reject audit log
     reg_rej = client.post(
         "/api/v1/companies/register",
         json={
@@ -638,7 +657,7 @@ def test_S01_audit_log_created_for_approve_and_reject(client, db, super_admin_he
             "password": "Password123!",
         },
     )
-    rej_id = reg_rej.json()["id"]
+    rej_id = uuid.UUID(reg_rej.json()["id"])
     client.post(
         f"/api/v1/companies/{rej_id}/reject",
         headers=super_admin_headers,
@@ -647,15 +666,44 @@ def test_S01_audit_log_created_for_approve_and_reject(client, db, super_admin_he
 
     log_rej = db.scalar(
         select(AuditLog).where(
-            AuditLog.company_id == uuid.UUID(rej_id),
-            AuditLog.action.in_(["COMPANY_REJECTED", "REJECT_COMPANY", "COMPANY_REJECT"]),
+            AuditLog.entity_id == rej_id,
+            AuditLog.action == "COMPANY_REJECTED",
         )
     )
     assert log_rej is not None
+    assert log_rej.actor_user_id == sa_user.id
+    assert log_rej.created_at is not None
+
+    # 3. Deactivate audit log
+    client.post(
+        f"/api/v1/companies/{app_id}/deactivate",
+        headers=super_admin_headers,
+        json={"reason": "Test deactivation", "password": "Test1234pass!"},
+    )
+    log_deact = db.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_id == app_id,
+            AuditLog.action == "COMPANY_DEACTIVATED",
+        )
+    )
+    assert log_deact is not None
+    assert log_deact.actor_user_id == sa_user.id
+    assert log_deact.created_at is not None
+
+    # 4. Reactivate audit log
+    client.post(f"/api/v1/companies/{app_id}/reactivate", headers=super_admin_headers)
+    log_react = db.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_id == app_id,
+            AuditLog.action == "COMPANY_REACTIVATED",
+        )
+    )
+    assert log_react is not None
+    assert log_react.actor_user_id == sa_user.id
+    assert log_react.created_at is not None
 
 
 # ── S02: Email queued on approve and reject ────────────────────────────────────
-@pytest.mark.xfail(strict=True, reason="S02 not met yet")
 def test_S02_emails_queued_on_approve_and_reject(client, super_admin_headers, email_outbox):
     email_app = f"app-mail-{uuid.uuid4().hex[:6]}@example.com"
     reg_app = client.post(
@@ -698,10 +746,10 @@ def test_S02_emails_queued_on_approve_and_reject(client, super_admin_headers, em
     rej_emails = [e for e in email_outbox if e["to"] == email_rej]
     assert len(rej_emails) == 1
     assert reason in rej_emails[0]["text_body"]
+    assert "SecretPassword123!" not in rej_emails[0]["text_body"]
 
 
-# ── S03: Company deactivation blocks login and access tokens ──────────────────
-@pytest.mark.xfail(strict=True, reason="S03 not met yet")
+# ── S03: Company deactivation blocks login, refresh, and access tokens ────────
 def test_S03_company_deactivation_and_reactivation(client, db, super_admin_headers):
     email = f"deact-{uuid.uuid4().hex[:6]}@example.com"
     pw = "ActivePass123!"
@@ -727,26 +775,46 @@ def test_S03_company_deactivation_and_reactivation(client, db, super_admin_heade
     )
     assert deact_resp.status_code == 200
 
-    # Existing token -> 401 on /auth/me
+    # (a) Existing access token -> 401 on /auth/me
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
 
-    # Login refused
-    assert (
-        client.post("/api/v1/auth/login", json={"email": email, "password": pw}).status_code == 401
-    )
+    # (b) Login with CORRECT password -> 403 with error code company_inactive
+    login_correct = client.post("/api/v1/auth/login", json={"email": email, "password": pw})
+    assert login_correct.status_code == 403
+    assert login_correct.json()["error"]["code"] == "company_inactive"
 
-    # Reactivate company
+    # (c) Login with WRONG password -> 401 generic (same as unknown email)
+    login_wrong = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": "WrongPassword123!"}
+    )
+    assert login_wrong.status_code == 401
+
+    # (d) Refresh with an existing cookie -> 401
+    refresh_resp = client.post("/api/v1/auth/refresh")
+    assert refresh_resp.status_code == 401
+
+    # (e) After reactivate: login -> 200 and the new token works on /auth/me
     react_resp = client.post(f"/api/v1/companies/{comp_id}/reactivate", headers=super_admin_headers)
     assert react_resp.status_code == 200
 
-    # Login works again
-    assert (
-        client.post("/api/v1/auth/login", json={"email": email, "password": pw}).status_code == 200
-    )
+    new_login = client.post("/api/v1/auth/login", json={"email": email, "password": pw})
+    assert new_login.status_code == 200
+    new_token = new_login.json()["access_token"]
+    new_headers = {"Authorization": f"Bearer {new_token}"}
+    assert client.get("/api/v1/auth/me", headers=new_headers).status_code == 200
 
 
 # ── S04: admin_password_hash never leaked in responses ─────────────────────────
 def test_S04_admin_password_hash_never_in_company_responses(client, super_admin_headers):
+    def _assert_no_hash(obj):
+        if isinstance(obj, dict):
+            assert "admin_password_hash" not in obj
+            for v in obj.values():
+                _assert_no_hash(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _assert_no_hash(item)
+
     # 1. Register response
     reg = client.post(
         "/api/v1/companies/register",
@@ -756,14 +824,50 @@ def test_S04_admin_password_hash_never_in_company_responses(client, super_admin_
             "password": "Password123!",
         },
     )
-    assert "admin_password_hash" not in reg.json()
+    assert reg.status_code == 201
+    _assert_no_hash(reg.json())
+    comp_id = reg.json()["id"]
 
     # 2. List pending response
     list_resp = client.get(
         "/api/v1/companies", headers=super_admin_headers, params={"status": "pending"}
     )
     assert list_resp.status_code == 200
-    items = list_resp.json()["items"]
-    assert len(items) > 0
-    for item in items:
-        assert "admin_password_hash" not in item
+    _assert_no_hash(list_resp.json())
+
+    # 3. Approve response
+    app_resp = client.post(f"/api/v1/companies/{comp_id}/approve", headers=super_admin_headers)
+    assert app_resp.status_code == 200
+    _assert_no_hash(app_resp.json())
+
+    # 4. Deactivate response
+    deact_resp = client.post(
+        f"/api/v1/companies/{comp_id}/deactivate",
+        headers=super_admin_headers,
+        json={"reason": "test leak check", "password": "Test1234pass!"},
+    )
+    assert deact_resp.status_code == 200
+    _assert_no_hash(deact_resp.json())
+
+    # 5. Reactivate response
+    react_resp = client.post(f"/api/v1/companies/{comp_id}/reactivate", headers=super_admin_headers)
+    assert react_resp.status_code == 200
+    _assert_no_hash(react_resp.json())
+
+    # 6. Reject response
+    reg_rej = client.post(
+        "/api/v1/companies/register",
+        json={
+            "company_name": "Leak Rej Co",
+            "company_email": f"leak-rej-{uuid.uuid4().hex[:6]}@example.com",
+            "password": "Password123!",
+        },
+    )
+    rej_id = reg_rej.json()["id"]
+    rej_resp = client.post(
+        f"/api/v1/companies/{rej_id}/reject",
+        headers=super_admin_headers,
+        json={"reason": "test leak check"},
+    )
+    assert rej_resp.status_code == 200
+    _assert_no_hash(rej_resp.json())

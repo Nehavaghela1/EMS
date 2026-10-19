@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
-from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import limiter
 from app.core.security import verify_password
@@ -39,6 +39,7 @@ from app.modules.identity.schemas import (
     UserWorkspaceResponse,
 )
 from app.modules.identity.service import AuthService, CompanyService, LocationService
+from app.modules.platform.service import AuditService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -201,7 +202,12 @@ companies_router = APIRouter(prefix="/companies", tags=["Companies"])
 
 
 @companies_router.post("/register", response_model=CompanyResponse, status_code=201)
-def register_company(data: CompanyRegisterRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/hour")
+def register_company(
+    data: CompanyRegisterRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     return CompanyService(db).register_company(data)
 
 
@@ -309,9 +315,9 @@ def reject_company(
     company_id: uuid.UUID,
     data: CompanyRejectRequest,
     db: Session = Depends(get_tenant_db),
-    _admin: User = Depends(require_role(UserRole.super_admin)),
+    admin: User = Depends(require_role(UserRole.super_admin)),
 ):
-    return CompanyService(db).reject_company(company_id, data.reason)
+    return CompanyService(db).reject_company(company_id, data.reason, admin_user=admin)
 
 
 @companies_router.post("/{company_id}/deactivate")
@@ -333,12 +339,50 @@ def deactivate_company(
     if company is None:
         raise NotFoundError("Company not found.")
     if current_user.role != UserRole.super_admin and current_user.company_id != company.id:
-        raise ForbiddenError("You cannot deactivate another company's workspace.")
+        raise NotFoundError("Company not found.")
 
     company.is_active = False
     company.deactivation_reason = data.reason
+
+    AuditService(db).record(
+        company_id=company.id,
+        actor=current_user,
+        action="COMPANY_DEACTIVATED",
+        entity_type="company",
+        entity_id=company.id,
+        details={"company_name": company.name, "reason": data.reason},
+    )
+
     db.commit()
     return {"message": "Company workspace has been deactivated."}
+
+
+@companies_router.post("/{company_id}/reactivate", response_model=CompanyResponse)
+def reactivate_company(
+    company_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    admin: User = Depends(require_role(UserRole.super_admin)),
+):
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if company is None:
+        raise NotFoundError("Company not found.")
+    if company.is_active:
+        raise ConflictError("Company is already active.")
+
+    company.is_active = True
+    company.deactivation_reason = None
+
+    AuditService(db).record(
+        company_id=company.id,
+        actor=admin,
+        action="COMPANY_REACTIVATED",
+        entity_type="company",
+        entity_id=company.id,
+        details={"company_name": company.name},
+    )
+
+    db.commit()
+    return CompanyResponse.model_validate(company)
 
 
 # --- Locations ---

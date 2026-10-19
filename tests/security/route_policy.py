@@ -107,6 +107,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/api/v1/companies/{company_id}"): ROLES(UserRole.super_admin),
     ("POST", "/api/v1/companies/{company_id}/approve"): ROLES(UserRole.super_admin),
     ("POST", "/api/v1/companies/{company_id}/deactivate"): AUTHENTICATED,
+    ("POST", "/api/v1/companies/{company_id}/reactivate"): ROLES(UserRole.super_admin),
     ("POST", "/api/v1/companies/{company_id}/reject"): ROLES(UserRole.super_admin),
     ("GET", "/api/v1/dashboard"): AUTHENTICATED,
     ("GET", "/api/v1/departments"): AUTHENTICATED,

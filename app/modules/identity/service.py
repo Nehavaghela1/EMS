@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.email_templates import (
+    company_rejected_email,
     hr_admin_credentials_email,
     password_changed_email,
     password_reset_otp_email,
@@ -127,6 +128,14 @@ class AccountInactiveError(AppError):
 
     def __init__(self) -> None:
         super().__init__("Account is not active.")
+
+
+class CompanyInactiveError(AppError):
+    status_code = 403
+    code = "company_inactive"
+
+    def __init__(self, message: str = "Company workspace is inactive.") -> None:
+        super().__init__(message)
 
 
 class CompanyPendingApprovalError(AppError):
@@ -269,6 +278,8 @@ class AuthService:
             raise AccountLockedError(until=user.locked_until)
         if not user.is_active:
             raise AccountInactiveError()
+        if user.company is not None and not user.company.is_active:
+            raise CompanyInactiveError()
 
         self.user_repo.reset_failed_attempts(user)
         # Transparent rehash-on-login (9.1): a stored hash that predates a
@@ -330,6 +341,8 @@ class AuthService:
 
         user = self.user_repo.get_by_id_for_token_refresh(token_record.user_id)
         if user is None or not user.is_active:
+            raise UnauthorizedError(INVALID_REFRESH_TOKEN_MESSAGE)
+        if user.company is None or not user.company.is_active:
             raise UnauthorizedError(INVALID_REFRESH_TOKEN_MESSAGE)
 
         access_token = create_access_token(
@@ -663,11 +676,11 @@ class CompanyService:
             user_hashed_pw = hash_password(raw_password)
             must_change = True
 
-        hr_admin = self.user_repo.create(
+        owner_user = self.user_repo.create(
             company_id=company.id,
             email=company.email,
             hashed_password=user_hashed_pw,
-            role=UserRole.hr_admin,
+            role=UserRole.owner,
             is_active=True,
             must_change_password=must_change,
         )
@@ -699,34 +712,46 @@ class CompanyService:
             last_name=name_parts[1].capitalize() if len(name_parts) > 1 else None,
             email=company.email,
             employee_code="ADMIN-001",
-            position="HR Admin / Org Head",
+            position="Owner / Org Head",
             hire_date=date.today(),
             is_active=True,
             invitation_status=InvitationStatus.activated,
-            user_id=hr_admin.id,
+            user_id=owner_user.id,
             location_id=head_office.id,
+        )
+
+        actor_user = self.db.get(User, admin_id)
+        AuditService(self.db).record(
+            company_id=company.id,
+            actor=actor_user,
+            action="COMPANY_APPROVED",
+            entity_type="company",
+            entity_id=company.id,
+            details={"company_name": company.name, "company_code": company.code},
         )
 
         # Never log the password (6.8, rule 10) — it leaves this function in
         # only one place now: the email sent below, never the return value.
         logger.info(
-            "hr_admin_created_at_approval",
-            extra={"company_id": str(company.id), "hr_admin_email": hr_admin.email},
+            "owner_created_at_approval",
+            extra={"company_id": str(company.id), "owner_email": owner_user.email},
         )
 
         self.db.commit()
         subject, text_body, html_body = hr_admin_credentials_email(
             company_name=company.name,
-            email=hr_admin.email,
+            email=owner_user.email,
             temporary_password=raw_password,
             login_link=f"{settings.FRONTEND_BASE_URL}/login",
         )
         send_email_task.delay(
-            to=hr_admin.email, subject=subject, text_body=text_body, html_body=html_body
+            to=owner_user.email, subject=subject, text_body=text_body, html_body=html_body
         )
-        return company, hr_admin.email
+        return company, owner_user.email
 
-    def reject_company(self, company_id: uuid.UUID, reason: str) -> Company:
+    def reject_company(
+        self, company_id: uuid.UUID, reason: str, admin_user: User | None = None
+    ) -> Company:
         """Route 16, SA only."""
         company = self.company_repo.get_by_id(company_id)
         if company is None:
@@ -736,7 +761,23 @@ class CompanyService:
                 f"Company is not pending approval (current status: {company.status.value})."
             )
         self.company_repo.update(company, status=CompanyStatus.rejected, rejection_reason=reason)
+        AuditService(self.db).record(
+            company_id=company.id,
+            actor=admin_user,
+            action="COMPANY_REJECTED",
+            entity_type="company",
+            entity_id=company.id,
+            details={"company_name": company.name, "reason": reason},
+        )
         self.db.commit()
+
+        subject, text_body, html_body = company_rejected_email(
+            company_name=company.name,
+            rejection_reason=reason,
+        )
+        send_email_task.delay(
+            to=company.email, subject=subject, text_body=text_body, html_body=html_body
+        )
         return company
 
     def get_my_company(self, company_id: uuid.UUID) -> Company:

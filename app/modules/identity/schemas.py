@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, EmailStr
+from pydantic import AfterValidator, BaseModel, EmailStr, field_validator
 
 from app.core.config import settings
 from app.modules.identity.models import CompanyStatus, UserRole
@@ -42,6 +42,22 @@ class CompanyRegisterRequest(BaseModel):
     company_size: str | None = None
     password: PasswordStr | None = None
 
+    @field_validator("company_name", mode="before")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        if isinstance(v, str):
+            v = v.strip()
+        if not v or len(v) < 1 or len(v) > 255:
+            raise ValueError("Company name must be between 1 and 255 characters.")
+        return v
+
+    @field_validator("company_email", mode="before")
+    @classmethod
+    def _validate_email(cls, v: str) -> str:
+        if isinstance(v, str):
+            v = v.strip().lower()
+        return v
+
 
 class CompanyResponse(BaseModel):
     id: uuid.UUID
@@ -76,6 +92,15 @@ class CompanyDetailResponse(CompanyResponse):
 
 class CompanyRejectRequest(BaseModel):
     reason: str
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _validate_reason(cls, v: str) -> str:
+        if isinstance(v, str):
+            v = v.strip()
+        if not v or len(v) < 1 or len(v) > 500:
+            raise ValueError("Rejection reason must be between 1 and 500 characters.")
+        return v
 
 
 class CompanyDeactivateRequest(BaseModel):

@@ -136,3 +136,22 @@ def leave_decision_email(
         f"<p>Your leave request {dates} was <strong>{verb}</strong>.{reason_line}</p>"
     )
     return subject, text, html
+
+
+def company_rejected_email(*, company_name: str, rejection_reason: str) -> tuple[str, str, str]:
+    """Route 16 (company rejection) — sent upon company rejection."""
+    subject = f"Your company registration for {company_name} was not approved"
+    text = (
+        f"Thank you for your interest in EMS.\n\n"
+        f"Unfortunately, your registration for {company_name} was not approved.\n\n"
+        f"Reason: {rejection_reason}\n\n"
+        f"If you believe this was in error, please contact platform support."
+    )
+    html = _wrap_html(
+        f"<p>Thank you for your interest in EMS.</p>"
+        f"<p>Unfortunately, your registration for "
+        f"<strong>{company_name}</strong> was not approved.</p>"
+        f"<p><strong>Reason:</strong> {rejection_reason}</p>"
+        f"<p>If you believe this was in error, please contact platform support.</p>"
+    )
+    return subject, text, html
