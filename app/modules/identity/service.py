@@ -558,6 +558,14 @@ class AuthService:
             token_hash=hash_token(raw_refresh),
             expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
         )
+        AuditService(self.db).record(
+            company_id=employee.company_id,
+            actor=user,
+            action="EMPLOYEE_ACTIVATED",
+            entity_type="employee",
+            entity_id=employee.id,
+            details={"employee_code": employee.employee_code, "username": user.username},
+        )
         self.db.commit()
         return TokenResponse(access_token=access_token), raw_refresh
 

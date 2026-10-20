@@ -6,6 +6,7 @@ body, never in a subject line (a subject often survives in notification
 previews, push banners, and mail server logs even when the body doesn't).
 """
 
+import html
 from datetime import datetime
 
 _STYLE = (
@@ -40,14 +41,17 @@ def employee_invitation_email(
         f"This link expires {_fmt(expires_at)}.\n\n"
         "If you weren't expecting this, you can safely ignore this email."
     )
-    html = _wrap_html(
-        f"<p>Hi {first_name},</p>"
-        f"<p>{company_name} has invited you to set up your EMS account.</p>"
-        f'<p><a href="{activation_link}" style="{_BUTTON_STYLE}">Activate your account</a></p>'
+    safe_name = html.escape(first_name)
+    safe_company = html.escape(company_name)
+    safe_link = html.escape(activation_link)
+    html_body = _wrap_html(
+        f"<p>Hi {safe_name},</p>"
+        f"<p>{safe_company} has invited you to set up your EMS account.</p>"
+        f'<p><a href="{safe_link}" style="{_BUTTON_STYLE}">Activate your account</a></p>'
         f"<p>This link expires {_fmt(expires_at)}.</p>"
         "<p>If you weren't expecting this, you can safely ignore this email.</p>"
     )
-    return subject, text, html
+    return subject, text, html_body
 
 
 def password_reset_otp_email(*, otp: str, expires_minutes: int) -> tuple[str, str, str]:
@@ -61,12 +65,13 @@ def password_reset_otp_email(*, otp: str, expires_minutes: int) -> tuple[str, st
         f"{ignore_line}"
     )
     otp_style = "font-size:28px;font-weight:700;letter-spacing:0.08em"
-    html = _wrap_html(
-        f'<p>Your password reset code is:</p><p style="{otp_style}">{otp}</p>'
+    safe_otp = html.escape(otp)
+    html_body = _wrap_html(
+        f'<p>Your password reset code is:</p><p style="{otp_style}">{safe_otp}</p>'
         f"<p>It expires in {expires_minutes} minutes.</p>"
         f"<p>{ignore_line}</p>"
     )
-    return subject, text, html
+    return subject, text, html_body
 
 
 def hr_admin_credentials_email(
@@ -74,13 +79,17 @@ def hr_admin_credentials_email(
 ) -> tuple[str, str, str]:
     """Route 15 (company approval) — sent upon company approval."""
     subject = f"Your EMS admin account for {company_name} is ready"
+    safe_company = html.escape(company_name)
+    safe_email = html.escape(email)
+    safe_link = html.escape(login_link)
     if temporary_password:
         pw_text = (
             f"  Temporary password: {temporary_password}\n\n"
             "You'll be asked to change this password the first time you sign in."
         )
+        safe_pw = html.escape(temporary_password)
         pw_html = (
-            f"<p>Email: {email}<br>Temporary password: <strong>{temporary_password}</strong></p>"
+            f"<p>Email: {safe_email}<br>Temporary password: <strong>{safe_pw}</strong></p>"
             "<p>You'll be asked to change this password the first time you sign in.</p>"
         )
     else:
@@ -89,7 +98,7 @@ def hr_admin_credentials_email(
             "You can log in directly with the password you created."
         )
         pw_html = (
-            f"<p>Email: {email}<br>"
+            f"<p>Email: {safe_email}<br>"
             "Password: <em>(The password chosen during company registration)</em></p>"
             "<p>You can sign in immediately with your account password.</p>"
         )
@@ -100,12 +109,12 @@ def hr_admin_credentials_email(
         f"  Email: {email}\n"
         f"{pw_text}"
     )
-    html = _wrap_html(
-        f"<p>{company_name} has been approved on EMS.</p>"
-        f'<p>Sign in at <a href="{login_link}">{login_link}</a> with:</p>'
+    html_body = _wrap_html(
+        f"<p>{safe_company} has been approved on EMS.</p>"
+        f'<p>Sign in at <a href="{safe_link}">{safe_link}</a> with:</p>'
         f"{pw_html}"
     )
-    return subject, text, html
+    return subject, text, html_body
 
 
 def password_changed_email(*, first_name: str) -> tuple[str, str, str]:
@@ -117,8 +126,9 @@ def password_changed_email(*, first_name: str) -> tuple[str, str, str]:
     )
     warning = "If this wasn't you, contact your HR admin immediately."
     text = f"Hi {first_name},\n\n{signed_out_line}\n\n{warning}"
-    html = _wrap_html(f"<p>Hi {first_name},</p><p>{signed_out_line}</p><p>{warning}</p>")
-    return subject, text, html
+    safe_name = html.escape(first_name)
+    html_body = _wrap_html(f"<p>Hi {safe_name},</p><p>{signed_out_line}</p><p>{warning}</p>")
+    return subject, text, html_body
 
 
 def leave_decision_email(
@@ -131,11 +141,14 @@ def leave_decision_email(
     reason_line = f" Reason: {rejection_reason}" if rejection_reason else ""
     dates = f"from {start_date} to {end_date}"
     text = f"Hi {first_name},\n\nYour leave request {dates} was {verb}.{reason_line}"
-    html = _wrap_html(
-        f"<p>Hi {first_name},</p>"
-        f"<p>Your leave request {dates} was <strong>{verb}</strong>.{reason_line}</p>"
+    safe_name = html.escape(first_name)
+    safe_reason = html.escape(rejection_reason) if rejection_reason else ""
+    safe_reason_line = f" Reason: {safe_reason}" if safe_reason else ""
+    html_body = _wrap_html(
+        f"<p>Hi {safe_name},</p>"
+        f"<p>Your leave request {dates} was <strong>{verb}</strong>.{safe_reason_line}</p>"
     )
-    return subject, text, html
+    return subject, text, html_body
 
 
 def company_rejected_email(*, company_name: str, rejection_reason: str) -> tuple[str, str, str]:
@@ -147,11 +160,13 @@ def company_rejected_email(*, company_name: str, rejection_reason: str) -> tuple
         f"Reason: {rejection_reason}\n\n"
         f"If you believe this was in error, please contact platform support."
     )
-    html = _wrap_html(
+    safe_company = html.escape(company_name)
+    safe_reason = html.escape(rejection_reason)
+    html_body = _wrap_html(
         f"<p>Thank you for your interest in EMS.</p>"
         f"<p>Unfortunately, your registration for "
-        f"<strong>{company_name}</strong> was not approved.</p>"
-        f"<p><strong>Reason:</strong> {rejection_reason}</p>"
+        f"<strong>{safe_company}</strong> was not approved.</p>"
+        f"<p><strong>Reason:</strong> {safe_reason}</p>"
         f"<p>If you believe this was in error, please contact platform support.</p>"
     )
-    return subject, text, html
+    return subject, text, html_body
