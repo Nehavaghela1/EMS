@@ -13,7 +13,13 @@ from app.core.email_templates import (
     password_changed_email,
     password_reset_otp_email,
 )
-from app.core.exceptions import AppError, ConflictError, NotFoundError, UnauthorizedError
+from app.core.exceptions import (
+    AppError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    UnauthorizedError,
+)
 from app.core.otp import generate_and_store_otp, verify_otp
 from app.core.pagination import PageParams
 from app.core.security import (
@@ -503,9 +509,14 @@ class AuthService:
         self.db.commit()
         self._send_password_changed_email(user)
 
-    def check_username_available(self, username: str) -> bool:
-        """Route 9 — see UserRepository.username_taken_anywhere's docstring
-        for why this is platform-wide rather than per-company."""
+    def check_username_available(self, username: str, raw_token: str | None = None) -> bool:
+        """Route 9: If an invite token is provided, scope the availability
+        check to that employee's company. An invalid, expired, or used token
+        raises InvalidActivationTokenError (404). If no token is provided,
+        falls back to platform-wide availability check."""
+        if raw_token is not None:
+            employee, _company = self.preview_activation(raw_token)
+            return self.user_repo.get_by_username(employee.company_id, username) is None
         return not self.user_repo.username_taken_anywhere(username)
 
     def preview_activation(self, raw_token: str) -> tuple[Employee, Company]:
@@ -786,6 +797,62 @@ class CompanyService:
         send_email_task.delay(
             to=company.email, subject=subject, text_body=text_body, html_body=html_body
         )
+        return company
+
+    def deactivate_company(
+        self,
+        company_id: uuid.UUID,
+        reason: str,
+        actor: User,
+        password: str,
+    ) -> dict[str, str]:
+        if actor.role not in [UserRole.owner, UserRole.super_admin]:
+            raise ForbiddenError(
+                "Only the Workspace Owner (CEO) can deactivate this company workspace."
+            )
+
+        if not verify_password(password, actor.hashed_password):
+            raise ForbiddenError("Invalid password.")
+
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+        if actor.role != UserRole.super_admin and actor.company_id != company.id:
+            raise NotFoundError("Company not found.")
+
+        self.company_repo.update(company, is_active=False, deactivation_reason=reason)
+
+        AuditService(self.db).record(
+            company_id=company.id,
+            actor=actor,
+            action="COMPANY_DEACTIVATED",
+            entity_type="company",
+            entity_id=company.id,
+            details={"company_name": company.name, "reason": reason},
+        )
+
+        self.db.commit()
+        return {"message": "Company workspace has been deactivated."}
+
+    def reactivate_company(self, company_id: uuid.UUID, actor: User) -> Company:
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+        if company.is_active:
+            raise ConflictError("Company is already active.")
+
+        self.company_repo.update(company, is_active=True, deactivation_reason=None)
+
+        AuditService(self.db).record(
+            company_id=company.id,
+            actor=actor,
+            action="COMPANY_REACTIVATED",
+            entity_type="company",
+            entity_id=company.id,
+            details={"company_name": company.name},
+        )
+
+        self.db.commit()
         return company
 
     def get_my_company(self, company_id: uuid.UUID) -> Company:

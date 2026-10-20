@@ -574,3 +574,98 @@ def test_I14_resend_invite_requires_actor_parameter(db, company_a):
     with pytest.raises(TypeError):
         # Calling without actor argument must raise TypeError
         EmployeeService(db).resend_invite(company_a.company_id, emp_id)  # type: ignore[call-arg]
+
+
+# ── Gap 7: Trusted proxy client IP extraction & rate limiting ─────────────────
+def test_gap7_untrusted_client_xff_ignored_rotating_xff_does_not_bypass(client, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", [])
+    limiter.enabled = True
+    try:
+        limiter.reset()
+        # With no trusted proxies, rotating X-Forwarded-For should NOT bypass the limit
+        # Preview endpoint is 20/min
+        token = "dummy_token"
+        resps = []
+        for i in range(21):
+            resps.append(
+                client.get(
+                    f"/api/v1/auth/activate/{token}",
+                    headers={"X-Forwarded-For": f"198.51.100.{i}"},
+                )
+            )
+        assert resps[0].status_code != 429
+        assert resps[-1].status_code == 429, (
+            "Rotating X-Forwarded-For from untrusted peer bypassed rate limit!"
+        )
+    finally:
+        limiter.enabled = False
+        limiter.reset()
+
+
+def test_gap7_trusted_proxy_uses_forwarded_client_ip(monkeypatch):
+    from unittest.mock import Mock
+
+    from app.core.config import settings
+    from app.core.rate_limit import get_client_ip
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["10.0.0.0/8", "127.0.0.1/32"])
+
+    # 1. Request from trusted proxy (10.0.0.1) with X-Forwarded-For
+    req1 = Mock()
+    req1.client = Mock(host="10.0.0.1")
+    req1.headers = {"x-forwarded-for": "203.0.113.195, 10.0.0.2"}
+    assert get_client_ip(req1) == "203.0.113.195"
+
+    # 2. Request from untrusted peer (198.51.100.5) with fake X-Forwarded-For
+    req2 = Mock()
+    req2.client = Mock(host="198.51.100.5")
+    req2.headers = {"x-forwarded-for": "1.1.1.1"}
+    assert get_client_ip(req2) == "198.51.100.5"
+
+
+# ── Gap 8: check-username scoped to token's company ───────────────────────────
+def test_gap8_check_username_scoped_to_token_company(client, company_a, company_b, email_outbox):
+    email_a = f"g8-a-{uuid.uuid4().hex[:6]}@example.com"
+    email_b = f"g8-b-{uuid.uuid4().hex[:6]}@example.com"
+    _emp_a, token_a = _create_employee_via_api(client, company_a.hr_headers, email_outbox, email_a)
+    _emp_b, token_b = _create_employee_via_api(client, company_b.hr_headers, email_outbox, email_b)
+
+    shared_user = f"shared_{uuid.uuid4().hex[:6]}"
+
+    # Activate shared_user in company A
+    act_a = client.post(
+        "/api/v1/auth/activate",
+        json={"token": token_a, "username": shared_user, "password": "ValidPassword123!"},
+    )
+    assert act_a.status_code == 200
+
+    # For Company A (with a fresh token in Company A), shared_user is taken (available: False)
+    email_a2 = f"g8-a2-{uuid.uuid4().hex[:6]}@example.com"
+    _emp_a2, token_a2 = _create_employee_via_api(
+        client, company_a.hr_headers, email_outbox, email_a2
+    )
+    resp_check_a = client.get(
+        f"/api/v1/auth/check-username/{shared_user}", params={"token": token_a2}
+    )
+    assert resp_check_a.status_code == 200
+    assert resp_check_a.json()["available"] is False
+
+    # For Company B (with token_b), shared_user is AVAILABLE (available: True)
+    resp_check_b = client.get(
+        f"/api/v1/auth/check-username/{shared_user}", params={"token": token_b}
+    )
+    assert resp_check_b.status_code == 200
+    assert resp_check_b.json()["available"] is True
+
+    # Invalid, expired or used token returns 404 (same as preview)
+    # 1. Unknown token
+    resp_bad = client.get(
+        f"/api/v1/auth/check-username/{shared_user}", params={"token": "unknown_token"}
+    )
+    assert resp_bad.status_code == 404
+
+    # 2. Used token (token_a was already used)
+    resp_used = client.get(f"/api/v1/auth/check-username/{shared_user}", params={"token": token_a})
+    assert resp_used.status_code == 404

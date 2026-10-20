@@ -946,3 +946,88 @@ def test_R10b_non_text_reject_reason_returns_422(client, super_admin_headers):
         json={"reason": 123},
     )
     assert response.status_code == 422
+
+
+# ── Gap 5: CompanyService deactivate and reactivate called directly ────────────
+def test_gap5_company_service_deactivate_and_reactivate_direct(db, super_admin_headers):
+    from app.modules.identity.schemas import CompanyRegisterRequest
+    from app.modules.identity.service import CompanyService
+
+    # 1. Register & approve a company
+    svc = CompanyService(db)
+    comp_email = f"gap5-{uuid.uuid4().hex[:6]}@example.com"
+    req = CompanyRegisterRequest(
+        company_name="Gap5 Direct Co",
+        company_email=comp_email,
+        password="ValidPassword123!",
+    )
+    comp = svc.register_company(req)
+    admin_user = db.scalar(select(User).where(User.role == UserRole.super_admin))
+    assert admin_user is not None
+    comp, owner_email = svc.approve_company(comp.id, admin_id=admin_user.id)
+    assert comp.is_active is True
+
+    owner_user = db.scalar(select(User).where(User.email == owner_email))
+    assert owner_user is not None
+
+    # 2. Deactivate directly via service
+    deact_res = svc.deactivate_company(
+        company_id=comp.id,
+        reason="Direct service deactivation",
+        actor=owner_user,
+        password="ValidPassword123!",
+    )
+    assert comp.is_active is False
+    assert comp.deactivation_reason == "Direct service deactivation"
+    assert deact_res["message"] == "Company workspace has been deactivated."
+
+    # Audit log recorded
+    log = db.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_id == comp.id,
+            AuditLog.action == "COMPANY_DEACTIVATED",
+        )
+    )
+    assert log is not None
+    assert log.actor_user_id == owner_user.id
+
+    # 3. Reactivate directly via service
+    react_comp = svc.reactivate_company(company_id=comp.id, actor=admin_user)
+    assert react_comp.is_active is True
+    assert react_comp.deactivation_reason is None
+
+    react_log = db.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_id == comp.id,
+            AuditLog.action == "COMPANY_REACTIVATED",
+        )
+    )
+    assert react_log is not None
+    assert react_log.actor_user_id == admin_user.id
+
+
+# ── Gap 6: Route policy entry for deactivate matches real dependency ──────────
+def test_gap6_deactivate_policy_matches_code():
+    from app.main import app
+    from tests.security.route_policy import POLICY
+    from tests.security.test_route_access_matrix import (
+        _discover_app_routes,
+        extract_roles_from_route,
+    )
+
+    discovered = _discover_app_routes(app)
+    deact_route = None
+    for m, p, r in discovered:
+        if m == "POST" and p == "/api/v1/companies/{company_id}/deactivate":
+            deact_route = r
+            break
+    assert deact_route is not None, "Deactivate route not found"
+
+    code_roles = extract_roles_from_route(deact_route)
+    policy_entry = POLICY[("POST", "/api/v1/companies/{company_id}/deactivate")]
+
+    # Code dependency require_role(UserRole.owner, UserRole.super_admin) must match policy
+    assert code_roles is not None
+    assert isinstance(policy_entry, tuple)
+    assert set(code_roles) == set(policy_entry)
+    assert set(policy_entry) == {UserRole.owner, UserRole.super_admin}
