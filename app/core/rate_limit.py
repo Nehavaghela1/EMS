@@ -46,4 +46,15 @@ def get_client_ip(request: Request) -> str:
 
 # Redis storage so limits hold across multiple API processes (Spec 9.5).
 # key_func is get_client_ip, extracting the trusted peer or forwarded client.
+#
+# key_style="endpoint" (hardening pass): slowapi's own default is "url" —
+# it buckets by the literal request path, path parameters included. For
+# every route this project rate-limits except one that was harmless by
+# coincidence (no route with a path parameter had a limit yet). But
+# GET /auth/check-username/{username} is rate-limited BECAUSE it's an
+# enumeration surface (Spec 9.3), and enumerating usernames means varying
+# the one thing "url" bucketing keys on — every distinct username silently
+# got its own fresh bucket, so the limit never actually engaged for the
+# attack it exists to stop. "endpoint" buckets by the view function's name
+# instead, constant regardless of the path parameter.
 limiter = Limiter(key_func=get_client_ip, storage_uri=settings.REDIS_URL, key_style="endpoint")

@@ -669,3 +669,23 @@ def test_gap8_check_username_scoped_to_token_company(client, company_a, company_
     # 2. Used token (token_a was already used)
     resp_used = client.get(f"/api/v1/auth/check-username/{shared_user}", params={"token": token_a})
     assert resp_used.status_code == 404
+
+    # 3. Request without token returns 422 (token is a required query parameter)
+    resp_no_token = client.get(f"/api/v1/auth/check-username/{shared_user}")
+    assert resp_no_token.status_code == 422
+
+
+def test_gap7_trusted_proxy_ignores_spoofed_leftmost_xff(monkeypatch):
+    from unittest.mock import Mock
+
+    from app.core.config import settings
+    from app.core.rate_limit import get_client_ip
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["10.0.0.0/8", "127.0.0.1/32"])
+
+    # Peer 10.0.0.1 (trusted), X-Forwarded-For "203.0.113.50, 198.51.100.7, 10.0.0.2"
+    # returns 198.51.100.7 (spoofed leftmost 203.0.113.50 is ignored)
+    req = Mock()
+    req.client = Mock(host="10.0.0.1")
+    req.headers = {"x-forwarded-for": "203.0.113.50, 198.51.100.7, 10.0.0.2"}
+    assert get_client_ip(req) == "198.51.100.7"

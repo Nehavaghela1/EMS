@@ -504,9 +504,22 @@ def test_resetting_a_locked_accounts_password_clears_the_lockout(
 # --- Route 9: check-username -----------------------------------------------
 
 
-def test_check_username_reports_availability(client):
+def test_check_username_reports_availability(client, super_admin_headers, email_outbox):
+    approve = _register_and_approve(
+        client, super_admin_headers, "CheckUser Co", "admin@checkuserco.com", email_outbox
+    )
+    hr_login = _login(client, approve["hr_admin_email"], approve["temporary_password"])
+    hr_headers = {"Authorization": f"Bearer {hr_login.json()['access_token']}"}
+
+    client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={"first_name": "Check", "email": "check@checkuserco.com", "hire_date": "2024-01-01"},
+    )
+    activation_token = _extract_activation_token(email_outbox, "check@checkuserco.com")
+
     fresh = f"brand-new-{uuid.uuid4().hex[:10]}"
-    resp = client.get(f"/api/v1/auth/check-username/{fresh}")
+    resp = client.get(f"/api/v1/auth/check-username/{fresh}", params={"token": activation_token})
     assert resp.status_code == 200
     assert resp.json()["available"] is True
 

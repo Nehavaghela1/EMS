@@ -169,9 +169,7 @@ def reset_password(data: ResetPasswordRequest, request: Request, db: Session = D
 
 @router.get("/check-username/{username}", response_model=UsernameAvailabilityResponse)
 @limiter.limit("20/minute")  # Spec 9.5
-def check_username(
-    username: str, request: Request, token: str | None = None, db: Session = Depends(get_db)
-):
+def check_username(username: str, request: Request, token: str, db: Session = Depends(get_db)):
     available = AuthService(db).check_username_available(username, raw_token=token)
     return UsernameAvailabilityResponse(available=available)
 

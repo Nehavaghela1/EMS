@@ -182,21 +182,6 @@ class UserRepository:
             )
         )
 
-    def username_taken_anywhere(self, username: str) -> bool:
-        """A fifth pre-authentication-shaped, cross-company lookup (7.2
-        names four; `get_by_id_for_token_refresh` was the first one added
-        beyond those, WP-01/WP-04) — `GET /auth/check-username/{username}`
-        (route 9) is public and has no company context to scope by yet, so
-        this checks platform-wide as a conservative UX pre-check only. It
-        reveals nothing sensitive (a username's existence, not whose), and
-        the real, correctly per-company-scoped enforcement is `get_by_username`
-        above plus the database's own unique constraint at activation time.
-        """
-        return (
-            self.db.scalar(select(User.id).where(func.lower(User.username) == username.lower()))
-            is not None
-        )
-
     def count_by_company(self, company_id: uuid.UUID) -> int:
         return (
             self.db.scalar(

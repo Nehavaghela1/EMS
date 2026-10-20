@@ -509,15 +509,11 @@ class AuthService:
         self.db.commit()
         self._send_password_changed_email(user)
 
-    def check_username_available(self, username: str, raw_token: str | None = None) -> bool:
-        """Route 9: If an invite token is provided, scope the availability
-        check to that employee's company. An invalid, expired, or used token
-        raises InvalidActivationTokenError (404). If no token is provided,
-        falls back to platform-wide availability check."""
-        if raw_token is not None:
-            employee, _company = self.preview_activation(raw_token)
-            return self.user_repo.get_by_username(employee.company_id, username) is None
-        return not self.user_repo.username_taken_anywhere(username)
+    def check_username_available(self, username: str, raw_token: str) -> bool:
+        """Route 9: Scopes the availability check to that employee's company.
+        An invalid, expired, or used token raises InvalidActivationTokenError (404)."""
+        employee, _company = self.preview_activation(raw_token)
+        return self.user_repo.get_by_username(employee.company_id, username) is None
 
     def preview_activation(self, raw_token: str) -> tuple[Employee, Company]:
         """Route 10, and the first half of route 11. `employees` IS RLS-
