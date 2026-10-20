@@ -33,9 +33,12 @@ def test_forgot_password_is_limited_to_3_per_hour(client):
 
 
 def test_check_username_is_limited_to_20_per_minute(client):
-    responses = [client.get(f"/api/v1/auth/check-username/probe-{i}") for i in range(22)]
+    responses = [
+        client.get(f"/api/v1/auth/check-username/probe-{i}", params={"token": "probe"})
+        for i in range(22)
+    ]
     codes = [r.status_code for r in responses]
-    assert codes[:20] == [200] * 20
+    assert codes[:20] == [404] * 20
     assert all(code == 429 for code in codes[20:])
 
 

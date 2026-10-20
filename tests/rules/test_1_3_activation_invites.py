@@ -405,6 +405,10 @@ def test_I10_audit_logging_activation_and_resend(client, db, company_a, email_ou
     assert res_resend.status_code == 200
     new_token = _extract_token(email_outbox, email)
 
+    hr_me = client.get("/api/v1/auth/me", headers=company_a.hr_headers)
+    assert hr_me.status_code == 200
+    hr_user_id = hr_me.json()["id"]
+
     resend_logs = db.scalars(
         select(AuditLog).where(
             AuditLog.entity_id == uuid.UUID(emp_id),
@@ -413,6 +417,7 @@ def test_I10_audit_logging_activation_and_resend(client, db, company_a, email_ou
     ).all()
     assert len(resend_logs) == 1
     resend_log = resend_logs[0]
+    assert resend_log.actor_user_id == uuid.UUID(hr_user_id)
     assert resend_log.created_at is not None
     # Details contain no token
     details_str = str(resend_log.details)
@@ -476,3 +481,211 @@ def test_I11_email_html_escaping():
     assert "<img src=x" not in html_rej
     assert html.escape(xss_company) in html_rej
     assert html.escape("Reason with <img src=x onerror=alert(1)>") in html_rej
+
+
+# ── I12: Invitation link escaping inside button href ──────────────────────────
+def test_I12_invitation_link_escaping_inside_href():
+    xss_link = 'http://localhost:5173/activate/"><script>alert(1)</script>'
+    now = datetime.now(UTC)
+    _sub, text, html_part = email_templates.employee_invitation_email(
+        first_name="Ravi",
+        company_name="Acme Corp",
+        activation_link=xss_link,
+        expires_at=now,
+    )
+    # Unescaped raw string must be in text, but NOT in html_part anywhere
+    assert xss_link in text
+    assert '"><script>alert(1)</script>' not in html_part
+    assert "<script>" not in html_part
+    assert html.escape(xss_link, quote=True) in html_part
+
+
+# ── I13: Escaping in remaining email templates ─────────────────────────────────
+def test_I13_password_reset_otp_email_escaping():
+    payload = "<script>alert(1)</script>"
+    _sub, text, html_part = email_templates.password_reset_otp_email(
+        otp=payload, expires_minutes=15
+    )
+    assert payload in text
+    assert payload not in html_part
+    assert "<script>" not in html_part
+    assert html.escape(payload, quote=True) in html_part
+
+
+def test_I13_hr_admin_credentials_email_escaping():
+    payload = "<script>alert(1)</script>"
+    link_payload = f"http://localhost:5173/login?x={payload}"
+    # With temporary password
+    _sub1, text1, html_part1 = email_templates.hr_admin_credentials_email(
+        company_name=payload,
+        email=f"admin+{payload}@example.com",
+        temporary_password=payload,
+        login_link=link_payload,
+    )
+    assert payload in text1
+    assert payload not in html_part1
+    assert "<script>" not in html_part1
+    assert html.escape(payload, quote=True) in html_part1
+    assert html.escape(link_payload, quote=True) in html_part1
+
+    # Without temporary password
+    _sub2, text2, html_part2 = email_templates.hr_admin_credentials_email(
+        company_name=payload,
+        email=f"admin+{payload}@example.com",
+        temporary_password=None,
+        login_link=link_payload,
+    )
+    assert payload in text2
+    assert payload not in html_part2
+    assert "<script>" not in html_part2
+    assert html.escape(payload, quote=True) in html_part2
+    assert html.escape(link_payload, quote=True) in html_part2
+
+
+def test_I13_password_changed_email_escaping():
+    payload = "<script>alert(1)</script>"
+    _sub, text, html_part = email_templates.password_changed_email(first_name=payload)
+    assert payload in text
+    assert payload not in html_part
+    assert "<script>" not in html_part
+    assert html.escape(payload, quote=True) in html_part
+
+
+def test_I13_leave_decision_email_escaping():
+    payload = "<script>alert(1)</script>"
+    _sub, text, html_part = email_templates.leave_decision_email(
+        first_name=payload,
+        status="rejected",
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        rejection_reason=payload,
+    )
+    assert payload in text
+    assert payload not in html_part
+    assert "<script>" not in html_part
+    assert html.escape(payload, quote=True) in html_part
+
+
+# ── I14: EmployeeService.resend_invite requires actor parameter ───────────────
+def test_I14_resend_invite_requires_actor_parameter(db, company_a):
+    from app.modules.hr.service import EmployeeService
+
+    emp_id = uuid.uuid4()
+    with pytest.raises(TypeError):
+        # Calling without actor argument must raise TypeError
+        EmployeeService(db).resend_invite(company_a.company_id, emp_id)  # type: ignore[call-arg]
+
+
+# ── Gap 7: Trusted proxy client IP extraction & rate limiting ─────────────────
+def test_gap7_untrusted_client_xff_ignored_rotating_xff_does_not_bypass(client, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", [])
+    limiter.enabled = True
+    try:
+        limiter.reset()
+        # With no trusted proxies, rotating X-Forwarded-For should NOT bypass the limit
+        # Preview endpoint is 20/min
+        token = "dummy_token"
+        resps = []
+        for i in range(21):
+            resps.append(
+                client.get(
+                    f"/api/v1/auth/activate/{token}",
+                    headers={"X-Forwarded-For": f"198.51.100.{i}"},
+                )
+            )
+        assert resps[0].status_code != 429
+        assert resps[-1].status_code == 429, (
+            "Rotating X-Forwarded-For from untrusted peer bypassed rate limit!"
+        )
+    finally:
+        limiter.enabled = False
+        limiter.reset()
+
+
+def test_gap7_trusted_proxy_uses_forwarded_client_ip(monkeypatch):
+    from unittest.mock import Mock
+
+    from app.core.config import settings
+    from app.core.rate_limit import get_client_ip
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["10.0.0.0/8", "127.0.0.1/32"])
+
+    # 1. Request from trusted proxy (10.0.0.1) with X-Forwarded-For
+    req1 = Mock()
+    req1.client = Mock(host="10.0.0.1")
+    req1.headers = {"x-forwarded-for": "203.0.113.195, 10.0.0.2"}
+    assert get_client_ip(req1) == "203.0.113.195"
+
+    # 2. Request from untrusted peer (198.51.100.5) with fake X-Forwarded-For
+    req2 = Mock()
+    req2.client = Mock(host="198.51.100.5")
+    req2.headers = {"x-forwarded-for": "1.1.1.1"}
+    assert get_client_ip(req2) == "198.51.100.5"
+
+
+# ── Gap 8: check-username scoped to token's company ───────────────────────────
+def test_gap8_check_username_scoped_to_token_company(client, company_a, company_b, email_outbox):
+    email_a = f"g8-a-{uuid.uuid4().hex[:6]}@example.com"
+    email_b = f"g8-b-{uuid.uuid4().hex[:6]}@example.com"
+    _emp_a, token_a = _create_employee_via_api(client, company_a.hr_headers, email_outbox, email_a)
+    _emp_b, token_b = _create_employee_via_api(client, company_b.hr_headers, email_outbox, email_b)
+
+    shared_user = f"shared_{uuid.uuid4().hex[:6]}"
+
+    # Activate shared_user in company A
+    act_a = client.post(
+        "/api/v1/auth/activate",
+        json={"token": token_a, "username": shared_user, "password": "ValidPassword123!"},
+    )
+    assert act_a.status_code == 200
+
+    # For Company A (with a fresh token in Company A), shared_user is taken (available: False)
+    email_a2 = f"g8-a2-{uuid.uuid4().hex[:6]}@example.com"
+    _emp_a2, token_a2 = _create_employee_via_api(
+        client, company_a.hr_headers, email_outbox, email_a2
+    )
+    resp_check_a = client.get(
+        f"/api/v1/auth/check-username/{shared_user}", params={"token": token_a2}
+    )
+    assert resp_check_a.status_code == 200
+    assert resp_check_a.json()["available"] is False
+
+    # For Company B (with token_b), shared_user is AVAILABLE (available: True)
+    resp_check_b = client.get(
+        f"/api/v1/auth/check-username/{shared_user}", params={"token": token_b}
+    )
+    assert resp_check_b.status_code == 200
+    assert resp_check_b.json()["available"] is True
+
+    # Invalid, expired or used token returns 404 (same as preview)
+    # 1. Unknown token
+    resp_bad = client.get(
+        f"/api/v1/auth/check-username/{shared_user}", params={"token": "unknown_token"}
+    )
+    assert resp_bad.status_code == 404
+
+    # 2. Used token (token_a was already used)
+    resp_used = client.get(f"/api/v1/auth/check-username/{shared_user}", params={"token": token_a})
+    assert resp_used.status_code == 404
+
+    # 3. Request without token returns 422 (token is a required query parameter)
+    resp_no_token = client.get(f"/api/v1/auth/check-username/{shared_user}")
+    assert resp_no_token.status_code == 422
+
+
+def test_gap7_trusted_proxy_ignores_spoofed_leftmost_xff(monkeypatch):
+    from unittest.mock import Mock
+
+    from app.core.config import settings
+    from app.core.rate_limit import get_client_ip
+
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["10.0.0.0/8", "127.0.0.1/32"])
+
+    # Peer 10.0.0.1 (trusted), X-Forwarded-For "203.0.113.50, 198.51.100.7, 10.0.0.2"
+    # returns 198.51.100.7 (spoofed leftmost 203.0.113.50 is ignored)
+    req = Mock()
+    req.client = Mock(host="10.0.0.1")
+    req.headers = {"x-forwarded-for": "203.0.113.50, 198.51.100.7, 10.0.0.2"}
+    assert get_client_ip(req) == "198.51.100.7"

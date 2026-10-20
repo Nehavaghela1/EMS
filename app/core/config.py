@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     # Password policy (Spec 9.1): minimum length, enforced in the Pydantic
     # schema layer so it fails at the edge with a clear message.
     PASSWORD_MIN_LENGTH: int = 10
+    # Reverse proxy / rate-limit trusted proxies (Spec 9.5)
+    TRUSTED_PROXIES: list[str] = []
 
     # ── CORS ────────────────────────────────────────────────────
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]

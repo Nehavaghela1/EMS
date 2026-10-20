@@ -5,12 +5,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
-from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.core.exceptions import NotFoundError
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import limiter
-from app.core.security import verify_password
 from app.db.session import get_db
-from app.modules.identity.models import Company, CompanyStatus, User, UserRole
+from app.modules.identity.models import CompanyStatus, User, UserRole
 from app.modules.identity.schemas import (
     ActivateAccountRequest,
     ActivationPreviewResponse,
@@ -39,7 +38,6 @@ from app.modules.identity.schemas import (
     UserWorkspaceResponse,
 )
 from app.modules.identity.service import AuthService, CompanyService, LocationService
-from app.modules.platform.service import AuditService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -171,8 +169,8 @@ def reset_password(data: ResetPasswordRequest, request: Request, db: Session = D
 
 @router.get("/check-username/{username}", response_model=UsernameAvailabilityResponse)
 @limiter.limit("20/minute")  # Spec 9.5
-def check_username(username: str, request: Request, db: Session = Depends(get_db)):
-    available = AuthService(db).check_username_available(username)
+def check_username(username: str, request: Request, token: str, db: Session = Depends(get_db)):
+    available = AuthService(db).check_username_available(username, raw_token=token)
     return UsernameAvailabilityResponse(available=available)
 
 
@@ -331,37 +329,15 @@ def reject_company(
 def deactivate_company(
     company_id: uuid.UUID,
     data: CompanyDeactivateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.owner, UserRole.super_admin)),
     db: Session = Depends(get_tenant_db),
 ):
-    if current_user.role not in [UserRole.owner, UserRole.super_admin]:
-        raise ForbiddenError(
-            "Only the Workspace Owner (CEO) can deactivate this company workspace."
-        )
-
-    if not verify_password(data.password, current_user.hashed_password):
-        raise ForbiddenError("Invalid password.")
-
-    company = db.query(Company).filter(Company.id == company_id).first()
-    if company is None:
-        raise NotFoundError("Company not found.")
-    if current_user.role != UserRole.super_admin and current_user.company_id != company.id:
-        raise NotFoundError("Company not found.")
-
-    company.is_active = False
-    company.deactivation_reason = data.reason
-
-    AuditService(db).record(
-        company_id=company.id,
+    return CompanyService(db).deactivate_company(
+        company_id=company_id,
+        reason=data.reason,
         actor=current_user,
-        action="COMPANY_DEACTIVATED",
-        entity_type="company",
-        entity_id=company.id,
-        details={"company_name": company.name, "reason": data.reason},
+        password=data.password,
     )
-
-    db.commit()
-    return {"message": "Company workspace has been deactivated."}
 
 
 @companies_router.post("/{company_id}/reactivate", response_model=CompanyResponse)
@@ -370,25 +346,7 @@ def reactivate_company(
     db: Session = Depends(get_tenant_db),
     admin: User = Depends(require_role(UserRole.super_admin)),
 ):
-    company = db.query(Company).filter(Company.id == company_id).first()
-    if company is None:
-        raise NotFoundError("Company not found.")
-    if company.is_active:
-        raise ConflictError("Company is already active.")
-
-    company.is_active = True
-    company.deactivation_reason = None
-
-    AuditService(db).record(
-        company_id=company.id,
-        actor=admin,
-        action="COMPANY_REACTIVATED",
-        entity_type="company",
-        entity_id=company.id,
-        details={"company_name": company.name},
-    )
-
-    db.commit()
+    company = CompanyService(db).reactivate_company(company_id=company_id, actor=admin)
     return CompanyResponse.model_validate(company)
 
 

@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -259,7 +260,6 @@ class ActivateAccountRequest(BaseModel):
         v = v.strip().lower()
         if len(v) < 3 or len(v) > 30:
             raise ValueError("Username must be between 3 and 30 characters.")
-        import re
 
         if not re.match(r"^[a-zA-Z0-9._-]+$", v):
             raise ValueError(

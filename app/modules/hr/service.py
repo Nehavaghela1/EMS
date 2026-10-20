@@ -521,7 +521,7 @@ class EmployeeService:
         return employee
 
     def resend_invite(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User | None = None
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
     ) -> tuple[Employee, str]:
         """Route 26: a fresh activation token, on a fresh clock — invalidates
         whatever link was already sent (a new hash overwrites the old one),
@@ -536,15 +536,14 @@ class EmployeeService:
             activation_token_hash=hash_token(raw_token),
             activation_expires_at=utcnow() + timedelta(days=settings.INVITE_TOKEN_EXPIRE_DAYS),
         )
-        if actor is not None:
-            self.audit.record(
-                company_id=company_id,
-                actor=actor,
-                action="EMPLOYEE_INVITE_RESENT",
-                entity_type="employee",
-                entity_id=employee.id,
-                details={"employee_code": employee.employee_code, "email": employee.email},
-            )
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEE_INVITE_RESENT",
+            entity_type="employee",
+            entity_id=employee.id,
+            details={"employee_code": employee.employee_code, "email": employee.email},
+        )
         self.db.commit()
         sent_to = self._send_activation_email(company_id, employee, raw_token)
         return employee, sent_to

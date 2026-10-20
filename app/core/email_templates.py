@@ -43,7 +43,7 @@ def employee_invitation_email(
     )
     safe_name = html.escape(first_name)
     safe_company = html.escape(company_name)
-    safe_link = html.escape(activation_link)
+    safe_link = html.escape(activation_link, quote=True)
     html_body = _wrap_html(
         f"<p>Hi {safe_name},</p>"
         f"<p>{safe_company} has invited you to set up your EMS account.</p>"
@@ -81,7 +81,7 @@ def hr_admin_credentials_email(
     subject = f"Your EMS admin account for {company_name} is ready"
     safe_company = html.escape(company_name)
     safe_email = html.escape(email)
-    safe_link = html.escape(login_link)
+    safe_link = html.escape(login_link, quote=True)
     if temporary_password:
         pw_text = (
             f"  Temporary password: {temporary_password}\n\n"
