@@ -405,6 +405,10 @@ def test_I10_audit_logging_activation_and_resend(client, db, company_a, email_ou
     assert res_resend.status_code == 200
     new_token = _extract_token(email_outbox, email)
 
+    hr_me = client.get("/api/v1/auth/me", headers=company_a.hr_headers)
+    assert hr_me.status_code == 200
+    hr_user_id = hr_me.json()["id"]
+
     resend_logs = db.scalars(
         select(AuditLog).where(
             AuditLog.entity_id == uuid.UUID(emp_id),
@@ -413,6 +417,7 @@ def test_I10_audit_logging_activation_and_resend(client, db, company_a, email_ou
     ).all()
     assert len(resend_logs) == 1
     resend_log = resend_logs[0]
+    assert resend_log.actor_user_id == uuid.UUID(hr_user_id)
     assert resend_log.created_at is not None
     # Details contain no token
     details_str = str(resend_log.details)
@@ -476,3 +481,96 @@ def test_I11_email_html_escaping():
     assert "<img src=x" not in html_rej
     assert html.escape(xss_company) in html_rej
     assert html.escape("Reason with <img src=x onerror=alert(1)>") in html_rej
+
+
+# ── I12: Invitation link escaping inside button href ──────────────────────────
+def test_I12_invitation_link_escaping_inside_href():
+    xss_link = 'http://localhost:5173/activate/"><script>alert(1)</script>'
+    now = datetime.now(UTC)
+    _sub, text, html_part = email_templates.employee_invitation_email(
+        first_name="Ravi",
+        company_name="Acme Corp",
+        activation_link=xss_link,
+        expires_at=now,
+    )
+    # Unescaped raw string must be in text, but NOT in html_part anywhere
+    assert xss_link in text
+    assert '"><script>alert(1)</script>' not in html_part
+    assert "<script>" not in html_part
+    assert html.escape(xss_link, quote=True) in html_part
+
+
+# ── I13: Escaping in remaining email templates ─────────────────────────────────
+def test_I13_password_reset_otp_email_escaping():
+    payload = "<script>alert(1)</script>"
+    _sub, text, html_part = email_templates.password_reset_otp_email(
+        otp=payload, expires_minutes=15
+    )
+    assert payload in text
+    assert payload not in html_part
+    assert "<script>" not in html_part
+    assert html.escape(payload, quote=True) in html_part
+
+
+def test_I13_hr_admin_credentials_email_escaping():
+    payload = "<script>alert(1)</script>"
+    link_payload = f"http://localhost:5173/login?x={payload}"
+    # With temporary password
+    _sub1, text1, html_part1 = email_templates.hr_admin_credentials_email(
+        company_name=payload,
+        email=f"admin+{payload}@example.com",
+        temporary_password=payload,
+        login_link=link_payload,
+    )
+    assert payload in text1
+    assert payload not in html_part1
+    assert "<script>" not in html_part1
+    assert html.escape(payload, quote=True) in html_part1
+    assert html.escape(link_payload, quote=True) in html_part1
+
+    # Without temporary password
+    _sub2, text2, html_part2 = email_templates.hr_admin_credentials_email(
+        company_name=payload,
+        email=f"admin+{payload}@example.com",
+        temporary_password=None,
+        login_link=link_payload,
+    )
+    assert payload in text2
+    assert payload not in html_part2
+    assert "<script>" not in html_part2
+    assert html.escape(payload, quote=True) in html_part2
+    assert html.escape(link_payload, quote=True) in html_part2
+
+
+def test_I13_password_changed_email_escaping():
+    payload = "<script>alert(1)</script>"
+    _sub, text, html_part = email_templates.password_changed_email(first_name=payload)
+    assert payload in text
+    assert payload not in html_part
+    assert "<script>" not in html_part
+    assert html.escape(payload, quote=True) in html_part
+
+
+def test_I13_leave_decision_email_escaping():
+    payload = "<script>alert(1)</script>"
+    _sub, text, html_part = email_templates.leave_decision_email(
+        first_name=payload,
+        status="rejected",
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        rejection_reason=payload,
+    )
+    assert payload in text
+    assert payload not in html_part
+    assert "<script>" not in html_part
+    assert html.escape(payload, quote=True) in html_part
+
+
+# ── I14: EmployeeService.resend_invite requires actor parameter ───────────────
+def test_I14_resend_invite_requires_actor_parameter(db, company_a):
+    from app.modules.hr.service import EmployeeService
+
+    emp_id = uuid.uuid4()
+    with pytest.raises(TypeError):
+        # Calling without actor argument must raise TypeError
+        EmployeeService(db).resend_invite(company_a.company_id, emp_id)  # type: ignore[call-arg]
