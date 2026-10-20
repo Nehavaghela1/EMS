@@ -177,7 +177,8 @@ def check_username(username: str, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/activate/{token}", response_model=ActivationPreviewResponse)
-def preview_activation(token: str, db: Session = Depends(get_db)):
+@limiter.limit("20/minute")
+def preview_activation(token: str, request: Request, db: Session = Depends(get_db)):
     employee, company = AuthService(db).preview_activation(token)
     # AuthService.preview_activation already raises when this is None/expired.
     assert employee.activation_expires_at is not None
@@ -190,7 +191,13 @@ def preview_activation(token: str, db: Session = Depends(get_db)):
 
 
 @router.post("/activate", response_model=TokenResponse)
-def activate(data: ActivateAccountRequest, response: Response, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def activate(
+    data: ActivateAccountRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     result, raw_refresh = AuthService(db).activate_employee(data)
     _set_refresh_cookie(response, raw_refresh)
     return result

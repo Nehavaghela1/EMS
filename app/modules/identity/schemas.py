@@ -251,6 +251,22 @@ class ActivateAccountRequest(BaseModel):
     username: str
     password: PasswordStr
 
+    @field_validator("username", mode="before")
+    @classmethod
+    def _validate_username(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Username must be text.")
+        v = v.strip().lower()
+        if len(v) < 3 or len(v) > 30:
+            raise ValueError("Username must be between 3 and 30 characters.")
+        import re
+
+        if not re.match(r"^[a-zA-Z0-9._-]+$", v):
+            raise ValueError(
+                "Username can only contain letters, numbers, dots, hyphens, and underscores."
+            )
+        return v
+
 
 # Workspaces
 class CreateWorkspaceRequest(BaseModel):

@@ -329,7 +329,7 @@ def resend_invite(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
-    employee, sent_to = EmployeeService(db).resend_invite(user.company_id, employee_id)
+    employee, sent_to = EmployeeService(db).resend_invite(user.company_id, employee_id, actor=user)
     return _to_employee_create_response(employee, sent_to)
 
 
