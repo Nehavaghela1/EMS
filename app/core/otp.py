@@ -76,6 +76,37 @@ end
 """
 _consume_script = _redis_client.register_script(_CONSUME_OTP_LUA)
 
+# Atomic verify-and-consume in ONE script for verify_otp:
+_VERIFY_AND_CONSUME_OTP_LUA = """
+local code_key = KEYS[1]
+local attempts_key = KEYS[2]
+local expected_hmac = ARGV[1]
+local max_attempts = tonumber(ARGV[2])
+
+local stored_val = redis.call("GET", code_key)
+if not stored_val then
+    return -1
+end
+
+local attempts = redis.call("INCR", attempts_key)
+if attempts > max_attempts then
+    return -2
+end
+
+if stored_val == expected_hmac then
+    redis.call("DEL", code_key)
+    redis.call("DEL", attempts_key)
+    return 1
+else
+    if attempts >= max_attempts then
+        redis.call("DEL", code_key)
+        return -2
+    end
+    return 0
+end
+"""
+_verify_and_consume_script = _redis_client.register_script(_VERIFY_AND_CONSUME_OTP_LUA)
+
 
 def _hash(value: str) -> str:
     """Computes HMAC-SHA256 keyed with SECRET_KEY (F3)."""
@@ -188,11 +219,16 @@ def consume_otp_atomic(email: str, otp: str, company_id: str | uuid.UUID | None 
 
 def verify_otp(email: str, otp: str, company_id: str | uuid.UUID | None = None) -> bool:
     """Caps verification attempts at OTP_MAX_ATTEMPTS (Spec 7.9, F3).
-    Atomic Redis Lua script verification. Also consumes the code on success
-    for backward compatibility.
+    Atomic Redis Lua script verification and consumption in one step.
     """
-    valid, _ = verify_otp_atomic(email, otp, company_id)
-    if valid:
-        consume_otp_atomic(email, otp, company_id)
-        return True
-    return False
+    code_key = _otp_key(email, company_id)
+    att_key = _attempts_key(email, company_id)
+    expected_hmac = _hash(otp)
+
+    res = int(
+        _verify_and_consume_script(
+            keys=[code_key, att_key],
+            args=[expected_hmac, settings.OTP_MAX_ATTEMPTS],
+        )
+    )
+    return res == 1

@@ -1383,3 +1383,178 @@ def test_f8_celery_trace_deterministic_redaction():
     assert "kwargs" not in parsed.get("data", {})
     assert parsed.get("data", {}).get("name") == "send_email_task"
     assert parsed.get("data", {}).get("id") == "test-task-id"
+
+
+def test_commit3_journey_end_to_end_single_company(client, db, company_a, email_outbox):
+    """8. Journey test, end to end (single company): forgot, mail, reset, old password fails,
+    new password logs in, old access token gives 401, old refresh gives 401.
+    """
+    import time
+
+    email = f"journey-single-{uuid.uuid4().hex[:6]}@example.com"
+    _, orig_pw = _make_user_in_company(db, company_a.company_id, email=email)
+
+    # Log in initially to get an active access token and refresh token
+    login_orig = client.post("/api/v1/auth/login", json={"email": email, "password": orig_pw})
+    assert login_orig.status_code == 200
+    old_access = login_orig.json()["access_token"]
+    old_refresh = login_orig.cookies["refresh_token"]
+
+    # Sleep slightly so token iat is strictly before password_changed_at
+    time.sleep(1.05)
+
+    # 1. Forgot password request
+    email_outbox.clear()
+    r_forgot = client.post("/api/v1/auth/forgot-password", json={"email": email})
+    assert r_forgot.status_code == 200
+
+    # 2. Mail arrives with reset code
+    assert len(email_outbox) >= 1
+    code = (
+        email_outbox[-1]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
+    )
+
+    # 3. Reset password
+    new_pw = "BrandNewPass456!"
+    r_reset = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": email, "otp": code, "new_password": new_pw},
+    )
+    assert r_reset.status_code == 204
+
+    # 4. Old password fails
+    r_old_fail = client.post("/api/v1/auth/login", json={"email": email, "password": orig_pw})
+    assert r_old_fail.status_code == 401
+
+    # 5. New password logs in
+    r_new_login = client.post("/api/v1/auth/login", json={"email": email, "password": new_pw})
+    assert r_new_login.status_code == 200
+    assert r_new_login.json()["access_token"]
+
+    # 6. Old access token gives 401
+    r_me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {old_access}"})
+    assert r_me.status_code == 401
+
+    # 7. Old refresh gives 401
+    r_refresh = client.post("/api/v1/auth/refresh", cookies={"refresh_token": old_refresh})
+    assert r_refresh.status_code == 401
+
+
+def test_commit3_journey_end_to_end_shared_email_two_companies(client, db, company_a, email_outbox):
+    """8. Journey test, end to end: same email in two companies (with and without company code)."""
+    import time
+
+    from app.modules.identity.models import Company
+
+    shared_email = f"journey-shared-{uuid.uuid4().hex[:6]}@example.com"
+    comp_b = Company(
+        id=uuid.uuid4(),
+        name=f"Company B Journey {uuid.uuid4().hex[:4]}",
+        code=f"CBJ{uuid.uuid4().hex[:4].upper()}",
+        email=f"cbj-{uuid.uuid4().hex[:4]}@example.com",
+        status="active",
+        country="IN",
+        currency="INR",
+    )
+    db.add(comp_b)
+    db.commit()
+
+    _, u_a_pw = _make_user_in_company(db, company_a.company_id, email=shared_email)
+    _, u_b_pw = _make_user_in_company(db, comp_b.id, email=shared_email)
+
+    company_a_obj = db.scalar(select(Company).where(Company.id == company_a.company_id))
+
+    # Log in to both companies initially to obtain tokens
+    login_a = client.post(
+        "/api/v1/auth/login",
+        json={"email": shared_email, "password": u_a_pw, "company_code": company_a_obj.code},
+    )
+    assert login_a.status_code == 200
+    old_access_a = login_a.json()["access_token"]
+    old_refresh_a = login_a.cookies["refresh_token"]
+
+    login_b = client.post(
+        "/api/v1/auth/login",
+        json={"email": shared_email, "password": u_b_pw, "company_code": comp_b.code},
+    )
+    assert login_b.status_code == 200
+    old_access_b = login_b.json()["access_token"]
+    old_refresh_b = login_b.cookies["refresh_token"]
+
+    time.sleep(1.05)
+
+    # Case A: Request WITHOUT company code -> Guidance email sent, NO reset code generated
+    email_outbox.clear()
+    r_no_code = client.post("/api/v1/auth/forgot-password", json={"email": shared_email})
+    assert r_no_code.status_code == 200
+    assert len(email_outbox) >= 1
+    guidance_mail = email_outbox[-1]
+    assert "more than one workspace" in guidance_mail["text_body"]
+    assert "Your password reset code is" not in guidance_mail["text_body"]
+
+    # Case B: Request WITH company code for Company A -> OTP code sent for Company A
+    email_outbox.clear()
+    r_with_code = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": shared_email, "company_code": company_a_obj.code},
+    )
+    assert r_with_code.status_code == 200
+    assert len(email_outbox) >= 1
+    code_a = (
+        email_outbox[-1]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
+    )
+
+    # Reset password on Company A
+    new_pw_a = "BrandNewPassCompA123!"
+    r_reset_a = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "email": shared_email,
+            "company_code": company_a_obj.code,
+            "otp": code_a,
+            "new_password": new_pw_a,
+        },
+    )
+    assert r_reset_a.status_code == 204
+
+    # On Company A: old password fails, new password succeeds
+    fail_a = client.post(
+        "/api/v1/auth/login",
+        json={"email": shared_email, "password": u_a_pw, "company_code": company_a_obj.code},
+    )
+    assert fail_a.status_code == 401
+
+    ok_a = client.post(
+        "/api/v1/auth/login",
+        json={"email": shared_email, "password": new_pw_a, "company_code": company_a_obj.code},
+    )
+    assert ok_a.status_code == 200
+
+    # Old tokens for Company A invalidated
+    assert (
+        client.get(
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {old_access_a}"}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post("/api/v1/auth/refresh", cookies={"refresh_token": old_refresh_a}).status_code
+        == 401
+    )
+
+    # Company B account is untouched: old password and session for B still work
+    ok_b = client.post(
+        "/api/v1/auth/login",
+        json={"email": shared_email, "password": u_b_pw, "company_code": comp_b.code},
+    )
+    assert ok_b.status_code == 200
+    assert (
+        client.get(
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {old_access_b}"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post("/api/v1/auth/refresh", cookies={"refresh_token": old_refresh_b}).status_code
+        == 200
+    )
