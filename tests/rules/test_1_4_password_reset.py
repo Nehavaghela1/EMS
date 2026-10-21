@@ -194,30 +194,36 @@ def test_T02b_rate_limits_per_account(db, company_a, email_outbox, monkeypatch):
 
         # Step 2: Now run the per-account assertions with 4 requests for the SAME user email
         # across different IPs
+        email_outbox.clear()
         account_resps = []
-        codes_sent = []
         for i in range(4):
-            email_outbox.clear()
             r = client.post(
                 "/api/v1/auth/forgot-password",
                 json={"email": user.email},
                 headers={"X-Forwarded-For": f"198.51.100.{10 + i}"},
             )
             account_resps.append(r)
-            if email_outbox:
-                body = email_outbox[-1]["text_body"]
-                code = body.split("Your password reset code is ")[1].split(".")[0].strip()
-                codes_sent.append(code)
 
         # 4th request: same reply status and body
         assert account_resps[3].status_code == 200
         assert account_resps[3].json() == account_resps[0].json()
 
-        # Exactly 3 codes sent, 4th must not send email
-        assert len(codes_sent) == 3, f"Expected 3 codes across 4 requests, got {len(codes_sent)}"
+        # 3 emails sent, 4th request sends nothing
+        assert len(email_outbox) == 3, (
+            f"Expected 3 emails across 4 requests, got {len(email_outbox)}"
+        )
 
-        # 4th request did not generate a new code (latest code remains the 3rd one)
+        # 3 distinct codes
+        codes_sent = [
+            m["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
+            for m in email_outbox
+        ]
+        assert len(set(codes_sent)) == 3, f"Expected 3 distinct codes, got {codes_sent}"
+
+        # The 3rd code still verifies with verify_otp_atomic, the 1st and 2nd do not (superseded)
         assert verify_otp_atomic(user.email, codes_sent[2], company_id=user.company_id)[0] is True
+        assert verify_otp_atomic(user.email, codes_sent[0], company_id=user.company_id)[0] is False
+        assert verify_otp_atomic(user.email, codes_sent[1], company_id=user.company_id)[0] is False
 
         # Account is not locked
         db.refresh(user)
