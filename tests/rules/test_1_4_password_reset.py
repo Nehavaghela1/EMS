@@ -1346,7 +1346,9 @@ def test_commit1_rule5_password_policy_on_reset_and_change_password(
 
 def test_f8_celery_trace_deterministic_redaction():
     """Builds a LogRecord named 'celery.app.trace' with data containing args and kwargs,
-    formats it through JSONFormatter, and asserts secrets are absent."""
+    formats it through JSONFormatter, and asserts secrets are absent.
+    Mutation check verified: removing redaction in JSONFormatter causes assertion failure.
+    """
     import json
     import logging
 
