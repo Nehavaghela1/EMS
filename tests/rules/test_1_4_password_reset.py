@@ -911,6 +911,10 @@ def test_L01_no_secrets_in_logs(client, db, company_a, email_outbox, caplog):
             )
 
         # Inspect all caplog records AND formatted stream output
+        celery_records = [r for r in caplog.records if r.name == "celery.app.trace"]
+        # Print count of records named "celery.app.trace" captured while an eager task runs
+        print(f"Captured celery.app.trace records count: {len(celery_records)}")
+
         all_records_text: list[str] = []
         for r in caplog.records:
             all_records_text.append(str(r.msg))
@@ -928,6 +932,70 @@ def test_L01_no_secrets_in_logs(client, db, company_a, email_outbox, caplog):
 
     finally:
         root_logger.removeHandler(handler)
+
+
+def test_formatted_json_line_keeps_metadata_visible_and_hides_nested_secrets():
+    """Test: a formatted JSON line keeps status_code, code, request_id, company_id,
+    event and reason visible, and hides secrets nested in dicts and lists.
+    """
+    import json
+    import logging
+
+    from app.core.logging import JSONFormatter
+
+    rec = logging.LogRecord(
+        name="app.security",
+        level=logging.WARNING,
+        pathname="service.py",
+        lineno=42,
+        msg="Password reset event",
+        args=(),
+        exc_info=None,
+    )
+    # Populate visible metadata and nested sensitive data
+    rec.status_code = 400
+    rec.code = "invalid_otp"
+    rec.request_id = "req-12345"
+    rec.company_id = "comp-67890"
+    rec.event = "password_reset_failed"
+    rec.reason = "wrong_code"
+
+    # Nested secrets in dicts and lists
+    rec.payload = {
+        "user_meta": {
+            "password": "super-secret-password-123",
+            "nested_list": [
+                {"otp": "999888", "label": "auth_code"},
+                "plain_string_item",
+            ],
+            "token": "secret-jwt-token-val",
+        },
+        "safe_key": "safe_value",
+    }
+
+    formatter = JSONFormatter()
+    formatted = formatter.format(rec)
+    parsed = json.loads(formatted)
+
+    # 1. Metadata keys remain visible and exact
+    assert parsed["status_code"] == 400
+    assert parsed["code"] == "invalid_otp"
+    assert parsed["request_id"] == "req-12345"
+    assert parsed["company_id"] == "comp-67890"
+    assert parsed["event"] == "password_reset_failed"
+    assert parsed["reason"] == "wrong_code"
+
+    # 2. Secrets nested in dicts and lists are hidden / redacted
+    assert "super-secret-password-123" not in formatted
+    assert "999888" not in formatted
+    assert "secret-jwt-token-val" not in formatted
+
+    nested_user = parsed["payload"]["user_meta"]
+    assert nested_user["password"] == "[REDACTED]"
+    assert nested_user["token"] == "[REDACTED]"
+    assert nested_user["nested_list"][0]["otp"] == "[REDACTED]"
+    assert nested_user["nested_list"][0]["label"] == "auth_code"
+    assert parsed["payload"]["safe_key"] == "safe_value"
 
 
 # ── M01: Migration password_changed_at ────────────────────────────────────────
