@@ -247,7 +247,7 @@ def test_J04_uniform_error_response_for_all_failed_codes(client, db, company_a, 
 def test_J05_single_use_sequential_replay(client, db, company_a, email_outbox):
     import concurrent.futures
 
-    from app.core.otp import generate_and_store_otp, verify_otp
+    from app.core.otp import consume_otp_atomic, generate_and_store_otp, verify_otp_atomic
 
     email = f"j05-{uuid.uuid4().hex[:8]}@example.com"
     _create_user(db, company_a.company_id, email=email)
@@ -271,16 +271,19 @@ def test_J05_single_use_sequential_replay(client, db, company_a, email_outbox):
     assert res1.status_code == 204
     assert res2.status_code in (400, 422)
 
-    # 2. Concurrency test: 20 threads call verify_otp with the same correct code;
-    # exactly one returns True.
+    # 2. Concurrency test: 20 threads call verify_otp_atomic then consume_otp_atomic
+    # on the same valid code; exactly one thread gets True from consume.
     conc_email = f"j05-conc-{uuid.uuid4().hex[:8]}@example.com"
     otp_code = generate_and_store_otp(conc_email, company_id=str(company_a.company_id))
 
-    def _call_verify():
-        return verify_otp(conc_email, otp_code, company_id=str(company_a.company_id))
+    def _worker():
+        valid, _ = verify_otp_atomic(conc_email, otp_code, company_id=str(company_a.company_id))
+        if not valid:
+            return False
+        return consume_otp_atomic(conc_email, otp_code, company_id=str(company_a.company_id))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        futures = [executor.submit(_call_verify) for _ in range(20)]
+        futures = [executor.submit(_worker) for _ in range(20)]
         results = [f.result() for f in futures]
 
     assert results.count(True) == 1, (

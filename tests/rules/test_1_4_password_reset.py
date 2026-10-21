@@ -154,7 +154,7 @@ def test_T02a_rate_limits_per_ip(client):
 def test_T02b_rate_limits_per_account(db, company_a, email_outbox, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from app.core.otp import verify_otp
+    from app.core.otp import verify_otp_atomic
     from app.db.session import get_db
     from app.main import app as fastapi_app
 
@@ -217,7 +217,7 @@ def test_T02b_rate_limits_per_account(db, company_a, email_outbox, monkeypatch):
         assert len(codes_sent) == 3, f"Expected 3 codes across 4 requests, got {len(codes_sent)}"
 
         # 4th request did not generate a new code (latest code remains the 3rd one)
-        assert verify_otp(user.email, codes_sent[2], company_id=user.company_id) is True
+        assert verify_otp_atomic(user.email, codes_sent[2], company_id=user.company_id)[0] is True
 
         # Account is not locked
         db.refresh(user)
