@@ -634,7 +634,9 @@ class AuthService:
         active_users = [u for u in candidates if u.is_active]
 
         if len(active_users) != 1:
-            # Cannot uniquely resolve single active user: generic failure (A1, F4)
+            # Cannot uniquely resolve single active user: generic failure (A1, F4).
+            # Make one dummy Redis call so response time matches the wrong-code branch.
+            verify_otp_atomic(data.email, data.otp, company_id=None)
             sec_logger.warning(
                 "Password reset failed",
                 extra={
@@ -649,8 +651,9 @@ class AuthService:
         user = active_users[0]
         comp_id = user.company_id
 
+        # (i) Check the code WITHOUT deleting it (the attempt is counted)
         valid, reason = verify_otp_atomic(data.email, data.otp, company_id=comp_id)
-        if not valid or not user:
+        if not valid:
             sec_logger.warning(
                 "Password reset failed",
                 extra={
@@ -662,10 +665,26 @@ class AuthService:
             )
             raise InvalidOtpError()
 
-        # F10: A new password must differ from the current one
+        # (ii) New password must differ from current (do not check before code to avoid oracle)
         if verify_password(data.new_password, user.hashed_password):
             raise ValidationError("New password must differ from current password.")
 
+        # (iii) Delete the code with one atomic compare-and-delete Lua script (no attempt increment)
+        from app.core.otp import consume_otp_atomic
+
+        if not consume_otp_atomic(data.email, data.otp, company_id=comp_id):
+            sec_logger.warning(
+                "Password reset failed",
+                extra={
+                    "event": "password_reset_failed",
+                    "reason": "missing_or_expired",
+                    "email_hash": email_hash_val,
+                    "company_id": str(comp_id) if comp_id else None,
+                },
+            )
+            raise InvalidOtpError()
+
+        # (iv) DB update
         now = utcnow()
         self.user_repo.update(
             user,

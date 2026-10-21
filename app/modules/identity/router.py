@@ -184,7 +184,6 @@ def forgot_password(data: ForgotPasswordRequest, request: Request):
                 "request_id": req_id,
                 "error": type(exc).__name__,
             },
-            exc_info=True,
         )
         return {"message": "If that email exists, a password reset code has been sent."}
 
@@ -212,7 +211,6 @@ def forgot_password(data: ForgotPasswordRequest, request: Request):
                 "request_id": req_id,
                 "error": type(exc).__name__,
             },
-            exc_info=True,
         )
 
     return {"message": "If that email exists, a password reset code has been sent."}

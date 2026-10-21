@@ -21,19 +21,14 @@ from app.core.config import settings
 
 _redis_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
-# Atomic Lua script for OTP verification (F3).
-# Keys:
-#   KEYS[1] = code_key
-#   KEYS[2] = attempts_key
-# Args:
-#   ARGV[1] = expected_hmac
-#   ARGV[2] = max_attempts
+# Atomic Lua scripts for OTP verification (F3).
+# Check script: checks code WITHOUT deleting it; counts the attempt.
 # Returns:
-#   1  = SUCCESS (match, deleted keys)
+#   1  = VALID_CODE (match, code preserved, attempt counted)
 #   0  = WRONG_CODE (code exists, attempts <= max_attempts, but HMAC does not match)
 #  -1  = MISSING_OR_EXPIRED (code does not exist)
-#  -2  = EXHAUSTED (attempts exceeded max_attempts)
-_VERIFY_OTP_LUA = """
+#  -2  = EXHAUSTED (attempts reached or exceeded max_attempts)
+_CHECK_OTP_LUA = """
 local code_key = KEYS[1]
 local attempts_key = KEYS[2]
 local expected_hmac = ARGV[1]
@@ -50,8 +45,6 @@ if attempts > max_attempts then
 end
 
 if stored_val == expected_hmac then
-    redis.call("DEL", code_key)
-    redis.call("DEL", attempts_key)
     return 1
 else
     if attempts >= max_attempts then
@@ -61,7 +54,27 @@ else
     return 0
 end
 """
-_verify_script = _redis_client.register_script(_VERIFY_OTP_LUA)
+_check_script = _redis_client.register_script(_CHECK_OTP_LUA)
+
+# Consume script: atomic compare-and-delete (no attempt increment).
+# Returns:
+#   1  = SUCCESS (deleted)
+#   0  = MISMATCH_OR_ALREADY_CONSUMED
+_CONSUME_OTP_LUA = """
+local code_key = KEYS[1]
+local attempts_key = KEYS[2]
+local expected_hmac = ARGV[1]
+
+local stored_val = redis.call("GET", code_key)
+if stored_val == expected_hmac then
+    redis.call("DEL", code_key)
+    redis.call("DEL", attempts_key)
+    return 1
+else
+    return 0
+end
+"""
+_consume_script = _redis_client.register_script(_CONSUME_OTP_LUA)
 
 
 def _hash(value: str) -> str:
@@ -130,7 +143,7 @@ def verify_otp_atomic(
     """Atomic Lua verification:
     Returns (success: bool, reason: str).
     Reasons:
-      - 'ok' (success)
+      - 'ok' (success, code verified and preserved)
       - 'missing_or_expired' (-1)
       - 'exhausted' (-2)
       - 'wrong_code' (0)
@@ -140,7 +153,7 @@ def verify_otp_atomic(
     expected_hmac = _hash(otp)
 
     res = int(
-        _verify_script(
+        _check_script(
             keys=[code_key, att_key],
             args=[expected_hmac, settings.OTP_MAX_ATTEMPTS],
         )
@@ -156,9 +169,30 @@ def verify_otp_atomic(
         return False, "wrong_code"
 
 
+def consume_otp_atomic(email: str, otp: str, company_id: str | uuid.UUID | None = None) -> bool:
+    """Atomic compare-and-delete Lua script (no attempt increment).
+    Consumes the code so it cannot be used again. Returns True if deleted.
+    """
+    code_key = _otp_key(email, company_id)
+    att_key = _attempts_key(email, company_id)
+    expected_hmac = _hash(otp)
+
+    res = int(
+        _consume_script(
+            keys=[code_key, att_key],
+            args=[expected_hmac],
+        )
+    )
+    return res == 1
+
+
 def verify_otp(email: str, otp: str, company_id: str | uuid.UUID | None = None) -> bool:
     """Caps verification attempts at OTP_MAX_ATTEMPTS (Spec 7.9, F3).
-    Atomic Redis Lua script verification.
+    Atomic Redis Lua script verification. Also consumes the code on success
+    for backward compatibility.
     """
-    success, _ = verify_otp_atomic(email, otp, company_id)
-    return success
+    valid, _ = verify_otp_atomic(email, otp, company_id)
+    if valid:
+        consume_otp_atomic(email, otp, company_id)
+        return True
+    return False

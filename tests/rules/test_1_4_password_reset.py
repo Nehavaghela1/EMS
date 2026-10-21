@@ -1042,8 +1042,9 @@ def test_exactly_five_wrong_guesses_per_code_in_total(client, db, company_a, ema
     assert reason_right in ("exhausted", "missing_or_expired")
 
 
-def test_f1_counter_and_expiry_atomic_and_redis_error_handled(client, monkeypatch):
-    """F1: counter + expiry atomic (always has a TTL), and Redis errors are caught and logged."""
+def test_f1_counter_and_expiry_atomic_and_redis_error_handled(client, monkeypatch, email_outbox):
+    """F1: counter + expiry atomic (always has a TTL), and Redis errors are caught and logged,
+    asserting that nothing was enqueued and no email was sent."""
     import redis
 
     from app.core.otp import _account_req_key, check_and_increment_account_limit
@@ -1062,8 +1063,217 @@ def test_f1_counter_and_expiry_atomic_and_redis_error_handled(client, monkeypatc
         raise redis.RedisError("Redis connection failure simulation")
 
     monkeypatch.setattr("app.modules.identity.router.check_and_increment_account_limit", mock_incr)
+    enqueued_tasks = []
+
+    def mock_delay(*args, **kwargs):
+        enqueued_tasks.append((args, kwargs))
+
+    monkeypatch.setattr(
+        "app.modules.identity.router.process_password_reset_request.delay", mock_delay
+    )
+    email_outbox.clear()
     resp = client.post("/api/v1/auth/forgot-password", json={"email": test_email})
     assert resp.status_code == 200
+    assert len(enqueued_tasks) == 0, "No task should be enqueued when Redis raises"
+    assert len(email_outbox) == 0, "No email should be sent when Redis raises"
+
+
+def test_commit1_reset_code_consumed_only_on_success(client, db, company_a, email_outbox):
+    """1. Same password gives 422 and code remains usable.
+    2. 4 wrong tries then 5th correct succeeds.
+    3. 5 wrong tries kills the code.
+    """
+    user, orig_pw = _make_user_in_company(db, company_a.company_id)
+    email_outbox.clear()
+    client.post("/api/v1/auth/forgot-password", json={"email": user.email})
+    code = (
+        email_outbox[0]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
+    )
+
+    # (i) Same password as current gives 422 and code is NOT consumed
+    resp_same = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": user.email, "otp": code, "new_password": orig_pw},
+    )
+    assert resp_same.status_code == 422
+
+    # SAME code can now be used to reset with a different valid password
+    resp_diff = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": user.email, "otp": code, "new_password": "BrandNewPass123!"},
+    )
+    assert resp_diff.status_code == 204
+
+    # Now the code IS consumed
+    resp_reused = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": user.email, "otp": code, "new_password": "AnotherNewPass123!"},
+    )
+    assert resp_reused.status_code == 400
+
+
+def test_commit1_four_wrong_then_fifth_correct_succeeds(client, db, company_a, email_outbox):
+    """4 wrong then the correct 5th still succeeds."""
+    user, orig_pw = _make_user_in_company(db, company_a.company_id)
+    email_outbox.clear()
+    client.post("/api/v1/auth/forgot-password", json={"email": user.email})
+    code = (
+        email_outbox[0]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
+    )
+
+    # 4 wrong tries
+    for _ in range(4):
+        r_wrong = client.post(
+            "/api/v1/auth/reset-password",
+            json={"email": user.email, "otp": "000000", "new_password": "NewValidPass123!"},
+        )
+        assert r_wrong.status_code == 400
+
+    # 5th attempt with the CORRECT code succeeds
+    r_corr = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": user.email, "otp": code, "new_password": "NewValidPass123!"},
+    )
+    assert r_corr.status_code == 204
+
+
+def test_commit1_five_wrong_kills_the_code(client, db, company_a, email_outbox):
+    """5 wrong kills the code; 6th with correct code fails."""
+    user, orig_pw = _make_user_in_company(db, company_a.company_id)
+    email_outbox.clear()
+    client.post("/api/v1/auth/forgot-password", json={"email": user.email})
+    code = (
+        email_outbox[0]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
+    )
+
+    # 5 wrong tries
+    for _ in range(5):
+        r_wrong = client.post(
+            "/api/v1/auth/reset-password",
+            json={"email": user.email, "otp": "000000", "new_password": "NewValidPass123!"},
+        )
+        assert r_wrong.status_code == 400
+
+    # 6th attempt with correct code fails
+    r_six = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": user.email, "otp": code, "new_password": "NewValidPass123!"},
+    )
+    assert r_six.status_code == 400
+
+
+def test_commit1_two_simultaneous_valid_submissions_exactly_one_wins(client, db, company_a):
+    """Two simultaneous valid submissions, exactly one wins."""
+    import concurrent.futures
+
+    from app.core.otp import generate_and_store_otp
+
+    user, orig_pw = _make_user_in_company(db, company_a.company_id)
+    code = generate_and_store_otp(user.email, company_id=user.company_id)
+
+    def _submit(idx: int):
+        return client.post(
+            "/api/v1/auth/reset-password",
+            json={
+                "email": user.email,
+                "otp": code,
+                "new_password": f"NewValidPass{idx}99!",
+            },
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(_submit, 1)
+        f2 = executor.submit(_submit, 2)
+        r1 = f1.result()
+        r2 = f2.result()
+
+    statuses = [r1.status_code, r2.status_code]
+    assert 204 in statuses, f"Expected at least one 204, got {statuses}"
+    assert statuses.count(204) == 1, f"Expected exactly one 204, got {statuses}"
+
+
+def test_commit1_unresolved_branch_response_matches_wrong_code(client, db, company_a):
+    """Reset-password: unresolved branch (no unique active user) and wrong-code branch
+    give the same status and body.
+    """
+    # 1. Unresolved email
+    resp_unresolved = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "email": "nonexistent-user@example.com",
+            "otp": "123456",
+            "new_password": "ValidNewPass123!",
+        },
+    )
+
+    # 2. Existing user with wrong code
+    user, _ = _make_user_in_company(db, company_a.company_id)
+    resp_wrong = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "email": user.email,
+            "otp": "123456",
+            "new_password": "ValidNewPass123!",
+        },
+    )
+
+    assert resp_unresolved.status_code == resp_wrong.status_code == 400
+    err_unresolved = resp_unresolved.json().get("error", {})
+    err_wrong = resp_wrong.json().get("error", {})
+    assert err_unresolved.get("code") == err_wrong.get("code")
+    assert err_unresolved.get("message") == err_wrong.get("message")
+    assert err_unresolved.get("details") == err_wrong.get("details")
+
+
+def test_commit1_rule5_password_policy_on_reset_and_change_password(
+    client, db, company_a, email_outbox
+):
+    """Rule 5 on reset AND change-password: 9 chars, no digit, 129 chars and empty give
+    422 and the code stays usable.
+    """
+    user, orig_pw = _make_user_in_company(db, company_a.company_id)
+    email_outbox.clear()
+    client.post("/api/v1/auth/forgot-password", json={"email": user.email})
+    code = (
+        email_outbox[0]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
+    )
+
+    invalid_passwords = [
+        "Short9!",  # 7 chars < 10
+        "NineChars",  # 9 chars
+        "TenLettersNoDigits!",  # no digit
+        "A1" + "a" * 127,  # 129 chars > 128
+        "",  # empty
+    ]
+
+    # Test each on reset-password: all return 422
+    for bad_pw in invalid_passwords:
+        r = client.post(
+            "/api/v1/auth/reset-password",
+            json={"email": user.email, "otp": code, "new_password": bad_pw},
+        )
+        assert r.status_code == 422, f"Expected 422 for {bad_pw!r}, got {r.status_code}"
+
+    # And the code STAYS usable for a valid password
+    valid_new_pw = "ValidPass123!"
+    r_valid = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": user.email, "otp": code, "new_password": valid_new_pw},
+    )
+    assert r_valid.status_code == 204
+
+    # Test each on change-password: all return 422
+    login_r = client.post(
+        "/api/v1/auth/login", json={"email": user.email, "password": valid_new_pw}
+    )
+    token = login_r.json()["access_token"]
+    for bad_pw in invalid_passwords:
+        r_cp = client.post(
+            "/api/v1/auth/change-password",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"current_password": valid_new_pw, "new_password": bad_pw},
+        )
+        assert r_cp.status_code == 422, f"Expected 422 on change-password for {bad_pw!r}"
 
 
 def test_f8_celery_trace_deterministic_redaction():
