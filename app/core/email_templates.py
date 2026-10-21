@@ -170,3 +170,19 @@ def company_rejected_email(*, company_name: str, rejection_reason: str) -> tuple
         f"<p>If you believe this was in error, please contact platform support.</p>"
     )
     return subject, text, html_body
+
+
+def multi_company_guidance_email() -> tuple[str, str, str]:
+    """F4: Guidance email sent when an email matches more than one company
+    and no company code was supplied in the forgot-password request."""
+    subject = "EMS Password Reset - Company Code Required"
+    text = (
+        "This email is used in more than one workspace; request again with your company code.\n\n"
+        "If you didn't request this, you can safely ignore this email."
+    )
+    html_body = _wrap_html(
+        "<p>This email is used in more than one workspace; "
+        "request again with your company code.</p>"
+        "<p>If you didn't request this, you can safely ignore this email.</p>"
+    )
+    return subject, text, html_body

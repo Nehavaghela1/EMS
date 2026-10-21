@@ -11,7 +11,6 @@ from app.core.email_templates import (
     company_rejected_email,
     hr_admin_credentials_email,
     password_changed_email,
-    password_reset_otp_email,
 )
 from app.core.exceptions import (
     AppError,
@@ -19,8 +18,8 @@ from app.core.exceptions import (
     ForbiddenError,
     NotFoundError,
     UnauthorizedError,
+    ValidationError,
 )
-from app.core.otp import generate_and_store_otp, verify_otp
 from app.core.pagination import PageParams
 from app.core.security import (
     DUMMY_HASH,
@@ -218,6 +217,11 @@ class AuthService:
         on more than one match, lockout and active checks only after a proven
         password (9.3, 9.4).
         """
+        import hashlib
+
+        sec_logger = logging.getLogger("app.security")
+        email_hash_val = hashlib.sha256(payload.email.lower().strip().encode()).hexdigest()[:12]
+
         # May return more than one row: the same email can exist at two companies
         # (7.2). Includes inactive users, so we can tell "wrong password" from
         # "not activated".
@@ -230,12 +234,37 @@ class AuthService:
             verify_password(payload.password, DUMMY_HASH)
 
         if not matched:
+            locked_any = False
             for u in candidates:
                 self.user_repo.increment_failed_attempts(u)
+                if u.failed_attempts == settings.MAX_LOGIN_ATTEMPTS:
+                    # Write ACCOUNT_LOCKED audit row once, at the attempt that locks (F6)
+                    AuditService(self.db).record(
+                        company_id=u.company_id,
+                        actor=u,
+                        action="ACCOUNT_LOCKED",
+                        entity_type="user",
+                        entity_id=u.id,
+                        details={"email": u.email, "failed_attempts": u.failed_attempts},
+                    )
                 if u.failed_attempts >= settings.MAX_LOGIN_ATTEMPTS:
                     self.user_repo.lock(u, utcnow() + timedelta(minutes=settings.LOCKOUT_MINUTES))
+                    locked_any = True
+
             if candidates:
                 self.db.commit()
+                # F7: login_failed (wrong_password or locked)
+                reason = "locked" if locked_any else "wrong_password"
+                comp_id = candidates[0].company_id if candidates else None
+                sec_logger.warning(
+                    "Login failed",
+                    extra={
+                        "event": "login_failed",
+                        "reason": reason,
+                        "email_hash": email_hash_val,
+                        "company_id": str(comp_id) if comp_id else None,
+                    },
+                )
                 raise InvalidCredentialsError()
 
             # If no active/candidate user was found, check if this email belongs
@@ -250,9 +279,27 @@ class AuthService:
                         ):
                             raise CompanyPendingApprovalError(pending_or_unapproved.name)
                         else:
+                            sec_logger.warning(
+                                "Login failed",
+                                extra={
+                                    "event": "login_failed",
+                                    "reason": "wrong_password",
+                                    "email_hash": email_hash_val,
+                                    "company_id": str(pending_or_unapproved.id),
+                                },
+                            )
                             raise InvalidCredentialsError()
                     else:
                         verify_password(payload.password, DUMMY_HASH)
+                        sec_logger.warning(
+                            "Login failed",
+                            extra={
+                                "event": "login_failed",
+                                "reason": "wrong_password",
+                                "email_hash": email_hash_val,
+                                "company_id": str(pending_or_unapproved.id),
+                            },
+                        )
                         raise InvalidCredentialsError()
                 elif pending_or_unapproved.status == CompanyStatus.rejected:
                     # Status is revealed only after the password is proven
@@ -264,11 +311,39 @@ class AuthService:
                                 pending_or_unapproved.name, pending_or_unapproved.rejection_reason
                             )
                         else:
+                            sec_logger.warning(
+                                "Login failed",
+                                extra={
+                                    "event": "login_failed",
+                                    "reason": "wrong_password",
+                                    "email_hash": email_hash_val,
+                                    "company_id": str(pending_or_unapproved.id),
+                                },
+                            )
                             raise InvalidCredentialsError()
                     else:
                         verify_password(payload.password, DUMMY_HASH)
+                        sec_logger.warning(
+                            "Login failed",
+                            extra={
+                                "event": "login_failed",
+                                "reason": "wrong_password",
+                                "email_hash": email_hash_val,
+                                "company_id": str(pending_or_unapproved.id),
+                            },
+                        )
                         raise InvalidCredentialsError()
 
+            # No candidates at all: unknown_user
+            sec_logger.warning(
+                "Login failed",
+                extra={
+                    "event": "login_failed",
+                    "reason": "unknown_user",
+                    "email_hash": email_hash_val,
+                    "company_id": None,
+                },
+            )
             raise InvalidCredentialsError()
 
         if len(matched) > 1:
@@ -281,10 +356,37 @@ class AuthService:
 
         # Both checks come after a proven password, for the same reason (9.3).
         if user.locked_until and user.locked_until > utcnow():
+            sec_logger.warning(
+                "Login failed",
+                extra={
+                    "event": "login_failed",
+                    "reason": "locked",
+                    "email_hash": email_hash_val,
+                    "company_id": str(user.company_id),
+                },
+            )
             raise AccountLockedError(until=user.locked_until)
         if not user.is_active:
+            sec_logger.warning(
+                "Login failed",
+                extra={
+                    "event": "login_failed",
+                    "reason": "inactive_user",
+                    "email_hash": email_hash_val,
+                    "company_id": str(user.company_id),
+                },
+            )
             raise AccountInactiveError()
         if user.company is not None and not user.company.is_active:
+            sec_logger.warning(
+                "Login failed",
+                extra={
+                    "event": "login_failed",
+                    "reason": "company_not_active",
+                    "email_hash": email_hash_val,
+                    "company_id": str(user.company_id),
+                },
+            )
             raise CompanyInactiveError()
 
         self.user_repo.reset_failed_attempts(user)
@@ -305,6 +407,17 @@ class AuthService:
             expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
             device_info=device_info,
         )
+
+        # F6 & F12: Successful login writes LOGIN_SUCCEEDED audit row in same transaction
+        AuditService(self.db).record(
+            company_id=user.company_id,
+            actor=user,
+            action="LOGIN_SUCCEEDED",
+            entity_type="user",
+            entity_id=user.id,
+            details={"email": user.email},
+        )
+
         self.db.commit()
         return TokenResponse(access_token=access_token), raw_refresh
 
@@ -374,13 +487,32 @@ class AuthService:
         token_record = self.token_repo.get_by_hash(hash_token(raw_token))
         if token_record and not token_record.is_revoked:
             self.token_repo.revoke(token_record)
+            user = self.user_repo.get_by_id_for_token_refresh(token_record.user_id)
+            # F6 Audit row LOGOUT
+            AuditService(self.db).record(
+                company_id=user.company_id if user else None,
+                actor=user,
+                action="LOGOUT",
+                entity_type="user",
+                entity_id=token_record.user_id,
+            )
             self.db.commit()
 
     def logout_all(self, user_id: uuid.UUID) -> None:
         """Route 4: revoke every active refresh token for this user, across
         every device."""
-        for token in self.token_repo.get_active_by_user(user_id):
+        active_tokens = self.token_repo.get_active_by_user(user_id)
+        for token in active_tokens:
             self.token_repo.revoke(token)
+        user = self.user_repo.get_by_id_for_token_refresh(user_id)
+        # F6 Audit row LOGOUT_ALL
+        AuditService(self.db).record(
+            company_id=user.company_id if user else None,
+            actor=user,
+            action="LOGOUT_ALL",
+            entity_type="user",
+            entity_id=user_id,
+        )
         self.db.commit()
 
     def get_user_workspaces(self, email: str) -> list[dict]:
@@ -450,62 +582,130 @@ class AuthService:
         )
 
     def change_password(self, user: User, data: ChangePasswordRequest) -> None:
-        """Route 6: current + new password; revokes every other session —
-        a changed password should not leave old sessions valid."""
+        """Route 6: current + new password; revokes all sessions including current one (F11),
+        updates password_changed_at (F5), writes PASSWORD_CHANGED audit row (F6), and
+        sends password-changed email after the commit (F11).
+        """
         if not verify_password(data.current_password, user.hashed_password):
             raise InvalidCurrentPasswordError()
-        self.user_repo.update(
-            user, user.company_id, hashed_password=hash_password(data.new_password)
-        )
-        for token in self.token_repo.get_active_by_user(user.id):
-            self.token_repo.revoke(token)
-        self.db.commit()
-        self._send_password_changed_email(user)
 
-    def forgot_password(self, email: str) -> None:
-        """Route 7. The router always returns the same 200 regardless of
-        what happens in here (9.3) — this method's return value is never
-        branched on by the caller. Only sends when exactly one active
-        account matches: zero matches and more-than-one matches (ambiguous
-        — which account?) are both silent no-ops, indistinguishable to the
-        caller from the real case either way.
-        """
-        users = self.user_repo.find_by_email(email)
-        if len(users) == 1 and users[0].is_active:
-            otp = generate_and_store_otp(email)
-            subject, text_body, html_body = password_reset_otp_email(
-                otp=otp, expires_minutes=settings.OTP_TTL_MINUTES
-            )
-            send_email_task.delay(
-                to=email, subject=subject, text_body=text_body, html_body=html_body
-            )
+        if verify_password(data.new_password, user.hashed_password):
+            raise ValidationError("New password must differ from current password.")
 
-    def reset_password(self, data: ResetPasswordRequest) -> None:
-        """Route 8: OTP + new password. Also revokes every existing
-        session, same reasoning as change-password."""
-        if not verify_otp(data.email, data.otp):
-            raise InvalidOtpError()
-        users = self.user_repo.find_by_email(data.email)
-        if len(users) != 1:
-            # Unreachable in practice — forgot_password only ever issues an
-            # OTP for exactly one match — but never silently succeed on an
-            # unexpected shape.
-            raise InvalidOtpError()
-        user = users[0]
+        now = utcnow()
         self.user_repo.update(
             user,
             user.company_id,
             hashed_password=hash_password(data.new_password),
-            # Part 3: an OTP is a stronger proof of identity than the
-            # password just being replaced — without this, a locked-out
-            # user who successfully resets their password was still locked
-            # out until the 15-minute timer expired on its own, even though
-            # they'd already proven who they are.
-            failed_attempts=0,
-            locked_until=None,
+            password_changed_at=now,
         )
         for token in self.token_repo.get_active_by_user(user.id):
             self.token_repo.revoke(token)
+
+        # F6: PASSWORD_CHANGED audit row
+        AuditService(self.db).record(
+            company_id=user.company_id,
+            actor=user,
+            action="PASSWORD_CHANGED",
+            entity_type="user",
+            entity_id=user.id,
+            details={"email": user.email},
+        )
+        self.db.commit()
+        self._send_password_changed_email(user)
+
+    def reset_password(self, data: ResetPasswordRequest) -> None:
+        """Route 8: OTP + new password.
+        Uses verify_otp_atomic with company scoping (F3, F4).
+        On failure: logs F7 password_reset_failed on app.security with reason
+        (wrong_code, exhausted, missing_or_expired).
+        On success: sets password_changed_at (F5), revokes all refresh tokens,
+        clears lockout counters, writes PASSWORD_RESET_COMPLETED audit row (F6),
+        and sends confirmation email after commit.
+        """
+        import hashlib
+
+        from app.core.otp import verify_otp_atomic
+
+        sec_logger = logging.getLogger("app.security")
+        email_hash_val = hashlib.sha256(data.email.lower().strip().encode()).hexdigest()[:12]
+
+        candidates = self.user_repo.find_by_email(data.email, data.company_code)
+        active_users = [u for u in candidates if u.is_active]
+
+        if len(active_users) != 1:
+            # Cannot uniquely resolve single active user: generic failure (A1, F4).
+            # Make one dummy Redis call so response time matches the wrong-code branch.
+            verify_otp_atomic(data.email, data.otp, company_id=None)
+            sec_logger.warning(
+                "Password reset failed",
+                extra={
+                    "event": "password_reset_failed",
+                    "reason": "missing_or_expired",
+                    "email_hash": email_hash_val,
+                    "company_id": None,
+                },
+            )
+            raise InvalidOtpError()
+
+        user = active_users[0]
+        comp_id = user.company_id
+
+        # (i) Check the code WITHOUT deleting it (the attempt is counted)
+        valid, reason = verify_otp_atomic(data.email, data.otp, company_id=comp_id)
+        if not valid:
+            sec_logger.warning(
+                "Password reset failed",
+                extra={
+                    "event": "password_reset_failed",
+                    "reason": reason if reason != "ok" else "missing_or_expired",
+                    "email_hash": email_hash_val,
+                    "company_id": str(comp_id) if comp_id else None,
+                },
+            )
+            raise InvalidOtpError()
+
+        # (ii) New password must differ from current (do not check before code to avoid oracle)
+        if verify_password(data.new_password, user.hashed_password):
+            raise ValidationError("New password must differ from current password.")
+
+        # (iii) Delete the code with one atomic compare-and-delete Lua script (no attempt increment)
+        from app.core.otp import consume_otp_atomic
+
+        if not consume_otp_atomic(data.email, data.otp, company_id=comp_id):
+            sec_logger.warning(
+                "Password reset failed",
+                extra={
+                    "event": "password_reset_failed",
+                    "reason": "missing_or_expired",
+                    "email_hash": email_hash_val,
+                    "company_id": str(comp_id) if comp_id else None,
+                },
+            )
+            raise InvalidOtpError()
+
+        # (iv) DB update
+        now = utcnow()
+        self.user_repo.update(
+            user,
+            user.company_id,
+            hashed_password=hash_password(data.new_password),
+            failed_attempts=0,
+            locked_until=None,
+            password_changed_at=now,
+        )
+        for token in self.token_repo.get_active_by_user(user.id):
+            self.token_repo.revoke(token)
+
+        # F6: PASSWORD_RESET_COMPLETED audit row
+        AuditService(self.db).record(
+            company_id=user.company_id,
+            actor=user,
+            action="PASSWORD_RESET_COMPLETED",
+            entity_type="user",
+            entity_id=user.id,
+            details={"email": user.email},
+        )
         self.db.commit()
         self._send_password_changed_email(user)
 
@@ -553,6 +753,7 @@ class AuthService:
             hashed_password=hash_password(data.password),
             role=UserRole.employee,
             is_active=True,
+            password_changed_at=utcnow(),
         )
         self.employee_repo.activate(employee, user_id=user.id)
 
