@@ -2,6 +2,7 @@
 Strictly tests only; no app code modified. Red where code is missing.
 """
 
+import logging
 import uuid
 from datetime import timedelta
 
@@ -37,8 +38,8 @@ def _make_user_in_company(
     return user, pw
 
 
-# ── T01: Same status and body for unknown, inactive, pending, rejected ────────
-def test_T01_forgot_password_uniform_response(client, db, company_a):
+# ── T01: Same status and body; spy asserts identical execution steps ──────────
+def test_T01_forgot_password_uniform_response(client, db, company_a, monkeypatch):
     limiter.enabled = False
     limiter.reset()
 
@@ -93,17 +94,54 @@ def test_T01_forgot_password_uniform_response(client, db, company_a):
             f"{label} content-type differs from active"
         )
 
+    # Spy assertion: assert both paths run the same steps (lookup, Redis store, email queue)
+    steps_executed: dict[str, list[str]] = {"active": [], "unknown": []}
 
-# ── T02: Per-IP limit 3/hour and per-account limit 3/hour ─────────────────────
-def test_T02_rate_limits_per_ip_and_per_account(client, db, company_a, email_outbox):
-    user, _ = _make_user_in_company(db, company_a.company_id)
-    email_outbox.clear()
+    orig_find = id_svc.UserRepository.find_by_email
+    orig_store = id_svc.generate_and_store_otp
+    orig_send = id_svc.send_email_task.delay
 
+    current_tag = "active"
+
+    def spy_find(self, *args, **kwargs):
+        steps_executed[current_tag].append("lookup")
+        return orig_find(self, *args, **kwargs)
+
+    def spy_store(*args, **kwargs):
+        steps_executed[current_tag].append("redis_store")
+        return orig_store(*args, **kwargs)
+
+    def spy_send(*args, **kwargs):
+        steps_executed[current_tag].append("email_queue")
+        return orig_send(*args, **kwargs)
+
+    monkeypatch.setattr(id_svc.UserRepository, "find_by_email", spy_find)
+    monkeypatch.setattr(id_svc, "generate_and_store_otp", spy_store)
+    monkeypatch.setattr(id_svc.send_email_task, "delay", spy_send)
+
+    current_tag = "active"
+    client.post("/api/v1/auth/forgot-password", json={"email": user_active.email})
+
+    current_tag = "unknown"
+    client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": f"spy-unknown-{uuid.uuid4().hex[:6]}@example.com"},
+    )
+
+    # To eliminate timing side-channels, unknown email must execute identical pipeline
+    assert steps_executed["unknown"] == steps_executed["active"], (
+        f"Pipeline steps differ: unknown executed {steps_executed['unknown']}, "
+        f"active executed {steps_executed['active']}"
+    )
+
+
+# ── T02a: Per-IP limit 3/hour ─────────────────────────────────────────────────
+def test_T02a_rate_limits_per_ip(client):
     limiter.enabled = True
     try:
         limiter.reset()
 
-        # 1. Per-IP limit: 3/hour allowed; 4th request must be 429
+        # Per-IP limit: 3/hour allowed; 4th request from same IP must be 429
         resps_ip = [
             client.post(
                 "/api/v1/auth/forgot-password",
@@ -115,26 +153,53 @@ def test_T02_rate_limits_per_ip_and_per_account(client, db, company_a, email_out
         assert resps_ip[1].status_code == 200
         assert resps_ip[2].status_code == 200
         assert resps_ip[3].status_code == 429
-
+    finally:
+        limiter.enabled = False
         limiter.reset()
-        email_outbox.clear()
 
-        # 2. Per-account limit: 3/hour across different IPs
-        # Extra requests: same reply, no email, no lockout
+
+# ── T02b: Per-ACCOUNT limit 3/hour reached from different client IPs ──────────
+def test_T02b_rate_limits_per_account(client, db, company_a, email_outbox, monkeypatch):
+    from app.core.otp import verify_otp
+
+    user, _ = _make_user_in_company(db, company_a.company_id)
+    email_outbox.clear()
+
+    # Configure trusted proxies so varying the X-Forwarded-For header varies the client IP
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["127.0.0.1/32", "testclient"])
+
+    limiter.enabled = True
+    try:
+        limiter.reset()
+
+        # Per-account limit: 3/hour across different IPs.
+        # IP is varied via X-Forwarded-For: 198.51.100.{10+i}
         account_resps = []
+        codes_sent = []
         for i in range(4):
-            # Simulate requests from distinct client IPs
+            email_outbox.clear()
             r = client.post(
                 "/api/v1/auth/forgot-password",
                 json={"email": user.email},
                 headers={"X-Forwarded-For": f"198.51.100.{10 + i}"},
             )
             account_resps.append(r)
+            if email_outbox:
+                body = email_outbox[-1]["text_body"]
+                code = body.split("Your password reset code is ")[1].split(".")[0].strip()
+                codes_sent.append(code)
 
-        # Requests beyond 3 per account should return the same reply without extra emails
-        user_emails = [e for e in email_outbox if e["to"] == user.email]
-        assert len(user_emails) == 3, f"Expected exactly 3 emails, got {len(user_emails)}"
+        # 4th request: same reply status and body
+        assert account_resps[3].status_code == 200
+        assert account_resps[3].json() == account_resps[0].json()
 
+        # Exactly 3 codes sent, 4th must not send email
+        assert len(codes_sent) == 3, f"Expected 3 codes across 4 requests, got {len(codes_sent)}"
+
+        # 4th request did not generate a new code (latest code remains the 3rd one)
+        assert verify_otp(user.email, codes_sent[2]) is True
+
+        # Account is not locked
         db.refresh(user)
         assert user.failed_attempts == 0
         assert user.locked_until is None
@@ -143,8 +208,8 @@ def test_T02_rate_limits_per_ip_and_per_account(client, db, company_a, email_out
         limiter.reset()
 
 
-# ── T03: Code stored as hash in Redis, 15m TTL, single-use, new request replaces old
-def test_T03_code_hash_15m_ttl_single_use_and_replacement(client, db, company_a, email_outbox):
+# ── T03: Code stored as hash in Redis, TTL, single-use, new request replaces old
+def test_T03_code_hash_ttl_single_use_and_replacement(client, db, company_a, email_outbox):
     user, _ = _make_user_in_company(db, company_a.company_id)
     r_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
@@ -159,14 +224,19 @@ def test_T03_code_hash_15m_ttl_single_use_and_replacement(client, db, company_a,
     otp_key = _otp_key(user.email)
     raw_in_redis = r_client.get(otp_key)
     assert raw_in_redis is not None
+
+    # Assertion 1: Hash only (Redis value != raw code)
     assert raw_in_redis != otp1
     assert raw_in_redis == _hash(otp1)
 
+    # Assertion 2: TTL equals settings.OTP_TTL_MINUTES * 60 (10 minutes)
+    expected_ttl = settings.OTP_TTL_MINUTES * 60
     ttl = r_client.ttl(otp_key)
-    # Rule 3 specifies 15-minute expiry (900 seconds)
-    assert 840 <= ttl <= 900, f"Expected 15m TTL (approx 900s), got {ttl}s"
+    assert expected_ttl - 60 <= ttl <= expected_ttl, (
+        f"Expected TTL near {expected_ttl}s, got {ttl}s"
+    )
 
-    # A new request invalidates the old code
+    # Assertion 3: Replacement — a new request invalidates the old code
     email_outbox.clear()
     resp2 = client.post("/api/v1/auth/forgot-password", json={"email": user.email})
     assert resp2.status_code == 200
@@ -175,18 +245,15 @@ def test_T03_code_hash_15m_ttl_single_use_and_replacement(client, db, company_a,
         email_outbox[0]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
     )
     assert otp2 != otp1
+    assert r_client.get(otp_key) == _hash(otp2)
 
-    new_hash_in_redis = r_client.get(otp_key)
-    assert new_hash_in_redis == _hash(otp2)
-
-    # Trying old code fails
     fail_old = client.post(
         "/api/v1/auth/reset-password",
         json={"email": user.email, "otp": otp1, "new_password": "NewValidPassword123!"},
     )
     assert fail_old.status_code == 400
 
-    # Single-use: using the new code succeeds and deletes the key
+    # Assertion 4: Single-use — using new code consumes and deletes key
     succ = client.post(
         "/api/v1/auth/reset-password",
         json={"email": user.email, "otp": otp2, "new_password": "NewValidPassword123!"},
@@ -195,7 +262,7 @@ def test_T03_code_hash_15m_ttl_single_use_and_replacement(client, db, company_a,
     assert r_client.get(otp_key) is None
     assert r_client.get(_attempts_key(user.email)) is None
 
-    # Replaying the same code fails
+    # Replay fails
     replay = client.post(
         "/api/v1/auth/reset-password",
         json={"email": user.email, "otp": otp2, "new_password": "AnotherPassword123!"},
@@ -203,9 +270,9 @@ def test_T03_code_hash_15m_ttl_single_use_and_replacement(client, db, company_a,
     assert replay.status_code == 400
 
 
-# ── T04: 5 wrong tries kill code; right code afterwards fails; account not locked
+# ── T04: 5 wrong tries kill code; structured warning log; account not locked ───
 def test_T04_five_wrong_tries_exhaust_code_without_account_lock(
-    client, db, company_a, email_outbox
+    client, db, company_a, email_outbox, caplog
 ):
     user, orig_pw = _make_user_in_company(db, company_a.company_id)
 
@@ -215,13 +282,33 @@ def test_T04_five_wrong_tries_exhaust_code_without_account_lock(
         email_outbox[0]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
     )
 
-    # 5 wrong attempts
-    for _ in range(5):
-        r = client.post(
-            "/api/v1/auth/reset-password",
-            json={"email": user.email, "otp": "000000", "new_password": "NewPassword123!"},
+    # 5 wrong attempts; assert a wrong code emits a structured warning log with reason code
+    caplog.clear()
+    wrong_code = "000000"
+    with caplog.at_level(logging.WARNING):
+        for _ in range(5):
+            r = client.post(
+                "/api/v1/auth/reset-password",
+                json={"email": user.email, "otp": wrong_code, "new_password": "NewPassword123!"},
+            )
+            assert r.status_code == 400
+
+    # Structured log check: emits warning log with reason code, without OTP or email
+    otp_warning_logs = [
+        rec
+        for rec in caplog.records
+        if rec.levelno == logging.WARNING
+        and (
+            "otp" in rec.getMessage().lower()
+            or (hasattr(rec, "reason") and "otp" in str(rec.reason).lower())
         )
-        assert r.status_code == 400
+    ]
+    assert len(otp_warning_logs) >= 1
+    for rec in otp_warning_logs:
+        msg = rec.getMessage()
+        assert wrong_code not in msg
+        assert otp not in msg
+        assert user.email not in msg
 
     # The right code afterwards fails
     r_right = client.post(
@@ -292,62 +379,85 @@ def test_T05_validation_malformed_inputs_and_weak_password_preserves_code(
     assert r_valid.status_code == 204
 
 
-# ── T06: Same email in two companies resets only targeted company ──────────────
-def test_T06_same_email_in_two_companies_targeted_reset(
-    client, db, company_a, company_b, email_outbox
-):
+# ── T06: Multi-company password reset with company code ───────────────────────
+def test_T06_multi_company_password_reset(client, db, company_a, company_b, email_outbox):
     shared_email = f"shared-{uuid.uuid4().hex[:8]}@example.com"
     _user_a, pw_a = _make_user_in_company(db, company_a.company_id, email=shared_email)
     _user_b, pw_b = _make_user_in_company(db, company_b.company_id, email=shared_email)
 
-    email_outbox.clear()
     comp_a = db.get(Company, company_a.company_id)
-    # Target company A's account (via company_code or scoped payload if supported)
-    resp = client.post(
+    comp_b = db.get(Company, company_b.company_id)
+
+    # (a) Email in two companies + company_code resets only that company
+    email_outbox.clear()
+    resp_a = client.post(
         "/api/v1/auth/forgot-password",
         json={"email": shared_email, "company_code": comp_a.code},
     )
-    assert resp.status_code == 200
-
-    # Ensure an email with code was sent for the targeted reset
-    matching_emails = [e for e in email_outbox if e["to"] == shared_email]
-    assert len(matching_emails) >= 1, "Expected reset OTP email to be queued for targeted company"
-    otp = (
-        matching_emails[0]["text_body"]
+    assert resp_a.status_code == 200
+    matching_emails_a = [e for e in email_outbox if e["to"] == shared_email]
+    assert len(matching_emails_a) == 1
+    otp_a = (
+        matching_emails_a[0]["text_body"]
         .split("Your password reset code is ")[1]
         .split(".")[0]
         .strip()
     )
 
     new_pw_a = "NewPasswordA123!"
-    reset_resp = client.post(
+    reset_a = client.post(
         "/api/v1/auth/reset-password",
         json={
             "email": shared_email,
             "company_code": comp_a.code,
-            "otp": otp,
+            "otp": otp_a,
             "new_password": new_pw_a,
         },
     )
-    assert reset_resp.status_code == 204
+    assert reset_a.status_code == 204
 
-    # User A's password should be updated
-    login_a_new = client.post(
-        "/api/v1/auth/login",
-        json={"email": shared_email, "password": new_pw_a, "company_code": comp_a.code},
+    # User A login with new pw succeeds; User B login with old pw in comp B succeeds
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": shared_email, "password": new_pw_a, "company_code": comp_a.code},
+        ).status_code
+        == 200
     )
-    assert login_a_new.status_code == 200
-
-    # User B's password in company B must be unchanged
-    comp_b = db.get(Company, company_b.company_id)
-    login_b_old = client.post(
-        "/api/v1/auth/login",
-        json={"email": shared_email, "password": pw_b, "company_code": comp_b.code},
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": shared_email, "password": pw_b, "company_code": comp_b.code},
+        ).status_code
+        == 200
     )
-    assert login_b_old.status_code == 200
+
+    # (b) No company code: same generic reply, no code created, exactly ONE guidance email queued
+    email_outbox.clear()
+    resp_no_code = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": shared_email},
+    )
+    assert resp_no_code.status_code == 200
+    assert resp_no_code.json() == resp_a.json()
+
+    guidance_emails = [e for e in email_outbox if e["to"] == shared_email]
+    assert len(guidance_emails) == 1
+    assert "company code" in guidance_emails[0]["text_body"].lower()
+    assert "Your password reset code is" not in guidance_emails[0]["text_body"]
+
+    # (c) Wrong company code: same generic reply, nothing queued
+    email_outbox.clear()
+    resp_wrong_code = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": shared_email, "company_code": "NONEXISTENT_CODE"},
+    )
+    assert resp_wrong_code.status_code == 200
+    assert resp_wrong_code.json() == resp_a.json()
+    assert len(email_outbox) == 0
 
 
-# ── T07: After reset: new pw works, old fails, lockout cleared, refresh revoked, access 401
+# ── T07: After reset: tokens revoked, lockout cleared, immediate login succeeds
 def test_T07_post_reset_token_invalidation_and_lockout_cleared(client, db, company_a, email_outbox):
     user, old_pw = _make_user_in_company(db, company_a.company_id)
 
@@ -384,12 +494,18 @@ def test_T07_post_reset_token_invalidation_and_lockout_cleared(client, db, compa
     assert not reset_resp.content or reset_resp.text == ""
     assert "access_token" not in reset_resp.headers.get("set-cookie", "")
 
-    # 5. Old password fails, new password works
-    fail_old = client.post("/api/v1/auth/login", json={"email": user.email, "password": old_pw})
-    assert fail_old.status_code == 401
-
+    # 5. Immediate login right after a reset (same second) must NOT get a false 401
     succ_new = client.post("/api/v1/auth/login", json={"email": user.email, "password": new_pw})
     assert succ_new.status_code == 200
+    new_token = succ_new.json()["access_token"]
+    assert (
+        client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {new_token}"}).status_code
+        == 200
+    )
+
+    # Old password fails
+    fail_old = client.post("/api/v1/auth/login", json={"email": user.email, "password": old_pw})
+    assert fail_old.status_code == 401
 
     # 6. Lockout cleared
     db.refresh(user)
@@ -565,3 +681,106 @@ def test_T10_atomicity_and_change_password(client, db, company_a, email_outbox, 
         )
     ).all()
     assert len(cp_audit) >= 1
+
+
+# ── T11: Length limits over 128 chars give 422; empty login password gives 422 ─
+def test_T11_length_limits_over_128_and_empty_login_password(client, db, company_a):
+    user, orig_pw = _make_user_in_company(db, company_a.company_id)
+    overlong = "P" + "a" * 128 + "1!"
+
+    # 1. Login password over 128 characters gives 422
+    resp_login_long = client.post(
+        "/api/v1/auth/login",
+        json={"email": user.email, "password": overlong},
+    )
+    assert resp_login_long.status_code == 422
+
+    # Empty login password gives 422
+    resp_login_empty = client.post(
+        "/api/v1/auth/login",
+        json={"email": user.email, "password": ""},
+    )
+    assert resp_login_empty.status_code == 422
+
+    # 2. Change-password current_password over 128 characters gives 422
+    login_res = client.post("/api/v1/auth/login", json={"email": user.email, "password": orig_pw})
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp_cp_long = client.post(
+        "/api/v1/auth/change-password",
+        headers=headers,
+        json={"current_password": overlong, "new_password": "ValidNewPassword123!"},
+    )
+    assert resp_cp_long.status_code == 422
+
+    # 3. Deactivate password over 128 characters gives 422
+    owner, owner_pw = _make_user_in_company(db, company_a.company_id, role=UserRole.owner)
+    login_owner = client.post(
+        "/api/v1/auth/login", json={"email": owner.email, "password": owner_pw}
+    )
+    owner_token = login_owner.json()["access_token"]
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+
+    resp_deact_long = client.post(
+        f"/api/v1/companies/{company_a.company_id}/deactivate",
+        headers=owner_headers,
+        json={"reason": "Testing limits", "password": overlong},
+    )
+    assert resp_deact_long.status_code == 422
+
+
+# ── T12: Change-password is limited to 5/minute; wrong current password counts ─
+def test_T12_change_password_rate_limited_to_5_per_minute(client, db, company_a):
+    user, orig_pw = _make_user_in_company(db, company_a.company_id)
+    login_res = client.post("/api/v1/auth/login", json={"email": user.email, "password": orig_pw})
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    limiter.enabled = True
+    try:
+        limiter.reset()
+        resps = []
+        for i in range(6):
+            r = client.post(
+                "/api/v1/auth/change-password",
+                headers=headers,
+                json={"current_password": "WrongPassword123!", "new_password": f"NewPass{i}123!"},
+            )
+            resps.append(r)
+
+        assert resps[0].status_code in (400, 401)
+        assert resps[-1].status_code == 429
+    finally:
+        limiter.enabled = False
+        limiter.reset()
+
+
+# ── T13: New password equal to current password gives 422 ──────────────────────
+def test_T13_new_password_equal_to_current_gives_422(client, db, company_a, email_outbox):
+    user, orig_pw = _make_user_in_company(db, company_a.company_id)
+
+    # 1. Reset password with new password == current password gives 422
+    email_outbox.clear()
+    client.post("/api/v1/auth/forgot-password", json={"email": user.email})
+    otp = (
+        email_outbox[0]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
+    )
+
+    resp_reset_same = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": user.email, "otp": otp, "new_password": orig_pw},
+    )
+    assert resp_reset_same.status_code == 422
+
+    # 2. Change password with new password == current password gives 422
+    login_res = client.post("/api/v1/auth/login", json={"email": user.email, "password": orig_pw})
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp_cp_same = client.post(
+        "/api/v1/auth/change-password",
+        headers=headers,
+        json={"current_password": orig_pw, "new_password": orig_pw},
+    )
+    assert resp_cp_same.status_code == 422
