@@ -3,6 +3,7 @@ Strictly tests only; no app code modified. Red where code is missing.
 """
 
 import logging
+import time
 import uuid
 from datetime import timedelta
 
@@ -21,7 +22,12 @@ from app.modules.platform.models import AuditLog
 
 
 def _make_user_in_company(
-    db, company_id: uuid.UUID, *, email: str | None = None, is_active: bool = True
+    db,
+    company_id: uuid.UUID,
+    *,
+    email: str | None = None,
+    is_active: bool = True,
+    role: UserRole = UserRole.employee,
 ) -> tuple[User, str]:
     pw = "ValidPassword123!"
     if email is None:
@@ -30,7 +36,7 @@ def _make_user_in_company(
         company_id=company_id,
         email=email,
         hashed_password=hash_password(pw),
-        role=UserRole.employee,
+        role=role,
         is_active=is_active,
     )
     db.add(user)
@@ -94,45 +100,31 @@ def test_T01_forgot_password_uniform_response(client, db, company_a, monkeypatch
             f"{label} content-type differs from active"
         )
 
-    # Spy assertion: assert both paths run the same steps (lookup, Redis store, email queue)
-    steps_executed: dict[str, list[str]] = {"active": [], "unknown": []}
+    # Assert that for existing, unknown and ineligible emails the HTTP handler performs the same
+    # steps (per-account counter, then exactly one enqueue of the reset-request task).
+    from app.workers.tasks.identity import process_password_reset_request
 
-    orig_find = id_svc.UserRepository.find_by_email
-    orig_store = id_svc.generate_and_store_otp
-    orig_send = id_svc.send_email_task.delay
+    enqueue_calls: list[tuple[str, str | None]] = []
 
-    current_tag = "active"
+    def fake_delay(email: str, company_code: str | None = None):
+        enqueue_calls.append((email, company_code))
 
-    def spy_find(self, *args, **kwargs):
-        steps_executed[current_tag].append("lookup")
-        return orig_find(self, *args, **kwargs)
+    monkeypatch.setattr(process_password_reset_request, "delay", fake_delay)
 
-    def spy_store(*args, **kwargs):
-        steps_executed[current_tag].append("redis_store")
-        return orig_store(*args, **kwargs)
+    emails_to_test = [
+        ("existing", user_active.email),
+        ("unknown", f"probe-unknown-{uuid.uuid4().hex[:6]}@example.com"),
+        ("ineligible_inactive", user_inactive.email),
+    ]
 
-    def spy_send(*args, **kwargs):
-        steps_executed[current_tag].append("email_queue")
-        return orig_send(*args, **kwargs)
-
-    monkeypatch.setattr(id_svc.UserRepository, "find_by_email", spy_find)
-    monkeypatch.setattr(id_svc, "generate_and_store_otp", spy_store)
-    monkeypatch.setattr(id_svc.send_email_task, "delay", spy_send)
-
-    current_tag = "active"
-    client.post("/api/v1/auth/forgot-password", json={"email": user_active.email})
-
-    current_tag = "unknown"
-    client.post(
-        "/api/v1/auth/forgot-password",
-        json={"email": f"spy-unknown-{uuid.uuid4().hex[:6]}@example.com"},
-    )
-
-    # To eliminate timing side-channels, unknown email must execute identical pipeline
-    assert steps_executed["unknown"] == steps_executed["active"], (
-        f"Pipeline steps differ: unknown executed {steps_executed['unknown']}, "
-        f"active executed {steps_executed['active']}"
-    )
+    for label, target_email in emails_to_test:
+        del enqueue_calls[:]
+        r = client.post("/api/v1/auth/forgot-password", json={"email": target_email})
+        assert r.status_code == 200, f"{label} expected 200"
+        assert len(enqueue_calls) == 1, (
+            f"{label} expected exactly one enqueue call, got {len(enqueue_calls)}"
+        )
+        assert enqueue_calls[0][0] == target_email, f"{label} enqueued wrong email"
 
 
 # ── T02a: Per-IP limit 3/hour ─────────────────────────────────────────────────
@@ -159,21 +151,49 @@ def test_T02a_rate_limits_per_ip(client):
 
 
 # ── T02b: Per-ACCOUNT limit 3/hour reached from different client IPs ──────────
-def test_T02b_rate_limits_per_account(client, db, company_a, email_outbox, monkeypatch):
+def test_T02b_rate_limits_per_account(db, company_a, email_outbox, monkeypatch):
+    from fastapi.testclient import TestClient
+
     from app.core.otp import verify_otp
+    from app.db.session import get_db
+    from app.main import app as fastapi_app
+
+    def _override_get_db():
+        try:
+            yield db
+        except Exception:
+            db.rollback()
+            raise
+
+    fastapi_app.dependency_overrides[get_db] = _override_get_db
+    # TestClient with peer IP 127.0.0.1 so X-Forwarded-For is evaluated by trusted proxies
+    client = TestClient(fastapi_app, client=("127.0.0.1", 50000))
 
     user, _ = _make_user_in_company(db, company_a.company_id)
     email_outbox.clear()
 
     # Configure trusted proxies so varying the X-Forwarded-For header varies the client IP
-    monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["127.0.0.1/32", "testclient"])
+    monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["127.0.0.1/32"])
 
     limiter.enabled = True
     try:
         limiter.reset()
 
-        # Per-account limit: 3/hour across different IPs.
-        # IP is varied via X-Forwarded-For: 198.51.100.{10+i}
+        # Step 1: Prove client IP really varies: send 3 requests for 3 DIFFERENT emails
+        # from 3 different IPs and assert none gets 429 (proving the IP varies and IP rate
+        # limit is not tripped).
+        for i in range(3):
+            r_diff = client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": f"diff-user-{i}-{uuid.uuid4().hex[:6]}@example.com"},
+                headers={"X-Forwarded-For": f"198.51.100.{100 + i}"},
+            )
+            assert r_diff.status_code == 200, (
+                f"Expected 200 for varying IP probe {i}, got {r_diff.status_code}"
+            )
+
+        # Step 2: Now run the per-account assertions with 4 requests for the SAME user email
+        # across different IPs
         account_resps = []
         codes_sent = []
         for i in range(4):
@@ -197,13 +217,14 @@ def test_T02b_rate_limits_per_account(client, db, company_a, email_outbox, monke
         assert len(codes_sent) == 3, f"Expected 3 codes across 4 requests, got {len(codes_sent)}"
 
         # 4th request did not generate a new code (latest code remains the 3rd one)
-        assert verify_otp(user.email, codes_sent[2]) is True
+        assert verify_otp(user.email, codes_sent[2], company_id=user.company_id) is True
 
         # Account is not locked
         db.refresh(user)
         assert user.failed_attempts == 0
         assert user.locked_until is None
     finally:
+        fastapi_app.dependency_overrides.clear()
         limiter.enabled = False
         limiter.reset()
 
@@ -221,7 +242,7 @@ def test_T03_code_hash_ttl_single_use_and_replacement(client, db, company_a, ema
         email_outbox[0]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
     )
 
-    otp_key = _otp_key(user.email)
+    otp_key = _otp_key(user.email, company_id=user.company_id)
     raw_in_redis = r_client.get(otp_key)
     assert raw_in_redis is not None
 
@@ -293,19 +314,20 @@ def test_T04_five_wrong_tries_exhaust_code_without_account_lock(
             )
             assert r.status_code == 400
 
-    # Structured log check: emits warning log with reason code, without OTP or email
-    otp_warning_logs = [
+    # Structured log check: assert a structured record on logger "app.security"
+    # with record.event and record.reason, email_hash present, raw email,
+    # code and password absent.
+    security_records = [
         rec
         for rec in caplog.records
-        if rec.levelno == logging.WARNING
-        and (
-            "otp" in rec.getMessage().lower()
-            or (hasattr(rec, "reason") and "otp" in str(rec.reason).lower())
-        )
+        if rec.name == "app.security" and rec.levelno == logging.WARNING
     ]
-    assert len(otp_warning_logs) >= 1
-    for rec in otp_warning_logs:
-        msg = rec.getMessage()
+    assert len(security_records) >= 1, "Expected warning records on logger app.security"
+    for rec in security_records:
+        assert getattr(rec, "event", None) == "password_reset_failed"
+        assert getattr(rec, "reason", None) in ("wrong_code", "exhausted", "missing_or_expired")
+        assert getattr(rec, "email_hash", None) is not None
+        msg = f"{rec.getMessage()} {rec.__dict__}"
         assert wrong_code not in msg
         assert otp not in msg
         assert user.email not in msg
@@ -374,7 +396,7 @@ def test_T05_validation_malformed_inputs_and_weak_password_preserves_code(
     # Verify that the code remains usable after 422 errors
     r_valid = client.post(
         "/api/v1/auth/reset-password",
-        json={"email": user.email, "otp": otp, "new_password": "ValidPassword123!"},
+        json={"email": user.email, "otp": otp, "new_password": "BrandNewValidPass123!"},
     )
     assert r_valid.status_code == 204
 
@@ -471,6 +493,9 @@ def test_T07_post_reset_token_invalidation_and_lockout_cleared(client, db, compa
     me_resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {access_token}"})
     assert me_resp.status_code == 200
 
+    # Ensure integer-second separation between initial token creation and password reset
+    time.sleep(1.05)
+
     # 2. Simulate account locked out
     user.failed_attempts = 5
     user.locked_until = utcnow() + timedelta(minutes=15)
@@ -494,7 +519,12 @@ def test_T07_post_reset_token_invalidation_and_lockout_cleared(client, db, compa
     assert not reset_resp.content or reset_resp.text == ""
     assert "access_token" not in reset_resp.headers.get("set-cookie", "")
 
-    # 5. Immediate login right after a reset (same second) must NOT get a false 401
+    # 5. Lockout cleared by reset
+    db.refresh(user)
+    assert user.failed_attempts == 0
+    assert user.locked_until is None
+
+    # 6. Immediate login right after a reset (same second) must NOT get a false 401
     succ_new = client.post("/api/v1/auth/login", json={"email": user.email, "password": new_pw})
     assert succ_new.status_code == 200
     new_token = succ_new.json()["access_token"]
@@ -506,11 +536,6 @@ def test_T07_post_reset_token_invalidation_and_lockout_cleared(client, db, compa
     # Old password fails
     fail_old = client.post("/api/v1/auth/login", json={"email": user.email, "password": old_pw})
     assert fail_old.status_code == 401
-
-    # 6. Lockout cleared
-    db.refresh(user)
-    assert user.failed_attempts == 0
-    assert user.locked_until is None
 
     # 7. Refresh token revoked
     ref_resp = client.post("/api/v1/auth/refresh", cookies={"refresh_token": refresh_token})
@@ -611,6 +636,9 @@ def test_T09_audit_rows_for_password_reset(client, db, company_a, email_outbox):
 # ── T10: Atomicity on failure and change-password requirements ────────────────
 def test_T10_atomicity_and_change_password(client, db, company_a, email_outbox, monkeypatch):
     user, orig_pw = _make_user_in_company(db, company_a.company_id)
+    # Log in so user has an active refresh token to revoke
+    login_init = client.post("/api/v1/auth/login", json={"email": user.email, "password": orig_pw})
+    assert login_init.status_code == 200
 
     # 1. Atomicity: if token revoke or audit write fails, password is unchanged
     email_outbox.clear()
@@ -784,3 +812,296 @@ def test_T13_new_password_equal_to_current_gives_422(client, db, company_a, emai
         json={"current_password": orig_pw, "new_password": orig_pw},
     )
     assert resp_cp_same.status_code == 422
+
+
+# ── L01: No secrets in logs ───────────────────────────────────────────────────
+# Capture ALL log output (caplog at INFO plus the app JSON formatter output) while running
+# forgot-password (code), employee invite (activation token), company approval
+# (HR admin temporary password) and a password change. Assert none of those secret
+# strings appear in any record message, args or extras, including "data".
+def test_L01_no_secrets_in_logs(client, db, company_a, email_outbox, caplog):
+    import io
+    import logging
+    from datetime import date
+
+    from app.core.logging import JSONFormatter
+    from app.modules.hr.schemas import EmployeeCreateRequest
+    from app.modules.hr.service import EmployeeService
+    from app.modules.identity.service import CompanyService
+
+    captured_stream = io.StringIO()
+    handler = logging.StreamHandler(captured_stream)
+    formatter = JSONFormatter()
+    handler.setFormatter(formatter)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+
+    caplog.clear()
+    secrets_to_check: list[str] = []
+
+    try:
+        with caplog.at_level(logging.INFO):
+            # 1. Forgot-password (code)
+            u_forgot, _ = _make_user_in_company(db, company_a.company_id)
+            email_outbox.clear()
+            r_forgot = client.post("/api/v1/auth/forgot-password", json={"email": u_forgot.email})
+            assert r_forgot.status_code == 200
+            assert len(email_outbox) >= 1
+            code = (
+                email_outbox[-1]["text_body"]
+                .split("Your password reset code is ")[1]
+                .split(".")[0]
+                .strip()
+            )
+            secrets_to_check.append(code)
+
+            # 2. Employee invite (activation token)
+            hr_user, _ = _make_user_in_company(db, company_a.company_id, role=UserRole.hr_admin)
+            emp_email = f"l01-emp-{uuid.uuid4().hex[:6]}@example.com"
+            email_outbox.clear()
+            emp_created, _ = EmployeeService(db).create_employee(
+                company_a.company_id,
+                EmployeeCreateRequest(
+                    first_name="L01",
+                    last_name="Tester",
+                    email=emp_email,
+                    hire_date=date(2026, 1, 1),
+                ),
+                actor=hr_user,
+            )
+            assert len(email_outbox) >= 1
+            # Extract activation token from link
+            body_inv = email_outbox[-1]["text_body"]
+            raw_token = body_inv.split("/activate/")[1].split(" ")[0].split("\n")[0].strip()
+            secrets_to_check.append(raw_token)
+
+            # 3. Company approval (HR admin temporary password)
+            reg_email = f"l01-comp-{uuid.uuid4().hex[:6]}@example.com"
+            client.post(
+                "/api/v1/companies/register",
+                json={
+                    "company_name": f"L01 Corp {uuid.uuid4().hex[:4]}",
+                    "company_email": reg_email,
+                },
+            )
+            comp_pending = db.scalar(select(Company).where(Company.email == reg_email))
+            super_admin, _ = _make_user_in_company(
+                db, company_a.company_id, role=UserRole.super_admin
+            )
+            email_outbox.clear()
+            CompanyService(db).approve_company(comp_pending.id, admin_id=super_admin.id)
+            assert len(email_outbox) >= 1
+            body_appr = email_outbox[-1]["text_body"]
+            # Temporary password sent in body
+            temp_pw = body_appr.split("Temporary password: ")[1].split("\n")[0].strip()
+            secrets_to_check.append(temp_pw)
+
+            # 4. Password change
+            u_change, orig_pw = _make_user_in_company(db, company_a.company_id)
+            login_res = client.post(
+                "/api/v1/auth/login", json={"email": u_change.email, "password": orig_pw}
+            )
+            token = login_res.json()["access_token"]
+            new_secret_pw = "NewSecretPassWord999!"
+            secrets_to_check.append(new_secret_pw)
+            client.post(
+                "/api/v1/auth/change-password",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"current_password": orig_pw, "new_password": new_secret_pw},
+            )
+
+        # Inspect all caplog records AND formatted stream output
+        all_records_text: list[str] = []
+        for r in caplog.records:
+            all_records_text.append(str(r.msg))
+            all_records_text.append(str(r.args))
+            all_records_text.append(str(getattr(r, "data", "")))
+            for k, v in r.__dict__.items():
+                all_records_text.append(f"{k}:{v}")
+
+        stream_output = captured_stream.getvalue()
+        combined_logs = " \n ".join(all_records_text) + " \n " + stream_output
+
+        for secret in secrets_to_check:
+            assert len(secret) >= 6
+            assert secret not in combined_logs, f"Secret string leaked in logs: {secret}"
+
+    finally:
+        root_logger.removeHandler(handler)
+
+
+# ── M01: Migration password_changed_at ────────────────────────────────────────
+# upgrade head, downgrade -1, upgrade head works and password_changed_at exists on users.
+def test_M01_migration_password_changed_at():
+    import subprocess
+
+    from sqlalchemy import inspect
+
+    from app.db.session import engine
+
+    # Run downgrade -1 then upgrade head to prove reversibility
+    res_down = subprocess.run(
+        ["./venv/bin/alembic", "downgrade", "-1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res_down.returncode == 0, (
+        f"Alembic downgrade failed:\n{res_down.stderr}\n{res_down.stdout}"
+    )
+
+    res_up = subprocess.run(
+        ["./venv/bin/alembic", "upgrade", "head"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res_up.returncode == 0, f"Alembic upgrade failed:\n{res_up.stderr}\n{res_up.stdout}"
+
+    # Verify column exists on users table in DB
+    insp = inspect(engine)
+    columns = [col["name"] for col in insp.get_columns("users")]
+    assert "password_changed_at" in columns, (
+        f"Expected password_changed_at in users table columns, got: {columns}"
+    )
+
+
+# ── New Tests for A, B, F, G ──────────────────────────────────────────────────
+def test_company_b_code_cannot_reset_company_a(client, db, company_a, email_outbox):
+    """Company-B code cannot reset company A even when A's code has expired and B's is alive."""
+    from app.modules.identity.models import Company
+
+    # User exists with same email in company A and company B
+    shared_email = f"shared-{uuid.uuid4().hex[:6]}@example.com"
+    comp_b = Company(
+        id=uuid.uuid4(),
+        name=f"Company B {uuid.uuid4().hex[:4]}",
+        code=f"CB{uuid.uuid4().hex[:4].upper()}",
+        email=f"cb-{uuid.uuid4().hex[:4]}@example.com",
+        status="active",
+        country="IN",
+        currency="INR",
+    )
+    db.add(comp_b)
+    db.commit()
+
+    u_a, _ = _make_user_in_company(db, company_a.company_id, email=shared_email)
+    u_b, _ = _make_user_in_company(db, comp_b.id, email=shared_email)
+
+    # Request reset for company B with company_code
+    email_outbox.clear()
+    r_b = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": shared_email, "company_code": comp_b.code},
+    )
+    assert r_b.status_code == 200
+    assert len(email_outbox) >= 1
+    otp_b = (
+        email_outbox[-1]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
+    )
+
+    # Attempt reset on company A (either via company_a's code or without code) using otp_b
+    company_a_obj = db.scalar(select(Company).where(Company.id == company_a.company_id))
+    resp_reset = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "email": shared_email,
+            "company_code": company_a_obj.code,
+            "otp": otp_b,
+            "new_password": "NewSecretPass123!",
+        },
+    )
+    assert resp_reset.status_code == 400
+
+
+def test_exactly_five_wrong_guesses_per_code_in_total(client, db, company_a, email_outbox):
+    """Exactly 5 wrong guesses per code in total."""
+    from app.core.otp import verify_otp_atomic
+
+    user, _ = _make_user_in_company(db, company_a.company_id)
+    email_outbox.clear()
+    client.post("/api/v1/auth/forgot-password", json={"email": user.email})
+    otp = (
+        email_outbox[0]["text_body"].split("Your password reset code is ")[1].split(".")[0].strip()
+    )
+
+    # 4 wrong guesses return (False, 'wrong_code')
+    for _ in range(4):
+        ok, reason = verify_otp_atomic(user.email, "000000", company_id=user.company_id)
+        assert ok is False
+        assert reason == "wrong_code"
+
+    # 5th wrong guess exhausts the code: returns (False, 'exhausted')
+    ok5, reason5 = verify_otp_atomic(user.email, "000000", company_id=user.company_id)
+    assert ok5 is False
+    assert reason5 == "exhausted"
+
+    # Subsequent verification with the right code now fails
+    ok_right, reason_right = verify_otp_atomic(user.email, otp, company_id=user.company_id)
+    assert ok_right is False
+    assert reason_right in ("exhausted", "missing_or_expired")
+
+
+def test_f1_counter_and_expiry_atomic_and_redis_error_handled(client, monkeypatch):
+    """F1: counter + expiry atomic (always has a TTL), and Redis errors are caught and logged."""
+    import redis
+
+    from app.core.otp import _account_req_key, check_and_increment_account_limit
+
+    test_email = f"f1-test-{uuid.uuid4().hex[:6]}@example.com"
+    count = check_and_increment_account_limit(test_email, limit=3, window_seconds=3600)
+    assert count == 1
+
+    r_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    key = _account_req_key(test_email)
+    ttl = r_client.ttl(key)
+    assert 3500 <= ttl <= 3600
+
+    # Redis error during forgot-password returns 200 (no 500)
+    def mock_incr(*args, **kwargs):
+        raise redis.RedisError("Redis connection failure simulation")
+
+    monkeypatch.setattr("app.modules.identity.router.check_and_increment_account_limit", mock_incr)
+    resp = client.post("/api/v1/auth/forgot-password", json={"email": test_email})
+    assert resp.status_code == 200
+
+
+def test_f8_celery_trace_deterministic_redaction():
+    """Builds a LogRecord named 'celery.app.trace' with data containing args and kwargs,
+    formats it through JSONFormatter, and asserts secrets are absent."""
+    import json
+    import logging
+
+    from app.core.logging import JSONFormatter
+
+    rec = logging.LogRecord(
+        name="celery.app.trace",
+        level=logging.INFO,
+        pathname="trace.py",
+        lineno=10,
+        msg="Task app.workers.tasks.email.send_email_task succeeded",
+        args=(),
+        exc_info=None,
+    )
+    rec.data = {
+        "args": ["secret-arg-val"],
+        "kwargs": {
+            "email": "user@example.com",
+            "text_body": "code 123456",
+            "password": "super-secret-password",
+        },
+        "id": "test-task-id",
+        "name": "send_email_task",
+        "runtime": 0.05,
+    }
+
+    formatter = JSONFormatter()
+    formatted = formatter.format(rec)
+    parsed = json.loads(formatted)
+
+    assert "123456" not in formatted
+    assert "super-secret-password" not in formatted
+    assert "args" not in parsed.get("data", {})
+    assert "kwargs" not in parsed.get("data", {})
+    assert parsed.get("data", {}).get("name") == "send_email_task"
+    assert parsed.get("data", {}).get("id") == "test-task-id"

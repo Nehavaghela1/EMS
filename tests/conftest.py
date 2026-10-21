@@ -156,9 +156,18 @@ def client(db):
     # failing with 429s that have nothing to do with what they're testing.
     # Dedicated coverage of the 429 behavior itself lives elsewhere and
     # resets it again first.
+    import redis
+
+    from app.core.config import settings
     from app.core.rate_limit import limiter
 
     limiter.reset()
+    try:
+        r = redis.Redis.from_url(settings.REDIS_URL)
+        for key in r.scan_iter("pwreset*"):
+            r.delete(key)
+    except Exception:
+        pass
 
     def _override_get_db():
         # Mirrors app.db.session.get_db's rollback-on-exception: this
@@ -292,6 +301,13 @@ def _isolate_email_sending(monkeypatch):
     """
     monkeypatch.setattr(
         send_email_task, "delay", lambda **kwargs: send_email_task.apply(kwargs=kwargs)
+    )
+    from app.workers.tasks.identity import process_password_reset_request
+
+    monkeypatch.setattr(
+        process_password_reset_request,
+        "delay",
+        lambda *args, **kwargs: process_password_reset_request.apply(args=args, kwargs=kwargs),
     )
     email_module.console_outbox.clear()
     yield

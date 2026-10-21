@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, EmailStr, field_validator
+from pydantic import AfterValidator, BaseModel, EmailStr, Field, field_validator, model_validator
 
 from app.core.config import settings
 from app.modules.identity.models import CompanyStatus, UserRole
@@ -108,7 +108,7 @@ class CompanyRejectRequest(BaseModel):
 
 class CompanyDeactivateRequest(BaseModel):
     reason: str
-    password: str
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class CompanyApproveResponse(BaseModel):
@@ -162,7 +162,7 @@ class AdminCompanyUpdateRequest(CompanyProfileUpdateRequest):
 # Auth
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=1, max_length=128)
     company_code: str | None = None
 
 
@@ -186,18 +186,26 @@ class UserResponse(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
+    current_password: str = Field(..., min_length=1, max_length=128)
     new_password: PasswordStr
+
+    @model_validator(mode="after")
+    def _validate_new_differs_from_current(self) -> "ChangePasswordRequest":
+        if self.new_password == self.current_password:
+            raise ValueError("New password must differ from current password.")
+        return self
 
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
+    company_code: str | None = None
 
 
 class ResetPasswordRequest(BaseModel):
     email: EmailStr
     otp: str
     new_password: PasswordStr
+    company_code: str | None = None
 
 
 class UsernameAvailabilityResponse(BaseModel):

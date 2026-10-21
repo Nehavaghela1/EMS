@@ -463,7 +463,7 @@ def test_otp_expires_after_its_ttl(client, super_admin_headers, email_outbox):
     otp_emails = [e for e in email_outbox if e["to"] == email and "reset code" in e["subject"]]
     otp = _extract_otp(otp_emails[-1]["text_body"])
 
-    otp_module._redis_client.delete(otp_module._otp_key(email))
+    otp_module._redis_client.delete(otp_module._otp_key(email, approve["company"]["id"]))
 
     resp = client.post(
         "/api/v1/auth/reset-password",

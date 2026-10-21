@@ -47,6 +47,24 @@ def get_current_user(
         raise UnauthorizedError(INVALID_TOKEN_MESSAGE)
     if user.company is None or not user.company.is_active:
         raise UnauthorizedError(INVALID_TOKEN_MESSAGE)
+
+    # F5: Invalidate tokens issued before password_changed_at.
+    # Note on the 1-second window: JWT "iat" is serialized in integer seconds.
+    # If password_changed_at is recorded within the same sub-second window as token issuance,
+    # integer comparison `int(iat) < int(password_changed_at.timestamp())` guarantees that any
+    # token issued strictly before the second in which the password changed is immediately rejected.
+    # If password_changed_at is NULL, no check is performed.
+    if user.password_changed_at is not None:
+        token_iat = payload.get("iat")
+        if token_iat is not None:
+            # iat can be a datetime (if decoded by PyJWT with options) or an int timestamp
+            iat_seconds = (
+                int(token_iat.timestamp()) if hasattr(token_iat, "timestamp") else int(token_iat)
+            )
+            pw_changed_seconds = int(user.password_changed_at.timestamp())
+            if iat_seconds < pw_changed_seconds:
+                raise UnauthorizedError(INVALID_TOKEN_MESSAGE)
+
     return user
 
 

@@ -98,10 +98,11 @@ def _send_via_console(*, to: str, subject: str, text_body: str, html_body: str) 
     console_outbox.append(
         {"to": to, "subject": subject, "text_body": text_body, "html_body": html_body}
     )
-    print(  # noqa: T201 — the deliberate dev-only "backend", not app logging
-        f"----- console email -----\nTo: {to}\nSubject: {subject}\n\n{text_body}\n"
-        "--------------------------"
-    )
+    if settings.ENVIRONMENT == "development":
+        print(  # noqa: T201 — the deliberate dev-only "backend", not app logging
+            f"----- console email -----\nTo: {to}\nSubject: {subject}\n\n{text_body}\n"
+            "--------------------------"
+        )
 
 
 def _send_via_smtp(*, to: str, subject: str, text_body: str, html_body: str) -> None:

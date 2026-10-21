@@ -1,3 +1,5 @@
+import hashlib
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -6,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.exceptions import NotFoundError
+from app.core.otp import check_and_increment_account_limit
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import limiter
 from app.db.session import get_db
@@ -38,6 +41,7 @@ from app.modules.identity.schemas import (
     UserWorkspaceResponse,
 )
 from app.modules.identity.service import AuthService, CompanyService, LocationService
+from app.workers.tasks.identity import process_password_reset_request
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -143,8 +147,10 @@ def switch_workspace(
 
 
 @router.post("/change-password", status_code=204)
+@limiter.limit("5/minute")
 def change_password(
     data: ChangePasswordRequest,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -152,12 +158,63 @@ def change_password(
 
 
 @router.post("/forgot-password", status_code=200)
-@limiter.limit("3/hour")  # Spec 9.5 — this endpoint sends real email/OTPs
-def forgot_password(data: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
-    AuthService(db).forgot_password(data.email)
-    # Always the same body and status regardless of whether the email
-    # exists, matched more than one company, or is inactive (9.3) — the
-    # router never branches on the service call above.
+@limiter.limit("3/hour")  # Spec 9.5 — per-IP limit on sending real email/OTPs
+def forgot_password(data: ForgotPasswordRequest, request: Request):
+    """F1 & F2: Constant handler work and per-account rate limit.
+    Redis counter key sha256(lower(email)), atomic counter + expiry via pipeline, limit 3.
+    Counts every request, including unknown emails.
+    Over the limit: same reply, no email, no new code, no lockout.
+    Under limit: enqueues process_password_reset_request.
+    If enqueue raises or Redis raises: catch it, log password_reset_enqueue_failed
+    on app.security at ERROR with type(exc).__name__, return same reply.
+    """
+    sec_logger = logging.getLogger("app.security")
+    email_hash_val = hashlib.sha256(data.email.lower().strip().encode()).hexdigest()[:12]
+    req_id = getattr(request.state, "request_id", None) if hasattr(request, "state") else None
+
+    # Increment per-account counter; handle Redis errors gracefully
+    try:
+        count = check_and_increment_account_limit(data.email, limit=3, window_seconds=3600)
+    except Exception as exc:
+        sec_logger.error(
+            "Failed to increment account rate limit counter",
+            extra={
+                "event": "password_reset_enqueue_failed",
+                "email_hash": email_hash_val,
+                "request_id": req_id,
+                "error": type(exc).__name__,
+            },
+            exc_info=True,
+        )
+        return {"message": "If that email exists, a password reset code has been sent."}
+
+    if count > 3:
+        # F7: password_reset_rate_limited
+        sec_logger.warning(
+            "Password reset request rate-limited per-account",
+            extra={
+                "event": "password_reset_rate_limited",
+                "email_hash": email_hash_val,
+                "request_id": req_id,
+            },
+        )
+        return {"message": "If that email exists, a password reset code has been sent."}
+
+    # Enqueue task
+    try:
+        process_password_reset_request.delay(email=data.email, company_code=data.company_code)
+    except Exception as exc:
+        sec_logger.error(
+            "Failed to enqueue password reset task",
+            extra={
+                "event": "password_reset_enqueue_failed",
+                "email_hash": email_hash_val,
+                "request_id": req_id,
+                "error": type(exc).__name__,
+            },
+            exc_info=True,
+        )
+
     return {"message": "If that email exists, a password reset code has been sent."}
 
 

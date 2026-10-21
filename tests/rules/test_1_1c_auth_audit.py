@@ -78,20 +78,18 @@ def test_C02_wrong_password_no_audit_row_emits_warning_log(client, db, company_a
     ).all()
     assert len(logs) == 0
 
-    # Structured warning log emitted with reason code, containing neither password nor email
-    warning_records = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING
-        and (
-            "login" in r.getMessage().lower()
-            or (hasattr(r, "reason") and "credential" in str(r.reason).lower())
-        )
+    # Structured record on logger "app.security" with record.event and record.reason,
+    # email_hash present, raw email, code and password absent.
+    security_records = [
+        r for r in caplog.records if r.name == "app.security" and r.levelno == logging.WARNING
     ]
-    assert len(warning_records) >= 1
+    assert len(security_records) >= 1, "Expected warning records on logger app.security"
 
-    for rec in warning_records:
-        msg = rec.getMessage()
+    for rec in security_records:
+        assert getattr(rec, "event", None) == "login_failed"
+        assert getattr(rec, "reason", None) == "wrong_password"
+        assert getattr(rec, "email_hash", None) is not None
+        msg = f"{rec.getMessage()} {rec.__dict__}"
         assert wrong_pw not in msg
         assert user.email not in msg
 
