@@ -131,7 +131,8 @@ class UserRepository:
         """Fetch all workspaces associated with an email for the multi-tenant switcher."""
         from app.modules.hr.models import Employee, InvitationStatus
 
-        # Exclude unactivated employee rows (either linked by user_id or by email in the same company)
+        # Exclude unactivated employee rows
+        # (either linked by user_id or by email in the same company)
         unactivated_user_ids = select(Employee.user_id).where(
             Employee.user_id.is_not(None),
             Employee.invitation_status != InvitationStatus.activated,

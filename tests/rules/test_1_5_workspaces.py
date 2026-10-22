@@ -3,19 +3,17 @@
 Strictly tests first; no product code modified in this step.
 """
 
-import hashlib
 import logging
 import uuid
-from datetime import date, timedelta
+from datetime import date
 
 import pytest
 from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.core.rate_limit import limiter
-from app.core.security import create_access_token, hash_password, hash_token
-from app.core.time import utcnow
-from app.modules.hr.models import Department, Employee, EmploymentType, InvitationStatus
+from app.core.security import create_access_token, hash_password
+from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import (
     Company,
     CompanyLocation,
@@ -116,7 +114,9 @@ def test_W01_list_shows_only_usable_memberships(client, db):
     u2, _ = _create_user_in_company(db, c2.id, email.lower(), is_active=True)
 
     # Inactive company -> MUST NOT be listed
-    c_inactive = _create_company(db, name="Inactive Co", status=CompanyStatus.active, is_active=False)
+    c_inactive = _create_company(
+        db, name="Inactive Co", status=CompanyStatus.active, is_active=False
+    )
     _create_user_in_company(db, c_inactive.id, email, is_active=True)
 
     # Pending company -> MUST NOT be listed
@@ -124,15 +124,21 @@ def test_W01_list_shows_only_usable_memberships(client, db):
     _create_user_in_company(db, c_pending.id, email, is_active=True)
 
     # Rejected company -> MUST NOT be listed
-    c_rejected = _create_company(db, name="Rejected Co", status=CompanyStatus.rejected, is_active=True)
+    c_rejected = _create_company(
+        db, name="Rejected Co", status=CompanyStatus.rejected, is_active=True
+    )
     _create_user_in_company(db, c_rejected.id, email, is_active=True)
 
     # Deactivated user in active company -> MUST NOT be listed
-    c_deact_user = _create_company(db, name="Deact User Co", status=CompanyStatus.active, is_active=True)
+    c_deact_user = _create_company(
+        db, name="Deact User Co", status=CompanyStatus.active, is_active=True
+    )
     _create_user_in_company(db, c_deact_user.id, email, is_active=False)
 
     # Not-activated employee in active company -> MUST NOT be listed
-    c_unact = _create_company(db, name="Unactivated Co", status=CompanyStatus.active, is_active=True)
+    c_unact = _create_company(
+        db, name="Unactivated Co", status=CompanyStatus.active, is_active=True
+    )
     _create_user_in_company(
         db, c_unact.id, email, is_active=True, invitation_status=InvitationStatus.sent
     )
@@ -208,6 +214,7 @@ def test_W03_role_comes_from_target_account(client, db):
 
     # Token claims must reflect target user B (employee), not caller A (hr_admin)
     from app.core.security import decode_access_token
+
     claims = decode_access_token(new_token)
     assert claims["role"] == UserRole.employee.value
     assert claims["sub"] == str(uB.id)
@@ -220,7 +227,9 @@ def test_W03_role_comes_from_target_account(client, db):
 
 # ── W04: Not a member / random UUID / another tenant: identical 404 ──────────
 def test_W04_unknown_or_non_member_company_identical_404(client, db, company_a, company_b):
-    userA, _ = _create_user_in_company(db, company_a.company_id, f"u-{uuid.uuid4().hex[:6]}@example.com")
+    userA, _ = _create_user_in_company(
+        db, company_a.company_id, f"u-{uuid.uuid4().hex[:6]}@example.com"
+    )
     headersA = _make_headers(userA.id, company_a.company_id, userA.role)
 
     # Random UUID
@@ -296,7 +305,9 @@ def test_W05_ineligible_targets_identical_404(client, db):
 
 # ── W06: Malformed or missing company_id gives 422; extra fields ignored ──────
 def test_W06_validation_error_and_extra_fields(client, db, company_a):
-    user, _ = _create_user_in_company(db, company_a.company_id, f"u-{uuid.uuid4().hex[:6]}@example.com")
+    user, _ = _create_user_in_company(
+        db, company_a.company_id, f"u-{uuid.uuid4().hex[:6]}@example.com"
+    )
     headers = _make_headers(user.id, company_a.company_id, user.role)
 
     # Missing company_id
@@ -313,14 +324,20 @@ def test_W06_validation_error_and_extra_fields(client, db, company_a):
     r3 = client.post(
         "/api/v1/auth/switch-workspace",
         headers=headers,
-        json={"company_id": str(company_a.company_id), "role": "super_admin", "user_id": str(uuid.uuid4())},
+        json={
+            "company_id": str(company_a.company_id),
+            "role": "super_admin",
+            "user_id": str(uuid.uuid4()),
+        },
     )
     assert r3.status_code == 200
 
 
 # ── W07: No token / expired token / deactivated caller gives 401 ──────────────
 def test_W07_unauthenticated_or_expired_or_deactivated_caller_gives_401(client, db, company_a):
-    user, _ = _create_user_in_company(db, company_a.company_id, f"u-{uuid.uuid4().hex[:6]}@example.com")
+    user, _ = _create_user_in_company(
+        db, company_a.company_id, f"u-{uuid.uuid4().hex[:6]}@example.com"
+    )
 
     # No token
     r_no_token = client.post(
@@ -329,8 +346,6 @@ def test_W07_unauthenticated_or_expired_or_deactivated_caller_gives_401(client, 
     assert r_no_token.status_code == 401
 
     # Expired token
-    from app.core.config import settings
-
     with pytest.MonkeyPatch.context() as m:
         m.setattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", -5)
         expired_token = create_access_token(
@@ -375,7 +390,7 @@ def test_W08_rate_limits_on_switch_and_create(client, db, company_a):
                 headers=headers,
                 json={"company_id": str(company_a.company_id)},
             )
-            assert res.status_code == 200, f"switch #{i+1} failed with {res.status_code}"
+            assert res.status_code == 200, f"switch #{i + 1} failed with {res.status_code}"
 
         res_21 = client.post(
             "/api/v1/auth/switch-workspace",
@@ -390,14 +405,20 @@ def test_W08_rate_limits_on_switch_and_create(client, db, company_a):
             res_c = client.post(
                 "/api/v1/companies/workspaces",
                 headers=headers,
-                json={"company_name": f"Rate Co {j}", "company_email": f"rate-{j}-{uuid.uuid4().hex[:6]}@example.com"},
+                json={
+                    "company_name": f"Rate Co {j}",
+                    "company_email": f"rate-{j}-{uuid.uuid4().hex[:6]}@example.com",
+                },
             )
-            assert res_c.status_code == 201, f"create #{j+1} failed with {res_c.status_code}"
+            assert res_c.status_code == 201, f"create #{j + 1} failed with {res_c.status_code}"
 
         res_c_6 = client.post(
             "/api/v1/companies/workspaces",
             headers=headers,
-            json={"company_name": "Rate Co 6", "company_email": f"rate-6-{uuid.uuid4().hex[:6]}@example.com"},
+            json={
+                "company_name": "Rate Co 6",
+                "company_email": f"rate-6-{uuid.uuid4().hex[:6]}@example.com",
+            },
         )
         assert res_c_6.status_code == 429
     finally:
@@ -620,7 +641,9 @@ def test_W12_create_workspace_role_guards_validation_and_seeding(client, db, com
 
     # Verify employee record has position "HR Admin / Org Head" and employee code "ADMIN-001"
     emp_in_new = db.scalar(
-        select(Employee).where(Employee.company_id == new_comp_id, Employee.user_id == user_in_new.id)
+        select(Employee).where(
+            Employee.company_id == new_comp_id, Employee.user_id == user_in_new.id
+        )
     )
     assert emp_in_new is not None
     assert emp_in_new.position == "HR Admin / Org Head"
@@ -800,6 +823,7 @@ def test_W16_journey_create_switch_create_emp_switch_back(client, db, company_a)
     )
     assert res_b.status_code == 201
     compB_id = res_b.json()["company"]["id"]
+    assert compB_id is not None
     tokenB = res_b.json()["access_token"]
     headersB = {"Authorization": f"Bearer {tokenB}"}
 

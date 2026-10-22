@@ -532,8 +532,9 @@ class AuthService:
     ) -> tuple[TokenResponse, str]:
         """Switch context to another workspace associated with the same email.
         Enforces failure-order checklist:
-        authenticate -> load target user row -> check company status, user active AND activated, email match
-        -> only then create tokens -> write audit -> single commit in the service.
+        authenticate -> load target user row -> check company status,
+        user active AND activated, email match -> only then create tokens
+        -> write audit -> single commit in the service.
         All denials return uniform 404 NotFoundError with structured logging on app.security.
         """
         import hashlib
