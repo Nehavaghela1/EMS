@@ -24,6 +24,7 @@ from app.modules.identity.schemas import (
     CompanyDetailResponse,
     CompanyLocationCreate,
     CompanyLocationResponse,
+    CompanyLocationUpdate,
     CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
     CompanyRejectRequest,
@@ -335,6 +336,61 @@ def update_my_company(
     return CompanyService(db).update_my_company(user.company_id, data)
 
 
+# --- Locations (defined before /{company_id} routes to prevent path capture) ---
+@companies_router.get("/locations", response_model=list[CompanyLocationResponse])
+def list_locations(
+    is_active: bool | None = None,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    return LocationService(db).list_locations(user.company_id, is_active=is_active)
+
+
+@companies_router.post("/locations", response_model=CompanyLocationResponse, status_code=201)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def create_location(
+    request: Request,
+    data: CompanyLocationCreate,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+):
+    return LocationService(db).create_location(user.company_id, data, actor=user)
+
+
+@companies_router.put("/locations/{location_id}", response_model=CompanyLocationResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def update_location(
+    request: Request,
+    location_id: uuid.UUID,
+    data: CompanyLocationUpdate,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+):
+    return LocationService(db).update_location(user.company_id, location_id, data, actor=user)
+
+
+@companies_router.delete("/locations/{location_id}", response_model=CompanyLocationResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def deactivate_location(
+    request: Request,
+    location_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+):
+    return LocationService(db).deactivate_location(user.company_id, location_id, actor=user)
+
+
+@companies_router.post("/locations/{location_id}/set-head-office", response_model=CompanyLocationResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def set_head_office(
+    request: Request,
+    location_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+):
+    return LocationService(db).set_head_office(user.company_id, location_id, actor=user)
+
+
 @companies_router.get("/{company_id}", response_model=CompanyDetailResponse)
 def get_company_detail(
     company_id: uuid.UUID,
@@ -407,24 +463,6 @@ def reactivate_company(
 ):
     company = CompanyService(db).reactivate_company(company_id=company_id, actor=admin)
     return CompanyResponse.model_validate(company)
-
-
-# --- Locations ---
-@companies_router.get("/locations", response_model=list[CompanyLocationResponse])
-def list_locations(
-    db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
-):
-    return LocationService(db).list_locations(user.company_id)
-
-
-@companies_router.post("/locations", response_model=CompanyLocationResponse, status_code=201)
-def create_location(
-    data: CompanyLocationCreate,
-    db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
-):
-    return LocationService(db).create_location(user.company_id, data)
 
 
 # --- Users ---

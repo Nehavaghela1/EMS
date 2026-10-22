@@ -27,8 +27,24 @@ from app.db.base import TenantBase, TimeStampedBase
 class CompanyLocation(TenantBase):
     __tablename__ = "company_locations"
     __table_args__ = (
-        Index("uq_company_locations_company_id_name", "company_id", "name", unique=True),
-        Index("uq_company_locations_company_id_code", "company_id", "code", unique=True),
+        Index(
+            "uq_company_locations_primary_head_office",
+            "company_id",
+            unique=True,
+            postgresql_where=text("is_primary = true"),
+        ),
+        Index(
+            "uq_company_locations_lower_name",
+            "company_id",
+            text("lower(name)"),
+            unique=True,
+        ),
+        Index(
+            "uq_company_locations_lower_code",
+            "company_id",
+            text("lower(code)"),
+            unique=True,
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -36,9 +52,10 @@ class CompanyLocation(TenantBase):
     address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
     state: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    country: Mapped[str] = mapped_column(String(100), nullable=False, default="India")
+    country: Mapped[str] = mapped_column(String(100), nullable=False, default="IN")
     postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # Geofencing — all nullable so existing locations continue to work (no
     # geofence enforcement when latitude/longitude are NULL).
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)

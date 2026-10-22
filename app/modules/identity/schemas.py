@@ -361,9 +361,58 @@ class CompanyLocationCreate(BaseModel):
     address_line1: str | None = None
     city: str | None = None
     state: str | None = None
-    country: str = "India"
+    country: str = "IN"
     postal_code: str | None = None
     is_primary: bool = False
+    latitude: float | None = None
+    longitude: float | None = None
+    geofence_radius_meters: int = 150
+    is_remote_exempt: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        s = v.strip()
+        if not (1 <= len(s) <= 100):
+            raise ValueError("Location name must be between 1 and 100 characters.")
+        return s
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not re.fullmatch(r"^[A-Z0-9-]{2,20}$", s):
+            raise ValueError("Location code must be 2 to 20 letters, digits or hyphens.")
+        return s
+
+    @field_validator("country")
+    @classmethod
+    def validate_country(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not re.fullmatch(r"^[A-Z]{2}$", s):
+            raise ValueError("Country must be a 2-letter ISO code.")
+        return s
+
+    @field_validator("geofence_radius_meters")
+    @classmethod
+    def validate_radius(cls, v: int) -> int:
+        if not (10 <= v <= 5000):
+            raise ValueError("Geofence radius must be between 10 and 5000 metres.")
+        return v
+
+    @model_validator(mode="after")
+    def validate_coordinates(self) -> "CompanyLocationCreate":
+        lat = self.latitude
+        lon = self.longitude
+        if (lat is None and lon is not None) or (lat is not None and lon is None):
+            raise ValueError("Latitude and longitude must be given together.")
+        if lat is not None:
+            if not (-90.0 <= lat <= 90.0):
+                raise ValueError("Latitude must be between -90 and 90 degrees.")
+        if lon is not None:
+            if not (-180.0 <= lon <= 180.0):
+                raise ValueError("Longitude must be between -180 and 180 degrees.")
+        return self
 
 
 class CompanyLocationUpdate(BaseModel):
@@ -375,6 +424,63 @@ class CompanyLocationUpdate(BaseModel):
     country: str | None = None
     postal_code: str | None = None
     is_primary: bool | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    geofence_radius_meters: int | None = None
+    is_remote_exempt: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not (1 <= len(s) <= 100):
+            raise ValueError("Location name must be between 1 and 100 characters.")
+        return s
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip().upper()
+        if not re.fullmatch(r"^[A-Z0-9-]{2,20}$", s):
+            raise ValueError("Location code must be 2 to 20 letters, digits or hyphens.")
+        return s
+
+    @field_validator("country")
+    @classmethod
+    def validate_country(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip().upper()
+        if not re.fullmatch(r"^[A-Z]{2}$", s):
+            raise ValueError("Country must be a 2-letter ISO code.")
+        return s
+
+    @field_validator("geofence_radius_meters")
+    @classmethod
+    def validate_radius(cls, v: int | None) -> int | None:
+        if v is None:
+            return None
+        if not (10 <= v <= 5000):
+            raise ValueError("Geofence radius must be between 10 and 5000 metres.")
+        return v
+
+    @model_validator(mode="after")
+    def validate_coordinates(self) -> "CompanyLocationUpdate":
+        lat = self.latitude
+        lon = self.longitude
+        if (lat is None and lon is not None) or (lat is not None and lon is None):
+            raise ValueError("Latitude and longitude must be given together.")
+        if lat is not None:
+            if not (-90.0 <= lat <= 90.0):
+                raise ValueError("Latitude must be between -90 and 90 degrees.")
+        if lon is not None:
+            if not (-180.0 <= lon <= 180.0):
+                raise ValueError("Longitude must be between -180 and 180 degrees.")
+        return self
 
 
 class CompanyLocationResponse(BaseModel):
@@ -388,5 +494,10 @@ class CompanyLocationResponse(BaseModel):
     country: str
     postal_code: str | None
     is_primary: bool
+    is_active: bool
+    latitude: float | None
+    longitude: float | None
+    geofence_radius_meters: int
+    is_remote_exempt: bool
     created_at: datetime
     updated_at: datetime

@@ -52,6 +52,8 @@ def _auth_headers(user: User) -> dict[str, str]:
 @pytest.fixture
 def company_setup(db: Session):
     """Provisions Company A with Owner, HR Admin, Employee, and Head Office."""
+    from app.db.rls import bind_tenant_to_session
+
     cid = uuid.uuid4()
     company = Company(
         id=cid,
@@ -64,6 +66,8 @@ def company_setup(db: Session):
     )
     db.add(company)
     db.flush()
+
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
 
     head_office = CompanyLocation(
         id=uuid.uuid4(),
@@ -120,6 +124,8 @@ def company_setup(db: Session):
 @pytest.fixture
 def company_b_setup(db: Session):
     """Provisions Company B for cross-tenant isolation testing."""
+    from app.db.rls import bind_tenant_to_session
+
     cid = uuid.uuid4()
     company = Company(
         id=cid,
@@ -132,6 +138,8 @@ def company_b_setup(db: Session):
     )
     db.add(company)
     db.flush()
+
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
 
     head_office_b = CompanyLocation(
         id=uuid.uuid4(),
@@ -250,11 +258,12 @@ def test_R02_cross_company_location_returns_404(client: TestClient, company_setu
 def test_R02_list_locations_scoped_to_own_company(client: TestClient, company_setup, company_b_setup):
     """Rule 2: List shows only locations belonging to caller's company."""
     headers_a = _auth_headers(company_setup["owner"])
+    loc_b_id = str(company_b_setup["head_office"].id)
     res = client.get("/api/v1/companies/locations", headers=headers_a)
     assert res.status_code == 200
     ids_a = {item["id"] for item in res.json()}
     assert str(company_setup["head_office"].id) in ids_a
-    assert str(company_b_setup["head_office"].id) not in ids_a
+    assert loc_b_id not in ids_a
 
 
 def test_R02_employee_cannot_be_assigned_to_other_company_location(client: TestClient, company_setup, company_b_setup):
@@ -556,20 +565,26 @@ def test_R07_single_commit_owned_by_service(client: TestClient, monkeypatch, com
     assert commit_counter.call_count == 1
 
 
-def test_R07_forced_failure_leaves_no_rows_and_no_audit(client: TestClient, db: Session, monkeypatch, company_setup):
+def test_R07_forced_failure_leaves_no_rows_and_no_audit(db: Session, monkeypatch, company_setup):
     """Rule 7: Rollback on any failure leaves no location and no audit log."""
-    headers = _auth_headers(company_setup["owner"])
+    from app.modules.identity.schemas import CompanyLocationCreate
     code = f"FAIL-{uuid.uuid4().hex[:4].upper()}"
 
     def boom(*args, **kwargs):
         raise RuntimeError("Simulated unexpected storage error")
 
     # Monkeypatch AuditService to fail after location creation but before commit
-    from app.core.audit import AuditService
+    from app.modules.platform.service import AuditService
     monkeypatch.setattr(AuditService, "record", boom)
 
-    res = client.post("/api/v1/companies/locations", json={"name": "Doomed", "code": code, "country": "IN"}, headers=headers)
-    assert res.status_code == 500
+    service = LocationService(db)
+    create_data = CompanyLocationCreate(
+        name="Doomed Branch",
+        code=code,
+        country="IN",
+    )
+    with pytest.raises(RuntimeError, match="Simulated unexpected storage error"):
+        service.create_location(company_setup["company"].id, create_data, actor=company_setup["owner"])
 
     db.expire_all()
     loc = db.query(CompanyLocation).filter_by(company_id=company_setup["company"].id, code=code).first()
@@ -654,13 +669,62 @@ def test_R09_writes_rate_limited_per_user(client: TestClient, company_setup):
 # Rule 10 Tests: Migration Round Trip & Duplicate Loud Failure
 # ==============================================================================
 
-def test_R10_migration_round_trip_and_safety():
+def test_R10_migration_round_trip_and_safety(engine):
     """Rule 10: Migration applies cleanly and downgrade works with sys.executable & settings."""
     import subprocess
+    from sqlalchemy import inspect
+
+    assert settings.TEST_MIGRATION_URL is not None, "TEST_MIGRATION_URL must be configured"
+
     repo_root = Path(__file__).resolve().parents[2]
+    migration_file = repo_root / "alembic/versions/1a2b3c4d5e6f_update_company_locations_rules_1_6.py"
+
+    # Read down_revision dynamically from migration file
+    down_rev = None
+    with open(migration_file) as f:
+        for line in f:
+            if line.startswith("down_revision"):
+                down_rev = line.split("=")[1].strip().strip('"').strip("'")
+                break
+    assert down_rev is not None, "Could not determine down_revision"
+
     env = {**os.environ, "ALEMBIC_DATABASE_URL": settings.TEST_MIGRATION_URL}
 
-    # Verify migration status / check
-    cmd_check = [sys.executable, "-m", "alembic", "check"]
-    proc = subprocess.run(cmd_check, cwd=repo_root, env=env, capture_output=True, text=True)
-    assert proc.returncode in (0, 1), proc.stderr
+    # Downgrade to down_revision, assert column gone, then upgrade head in try/finally
+    try:
+        res_down = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", down_rev],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res_down.returncode == 0, (
+            f"Alembic downgrade failed:\nstdout: {res_down.stdout}\nstderr: {res_down.stderr}"
+        )
+
+        insp = inspect(engine)
+        cols_after_down = [col["name"] for col in insp.get_columns("company_locations")]
+        assert "is_active" not in cols_after_down, (
+            f"Expected is_active to be removed, got columns: {cols_after_down}"
+        )
+    finally:
+        res_up = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res_up.returncode == 0, (
+            f"Alembic upgrade failed:\nstdout: {res_up.stdout}\nstderr: {res_up.stderr}"
+        )
+
+    # Verify column exists on company_locations table in DB
+    insp = inspect(engine)
+    columns = [col["name"] for col in insp.get_columns("company_locations")]
+    assert "is_active" in columns, (
+        f"Expected is_active in company_locations table columns, got: {columns}"
+    )
