@@ -1058,33 +1058,37 @@ def test_W22_rate_limit_per_user_verified_token(client, db, company_a):
     h1 = _make_headers(u1.id, company_a.company_id, u1.role)
     h2 = _make_headers(u2.id, company_a.company_id, u2.role)
 
-    # Clean rate limiter
-    limiter.reset()
+    limiter.enabled = True
+    try:
+        limiter.reset()
 
-    # User 1 makes 20 calls from IP 1.2.3.4
-    for i in range(20):
-        res = client.post(
+        # User 1 makes 20 calls from IP 1.2.3.4
+        for i in range(20):
+            res = client.post(
+                "/api/v1/auth/switch-workspace",
+                headers={**h1, "X-Forwarded-For": "1.2.3.4"},
+                json={"company_id": str(company_a.company_id)},
+            )
+            assert res.status_code == 200, f"u1 switch #{i + 1} failed"
+
+        # User 1's 21st call from a DIFFERENT IP (5.6.7.8) must be 429 (shared counter per user)
+        res_u1_diff_ip = client.post(
             "/api/v1/auth/switch-workspace",
-            headers={**h1, "X-Forwarded-For": "1.2.3.4"},
+            headers={**h1, "X-Forwarded-For": "5.6.7.8"},
             json={"company_id": str(company_a.company_id)},
         )
-        assert res.status_code == 200, f"u1 switch #{i+1} failed"
+        assert res_u1_diff_ip.status_code == 429
 
-    # User 1's 21st call from a DIFFERENT IP (5.6.7.8) must be 429 (shared counter per user)
-    res_u1_diff_ip = client.post(
-        "/api/v1/auth/switch-workspace",
-        headers={**h1, "X-Forwarded-For": "5.6.7.8"},
-        json={"company_id": str(company_a.company_id)},
-    )
-    assert res_u1_diff_ip.status_code == 429
-
-    # User 2 on the SAME initial IP (1.2.3.4) gets their OWN separate 20 quota (not 429)
-    res_u2 = client.post(
-        "/api/v1/auth/switch-workspace",
-        headers={**h2, "X-Forwarded-For": "1.2.3.4"},
-        json={"company_id": str(company_a.company_id)},
-    )
-    assert res_u2.status_code == 200
+        # User 2 on the SAME initial IP (1.2.3.4) gets their OWN separate 20 quota (not 429)
+        res_u2 = client.post(
+            "/api/v1/auth/switch-workspace",
+            headers={**h2, "X-Forwarded-For": "1.2.3.4"},
+            json={"company_id": str(company_a.company_id)},
+        )
+        assert res_u2.status_code == 200
+    finally:
+        limiter.enabled = False
+        limiter.reset()
 
 
 # ── W23: Invalid currency and invalid subdomain give 422 ──────────────────────

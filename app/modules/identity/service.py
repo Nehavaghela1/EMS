@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -518,10 +518,13 @@ class AuthService:
 
     def get_user_workspaces(self, email: str) -> list[dict]:
         """Fetch all workspaces associated with the user's email.
-        Uses platform-admin context for cross-tenant discovery of memberships.
+        Uses platform-admin context for cross-tenant discovery of memberships,
+        and guarantees restoration of the session's prior tenant context.
         """
-        bind_tenant_to_session(self.db, company_id=None, is_platform_admin=True)
-        return self.user_repo.get_workspaces_by_email(email)
+        from app.db.rls import elevate_tenant_context
+
+        with elevate_tenant_context(self.db):
+            return self.user_repo.get_workspaces_by_email(email)
 
     def switch_workspace(
         self,
@@ -539,90 +542,38 @@ class AuthService:
         """
         import hashlib
 
-        from app.modules.hr.models import Employee, InvitationStatus
+        from app.db.rls import elevate_tenant_context
 
         sec_logger = logging.getLogger("app.security")
         email_hash_val = hashlib.sha256(email.lower().strip().encode()).hexdigest()[:12]
 
-        users = self.user_repo.find_by_email(email)
-        target_user = next((u for u in users if u.company_id == target_company_id), None)
+        with elevate_tenant_context(self.db):
+            memberships = self.user_repo.find_usable_memberships(
+                email, company_id=target_company_id
+            )
 
-        # 1. Target user membership and active check
-        if not target_user or not target_user.is_active:
+        if not memberships:
             sec_logger.warning(
                 "Workspace switch denied",
                 extra={
                     "event": "workspace_switch_failed",
-                    "reason": "user_not_found_or_inactive",
+                    "reason": "workspace_not_found_or_ineligible",
                     "email_hash": email_hash_val,
                 },
             )
             raise NotFoundError("Workspace not found.")
 
-        # 2. Company exists, is_active, and active status check
-        target_company = self.company_repo.get_by_id(target_company_id)
-        if (
-            not target_company
-            or not target_company.is_active
-            or target_company.status != CompanyStatus.active
-        ):
-            sec_logger.warning(
-                "Workspace switch denied",
-                extra={
-                    "event": "workspace_switch_failed",
-                    "reason": "company_inactive_or_ineligible",
-                    "email_hash": email_hash_val,
-                },
-            )
-            raise NotFoundError("Workspace not found.")
+        target_user, target_company = memberships[0]
 
-        # 3. Check if target user is activated (if employee record exists)
-        bind_tenant_to_session(self.db, company_id=None, is_platform_admin=True)
-        employee = self.db.scalar(
-            select(Employee).where(
-                Employee.company_id == target_company_id,
-                (Employee.user_id == target_user.id)
-                | (func.lower(Employee.email) == target_user.email.lower()),
-            )
-        )
-        if employee and employee.invitation_status != InvitationStatus.activated:
-            sec_logger.warning(
-                "Workspace switch denied",
-                extra={
-                    "event": "workspace_switch_failed",
-                    "reason": "user_not_activated",
-                    "email_hash": email_hash_val,
-                },
-            )
-            raise NotFoundError("Workspace not found.")
-
-        # 4. Email match
-        if target_user.email.strip().lower() != email.strip().lower():
-            sec_logger.warning(
-                "Workspace switch denied",
-                extra={
-                    "event": "workspace_switch_failed",
-                    "reason": "email_mismatch",
-                    "email_hash": email_hash_val,
-                },
-            )
-            raise NotFoundError("Workspace not found.")
-
-        # 5. Tokens issued with target user's role and company_id
+        # Tokens issued with target user's role and company_id
         access_token = create_access_token(
             sub=str(target_user.id),
             company_id=str(target_user.company_id),
             role=target_user.role.value,
         )
-        raw_refresh = generate_refresh_token()
-        self.token_repo.create(
-            user_id=target_user.id,
-            token_hash=hash_token(raw_refresh),
-            expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
-            device_info=device_info,
-        )
+        raw_refresh = self._create_refresh_token(target_user.id, device_info, commit=False)
 
-        # 6. Audit log WORKSPACE_SWITCHED
+        # Audit log WORKSPACE_SWITCHED
         actor_user = caller or target_user
         AuditService(self.db).record(
             company_id=target_user.company_id,
@@ -639,12 +590,14 @@ class AuthService:
             },
         )
 
-        # 7. Single commit in service
+        # Single commit in service
         self.db.commit()
 
         return TokenResponse(access_token=access_token, token_type="bearer"), raw_refresh
 
-    def _create_refresh_token(self, user_id: uuid.UUID, device_info: str | None) -> str:
+    def _create_refresh_token(
+        self, user_id: uuid.UUID, device_info: str | None, commit: bool = True
+    ) -> str:
         raw_refresh = generate_refresh_token()
         self.token_repo.create(
             user_id=user_id,
@@ -652,7 +605,8 @@ class AuthService:
             expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
             device_info=device_info,
         )
-        self.db.commit()
+        if commit:
+            self.db.commit()
         return raw_refresh
 
     def get_me(self, user: User) -> MeResponse:
@@ -1296,6 +1250,9 @@ class CompanyService:
 
             self.db.commit()
             return company
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ConflictError("A company with this email already exists.") from exc
         except Exception:
             self.db.rollback()
             raise
