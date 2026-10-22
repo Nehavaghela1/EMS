@@ -33,7 +33,11 @@ from app.modules.hr.schemas import (
     TerminationRequest,
 )
 from app.modules.identity.models import User, UserRole
-from app.modules.identity.repository import CompanyLocationRepository, CompanyRepository, UserRepository
+from app.modules.identity.repository import (
+    CompanyLocationRepository,
+    CompanyRepository,
+    UserRepository,
+)
 from app.modules.platform.service import AuditService, DashboardService, jsonable
 from app.workers.tasks.email import send_email_task
 
@@ -196,7 +200,8 @@ class EmployeeService:
         loc = self.location_repo.get_by_id(location_id, company_id)
         if loc is None or not loc.is_active:
             raise InvalidReferenceError(
-                "The specified location does not exist or is inactive.", details={"field": "location_id"}
+                "The specified location does not exist or is inactive.",
+                details={"field": "location_id"},
             )
 
     def _validate_manager(

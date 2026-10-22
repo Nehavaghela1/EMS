@@ -380,7 +380,9 @@ def deactivate_location(
     return LocationService(db).deactivate_location(user.company_id, location_id, actor=user)
 
 
-@companies_router.post("/locations/{location_id}/set-head-office", response_model=CompanyLocationResponse)
+@companies_router.post(
+    "/locations/{location_id}/set-head-office", response_model=CompanyLocationResponse
+)
 @limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def set_head_office(
     request: Request,

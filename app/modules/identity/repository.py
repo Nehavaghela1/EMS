@@ -333,9 +333,12 @@ class CompanyLocationRepository:
             )
         )
 
-    def get_head_office(self, company_id: uuid.UUID, for_update: bool = False) -> CompanyLocation | None:
+    def get_head_office(
+        self, company_id: uuid.UUID, for_update: bool = False
+    ) -> CompanyLocation | None:
         stmt = select(CompanyLocation).where(
-            CompanyLocation.company_id == company_id, CompanyLocation.is_primary == True  # noqa: E712
+            CompanyLocation.company_id == company_id,
+            CompanyLocation.is_primary == True,  # noqa: E712
         )
         if for_update:
             stmt = stmt.with_for_update()

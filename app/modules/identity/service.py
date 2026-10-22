@@ -1311,7 +1311,9 @@ class LocationService:
         self.location_repo = CompanyLocationRepository(db)
         self.audit = AuditService(db)
 
-    def list_locations(self, company_id: uuid.UUID, is_active: bool | None = None) -> list[CompanyLocation]:
+    def list_locations(
+        self, company_id: uuid.UUID, is_active: bool | None = None
+    ) -> list[CompanyLocation]:
         return self.location_repo.list_locations(company_id, is_active=is_active)
 
     def create_location(
@@ -1319,9 +1321,13 @@ class LocationService:
     ) -> CompanyLocation:
         # Pre-checks for clean 409 errors
         if self.location_repo.get_by_name_lower(company_id, data.name):
-            raise ConflictError(f"A location with the name '{data.name}' already exists in your company.")
+            raise ConflictError(
+                f"A location with the name '{data.name}' already exists in your company."
+            )
         if self.location_repo.get_by_code_lower(company_id, data.code):
-            raise ConflictError(f"A location with the code '{data.code}' already exists in your company.")
+            raise ConflictError(
+                f"A location with the code '{data.code}' already exists in your company."
+            )
 
         try:
             # If client sets is_primary = True, perform atomic head office swap
@@ -1366,10 +1372,20 @@ class LocationService:
         except IntegrityError as exc:
             self.db.rollback()
             constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
-            if constraint in ("uq_company_locations_lower_name", "uq_company_locations_company_id_name"):
-                raise ConflictError("A location with this name already exists in your company.") from exc
-            if constraint in ("uq_company_locations_lower_code", "uq_company_locations_company_id_code"):
-                raise ConflictError("A location with this code already exists in your company.") from exc
+            if constraint in (
+                "uq_company_locations_lower_name",
+                "uq_company_locations_company_id_name",
+            ):
+                raise ConflictError(
+                    "A location with this name already exists in your company."
+                ) from exc
+            if constraint in (
+                "uq_company_locations_lower_code",
+                "uq_company_locations_company_id_code",
+            ):
+                raise ConflictError(
+                    "A location with this code already exists in your company."
+                ) from exc
             if constraint == "uq_company_locations_primary_head_office":
                 raise ConflictError("A head office already exists for this company.") from exc
             raise ConflictError("Could not save location due to a conflict.") from exc
@@ -1391,11 +1407,15 @@ class LocationService:
         updates = data.model_dump(exclude_unset=True)
         if "name" in updates and updates["name"].strip().lower() != location.name.lower():
             if self.location_repo.get_by_name_lower(company_id, updates["name"]):
-                raise ConflictError(f"A location with the name '{updates['name']}' already exists in your company.")
+                raise ConflictError(
+                    f"A location with the name '{updates['name']}' already exists in your company."
+                )
 
         if "code" in updates and updates["code"].strip().lower() != location.code.lower():
             if self.location_repo.get_by_code_lower(company_id, updates["code"]):
-                raise ConflictError(f"A location with the code '{updates['code']}' already exists in your company.")
+                raise ConflictError(
+                    f"A location with the code '{updates['code']}' already exists in your company."
+                )
 
         try:
             # If is_primary is being updated to True
@@ -1424,10 +1444,20 @@ class LocationService:
         except IntegrityError as exc:
             self.db.rollback()
             constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
-            if constraint in ("uq_company_locations_lower_name", "uq_company_locations_company_id_name"):
-                raise ConflictError("A location with this name already exists in your company.") from exc
-            if constraint in ("uq_company_locations_lower_code", "uq_company_locations_company_id_code"):
-                raise ConflictError("A location with this code already exists in your company.") from exc
+            if constraint in (
+                "uq_company_locations_lower_name",
+                "uq_company_locations_company_id_name",
+            ):
+                raise ConflictError(
+                    "A location with this name already exists in your company."
+                ) from exc
+            if constraint in (
+                "uq_company_locations_lower_code",
+                "uq_company_locations_company_id_code",
+            ):
+                raise ConflictError(
+                    "A location with this code already exists in your company."
+                ) from exc
             if constraint == "uq_company_locations_primary_head_office":
                 raise ConflictError("A head office already exists for this company.") from exc
             raise ConflictError("Could not update location due to a conflict.") from exc
@@ -1482,21 +1512,28 @@ class LocationService:
 
         # Rule 4: Head office cannot be deactivated
         if location.is_primary:
-            raise ConflictError("The head office cannot be deactivated. Set another active location as head office first.")
+            raise ConflictError(
+                "The head office cannot be deactivated. "
+                "Set another active location as head office first."
+            )
 
         # Rule 4: Reject if active employees assigned
         from app.modules.hr.models import Employee
 
-        active_emp_count = self.db.scalar(
-            select(func.count(Employee.id)).where(
-                Employee.company_id == company_id,
-                Employee.location_id == location_id,
-                Employee.is_active == True,  # noqa: E712
+        active_emp_count = (
+            self.db.scalar(
+                select(func.count(Employee.id)).where(
+                    Employee.company_id == company_id,
+                    Employee.location_id == location_id,
+                    Employee.is_active == True,  # noqa: E712
+                )
             )
-        ) or 0
+            or 0
+        )
         if active_emp_count > 0:
             raise ConflictError(
-                f"Cannot deactivate location: {active_emp_count} active employee(s) are assigned to it."
+                f"Cannot deactivate location: {active_emp_count} "
+                "active employee(s) are assigned to it."
             )
 
         try:
