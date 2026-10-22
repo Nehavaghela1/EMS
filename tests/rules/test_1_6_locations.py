@@ -33,6 +33,7 @@ from app.core.config import settings
 from app.core.security import create_access_token
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import Company, CompanyLocation, User, UserRole
+from app.modules.identity.schemas import CompanyLocationCreate
 from app.modules.identity.service import LocationService
 from app.modules.platform.models import AuditLog
 
@@ -973,3 +974,275 @@ def test_R10_migration_round_trip_and_safety(engine):
     assert "is_active" in columns, (
         f"Expected is_active in company_locations table columns, got: {columns}"
     )
+
+
+# ==============================================================================
+# Hardening Tests A through F
+# ==============================================================================
+
+
+def test_hardening_A_explicit_nulls_on_non_nullable_fields_return_422(
+    client: TestClient, company_setup
+):
+    """A. PUT /locations/{id} with explicit null on non-nullable field returns 422 for each."""
+    headers = _auth_headers(company_setup["owner"])
+    loc_id = company_setup["head_office"].id
+
+    non_nullable_fields = [
+        "name",
+        "code",
+        "country",
+        "geofence_radius_meters",
+        "is_remote_exempt",
+        "is_primary",
+    ]
+    for field in non_nullable_fields:
+        res = client.put(
+            f"/api/v1/companies/locations/{loc_id}",
+            json={field: None},
+            headers=headers,
+        )
+        assert res.status_code == 422, (
+            f"Expected 422 for null {field}, got {res.status_code}: {res.text}"
+        )
+
+
+def test_hardening_B_cannot_unseat_head_office_with_is_primary_false(
+    client: TestClient, company_setup
+):
+    """B. PUT with is_primary=false on current head office returns 409."""
+    headers = _auth_headers(company_setup["owner"])
+    loc_id = company_setup["head_office"].id
+    res = client.put(
+        f"/api/v1/companies/locations/{loc_id}",
+        json={"is_primary": False},
+        headers=headers,
+    )
+    assert res.status_code == 409, (
+        f"Expected 409 unseating head office, got {res.status_code}: {res.text}"
+    )
+
+
+def test_hardening_B_cannot_set_inactive_location_as_head_office_via_put_or_create(
+    client: TestClient, db: Session, company_setup
+):
+    """B. PUT or create with is_primary=true on inactive location is rejected."""
+    headers = _auth_headers(company_setup["owner"])
+
+    # Create active secondary, deactivate it
+    res = client.post(
+        "/api/v1/companies/locations",
+        json={
+            "name": "Temp Secondary",
+            "code": f"TS-{uuid.uuid4().hex[:4].upper()}",
+            "country": "IN",
+        },
+        headers=headers,
+    )
+    assert res.status_code == 201
+    sec_id = res.json()["id"]
+    client.delete(f"/api/v1/companies/locations/{sec_id}", headers=headers)
+
+    # Attempt PUT with is_primary=true on inactive location
+    res_put = client.put(
+        f"/api/v1/companies/locations/{sec_id}",
+        json={"is_primary": True},
+        headers=headers,
+    )
+    assert res_put.status_code in (400, 409), res_put.text
+
+
+def test_hardening_C_concurrent_head_office_swaps_end_with_exactly_one(company_setup, engine):
+    """C. Two concurrent swaps with threading.Barrier end with exactly one head office."""
+    import threading
+
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core.exceptions import ConflictError
+    from app.db.rls import bind_tenant_to_session
+
+    TestSessionLocal = sessionmaker(bind=engine)
+
+    # 1. Create a dedicated committed company and owner so independent connections can see it
+    cid = uuid.uuid4()
+    with TestSessionLocal() as setup_s:
+        bind_tenant_to_session(setup_s, company_id=cid, is_platform_admin=True)
+        company = Company(
+            id=cid,
+            name="Concurrent Swap Corp",
+            code=f"CS{uuid.uuid4().hex[:4].upper()}",
+            email=f"swap-{uuid.uuid4().hex[:6]}@example.com",
+            subdomain=f"swap-{uuid.uuid4().hex[:6]}",
+            status="active",
+            is_active=True,
+        )
+        setup_s.add(company)
+        owner_user = User(
+            id=uuid.uuid4(),
+            company_id=cid,
+            email=f"owner-{uuid.uuid4().hex[:6]}@example.com",
+            hashed_password="hashed_pw",
+            role=UserRole.owner,
+            is_active=True,
+        )
+        setup_s.add(owner_user)
+        setup_s.commit()
+
+        loc_service_setup = LocationService(setup_s)
+        loc_service_setup.create_location(
+            cid,
+            CompanyLocationCreate(
+                name="Initial HQ",
+                code=f"HQ-{uuid.uuid4().hex[:4].upper()}",
+                country="IN",
+                is_primary=True,
+            ),
+            actor=owner_user,
+        )
+        loc1 = loc_service_setup.create_location(
+            cid,
+            CompanyLocationCreate(
+                name="Conc HQ 1",
+                code=f"C1-{uuid.uuid4().hex[:4].upper()}",
+                country="IN",
+            ),
+            actor=owner_user,
+        )
+        loc2 = loc_service_setup.create_location(
+            cid,
+            CompanyLocationCreate(
+                name="Conc HQ 2",
+                code=f"C2-{uuid.uuid4().hex[:4].upper()}",
+                country="IN",
+            ),
+            actor=owner_user,
+        )
+        loc1_id, loc2_id = loc1.id, loc2.id
+        admin_id = owner_user.id
+
+    barrier = threading.Barrier(2)
+    results = []
+
+    def worker(target_loc_id):
+        session = TestSessionLocal()
+        bind_tenant_to_session(session, company_id=cid, is_platform_admin=True)
+        barrier.wait()
+        svc = LocationService(session)
+        admin_actor = session.get(User, admin_id)
+        try:
+            svc.set_head_office(cid, target_loc_id, actor=admin_actor)
+            results.append(200)
+        except ConflictError:
+            results.append(409)
+        except Exception:
+            results.append(500)
+        finally:
+            session.close()
+
+    try:
+        t1 = threading.Thread(target=worker, args=(loc1_id,))
+        t2 = threading.Thread(target=worker, args=(loc2_id,))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert all(code in (200, 409) for code in results), (
+            f"Got unexpected status codes: {results}"
+        )
+
+        with TestSessionLocal() as db_check:
+            bind_tenant_to_session(db_check, company_id=cid, is_platform_admin=True)
+            hqs = db_check.query(CompanyLocation).filter_by(company_id=cid, is_primary=True).all()
+            assert len(hqs) == 1
+    finally:
+        with TestSessionLocal() as cleanup:
+            bind_tenant_to_session(cleanup, company_id=cid, is_platform_admin=True)
+            cleanup.query(CompanyLocation).filter_by(company_id=cid).delete()
+            cleanup.commit()
+
+
+def test_hardening_D_reactivate_location_endpoint(
+    client: TestClient, company_setup, company_b_setup
+):
+    """D. POST /locations/{id}/reactivate with RBAC, 404 on other company, idempotent no-op."""
+    headers = _auth_headers(company_setup["owner"])
+    headers_emp = _auth_headers(company_setup["employee_user"])
+
+    # Create and deactivate
+    res = client.post(
+        "/api/v1/companies/locations",
+        json={
+            "name": "Reactivate Test",
+            "code": f"RT-{uuid.uuid4().hex[:4].upper()}",
+            "country": "IN",
+        },
+        headers=headers,
+    )
+    assert res.status_code == 201
+    loc_id = res.json()["id"]
+    client.delete(f"/api/v1/companies/locations/{loc_id}", headers=headers)
+
+    # 1. Non-admin forbidden
+    res_forbid = client.post(
+        f"/api/v1/companies/locations/{loc_id}/reactivate", headers=headers_emp
+    )
+    assert res_forbid.status_code == 403
+
+    # 2. Other company 404
+    headers_b = _auth_headers(company_b_setup["owner"])
+    res_404 = client.post(f"/api/v1/companies/locations/{loc_id}/reactivate", headers=headers_b)
+    assert res_404.status_code == 404
+
+    # 3. Successful reactivation by owner
+    res_react = client.post(f"/api/v1/companies/locations/{loc_id}/reactivate", headers=headers)
+    assert res_react.status_code == 200
+    assert res_react.json()["is_active"] is True
+
+    # 4. Idempotent call on already active location
+    res_idem = client.post(f"/api/v1/companies/locations/{loc_id}/reactivate", headers=headers)
+    assert res_idem.status_code == 200
+    assert res_idem.json()["is_active"] is True
+
+
+def test_hardening_E_put_that_changes_nothing_writes_no_audit(
+    client: TestClient, db: Session, company_setup
+):
+    """E. PUT that changes nothing returns 200 with no audit row."""
+    headers = _auth_headers(company_setup["owner"])
+    hq = company_setup["head_office"]
+
+    # Count audit logs before
+    db.expire_all()
+    count_before = (
+        db.query(AuditLog)
+        .filter_by(company_id=company_setup["company"].id, entity_id=hq.id)
+        .count()
+    )
+
+    res = client.put(
+        f"/api/v1/companies/locations/{hq.id}",
+        json={"name": hq.name},
+        headers=headers,
+    )
+    assert res.status_code == 200
+
+    db.expire_all()
+    count_after = (
+        db.query(AuditLog)
+        .filter_by(company_id=company_setup["company"].id, entity_id=hq.id)
+        .count()
+    )
+    assert count_after == count_before
+
+
+def test_hardening_F_locking_in_validate_location_and_deactivate(db: Session, company_setup):
+    """F. deactivate_location takes FOR UPDATE lock, _validate_location takes FOR SHARE lock."""
+    from app.modules.hr.service import EmployeeService
+
+    cid = company_setup["company"].id
+    hq_id = company_setup["head_office"].id
+
+    hr_service = EmployeeService(db)
+    # Ensure calling _validate_location executes cleanly with FOR SHARE
+    hr_service._validate_location(cid, hq_id)

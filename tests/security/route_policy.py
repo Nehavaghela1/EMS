@@ -103,6 +103,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("DELETE", "/api/v1/companies/locations/{location_id}"): ROLES(
         UserRole.owner, UserRole.hr_admin
     ),
+    ("POST", "/api/v1/companies/locations/{location_id}/reactivate"): ROLES(
+        UserRole.owner, UserRole.hr_admin
+    ),
     ("POST", "/api/v1/companies/locations/{location_id}/set-head-office"): ROLES(
         UserRole.owner, UserRole.hr_admin
     ),

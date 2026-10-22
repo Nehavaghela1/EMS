@@ -310,12 +310,21 @@ class CompanyLocationRepository:
         stmt = stmt.order_by(CompanyLocation.is_primary.desc(), CompanyLocation.name.asc())
         return list(self.db.scalars(stmt).all())
 
-    def get_by_id(self, location_id: uuid.UUID, company_id: uuid.UUID) -> CompanyLocation | None:
-        return self.db.scalar(
-            select(CompanyLocation).where(
-                CompanyLocation.id == location_id, CompanyLocation.company_id == company_id
-            )
+    def get_by_id(
+        self,
+        location_id: uuid.UUID,
+        company_id: uuid.UUID,
+        for_update: bool = False,
+        for_share: bool = False,
+    ) -> CompanyLocation | None:
+        stmt = select(CompanyLocation).where(
+            CompanyLocation.id == location_id, CompanyLocation.company_id == company_id
         )
+        if for_update:
+            stmt = stmt.with_for_update()
+        elif for_share:
+            stmt = stmt.with_for_update(read=True)
+        return self.db.scalar(stmt)
 
     def get_by_name_lower(self, company_id: uuid.UUID, name: str) -> CompanyLocation | None:
         return self.db.scalar(

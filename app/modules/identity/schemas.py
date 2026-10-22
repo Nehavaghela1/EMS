@@ -429,11 +429,24 @@ class CompanyLocationUpdate(BaseModel):
     geofence_radius_meters: int | None = None
     is_remote_exempt: bool | None = None
 
+    @field_validator(
+        "name",
+        "code",
+        "country",
+        "geofence_radius_meters",
+        "is_remote_exempt",
+        "is_primary",
+        mode="wrap",
+    )
+    @classmethod
+    def validate_non_nullable(cls, v, handler, info):
+        if v is None:
+            raise ValueError(f"Field '{info.field_name}' cannot be null.")
+        return handler(v)
+
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
+    def validate_name(cls, v: str) -> str:
         s = v.strip()
         if not (1 <= len(s) <= 100):
             raise ValueError("Location name must be between 1 and 100 characters.")
@@ -441,9 +454,7 @@ class CompanyLocationUpdate(BaseModel):
 
     @field_validator("code")
     @classmethod
-    def validate_code(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
+    def validate_code(cls, v: str) -> str:
         s = v.strip().upper()
         if not re.fullmatch(r"^[A-Z0-9-]{2,20}$", s):
             raise ValueError("Location code must be 2 to 20 letters, digits or hyphens.")
@@ -451,9 +462,7 @@ class CompanyLocationUpdate(BaseModel):
 
     @field_validator("country")
     @classmethod
-    def validate_country(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
+    def validate_country(cls, v: str) -> str:
         s = v.strip().upper()
         if not re.fullmatch(r"^[A-Z]{2}$", s):
             raise ValueError("Country must be a 2-letter ISO code.")
@@ -461,9 +470,7 @@ class CompanyLocationUpdate(BaseModel):
 
     @field_validator("geofence_radius_meters")
     @classmethod
-    def validate_radius(cls, v: int | None) -> int | None:
-        if v is None:
-            return None
+    def validate_radius(cls, v: int) -> int:
         if not (10 <= v <= 5000):
             raise ValueError("Geofence radius must be between 10 and 5000 metres.")
         return v

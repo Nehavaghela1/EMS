@@ -369,7 +369,12 @@ def update_location(
     return LocationService(db).update_location(user.company_id, location_id, data, actor=user)
 
 
-@companies_router.delete("/locations/{location_id}", response_model=CompanyLocationResponse)
+@companies_router.delete(
+    "/locations/{location_id}",
+    response_model=CompanyLocationResponse,
+    summary="Deactivate a location",
+    description="Deactivates a location (is_active=false). Never hard-deleted.",
+)
 @limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def deactivate_location(
     request: Request,
@@ -378,6 +383,22 @@ def deactivate_location(
     user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
 ):
     return LocationService(db).deactivate_location(user.company_id, location_id, actor=user)
+
+
+@companies_router.post(
+    "/locations/{location_id}/reactivate",
+    response_model=CompanyLocationResponse,
+    summary="Reactivate a location",
+    description="Reactivates an inactive company location (sets is_active=true).",
+)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def reactivate_location(
+    request: Request,
+    location_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+):
+    return LocationService(db).reactivate_location(user.company_id, location_id, actor=user)
 
 
 @companies_router.post(

@@ -197,7 +197,7 @@ class EmployeeService:
     def _validate_location(self, company_id: uuid.UUID, location_id: uuid.UUID | None) -> None:
         if location_id is None:
             return
-        loc = self.location_repo.get_by_id(location_id, company_id)
+        loc = self.location_repo.get_by_id(location_id, company_id, for_share=True)
         if loc is None or not loc.is_active:
             raise InvalidReferenceError(
                 "The specified location does not exist or is inactive.",
