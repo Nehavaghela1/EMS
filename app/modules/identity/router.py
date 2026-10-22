@@ -284,12 +284,8 @@ def create_workspace(
     db: Session = Depends(get_db),
     user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
 ):
-    company = CompanyService(db).create_workspace(user, data)
-    token_response, raw_refresh = AuthService(db).switch_workspace(
-        user.email,
-        company.id,
-        device_info=request.headers.get("user-agent"),
-        caller=user,
+    company, token_response, raw_refresh = CompanyService(db).create_workspace(
+        user, data, device_info=request.headers.get("user-agent")
     )
     _set_refresh_cookie(response, raw_refresh)
     return CreateWorkspaceResponse(

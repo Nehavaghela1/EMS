@@ -76,6 +76,12 @@ class Company(TimeStampedBase):
     __tablename__ = "companies"
     __table_args__ = (
         Index("uq_companies_lower_email", text("lower(email)"), unique=True),
+        Index(
+            "uq_companies_lower_subdomain",
+            text("lower(subdomain)"),
+            unique=True,
+            postgresql_where=text("subdomain IS NOT NULL"),
+        ),
         Index("ix_companies_status", "status"),
     )
 

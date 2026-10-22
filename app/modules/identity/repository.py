@@ -43,6 +43,14 @@ class CompanyRepository:
     def get_by_email(self, email: str) -> Company | None:
         return self.db.scalar(select(Company).where(func.lower(Company.email) == email.lower()))
 
+    def get_by_subdomain(self, subdomain: str) -> Company | None:
+        return self.db.scalar(
+            select(Company).where(
+                Company.subdomain.is_not(None),
+                func.lower(Company.subdomain) == subdomain.strip().lower(),
+            )
+        )
+
     def get_by_code(self, code: str) -> Company | None:
         return self.db.scalar(select(Company).where(func.lower(Company.code) == code.lower()))
 

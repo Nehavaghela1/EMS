@@ -607,20 +607,32 @@ def test_W12_create_workspace_role_guards_validation_and_seeding(client, db, com
     assert r_long.status_code == 422
 
     # Validation: country not ISO-2 -> 422
-    r_bad_ctry = client.post(
-        "/api/v1/companies/workspaces",
-        headers=h_owner,
-        json={"company_name": "Valid Co", "country": "IND"},
-    )
-    assert r_bad_ctry.status_code == 422
+    for bad_country in ["IND", "ÀB", "I1"]:
+        r_bad = client.post(
+            "/api/v1/companies/workspaces",
+            headers=h_owner,
+            json={"company_name": "Valid Co", "country": bad_country},
+        )
+        assert r_bad.status_code == 422
+
+    # Validation: currency checks -> "€UR" and "ÀBC" return 422
+    for bad_currency in ["€UR", "ÀBC"]:
+        r_bad_curr = client.post(
+            "/api/v1/companies/workspaces",
+            headers=h_owner,
+            json={"company_name": "Valid Co", "country": "IN", "currency": bad_currency},
+        )
+        assert r_bad_curr.status_code == 422
 
     # Success with HR Admin: creates workspace, creator becomes owner
+    # Country "in" stored as "IN", currency "inr" stored as "INR"
     r_ok = client.post(
         "/api/v1/companies/workspaces",
         headers=h_hr,
         json={
             "company_name": "  New HR Co  ",
-            "country": "IN",
+            "country": "in",
+            "currency": "inr",
             "seed_departments": True,
             "seed_shift": True,
         },
@@ -629,8 +641,13 @@ def test_W12_create_workspace_role_guards_validation_and_seeding(client, db, com
     res_data = r_ok.json()
     new_comp_id = res_data["company"]["id"]
 
-    # Verify created company has stripped name
+    # Verify created company has stripped name and uppercase country/currency
     assert res_data["company"]["name"] == "New HR Co"
+    assert res_data["company"]["country"] == "IN"
+
+    created_comp = db.scalar(select(Company).where(Company.id == new_comp_id))
+    assert created_comp is not None
+    assert created_comp.currency == "INR"
 
     # Verify creator's user role in the new company is OWNER
     user_in_new = db.scalar(
@@ -640,6 +657,10 @@ def test_W12_create_workspace_role_guards_validation_and_seeding(client, db, com
     assert user_in_new.role == UserRole.owner
 
     # Verify employee record has position "HR Admin / Org Head" and employee code "ADMIN-001"
+    # Note: Employee table is RLS-protected; elevate session to query cross-tenant
+    from app.db.rls import bind_tenant_to_session
+
+    bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
     emp_in_new = db.scalar(
         select(Employee).where(
             Employee.company_id == new_comp_id, Employee.user_id == user_in_new.id
@@ -719,6 +740,26 @@ def test_W13_create_workspace_all_or_nothing(client, db, company_a):
 
     counts_after_emp = get_all_counts()
     assert counts_before_seed == counts_after_emp
+
+    # 3. Force failure in token/switch step after company creation
+    from app.modules.identity.service import AuthService
+
+    def failing_switch(*args, **kwargs):
+        raise RuntimeError("Token generation boom!")
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(AuthService, "switch_workspace", failing_switch)
+        resp_tok = client_no_raise.post(
+            "/api/v1/companies/workspaces",
+            headers=headers,
+            json={"company_name": "Failing Switch Co", "country": "IN"},
+        )
+        assert resp_tok.status_code == 500
+        assert "RuntimeError" not in resp_tok.text
+        assert "Token generation boom" not in resp_tok.text
+
+    counts_after_tok = get_all_counts()
+    assert counts_before_seed == counts_after_tok
 
 
 # ── W14: Audit rows for create and switch; denied switch logs on app.security ──
@@ -1067,14 +1108,30 @@ def test_W23_invalid_currency_and_subdomain_give_422(client, db, company_a):
     )
     headers = _make_headers(u_owner.id, company_a.company_id, u_owner.role)
 
-    # Invalid currency: 2 letters or lowercase or non-alpha -> 422
-    for bad_curr in ["US", "inr", "US1", "TOOLONG"]:
+    # Invalid currency: length != 3 or non-ASCII -> 422
+    for bad_curr in ["US", "US1", "TOOLONG", "€UR", "ÀBC"]:
         res_curr = client.post(
             "/api/v1/companies/workspaces",
             headers=headers,
             json={"company_name": "Curr Co", "currency": bad_curr, "country": "IN"},
         )
         assert res_curr.status_code == 422, f"currency {bad_curr} did not return 422"
+
+    # currency "inr" is stored as "INR"
+    res_inr = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={
+            "company_name": f"Curr Inr {uuid.uuid4().hex[:4]}",
+            "company_email": f"curr-inr-{uuid.uuid4().hex[:6]}@example.com",
+            "currency": "inr",
+            "country": "IN",
+        },
+    )
+    assert res_inr.status_code == 201
+    inr_comp = db.scalar(select(Company).where(Company.id == res_inr.json()["company"]["id"]))
+    assert inr_comp is not None
+    assert inr_comp.currency == "INR"
 
     # Invalid subdomain: uppercase, symbols, or invalid format -> 422
     for bad_sub in ["Sub_Domain", "-badstart", "badend-", "sub domain", "a" * 101]:
@@ -1091,6 +1148,7 @@ def test_W23_invalid_currency_and_subdomain_give_422(client, db, company_a):
         headers=headers,
         json={
             "company_name": "Valid Sub Co",
+            "company_email": f"valid-sub-{uuid.uuid4().hex[:6]}@example.com",
             "currency": "USD",
             "subdomain": "valid-subdomain",
             "country": "US",
@@ -1298,3 +1356,234 @@ def test_W25_exhaustive_truth_table_memberships(client, db, company_a):
                     )
     finally:
         limiter.reset()
+
+
+# ── W26: db.info["tenant"] restored on success and on failure in create_workspace ──
+def test_W26_create_workspace_restores_tenant_context(client, db, company_a):
+    from app.db.rls import bind_tenant_to_session
+
+    u_owner, _ = _create_user_in_company(
+        db, company_a.company_id, f"owner-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.owner
+    )
+
+    # Establish caller's initial tenant context on db.info
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+    assert db.info.get("tenant") == (company_a.company_id, False)
+
+    # Success case: CompanyService.create_workspace
+    from app.modules.identity.schemas import CreateWorkspaceRequest
+    from app.modules.identity.service import CompanyService
+
+    comp_svc = CompanyService(db)
+    req = CreateWorkspaceRequest(
+        company_name="Tenant Restore Co",
+        company_email=f"tr1-{uuid.uuid4().hex[:6]}@example.com",
+        country="IN",
+    )
+    created_comp, _, _ = comp_svc.create_workspace(u_owner, req)
+    assert created_comp is not None
+
+    # After success, db.info["tenant"] must equal caller's context from before the call
+    assert db.info.get("tenant") == (company_a.company_id, False)
+
+    # Failure case: force failure after bind_tenant_to_session
+    from app.modules.identity.service import AuthService
+
+    def failing_switch(*args, **kwargs):
+        raise RuntimeError("Forced failure in switch")
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(AuthService, "switch_workspace", failing_switch)
+        fail_req = CreateWorkspaceRequest(
+            company_name="Fail Tenant Restore Co",
+            company_email=f"trfail-{uuid.uuid4().hex[:6]}@example.com",
+            country="IN",
+        )
+        with pytest.raises(RuntimeError):
+            comp_svc.create_workspace(u_owner, fail_req)
+
+    # After forced failure, db.info["tenant"] must also equal caller's context from before the call
+    assert db.info.get("tenant") == (company_a.company_id, False)
+
+
+# ── W27: Duplicate subdomain and constraint mapping ──────────────────────────
+def test_W27_subdomain_uniqueness_and_constraint_mapping(client, db, company_a):
+    u_owner, _ = _create_user_in_company(
+        db, company_a.company_id, f"owner-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.owner
+    )
+    headers = _make_headers(u_owner.id, company_a.company_id, u_owner.role)
+
+    sub = f"acme-{uuid.uuid4().hex[:6]}"
+    # 1. Create first company with subdomain
+    r1 = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={
+            "company_name": "Acme One",
+            "company_email": f"a1-{uuid.uuid4().hex[:6]}@example.com",
+            "subdomain": sub,
+            "country": "IN",
+        },
+    )
+    assert r1.status_code == 201
+
+    # 2. Duplicate subdomain -> 409 "That subdomain is already taken."
+    r2 = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={
+            "company_name": "Acme Two",
+            "company_email": f"a2-{uuid.uuid4().hex[:6]}@example.com",
+            "subdomain": sub,
+            "country": "IN",
+        },
+    )
+    assert r2.status_code == 409, f"Expected 409 but got {r2.status_code}"
+    assert r2.json()["error"]["message"] == "That subdomain is already taken."
+
+    # 3. Same subdomain in different case -> also rejected with 409
+    # "That subdomain is already taken."
+    r3 = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={
+            "company_name": "Acme Three",
+            "company_email": f"a3-{uuid.uuid4().hex[:6]}@example.com",
+            "subdomain": sub.upper(),
+            "country": "IN",
+        },
+    )
+    assert r3.status_code == 409
+    assert r3.json()["error"]["message"] == "That subdomain is already taken."
+
+    # 4. Duplicate email keeps email message
+    dup_email = f"dup-{uuid.uuid4().hex[:6]}@example.com"
+    r4_init = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={"company_name": "Acme Dup Orig", "company_email": dup_email, "country": "IN"},
+    )
+    assert r4_init.status_code == 201
+    r4 = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={"company_name": "Acme Four", "company_email": dup_email, "country": "IN"},
+    )
+    assert r4.status_code == 409
+    assert r4.json()["error"]["message"] == "A company with this email already exists."
+
+    # 5. IntegrityError mapping check: bypass service pre-check to trigger DB constraint
+    from app.modules.identity.repository import CompanyRepository
+
+    limiter.reset()
+    with pytest.MonkeyPatch.context() as m:
+        # Pretend pre-check finds nothing, so DB unique constraint raises IntegrityError
+        m.setattr(CompanyRepository, "get_by_subdomain", lambda self, s: None)
+        r_race = client.post(
+            "/api/v1/companies/workspaces",
+            headers=headers,
+            json={
+                "company_name": "Acme Race",
+                "company_email": f"arace-{uuid.uuid4().hex[:6]}@example.com",
+                "subdomain": sub,
+                "country": "IN",
+            },
+        )
+        assert r_race.status_code == 409
+        assert r_race.json()["error"]["message"] == "That subdomain is already taken."
+
+    # 6. Any other constraint -> 409 "Could not create workspace. Please try again."
+    from sqlalchemy.exc import IntegrityError
+
+    class FakeOrig:
+        class FakeDiag:
+            constraint_name = "companies_code_key"
+
+        diag = FakeDiag()
+
+    def fake_create_conflict(*args, **kwargs):
+        raise IntegrityError("duplicate key", None, FakeOrig())
+
+    limiter.reset()
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(CompanyRepository, "create", fake_create_conflict)
+        r_other = client.post(
+            "/api/v1/companies/workspaces",
+            headers=headers,
+            json={
+                "company_name": "Acme Code Fail",
+                "company_email": f"acode-{uuid.uuid4().hex[:6]}@example.com",
+                "country": "IN",
+            },
+        )
+        assert r_other.status_code == 409
+        assert r_other.json()["error"]["message"] == "Could not create workspace. Please try again."
+
+
+# ── M02: Migration subdomain unique index round trip ────────────────────────
+def test_M02_migration_subdomain_unique_index(engine):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from sqlalchemy import inspect
+
+    from app.core.config import settings
+
+    assert settings.TEST_MIGRATION_URL is not None, "TEST_MIGRATION_URL must be configured"
+
+    repo_root = Path(__file__).resolve().parents[2]
+    # Migration will be created at alembic/versions/*_add_unique_index_subdomain_to_companies.py
+    versions_dir = repo_root / "alembic/versions"
+    matching = list(versions_dir.glob("*_add_unique_index_subdomain_to_companies.py"))
+    assert matching, "Migration file not found for subdomain unique index"
+    migration_file = matching[0]
+
+    down_rev = None
+    with open(migration_file) as f:
+        for line in f:
+            if line.startswith("down_revision"):
+                down_rev = line.split("=")[1].strip().strip('"').strip("'")
+                break
+    assert down_rev is not None, "Could not determine down_revision"
+
+    env = {**os.environ, "ALEMBIC_DATABASE_URL": settings.TEST_MIGRATION_URL}
+
+    try:
+        res_down = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", down_rev],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res_down.returncode == 0, (
+            f"Alembic downgrade failed:\nstdout: {res_down.stdout}\nstderr: {res_down.stderr}"
+        )
+
+        insp = inspect(engine)
+        indexes_after_down = [idx["name"] for idx in insp.get_indexes("companies")]
+        assert "uq_companies_lower_subdomain" not in indexes_after_down, (
+            f"Expected uq_companies_lower_subdomain to be removed, got: {indexes_after_down}"
+        )
+    finally:
+        res_up = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res_up.returncode == 0, (
+            f"Alembic upgrade head failed:\nstdout: {res_up.stdout}\nstderr: {res_up.stderr}"
+        )
+
+    insp = inspect(engine)
+    indexes_after_up = [idx["name"] for idx in insp.get_indexes("companies")]
+    assert "uq_companies_lower_subdomain" in indexes_after_up, (
+        f"Expected uq_companies_lower_subdomain to exist, got: {indexes_after_up}"
+    )

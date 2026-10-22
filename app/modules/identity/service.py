@@ -32,7 +32,7 @@ from app.core.security import (
     verify_password,
 )
 from app.core.time import utcnow
-from app.db.rls import bind_tenant_to_session
+from app.db.rls import bind_tenant_to_session, set_tenant_context
 from app.modules.hr.models import Employee, InvitationStatus
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
 from app.modules.identity.models import (
@@ -532,6 +532,7 @@ class AuthService:
         target_company_id: uuid.UUID,
         device_info: str | None = None,
         caller: User | None = None,
+        commit: bool = True,
     ) -> tuple[TokenResponse, str]:
         """Switch context to another workspace associated with the same email.
         Enforces failure-order checklist:
@@ -590,8 +591,9 @@ class AuthService:
             },
         )
 
-        # Single commit in service
-        self.db.commit()
+        # Single commit in service if requested
+        if commit:
+            self.db.commit()
 
         return TokenResponse(access_token=access_token, token_type="bearer"), raw_refresh
 
@@ -857,23 +859,34 @@ class CompanyService:
         """Route 12: company self-registration with status = pending."""
         if self.company_repo.get_by_email(data.company_email):
             raise ConflictError("A company with this email already exists.")
+        if data.subdomain and self.company_repo.get_by_subdomain(data.subdomain):
+            raise ConflictError("That subdomain is already taken.")
 
         password_hash = hash_password(data.password) if data.password else None
 
-        company = self.company_repo.create(
-            name=data.company_name,
-            code=_generate_company_code(data.company_name),
-            email=data.company_email,
-            phone=data.phone,
-            industry=data.industry,
-            country=data.country,
-            subdomain=data.subdomain.strip().lower() if data.subdomain else None,
-            company_size=data.company_size.strip() if data.company_size else None,
-            admin_password_hash=password_hash,
-            status=CompanyStatus.pending,
-        )
-        self.db.commit()
-        return company
+        try:
+            company = self.company_repo.create(
+                name=data.company_name,
+                code=_generate_company_code(data.company_name),
+                email=data.company_email,
+                phone=data.phone,
+                industry=data.industry,
+                country=data.country,
+                subdomain=data.subdomain.strip().lower() if data.subdomain else None,
+                company_size=data.company_size.strip() if data.company_size else None,
+                admin_password_hash=password_hash,
+                status=CompanyStatus.pending,
+            )
+            self.db.commit()
+            return company
+        except IntegrityError as exc:
+            self.db.rollback()
+            constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            if constraint == "uq_companies_lower_email":
+                raise ConflictError("A company with this email already exists.") from exc
+            if constraint == "uq_companies_lower_subdomain":
+                raise ConflictError("That subdomain is already taken.") from exc
+            raise ConflictError("Could not create workspace. Please try again.") from exc
 
     def list_companies(
         self,
@@ -1148,15 +1161,25 @@ class CompanyService:
         self.db.commit()
         return company
 
-    def create_workspace(self, current_user: User, data: CreateWorkspaceRequest) -> Company:
-        """Create a new workspace, seed defaults, and make the current user the owner.
-        One transaction, one commit at the end, any exception rolls back everything.
-        Audit row WORKSPACE_CREATED recorded in same transaction.
+    def create_workspace(
+        self,
+        current_user: User,
+        data: CreateWorkspaceRequest,
+        device_info: str | None = None,
+    ) -> tuple[Company, TokenResponse, str]:
+        """Create a new workspace, seed defaults, make current user the owner,
+        and switch workspace context to issue tokens — all in one transaction with a
+        single commit at the end. Any exception rolls back everything.
+        Audit rows WORKSPACE_CREATED and WORKSPACE_SWITCHED recorded in same transaction.
+        Always restores caller's tenant context in finally block.
         """
         email = data.company_email or current_user.email
         if self.company_repo.get_by_email(email):
             raise ConflictError("A company with this email already exists.")
+        if data.subdomain and self.company_repo.get_by_subdomain(data.subdomain):
+            raise ConflictError("That subdomain is already taken.")
 
+        saved_tenant = self.db.info.get("tenant")
         try:
             company = self.company_repo.create(
                 name=data.company_name,
@@ -1248,14 +1271,35 @@ class CompanyService:
                 },
             )
 
+            # Switch workspace to issue tokens in the same single transaction
+            auth_service = AuthService(self.db)
+            token_response, raw_refresh = auth_service.switch_workspace(
+                current_user.email,
+                company.id,
+                device_info=device_info,
+                caller=current_user,
+                commit=False,
+            )
+
             self.db.commit()
-            return company
+            return company, token_response, raw_refresh
         except IntegrityError as exc:
             self.db.rollback()
-            raise ConflictError("A company with this email already exists.") from exc
+            constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            if constraint == "uq_companies_lower_email":
+                raise ConflictError("A company with this email already exists.") from exc
+            if constraint == "uq_companies_lower_subdomain":
+                raise ConflictError("That subdomain is already taken.") from exc
+            raise ConflictError("Could not create workspace. Please try again.") from exc
         except Exception:
             self.db.rollback()
             raise
+        finally:
+            if saved_tenant is not None:
+                bind_tenant_to_session(self.db, *saved_tenant)
+            else:
+                self.db.info.pop("tenant", None)
+                set_tenant_context(self.db, None, False)
 
 
 class LocationService:
