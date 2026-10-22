@@ -607,20 +607,32 @@ def test_W12_create_workspace_role_guards_validation_and_seeding(client, db, com
     assert r_long.status_code == 422
 
     # Validation: country not ISO-2 -> 422
-    r_bad_ctry = client.post(
-        "/api/v1/companies/workspaces",
-        headers=h_owner,
-        json={"company_name": "Valid Co", "country": "IND"},
-    )
-    assert r_bad_ctry.status_code == 422
+    for bad_country in ["IND", "ÀB", "I1"]:
+        r_bad = client.post(
+            "/api/v1/companies/workspaces",
+            headers=h_owner,
+            json={"company_name": "Valid Co", "country": bad_country},
+        )
+        assert r_bad.status_code == 422
+
+    # Validation: currency checks -> "€UR" and "ÀBC" return 422
+    for bad_currency in ["€UR", "ÀBC"]:
+        r_bad_curr = client.post(
+            "/api/v1/companies/workspaces",
+            headers=h_owner,
+            json={"company_name": "Valid Co", "country": "IN", "currency": bad_currency},
+        )
+        assert r_bad_curr.status_code == 422
 
     # Success with HR Admin: creates workspace, creator becomes owner
+    # Country "in" stored as "IN", currency "inr" stored as "INR"
     r_ok = client.post(
         "/api/v1/companies/workspaces",
         headers=h_hr,
         json={
             "company_name": "  New HR Co  ",
-            "country": "IN",
+            "country": "in",
+            "currency": "inr",
             "seed_departments": True,
             "seed_shift": True,
         },
@@ -629,8 +641,13 @@ def test_W12_create_workspace_role_guards_validation_and_seeding(client, db, com
     res_data = r_ok.json()
     new_comp_id = res_data["company"]["id"]
 
-    # Verify created company has stripped name
+    # Verify created company has stripped name and uppercase country/currency
     assert res_data["company"]["name"] == "New HR Co"
+    assert res_data["company"]["country"] == "IN"
+
+    created_comp = db.scalar(select(Company).where(Company.id == new_comp_id))
+    assert created_comp is not None
+    assert created_comp.currency == "INR"
 
     # Verify creator's user role in the new company is OWNER
     user_in_new = db.scalar(
@@ -719,6 +736,26 @@ def test_W13_create_workspace_all_or_nothing(client, db, company_a):
 
     counts_after_emp = get_all_counts()
     assert counts_before_seed == counts_after_emp
+
+    # 3. Force failure in token/switch step after company creation
+    from app.modules.identity.service import AuthService
+
+    def failing_switch(*args, **kwargs):
+        raise RuntimeError("Token generation boom!")
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(AuthService, "switch_workspace", failing_switch)
+        resp_tok = client_no_raise.post(
+            "/api/v1/companies/workspaces",
+            headers=headers,
+            json={"company_name": "Failing Switch Co", "country": "IN"},
+        )
+        assert resp_tok.status_code == 500
+        assert "RuntimeError" not in resp_tok.text
+        assert "Token generation boom" not in resp_tok.text
+
+    counts_after_tok = get_all_counts()
+    assert counts_before_seed == counts_after_tok
 
 
 # ── W14: Audit rows for create and switch; denied switch logs on app.security ──
@@ -1067,14 +1104,30 @@ def test_W23_invalid_currency_and_subdomain_give_422(client, db, company_a):
     )
     headers = _make_headers(u_owner.id, company_a.company_id, u_owner.role)
 
-    # Invalid currency: 2 letters or lowercase or non-alpha -> 422
-    for bad_curr in ["US", "inr", "US1", "TOOLONG"]:
+    # Invalid currency: length != 3 or non-ASCII -> 422
+    for bad_curr in ["US", "US1", "TOOLONG", "€UR", "ÀBC"]:
         res_curr = client.post(
             "/api/v1/companies/workspaces",
             headers=headers,
             json={"company_name": "Curr Co", "currency": bad_curr, "country": "IN"},
         )
         assert res_curr.status_code == 422, f"currency {bad_curr} did not return 422"
+
+    # currency "inr" is stored as "INR"
+    res_inr = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={
+            "company_name": f"Curr Inr {uuid.uuid4().hex[:4]}",
+            "company_email": f"curr-inr-{uuid.uuid4().hex[:6]}@example.com",
+            "currency": "inr",
+            "country": "IN",
+        },
+    )
+    assert res_inr.status_code == 201
+    inr_comp = db.scalar(select(Company).where(Company.id == res_inr.json()["company"]["id"]))
+    assert inr_comp is not None
+    assert inr_comp.currency == "INR"
 
     # Invalid subdomain: uppercase, symbols, or invalid format -> 422
     for bad_sub in ["Sub_Domain", "-badstart", "badend-", "sub domain", "a" * 101]:
@@ -1091,6 +1144,7 @@ def test_W23_invalid_currency_and_subdomain_give_422(client, db, company_a):
         headers=headers,
         json={
             "company_name": "Valid Sub Co",
+            "company_email": f"valid-sub-{uuid.uuid4().hex[:6]}@example.com",
             "currency": "USD",
             "subdomain": "valid-subdomain",
             "country": "US",
