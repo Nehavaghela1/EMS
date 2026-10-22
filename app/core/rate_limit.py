@@ -44,6 +44,28 @@ def get_client_ip(request: Request) -> str:
     return ips[0] if ips else client_host
 
 
+def get_user_or_ip_key(request: Request) -> str:
+    """Rules 1.5 F3: Per-user rate limiting key function.
+    Verifies the bearer token with decode_access_token and returns 'user:<sub>'.
+    Falls back to client IP key if the token is missing or invalid.
+    Never trusts an unverified sub.
+    """
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+        try:
+            from app.core.security import decode_access_token
+
+            payload = decode_access_token(token)
+            sub = payload.get("sub")
+            if sub:
+                return f"user:{sub}"
+        except Exception:
+            pass
+
+    return get_client_ip(request)
+
+
 # Redis storage so limits hold across multiple API processes (Spec 9.5).
 # key_func is get_client_ip, extracting the trusted peer or forwarded client.
 #

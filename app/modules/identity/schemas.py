@@ -283,9 +283,57 @@ class CreateWorkspaceRequest(BaseModel):
     subdomain: str | None = None
     country: str = "IN"
     currency: str = "INR"
-    timezone: str = "Asia/Kolkata"
     seed_departments: bool = True
     seed_shift: bool = True
+
+    @field_validator("company_name", mode="before")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Company name must be text.")
+        v = v.strip()
+        if not v or len(v) < 1 or len(v) > 200:
+            raise ValueError("Company name must be between 1 and 200 characters.")
+        return v
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def _validate_country(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Country must be text.")
+        v = v.strip().upper()
+        if len(v) != 2 or not v.isalpha():
+            raise ValueError("Country must be a valid 2-letter ISO country code.")
+        return v
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def _validate_currency(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Currency must be text.")
+        v = v.strip()
+        if len(v) != 3 or not v.isalpha() or not v.isupper():
+            raise ValueError("Currency must be 3 uppercase letters.")
+        return v
+
+    @field_validator("subdomain", mode="before")
+    @classmethod
+    def _validate_subdomain(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("Subdomain must be text.")
+        v = v.strip().lower()
+        if not v:
+            return None
+        if len(v) < 3 or len(v) > 63:
+            raise ValueError("Subdomain must be between 3 and 63 characters.")
+        if not re.match(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", v):
+            raise ValueError(
+                "Subdomain must contain only lowercase letters, digits, and hyphens,"
+                " and cannot start or end with a hyphen."
+            )
+        return v
 
 
 class SwitchWorkspaceRequest(BaseModel):

@@ -1,4 +1,6 @@
 import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
 
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
@@ -69,6 +71,23 @@ def bind_tenant_to_session(
     """
     db.info["tenant"] = (company_id, is_platform_admin)
     set_tenant_context(db, company_id, is_platform_admin)
+
+
+@contextmanager
+def elevate_tenant_context(db: Session) -> Generator[None, None, None]:
+    """Temporarily elevate session to platform admin with tenant context saved and restored.
+    Guarantees restoration of the session's prior tenant context in a finally block.
+    """
+    saved_tenant = db.info.get("tenant")
+    try:
+        bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
+        yield
+    finally:
+        if saved_tenant is not None:
+            bind_tenant_to_session(db, *saved_tenant)
+        else:
+            db.info.pop("tenant", None)
+            set_tenant_context(db, None, False)
 
 
 @event.listens_for(Session, "after_begin")

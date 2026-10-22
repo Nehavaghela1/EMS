@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -516,27 +517,87 @@ class AuthService:
         self.db.commit()
 
     def get_user_workspaces(self, email: str) -> list[dict]:
-        """Fetch all workspaces associated with the user's email."""
-        return self.user_repo.get_workspaces_by_email(email)
+        """Fetch all workspaces associated with the user's email.
+        Uses platform-admin context for cross-tenant discovery of memberships,
+        and guarantees restoration of the session's prior tenant context.
+        """
+        from app.db.rls import elevate_tenant_context
+
+        with elevate_tenant_context(self.db):
+            return self.user_repo.get_workspaces_by_email(email)
 
     def switch_workspace(
-        self, email: str, target_company_id: uuid.UUID, device_info: str | None = None
+        self,
+        email: str,
+        target_company_id: uuid.UUID,
+        device_info: str | None = None,
+        caller: User | None = None,
     ) -> tuple[TokenResponse, str]:
-        """Switch context to another workspace associated with the same email."""
-        users = self.user_repo.find_by_email(email)
-        target_user = next((u for u in users if u.company_id == target_company_id), None)
-        if not target_user or not target_user.is_active:
-            raise InvalidCredentialsError()
+        """Switch context to another workspace associated with the same email.
+        Enforces failure-order checklist:
+        authenticate -> load target user row -> check company status,
+        user active AND activated, email match -> only then create tokens
+        -> write audit -> single commit in the service.
+        All denials return uniform 404 NotFoundError with structured logging on app.security.
+        """
+        import hashlib
 
+        from app.db.rls import elevate_tenant_context
+
+        sec_logger = logging.getLogger("app.security")
+        email_hash_val = hashlib.sha256(email.lower().strip().encode()).hexdigest()[:12]
+
+        with elevate_tenant_context(self.db):
+            memberships = self.user_repo.find_usable_memberships(
+                email, company_id=target_company_id
+            )
+
+        if not memberships:
+            sec_logger.warning(
+                "Workspace switch denied",
+                extra={
+                    "event": "workspace_switch_failed",
+                    "reason": "workspace_not_found_or_ineligible",
+                    "email_hash": email_hash_val,
+                },
+            )
+            raise NotFoundError("Workspace not found.")
+
+        target_user, target_company = memberships[0]
+
+        # Tokens issued with target user's role and company_id
         access_token = create_access_token(
             sub=str(target_user.id),
             company_id=str(target_user.company_id),
             role=target_user.role.value,
         )
-        refresh_token_str = self._create_refresh_token(target_user.id, device_info)
-        return TokenResponse(access_token=access_token, token_type="bearer"), refresh_token_str
+        raw_refresh = self._create_refresh_token(target_user.id, device_info, commit=False)
 
-    def _create_refresh_token(self, user_id: uuid.UUID, device_info: str | None) -> str:
+        # Audit log WORKSPACE_SWITCHED
+        actor_user = caller or target_user
+        AuditService(self.db).record(
+            company_id=target_user.company_id,
+            actor=actor_user,
+            action="WORKSPACE_SWITCHED",
+            entity_type="company",
+            entity_id=target_company_id,
+            details={
+                "from_company_id": str(caller.company_id) if caller else None,
+                "to_company_id": str(target_company_id),
+                "target_company_id": str(target_company_id),
+                "target_company_name": target_company.name,
+                "role": target_user.role.value,
+            },
+        )
+
+        # Single commit in service
+        self.db.commit()
+
+        return TokenResponse(access_token=access_token, token_type="bearer"), raw_refresh
+
+    def _create_refresh_token(
+        self, user_id: uuid.UUID, device_info: str | None, commit: bool = True
+    ) -> str:
         raw_refresh = generate_refresh_token()
         self.token_repo.create(
             user_id=user_id,
@@ -544,7 +605,8 @@ class AuthService:
             expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
             device_info=device_info,
         )
-        self.db.commit()
+        if commit:
+            self.db.commit()
         return raw_refresh
 
     def get_me(self, user: User) -> MeResponse:
@@ -1087,88 +1149,113 @@ class CompanyService:
         return company
 
     def create_workspace(self, current_user: User, data: CreateWorkspaceRequest) -> Company:
-        """Create a new workspace, seed defaults, and make the current user the owner."""
+        """Create a new workspace, seed defaults, and make the current user the owner.
+        One transaction, one commit at the end, any exception rolls back everything.
+        Audit row WORKSPACE_CREATED recorded in same transaction.
+        """
         email = data.company_email or current_user.email
         if self.company_repo.get_by_email(email):
             raise ConflictError("A company with this email already exists.")
 
-        company = self.company_repo.create(
-            name=data.company_name,
-            code=_generate_company_code(data.company_name),
-            email=email,
-            phone=None,
-            industry=None,
-            country=data.country,
-            subdomain=data.subdomain.strip().lower() if data.subdomain else None,
-            company_size=None,
-            admin_password_hash=current_user.hashed_password,
-            status=CompanyStatus.active,
-        )
-        self.db.flush()
+        try:
+            company = self.company_repo.create(
+                name=data.company_name,
+                code=_generate_company_code(data.company_name),
+                email=email,
+                phone=None,
+                industry=None,
+                country=data.country,
+                currency=data.currency,
+                subdomain=data.subdomain.strip().lower() if data.subdomain else None,
+                company_size=None,
+                admin_password_hash=current_user.hashed_password,
+                status=CompanyStatus.active,
+            )
+            self.db.flush()
 
-        bind_tenant_to_session(self.db, company_id=company.id, is_platform_admin=True)
+            bind_tenant_to_session(self.db, company_id=company.id, is_platform_admin=True)
 
-        self.db.add(CompanySettings(company_id=company.id))
+            self.db.add(CompanySettings(company_id=company.id))
 
-        if data.seed_departments:
-            for dept_name in ["Engineering", "Sales", "Human Resources", "Finance"]:
-                self.department_repo.create(company_id=company.id, name=dept_name)
+            if data.seed_departments:
+                for dept_name in ["Engineering", "Sales", "Human Resources", "Finance"]:
+                    self.department_repo.create(company_id=company.id, name=dept_name)
 
-        if data.seed_shift:
-            from datetime import time
+            if data.seed_shift:
+                from datetime import time
 
-            from app.modules.time_leave.repository import ShiftRepository
+                from app.modules.time_leave.repository import ShiftRepository
 
-            shift_repo = ShiftRepository(self.db)
-            shift_repo.create(
+                shift_repo = ShiftRepository(self.db)
+                shift_repo.create(
+                    company_id=company.id,
+                    name="General Shift",
+                    start_time=time(9, 0),
+                    end_time=time(18, 0),
+                )
+
+            new_admin = self.user_repo.create(
                 company_id=company.id,
-                name="General Shift",
-                start_time=time(9, 0),
-                end_time=time(18, 0),
+                email=current_user.email,
+                hashed_password=current_user.hashed_password,
+                role=UserRole.owner,
+                is_active=True,
+                must_change_password=False,
             )
 
-        new_admin = self.user_repo.create(
-            company_id=company.id,
-            email=current_user.email,
-            hashed_password=current_user.hashed_password,
-            role=UserRole.hr_admin,
-            is_active=True,
-            must_change_password=False,
-        )
+            from datetime import date
 
-        from datetime import date
+            from app.modules.hr.models import InvitationStatus
+            from app.modules.hr.repository import EmployeeRepository
 
-        from app.modules.hr.models import InvitationStatus
-        from app.modules.hr.repository import EmployeeRepository
+            # Provision Head Office
+            location_repo = CompanyLocationRepository(self.db)
+            head_office = location_repo.create(
+                company_id=company.id,
+                name="Head Office",
+                code=f"{company.code}-HQ",
+                country=company.country,
+                is_primary=True,
+            )
 
-        # Provision Head Office
-        location_repo = CompanyLocationRepository(self.db)
-        head_office = location_repo.create(
-            company_id=company.id,
-            name="Head Office",
-            code=f"{company.code}-HQ",
-            country=company.country,
-            is_primary=True,
-        )
+            name_parts = current_user.email.split("@")[0].split(".")
+            emp_repo = EmployeeRepository(self.db)
+            emp_repo.create(
+                company_id=company.id,
+                first_name=name_parts[0].capitalize(),
+                last_name=name_parts[1].capitalize() if len(name_parts) > 1 else None,
+                email=current_user.email,
+                employee_code="ADMIN-001",
+                position="HR Admin / Org Head",
+                hire_date=date.today(),
+                is_active=True,
+                invitation_status=InvitationStatus.activated,
+                user_id=new_admin.id,
+                location_id=head_office.id,
+            )
 
-        name_parts = current_user.email.split("@")[0].split(".")
-        emp_repo = EmployeeRepository(self.db)
-        emp_repo.create(
-            company_id=company.id,
-            first_name=name_parts[0].capitalize(),
-            last_name=name_parts[1].capitalize() if len(name_parts) > 1 else None,
-            email=current_user.email,
-            employee_code="ADMIN-001",
-            position="HR Admin / Org Head",
-            hire_date=date.today(),
-            is_active=True,
-            invitation_status=InvitationStatus.activated,
-            user_id=new_admin.id,
-            location_id=head_office.id,
-        )
+            # Record WORKSPACE_CREATED audit log in the same transaction
+            AuditService(self.db).record(
+                company_id=company.id,
+                actor=current_user,
+                action="WORKSPACE_CREATED",
+                entity_type="company",
+                entity_id=company.id,
+                details={
+                    "company_name": company.name,
+                    "company_code": company.code,
+                    "country": company.country,
+                },
+            )
 
-        self.db.commit()
-        return company
+            self.db.commit()
+            return company
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ConflictError("A company with this email already exists.") from exc
+        except Exception:
+            self.db.rollback()
+            raise
 
 
 class LocationService:

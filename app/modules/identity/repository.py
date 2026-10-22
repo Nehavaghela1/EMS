@@ -127,30 +127,63 @@ class UserRepository:
             )
         return list(self.db.scalars(stmt).all())
 
+    def find_usable_memberships(
+        self, email: str, company_id: uuid.UUID | None = None
+    ) -> list[tuple[User, Company]]:
+        """Single source of truth for usable memberships (Rules 1.5 F2).
+        A membership is usable if:
+        - User.is_active is True
+        - Company.is_active is True
+        - Company.status == CompanyStatus.active
+        - No unactivated Employee exists in the SAME company linked to this user
+          (by user_id, or by lower(email) when Employee.user_id is NULL)
+          with invitation_status != activated.
+        """
+        from app.modules.hr.models import Employee, InvitationStatus
+
+        # Correlated unactivated employee check in the same company
+        unactivated_employee_exists = (
+            select(1)
+            .where(
+                Employee.company_id == User.company_id,
+                Employee.invitation_status != InvitationStatus.activated,
+                (Employee.user_id == User.id)
+                | (
+                    Employee.user_id.is_(None)
+                    & (func.lower(Employee.email) == func.lower(User.email))
+                ),
+            )
+            .exists()
+        )
+
+        stmt = (
+            select(User, Company)
+            .join(Company, Company.id == User.company_id)
+            .where(
+                func.lower(User.email) == email.strip().lower(),
+                User.is_active.is_(True),
+                Company.is_active.is_(True),
+                Company.status == CompanyStatus.active,
+                ~unactivated_employee_exists,
+            )
+        )
+        if company_id is not None:
+            stmt = stmt.where(Company.id == company_id)
+
+        return list(self.db.execute(stmt).tuples().all())
+
     def get_workspaces_by_email(self, email: str) -> list[dict]:
         """Fetch all workspaces associated with an email for the multi-tenant switcher."""
-        stmt = (
-            select(
-                Company.id,
-                Company.name,
-                Company.code,
-                User.role,
-                User.is_active,
-            )
-            .select_from(User)
-            .join(Company, Company.id == User.company_id)
-            .where(func.lower(User.email) == email.lower())
-        )
-        rows = self.db.execute(stmt).all()
+        memberships = self.find_usable_memberships(email)
         return [
             {
-                "id": r.id,
-                "name": r.name,
-                "code": r.code,
-                "role": r.role,
-                "is_active": r.is_active,
+                "id": company.id,
+                "name": company.name,
+                "code": company.code,
+                "role": user.role,
+                "is_active": user.is_active,
             }
-            for r in rows
+            for user, company in memberships
         ]
 
     def get_by_id_for_token_refresh(self, user_id: uuid.UUID) -> User | None:
