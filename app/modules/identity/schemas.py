@@ -292,7 +292,7 @@ class CreateWorkspaceRequest(BaseModel):
         if not isinstance(v, str):
             raise ValueError("Company name must be text.")
         v = v.strip()
-        if not v or len(v) < 1 or len(v) > 200:
+        if not v or len(v) > 200:
             raise ValueError("Company name must be between 1 and 200 characters.")
         return v
 
@@ -302,7 +302,7 @@ class CreateWorkspaceRequest(BaseModel):
         if not isinstance(v, str):
             raise ValueError("Country must be text.")
         v = v.strip().upper()
-        if len(v) != 2 or not v.isalpha():
+        if not re.fullmatch(r"[A-Z]{2}", v):
             raise ValueError("Country must be a valid 2-letter ISO country code.")
         return v
 
@@ -311,8 +311,8 @@ class CreateWorkspaceRequest(BaseModel):
     def _validate_currency(cls, v: str) -> str:
         if not isinstance(v, str):
             raise ValueError("Currency must be text.")
-        v = v.strip()
-        if len(v) != 3 or not v.isalpha() or not v.isupper():
+        v = v.strip().upper()
+        if not re.fullmatch(r"[A-Z]{3}", v):
             raise ValueError("Currency must be 3 uppercase letters.")
         return v
 

@@ -532,6 +532,7 @@ class AuthService:
         target_company_id: uuid.UUID,
         device_info: str | None = None,
         caller: User | None = None,
+        commit: bool = True,
     ) -> tuple[TokenResponse, str]:
         """Switch context to another workspace associated with the same email.
         Enforces failure-order checklist:
@@ -590,8 +591,9 @@ class AuthService:
             },
         )
 
-        # Single commit in service
-        self.db.commit()
+        # Single commit in service if requested
+        if commit:
+            self.db.commit()
 
         return TokenResponse(access_token=access_token, token_type="bearer"), raw_refresh
 
@@ -1148,10 +1150,16 @@ class CompanyService:
         self.db.commit()
         return company
 
-    def create_workspace(self, current_user: User, data: CreateWorkspaceRequest) -> Company:
-        """Create a new workspace, seed defaults, and make the current user the owner.
-        One transaction, one commit at the end, any exception rolls back everything.
-        Audit row WORKSPACE_CREATED recorded in same transaction.
+    def create_workspace(
+        self,
+        current_user: User,
+        data: CreateWorkspaceRequest,
+        device_info: str | None = None,
+    ) -> tuple[Company, TokenResponse, str]:
+        """Create a new workspace, seed defaults, make current user the owner,
+        and switch workspace context to issue tokens — all in one transaction with a
+        single commit at the end. Any exception rolls back everything.
+        Audit rows WORKSPACE_CREATED and WORKSPACE_SWITCHED recorded in same transaction.
         """
         email = data.company_email or current_user.email
         if self.company_repo.get_by_email(email):
@@ -1248,8 +1256,18 @@ class CompanyService:
                 },
             )
 
+            # Switch workspace to issue tokens in the same single transaction
+            auth_service = AuthService(self.db)
+            token_response, raw_refresh = auth_service.switch_workspace(
+                current_user.email,
+                company.id,
+                device_info=device_info,
+                caller=current_user,
+                commit=False,
+            )
+
             self.db.commit()
-            return company
+            return company, token_response, raw_refresh
         except IntegrityError as exc:
             self.db.rollback()
             raise ConflictError("A company with this email already exists.") from exc
