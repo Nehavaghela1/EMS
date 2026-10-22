@@ -1007,43 +1007,12 @@ def test_W20_unactivated_employee_in_other_company_and_agreement(client, db):
     assert resp_sw.status_code == 404
 
 
-# ── W21: Two employee rows for one email (one unact, one act) agree ───────────
-def test_W21_two_employee_rows_one_unact_one_act_different_companies(client, db):
-    email = f"w21-{uuid.uuid4().hex[:6]}@example.com"
-    c_act = _create_company(db, name="Active Co W21")
-    c_unact = _create_company(db, name="Unact Co W21")
-
-    u_act, _ = _create_user_in_company(
-        db, c_act.id, email, is_active=True, invitation_status=InvitationStatus.activated
-    )
-    u_unact, _ = _create_user_in_company(
-        db, c_unact.id, email, is_active=True, invitation_status=InvitationStatus.sent
-    )
-
-    headers = _make_headers(u_act.id, c_act.id, u_act.role)
-
-    # List only includes c_act
-    resp_list = client.get("/api/v1/auth/workspaces", headers=headers)
-    assert resp_list.status_code == 200
-    w_ids = [w["id"] for w in resp_list.json()]
-    assert str(c_act.id) in w_ids
-    assert str(c_unact.id) not in w_ids
-
-    # Switch to c_act succeeds
-    resp_sw_act = client.post(
-        "/api/v1/auth/switch-workspace",
-        headers=headers,
-        json={"company_id": str(c_act.id)},
-    )
-    assert resp_sw_act.status_code == 200
-
-    # Switch to c_unact fails with 404
-    resp_sw_unact = client.post(
-        "/api/v1/auth/switch-workspace",
-        headers=headers,
-        json={"company_id": str(c_unact.id)},
-    )
-    assert resp_sw_unact.status_code == 404
+# ── W21: Note on unique constraint on (company_id, email) ─────────────────────
+# Note: Two employee rows for one email in the SAME company is impossible because
+# of the database unique constraint Index("uq_employees_company_id_email",
+# "company_id", "email", unique=True). Across different companies, and for all
+# permutations of user, company, and employee state, the agreement between list
+# and switch is exhaustively tested in test_W25 below.
 
 
 # ── W22: Rate limit is per user: two users same IP separate; same user 2 IPs share ─
@@ -1130,15 +1099,34 @@ def test_W23_invalid_currency_and_subdomain_give_422(client, db, company_a):
     assert res_ok.status_code == 201
 
 
-# ── W24: Near-simultaneous creates with same company email: one 201, other 409 ──
+# ── W24: Near-simultaneous creates race condition stops at DB unique constraint ──
 def test_W24_near_simultaneous_creates_same_email_conflict_handling(client, db, company_a):
     u_owner, _ = _create_user_in_company(
         db, company_a.company_id, f"owner-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.owner
     )
     headers = _make_headers(u_owner.id, company_a.company_id, u_owner.role)
 
+    from app.db.rls import bind_tenant_to_session
+    from app.modules.hr.models import Department
+    from app.modules.identity.repository import CompanyRepository
+    from app.modules.time_leave.models import Shift
+
+    def get_all_counts():
+        bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
+        return {
+            "companies": db.scalar(select(func.count(Company.id))),
+            "users": db.scalar(select(func.count(User.id))),
+            "employees": db.scalar(select(func.count(Employee.id))),
+            "company_locations": db.scalar(select(func.count(CompanyLocation.id))),
+            "departments": db.scalar(select(func.count(Department.id))),
+            "shifts": db.scalar(select(func.count(Shift.id))),
+            "company_settings": db.scalar(select(func.count(CompanySettings.id))),
+            "audit_logs": db.scalar(select(func.count(AuditLog.id))),
+        }
+
     shared_email = f"shared-{uuid.uuid4().hex[:6]}@example.com"
 
+    # First POST succeeds
     res1 = client.post(
         "/api/v1/companies/workspaces",
         headers=headers,
@@ -1146,11 +1134,167 @@ def test_W24_near_simultaneous_creates_same_email_conflict_handling(client, db, 
     )
     assert res1.status_code == 201
 
-    # Second create with same company_email triggers 409
-    res2 = client.post(
-        "/api/v1/companies/workspaces",
-        headers=headers,
-        json={"company_name": "Company Two", "company_email": shared_email, "country": "IN"},
-    )
+    counts_after_first = get_all_counts()
+
+    # Second POST: bypass the application pre-check by mocking get_by_email to None,
+    # so execution proceeds to company_repo.create and hits the DB unique constraint
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(CompanyRepository, "get_by_email", lambda self, email: None)
+        res2 = client.post(
+            "/api/v1/companies/workspaces",
+            headers=headers,
+            json={"company_name": "Company Two", "company_email": shared_email, "country": "IN"},
+        )
+
     assert res2.status_code == 409
+    assert res2.status_code != 500
     assert "A company with this email already exists" in res2.json()["error"]["message"]
+
+    # Verify no partial rows created on failure
+    counts_after_second = get_all_counts()
+    assert counts_after_first == counts_after_second
+
+
+# ── W25: Exhaustive truth table for usable membership {user} x {company} x {employee} ──
+def test_W25_exhaustive_truth_table_memberships(client, db, company_a):
+    from app.db.rls import bind_tenant_to_session
+
+    caller, _ = _create_user_in_company(
+        db, company_a.company_id, f"caller-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.owner
+    )
+    headers = _make_headers(caller.id, company_a.company_id, caller.role)
+
+    # Truth table dimensions:
+    # user_active: [True, False]
+    # company_status:
+    #   [(CompanyStatus.active, True), (CompanyStatus.active, False), (CompanyStatus.pending, True)]
+    # employee_state:
+    #   - "none": no employee record
+    #   - "linked_activated": Employee linked by user_id, invitation_status == activated
+    #   - "linked_not_activated": Employee linked by user_id, invitation_status == sent
+    #   - "email_not_activated": Employee user_id=None, invitation_status==sent, matching email
+
+    user_actives = [True, False]
+    company_states = [
+        (CompanyStatus.active, True),  # active & is_active=True
+        (CompanyStatus.active, False),  # inactive (is_active=False)
+        (CompanyStatus.pending, True),  # pending status
+    ]
+    employee_states = [
+        "none",
+        "linked_activated",
+        "linked_not_activated",
+        "email_not_activated",
+    ]
+
+    limiter.enabled = False
+    try:
+        for u_active in user_actives:
+            for c_status, c_active in company_states:
+                for emp_state in employee_states:
+                    # Expected usable only when:
+                    # user is active AND company is active (status active & is_active=True)
+                    # AND employee is either "none" or "linked_activated"
+                    expected_usable = (
+                        u_active
+                        and c_active
+                        and (c_status == CompanyStatus.active)
+                        and (emp_state in ("none", "linked_activated"))
+                    )
+
+                    # Provision isolated company and user
+                    test_comp = _create_company(
+                        db,
+                        name=f"Co-{uuid.uuid4().hex[:6]}",
+                        status=c_status,
+                        is_active=c_active,
+                    )
+                    test_user = User(
+                        company_id=test_comp.id,
+                        email=caller.email,
+                        hashed_password=caller.hashed_password,
+                        role=UserRole.employee,
+                        is_active=u_active,
+                    )
+                    db.add(test_user)
+                    db.flush()
+
+                    bind_tenant_to_session(db, company_id=test_comp.id, is_platform_admin=True)
+
+                    if emp_state == "linked_activated":
+                        db.add(
+                            Employee(
+                                company_id=test_comp.id,
+                                user_id=test_user.id,
+                                employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
+                                first_name="Test",
+                                email=caller.email,
+                                hire_date=date.today(),
+                                is_active=True,
+                                invitation_status=InvitationStatus.activated,
+                                employment_type=EmploymentType.full_time,
+                            )
+                        )
+                    elif emp_state == "linked_not_activated":
+                        db.add(
+                            Employee(
+                                company_id=test_comp.id,
+                                user_id=test_user.id,
+                                employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
+                                first_name="Test",
+                                email=caller.email,
+                                hire_date=date.today(),
+                                is_active=True,
+                                invitation_status=InvitationStatus.sent,
+                                employment_type=EmploymentType.full_time,
+                            )
+                        )
+                    elif emp_state == "email_not_activated":
+                        db.add(
+                            Employee(
+                                company_id=test_comp.id,
+                                user_id=None,
+                                employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
+                                first_name="Test",
+                                email=caller.email,
+                                hire_date=date.today(),
+                                is_active=True,
+                                invitation_status=InvitationStatus.sent,
+                                employment_type=EmploymentType.full_time,
+                            )
+                        )
+
+                    db.commit()
+
+                    # 1. GET /auth/workspaces
+                    resp_list = client.get("/api/v1/auth/workspaces", headers=headers)
+                    assert resp_list.status_code == 200
+                    listed_ids = [w["id"] for w in resp_list.json()]
+                    is_listed = str(test_comp.id) in listed_ids
+
+                    # 2. POST /auth/switch-workspace
+                    resp_sw = client.post(
+                        "/api/v1/auth/switch-workspace",
+                        headers=headers,
+                        json={"company_id": str(test_comp.id)},
+                    )
+                    switch_ok = resp_sw.status_code == 200
+                    if not switch_ok:
+                        assert resp_sw.status_code == 404
+
+                    # Assert that "company appears in GET /auth/workspaces" ==
+                    # "POST /auth/switch-workspace returns 200"
+                    # and matches the expected truth table value
+                    ctx = (
+                        f"u_active={u_active}, c_status={c_status}, "
+                        f"c_active={c_active}, emp_state={emp_state}"
+                    )
+                    assert is_listed == switch_ok, (
+                        f"Disagreement between list ({is_listed}) and switch "
+                        f"({switch_ok}) for {ctx}"
+                    )
+                    assert is_listed == expected_usable, (
+                        f"Expected usable={expected_usable} but got is_listed={is_listed} for {ctx}"
+                    )
+    finally:
+        limiter.reset()
