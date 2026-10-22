@@ -129,6 +129,19 @@ class UserRepository:
 
     def get_workspaces_by_email(self, email: str) -> list[dict]:
         """Fetch all workspaces associated with an email for the multi-tenant switcher."""
+        from app.modules.hr.models import Employee, InvitationStatus
+
+        # Exclude unactivated employee rows (either linked by user_id or by email in the same company)
+        unactivated_user_ids = select(Employee.user_id).where(
+            Employee.user_id.is_not(None),
+            Employee.invitation_status != InvitationStatus.activated,
+        )
+        unactivated_company_emails = select(Employee.company_id, func.lower(Employee.email)).where(
+            Employee.invitation_status != InvitationStatus.activated,
+        )
+
+        from sqlalchemy import tuple_
+
         stmt = (
             select(
                 Company.id,
@@ -139,7 +152,14 @@ class UserRepository:
             )
             .select_from(User)
             .join(Company, Company.id == User.company_id)
-            .where(func.lower(User.email) == email.lower())
+            .where(
+                func.lower(User.email) == email.lower(),
+                User.is_active.is_(True),
+                Company.is_active.is_(True),
+                Company.status == CompanyStatus.active,
+                User.id.not_in(unactivated_user_ids),
+                tuple_(User.company_id, func.lower(User.email)).not_in(unactivated_company_emails),
+            )
         )
         rows = self.db.execute(stmt).all()
         return [

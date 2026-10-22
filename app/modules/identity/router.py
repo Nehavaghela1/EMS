@@ -132,6 +132,7 @@ def get_user_workspaces(
 
 
 @router.post("/switch-workspace", response_model=TokenResponse)
+@limiter.limit("20/minute")
 def switch_workspace(
     data: SwitchWorkspaceRequest,
     request: Request,
@@ -140,7 +141,10 @@ def switch_workspace(
     user: User = Depends(get_current_user),
 ):
     result, raw_refresh = AuthService(db).switch_workspace(
-        user.email, data.company_id, device_info=request.headers.get("user-agent")
+        user.email,
+        data.company_id,
+        device_info=request.headers.get("user-agent"),
+        caller=user,
     )
     _set_refresh_cookie(response, raw_refresh)
     return result
@@ -272,16 +276,20 @@ def register_company(
 
 
 @companies_router.post("/workspaces", response_model=CreateWorkspaceResponse, status_code=201)
+@limiter.limit("5/hour")
 def create_workspace(
     data: CreateWorkspaceRequest,
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
 ):
     company = CompanyService(db).create_workspace(user, data)
     token_response, raw_refresh = AuthService(db).switch_workspace(
-        user.email, company.id, device_info=request.headers.get("user-agent")
+        user.email,
+        company.id,
+        device_info=request.headers.get("user-agent"),
+        caller=user,
     )
     _set_refresh_cookie(response, raw_refresh)
     return CreateWorkspaceResponse(

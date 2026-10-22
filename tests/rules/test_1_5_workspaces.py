@@ -81,7 +81,10 @@ def _create_user_in_company(
     db.add(user)
     db.flush()
 
-    # Create associated employee
+    # Create associated employee under platform admin or tenant context
+    from app.db.rls import bind_tenant_to_session
+
+    bind_tenant_to_session(db, company_id=company_id, is_platform_admin=True)
     emp_code = f"EMP-{uuid.uuid4().hex[:6].upper()}"
     employee = Employee(
         company_id=company_id,
@@ -633,14 +636,19 @@ def test_W13_create_workspace_all_or_nothing(client, db, company_a, monkeypatch)
     }
 
     # Force failure in seed step
+    from fastapi.testclient import TestClient
+
+    from app.main import app as fastapi_app
     from app.modules.hr.repository import DepartmentRepository
 
     def failing_create(*args, **kwargs):
         raise RuntimeError("Seed simulation boom!")
 
+    client_no_raise = TestClient(fastapi_app, raise_server_exceptions=False)
+
     with pytest.MonkeyPatch.context() as m:
         m.setattr(DepartmentRepository, "create", failing_create)
-        resp = client.post(
+        resp = client_no_raise.post(
             "/api/v1/companies/workspaces",
             headers=headers,
             json={"company_name": "Failing Seed Co", "country": "IN", "seed_departments": True},

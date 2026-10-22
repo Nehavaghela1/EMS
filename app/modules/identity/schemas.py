@@ -287,6 +287,26 @@ class CreateWorkspaceRequest(BaseModel):
     seed_departments: bool = True
     seed_shift: bool = True
 
+    @field_validator("company_name", mode="before")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Company name must be text.")
+        v = v.strip()
+        if not v or len(v) < 1 or len(v) > 200:
+            raise ValueError("Company name must be between 1 and 200 characters.")
+        return v
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def _validate_country(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Country must be text.")
+        v = v.strip().upper()
+        if len(v) != 2 or not v.isalpha():
+            raise ValueError("Country must be a valid 2-letter ISO country code.")
+        return v
+
 
 class SwitchWorkspaceRequest(BaseModel):
     company_id: uuid.UUID
