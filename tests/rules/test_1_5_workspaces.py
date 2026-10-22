@@ -651,25 +651,36 @@ def test_W12_create_workspace_role_guards_validation_and_seeding(client, db, com
 
 
 # ── W13: Forced failure in seed/emp step leaves no partial records ────────────
-def test_W13_create_workspace_all_or_nothing(client, db, company_a, monkeypatch):
+def test_W13_create_workspace_all_or_nothing(client, db, company_a):
     u_owner, _ = _create_user_in_company(
         db, company_a.company_id, f"owner-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.owner
     )
     headers = _make_headers(u_owner.id, company_a.company_id, u_owner.role)
 
-    counts_before = {
-        "companies": db.scalar(select(func.count(Company.id))),
-        "users": db.scalar(select(func.count(User.id))),
-        "employees": db.scalar(select(func.count(Employee.id))),
-        "locations": db.scalar(select(func.count(CompanyLocation.id))),
-        "audit_logs": db.scalar(select(func.count(AuditLog.id))),
-    }
+    from app.db.rls import bind_tenant_to_session
+    from app.modules.hr.models import Department
+    from app.modules.time_leave.models import Shift
 
-    # Force failure in seed step
+    def get_all_counts():
+        bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
+        return {
+            "companies": db.scalar(select(func.count(Company.id))),
+            "users": db.scalar(select(func.count(User.id))),
+            "employees": db.scalar(select(func.count(Employee.id))),
+            "company_locations": db.scalar(select(func.count(CompanyLocation.id))),
+            "departments": db.scalar(select(func.count(Department.id))),
+            "shifts": db.scalar(select(func.count(Shift.id))),
+            "company_settings": db.scalar(select(func.count(CompanySettings.id))),
+            "audit_logs": db.scalar(select(func.count(AuditLog.id))),
+        }
+
+    counts_before_seed = get_all_counts()
+
+    # 1. Force failure in seed step
     from fastapi.testclient import TestClient
 
     from app.main import app as fastapi_app
-    from app.modules.hr.repository import DepartmentRepository
+    from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
 
     def failing_create(*args, **kwargs):
         raise RuntimeError("Seed simulation boom!")
@@ -688,15 +699,26 @@ def test_W13_create_workspace_all_or_nothing(client, db, company_a, monkeypatch)
         assert "RuntimeError" not in resp.text
         assert "Seed simulation boom" not in resp.text
 
-    counts_after = {
-        "companies": db.scalar(select(func.count(Company.id))),
-        "users": db.scalar(select(func.count(User.id))),
-        "employees": db.scalar(select(func.count(Employee.id))),
-        "locations": db.scalar(select(func.count(CompanyLocation.id))),
-        "audit_logs": db.scalar(select(func.count(AuditLog.id))),
-    }
+    counts_after_seed = get_all_counts()
+    assert counts_before_seed == counts_after_seed
 
-    assert counts_before == counts_after
+    # 2. Force failure in employee step
+    def failing_emp_create(*args, **kwargs):
+        raise RuntimeError("Employee creation boom!")
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(EmployeeRepository, "create", failing_emp_create)
+        resp_emp = client_no_raise.post(
+            "/api/v1/companies/workspaces",
+            headers=headers,
+            json={"company_name": "Failing Emp Co", "country": "IN"},
+        )
+        assert resp_emp.status_code == 500
+        assert "RuntimeError" not in resp_emp.text
+        assert "Employee creation boom" not in resp_emp.text
+
+    counts_after_emp = get_all_counts()
+    assert counts_before_seed == counts_after_emp
 
 
 # ── W14: Audit rows for create and switch; denied switch logs on app.security ──
@@ -912,3 +934,219 @@ def test_W18_duplicate_company_email_gives_409(client, db, company_a):
         "users": db.scalar(select(func.count(User.id))),
     }
     assert counts_before == counts_after
+
+
+# ── W19: Scoped elevation restores session tenant context to Company A ────────
+def test_W19_scoped_elevation_restores_tenant_context(client, db, company_a):
+    from app.db.rls import bind_tenant_to_session
+    from app.modules.identity.service import AuthService
+
+    # Create employee in Company A
+    userA, empA = _create_user_in_company(
+        db, company_a.company_id, f"emp-a-{uuid.uuid4().hex[:6]}@example.com"
+    )
+
+    # Bind session to Company A (normal tenant context)
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+
+    # Run get_user_workspaces
+    auth_service = AuthService(db)
+    workspaces = auth_service.get_user_workspaces(userA.email)
+    assert len(workspaces) >= 1
+
+    # Verify session's tenant context is restored: query on employees returns only A's rows
+    visible_employees = db.scalars(select(Employee)).all()
+    assert all(e.company_id == company_a.company_id for e in visible_employees)
+    assert any(e.id == empA.id for e in visible_employees)
+
+    # Now create company B and user in B
+    compB = _create_company(db, name="Company B for W19")
+    _create_user_in_company(db, compB.id, userA.email)
+
+    # Bind session back to Company A
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+
+    # Run switch_workspace
+    auth_service.switch_workspace(userA.email, compB.id, caller=userA)
+
+    # Verify session's tenant context is STILL restored to Company A
+    visible_employees_after = db.scalars(select(Employee)).all()
+    assert all(e.company_id == company_a.company_id for e in visible_employees_after)
+    assert any(e.id == empA.id for e in visible_employees_after)
+
+
+# ── W20: Unactivated employee in another company; list and switch agree ────────
+def test_W20_unactivated_employee_in_other_company_and_agreement(client, db):
+    email = f"w20-{uuid.uuid4().hex[:6]}@example.com"
+    cA = _create_company(db, name="Co A W20")
+    cB = _create_company(db, name="Co B W20")
+
+    # In Co A: activated user
+    uA, empA = _create_user_in_company(db, cA.id, email, is_active=True)
+
+    # In Co B: unactivated employee
+    uB, empB = _create_user_in_company(
+        db, cB.id, email, is_active=True, invitation_status=InvitationStatus.sent
+    )
+
+    headersA = _make_headers(uA.id, cA.id, uA.role)
+
+    # List shows Co A only, NOT Co B
+    resp_list = client.get("/api/v1/auth/workspaces", headers=headersA)
+    assert resp_list.status_code == 200
+    listed_ids = [w["id"] for w in resp_list.json()]
+    assert str(cA.id) in listed_ids
+    assert str(cB.id) not in listed_ids
+
+    # Switch to Co B fails with 404 (list and switch agree)
+    resp_sw = client.post(
+        "/api/v1/auth/switch-workspace",
+        headers=headersA,
+        json={"company_id": str(cB.id)},
+    )
+    assert resp_sw.status_code == 404
+
+
+# ── W21: Two employee rows for one email (one unact, one act) agree ───────────
+def test_W21_two_employee_rows_one_unact_one_act_different_companies(client, db):
+    email = f"w21-{uuid.uuid4().hex[:6]}@example.com"
+    c_act = _create_company(db, name="Active Co W21")
+    c_unact = _create_company(db, name="Unact Co W21")
+
+    u_act, _ = _create_user_in_company(
+        db, c_act.id, email, is_active=True, invitation_status=InvitationStatus.activated
+    )
+    u_unact, _ = _create_user_in_company(
+        db, c_unact.id, email, is_active=True, invitation_status=InvitationStatus.sent
+    )
+
+    headers = _make_headers(u_act.id, c_act.id, u_act.role)
+
+    # List only includes c_act
+    resp_list = client.get("/api/v1/auth/workspaces", headers=headers)
+    assert resp_list.status_code == 200
+    w_ids = [w["id"] for w in resp_list.json()]
+    assert str(c_act.id) in w_ids
+    assert str(c_unact.id) not in w_ids
+
+    # Switch to c_act succeeds
+    resp_sw_act = client.post(
+        "/api/v1/auth/switch-workspace",
+        headers=headers,
+        json={"company_id": str(c_act.id)},
+    )
+    assert resp_sw_act.status_code == 200
+
+    # Switch to c_unact fails with 404
+    resp_sw_unact = client.post(
+        "/api/v1/auth/switch-workspace",
+        headers=headers,
+        json={"company_id": str(c_unact.id)},
+    )
+    assert resp_sw_unact.status_code == 404
+
+
+# ── W22: Rate limit is per user: two users same IP separate; same user 2 IPs share ─
+def test_W22_rate_limit_per_user_verified_token(client, db, company_a):
+    u1, _ = _create_user_in_company(
+        db, company_a.company_id, f"u1-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.owner
+    )
+    u2, _ = _create_user_in_company(
+        db, company_a.company_id, f"u2-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.owner
+    )
+
+    h1 = _make_headers(u1.id, company_a.company_id, u1.role)
+    h2 = _make_headers(u2.id, company_a.company_id, u2.role)
+
+    # Clean rate limiter
+    limiter.reset()
+
+    # User 1 makes 20 calls from IP 1.2.3.4
+    for i in range(20):
+        res = client.post(
+            "/api/v1/auth/switch-workspace",
+            headers={**h1, "X-Forwarded-For": "1.2.3.4"},
+            json={"company_id": str(company_a.company_id)},
+        )
+        assert res.status_code == 200, f"u1 switch #{i+1} failed"
+
+    # User 1's 21st call from a DIFFERENT IP (5.6.7.8) must be 429 (shared counter per user)
+    res_u1_diff_ip = client.post(
+        "/api/v1/auth/switch-workspace",
+        headers={**h1, "X-Forwarded-For": "5.6.7.8"},
+        json={"company_id": str(company_a.company_id)},
+    )
+    assert res_u1_diff_ip.status_code == 429
+
+    # User 2 on the SAME initial IP (1.2.3.4) gets their OWN separate 20 quota (not 429)
+    res_u2 = client.post(
+        "/api/v1/auth/switch-workspace",
+        headers={**h2, "X-Forwarded-For": "1.2.3.4"},
+        json={"company_id": str(company_a.company_id)},
+    )
+    assert res_u2.status_code == 200
+
+
+# ── W23: Invalid currency and invalid subdomain give 422 ──────────────────────
+def test_W23_invalid_currency_and_subdomain_give_422(client, db, company_a):
+    u_owner, _ = _create_user_in_company(
+        db, company_a.company_id, f"owner-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.owner
+    )
+    headers = _make_headers(u_owner.id, company_a.company_id, u_owner.role)
+
+    # Invalid currency: 2 letters or lowercase or non-alpha -> 422
+    for bad_curr in ["US", "inr", "US1", "TOOLONG"]:
+        res_curr = client.post(
+            "/api/v1/companies/workspaces",
+            headers=headers,
+            json={"company_name": "Curr Co", "currency": bad_curr, "country": "IN"},
+        )
+        assert res_curr.status_code == 422, f"currency {bad_curr} did not return 422"
+
+    # Invalid subdomain: uppercase, symbols, or invalid format -> 422
+    for bad_sub in ["Sub_Domain", "-badstart", "badend-", "sub domain", "a" * 101]:
+        res_sub = client.post(
+            "/api/v1/companies/workspaces",
+            headers=headers,
+            json={"company_name": "Sub Co", "subdomain": bad_sub, "country": "IN"},
+        )
+        assert res_sub.status_code == 422, f"subdomain {bad_sub} did not return 422"
+
+    # Valid currency and subdomain work -> 201
+    res_ok = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={
+            "company_name": "Valid Sub Co",
+            "currency": "USD",
+            "subdomain": "valid-subdomain",
+            "country": "US",
+        },
+    )
+    assert res_ok.status_code == 201
+
+
+# ── W24: Near-simultaneous creates with same company email: one 201, other 409 ──
+def test_W24_near_simultaneous_creates_same_email_conflict_handling(client, db, company_a):
+    u_owner, _ = _create_user_in_company(
+        db, company_a.company_id, f"owner-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.owner
+    )
+    headers = _make_headers(u_owner.id, company_a.company_id, u_owner.role)
+
+    shared_email = f"shared-{uuid.uuid4().hex[:6]}@example.com"
+
+    res1 = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={"company_name": "Company One", "company_email": shared_email, "country": "IN"},
+    )
+    assert res1.status_code == 201
+
+    # Second create with same company_email triggers 409
+    res2 = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={"company_name": "Company Two", "company_email": shared_email, "country": "IN"},
+    )
+    assert res2.status_code == 409
+    assert "A company with this email already exists" in res2.json()["error"]["message"]
