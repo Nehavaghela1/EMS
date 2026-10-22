@@ -206,6 +206,13 @@ def test_W03_role_comes_from_target_account(client, db):
     new_token = resp.json()["access_token"]
     headersB = {"Authorization": f"Bearer {new_token}"}
 
+    # Token claims must reflect target user B (employee), not caller A (hr_admin)
+    from app.core.security import decode_access_token
+    claims = decode_access_token(new_token)
+    assert claims["role"] == UserRole.employee.value
+    assert claims["sub"] == str(uB.id)
+    assert claims["company_id"] == str(cB.id)
+
     # Calling an HR-only route in Company B (e.g. POST /departments) must be rejected with 403
     dept_resp = client.post("/api/v1/departments", headers=headersB, json={"name": "New Dept"})
     assert dept_resp.status_code == 403
