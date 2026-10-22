@@ -656,22 +656,20 @@ def test_T10_atomicity_and_change_password(client, db, company_a, email_outbox, 
     def fail_revoke(*args, **kwargs):
         raise RuntimeError("Simulated token revoke failure during reset")
 
-    monkeypatch.setattr(id_svc.RefreshTokenRepository, "revoke", fail_revoke)
+    with monkeypatch.context() as m:
+        m.setattr(id_svc.RefreshTokenRepository, "revoke", fail_revoke)
 
-    with pytest.raises(RuntimeError, match="Simulated token revoke failure"):
-        client.post(
-            "/api/v1/auth/reset-password",
-            json={"email": user.email, "otp": otp, "new_password": "ShouldNotBeSaved123!"},
-        )
+        with pytest.raises(RuntimeError, match="Simulated token revoke failure"):
+            client.post(
+                "/api/v1/auth/reset-password",
+                json={"email": user.email, "otp": otp, "new_password": "ShouldNotBeSaved123!"},
+            )
 
     db.rollback()
     # Password must remain the original password
     db.refresh(user)
     login_orig = client.post("/api/v1/auth/login", json={"email": user.email, "password": orig_pw})
     assert login_orig.status_code == 200
-
-    # Undo monkeypatch for change-password tests
-    monkeypatch.undo()
 
     # 2. Change password flow:
     # Requires current password, ends other sessions, writes audit row, sends email
@@ -1008,29 +1006,54 @@ def test_formatted_json_line_keeps_metadata_visible_and_hides_nested_secrets():
 # upgrade head, downgrade -1, upgrade head works and password_changed_at exists on users.
 def test_M01_migration_password_changed_at():
     import subprocess
+    import sys
+    from pathlib import Path
 
     from sqlalchemy import inspect
 
     from app.db.session import engine
 
-    # Run downgrade -1 then upgrade head to prove reversibility
-    res_down = subprocess.run(
-        ["./venv/bin/alembic", "downgrade", "-1"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert res_down.returncode == 0, (
-        f"Alembic downgrade failed:\n{res_down.stderr}\n{res_down.stdout}"
-    )
+    repo_root = Path(__file__).resolve().parents[2]
+    migration_file = repo_root / "alembic/versions/4a5b6c7d8e9f_add_password_changed_at_to_users.py"
 
-    res_up = subprocess.run(
-        ["./venv/bin/alembic", "upgrade", "head"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert res_up.returncode == 0, f"Alembic upgrade failed:\n{res_up.stderr}\n{res_up.stdout}"
+    # Read down_revision dynamically from migration file
+    down_rev = None
+    with open(migration_file) as f:
+        for line in f:
+            if line.startswith("down_revision"):
+                down_rev = line.split("=")[1].strip().strip('"').strip("'")
+                break
+    assert down_rev is not None, "Could not determine down_revision"
+
+    # Downgrade to down_revision, assert column gone, then upgrade head in try/finally
+    try:
+        res_down = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", down_rev],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res_down.returncode == 0, (
+            f"Alembic downgrade failed:\nstdout: {res_down.stdout}\nstderr: {res_down.stderr}"
+        )
+
+        insp = inspect(engine)
+        cols_after_down = [col["name"] for col in insp.get_columns("users")]
+        assert "password_changed_at" not in cols_after_down, (
+            f"Expected password_changed_at to be removed, got columns: {cols_after_down}"
+        )
+    finally:
+        res_up = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res_up.returncode == 0, (
+            f"Alembic upgrade failed:\nstdout: {res_up.stdout}\nstderr: {res_up.stderr}"
+        )
 
     # Verify column exists on users table in DB
     insp = inspect(engine)
