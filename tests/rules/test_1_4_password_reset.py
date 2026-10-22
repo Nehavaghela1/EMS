@@ -1003,15 +1003,18 @@ def test_formatted_json_line_keeps_metadata_visible_and_hides_nested_secrets():
 
 
 # ── M01: Migration password_changed_at ────────────────────────────────────────
-# upgrade head, downgrade -1, upgrade head works and password_changed_at exists on users.
-def test_M01_migration_password_changed_at():
+# Downgrade to down_revision and upgrade head works and password_changed_at exists on users.
+def test_M01_migration_password_changed_at(engine):
+    import os
     import subprocess
     import sys
     from pathlib import Path
 
     from sqlalchemy import inspect
 
-    from app.db.session import engine
+    from app.core.config import settings
+
+    assert settings.TEST_MIGRATION_URL is not None, "TEST_MIGRATION_URL must be configured"
 
     repo_root = Path(__file__).resolve().parents[2]
     migration_file = repo_root / "alembic/versions/4a5b6c7d8e9f_add_password_changed_at_to_users.py"
@@ -1025,11 +1028,14 @@ def test_M01_migration_password_changed_at():
                 break
     assert down_rev is not None, "Could not determine down_revision"
 
+    env = {**os.environ, "ALEMBIC_DATABASE_URL": settings.TEST_MIGRATION_URL}
+
     # Downgrade to down_revision, assert column gone, then upgrade head in try/finally
     try:
         res_down = subprocess.run(
             [sys.executable, "-m", "alembic", "downgrade", down_rev],
             cwd=repo_root,
+            env=env,
             capture_output=True,
             text=True,
             check=False,
@@ -1047,6 +1053,7 @@ def test_M01_migration_password_changed_at():
         res_up = subprocess.run(
             [sys.executable, "-m", "alembic", "upgrade", "head"],
             cwd=repo_root,
+            env=env,
             capture_output=True,
             text=True,
             check=False,
