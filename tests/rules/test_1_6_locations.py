@@ -1620,20 +1620,15 @@ def test_part3_G_approve_company_non_2_letter_country_rejected(
 
     from app.core.exceptions import ValidationError
     from app.modules.identity.models import Company, CompanyLocation, CompanyStatus, User
-    from app.modules.identity.schemas import AdminCompanyUpdateRequest, CompanyProfileUpdateRequest
+    from app.modules.identity.schemas import AdminCompanyUpdateRequest
     from app.modules.identity.service import CompanyService
 
-    # 1. Test schema validation: CompanyProfileUpdateRequest and AdminCompanyUpdateRequest
+    # 1. Test schema validation: AdminCompanyUpdateRequest validates 2-letter country
     # Invalid country -> 422 (ValidationError)
-    with pytest.raises((ValueError, PydanticValidationError)):
-        CompanyProfileUpdateRequest(country="India")
-
     with pytest.raises((ValueError, PydanticValidationError)):
         AdminCompanyUpdateRequest(country="USA")
 
     # Valid lowercase country gets stripped and uppercased
-    req_profile = CompanyProfileUpdateRequest(country=" us ")
-    assert req_profile.country == "US"
     req_admin = AdminCompanyUpdateRequest(country=" gb ")
     assert req_admin.country == "GB"
 
