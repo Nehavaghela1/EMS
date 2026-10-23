@@ -16,7 +16,7 @@ from app.core.security import create_access_token
 from app.modules.hr.models import EmploymentType
 from app.modules.hr.schemas import EmployeeCreateRequest
 from app.modules.hr.service import EmployeeService
-from app.modules.identity.models import Company, CompanyLocation, CompanyStatus, User, UserRole
+from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 
 
 def _auth_headers(user: User) -> dict[str, str]:
@@ -256,6 +256,25 @@ def test_country_boundary_owner_and_super_admin(
     assert comp.country == "GB"
 
 
+def test_country_boundary_hr_admin(client: TestClient, db: Session, hardening_company):
+    """ITEM 2:
+    - hr_admin caller: PUT /api/v1/companies/me with country 'US' returns 200
+      and company.country stays 'IN'.
+    """
+    comp = hardening_company["company"]
+    hr_headers = _auth_headers(hardening_company["hr_admin"])
+
+    # Attempt to change country via company profile endpoint using hr_admin
+    res_profile = client.put(
+        "/api/v1/companies/me",
+        headers=hr_headers,
+        json={"name": "HR Updated Name", "country": "US"},
+    )
+    assert res_profile.status_code == 200
+    db.refresh(comp)
+    assert comp.country == "IN", "hr_admin profile update must not change company.country"
+
+
 # ==============================================================================
 # ITEM 3: Employee Reactivation
 # ==============================================================================
@@ -302,7 +321,7 @@ def test_inactive_employee_location_journey_update_then_reactivate(
     client: TestClient, db: Session, hardening_company
 ):
     """ITEM 3(b) Journey test:
-    - An inactive employee whose location is inactive cannot be reactivated (existing 4xx).
+    - An inactive employee whose location is inactive cannot be reactivated (exact 400).
     - HR/owner updates that employee's location_id to an active location via
       PUT /api/v1/employees/{id}.
     - Reactivation succeeds.
@@ -348,17 +367,21 @@ def test_inactive_employee_location_journey_update_then_reactivate(
     db.refresh(emp)
     assert emp.is_active is False
 
-    # 4. Deactivate loc1
-    loc1 = db.get(CompanyLocation, loc1_id)
-    loc1.is_active = False
-    db.commit()
+    # 4. Deactivate loc1 via real 1.6 route: DELETE /api/v1/companies/locations/{location_id}
+    res_deact_loc = client.delete(
+        f"/api/v1/companies/locations/{loc1_id}",
+        headers=owner_headers,
+    )
+    assert res_deact_loc.status_code == 200
+    assert res_deact_loc.json()["is_active"] is False
 
-    # 5. Attempt reactivation -> fails (400 or 422 with location inactive error)
+    # 5. Attempt reactivation -> fails with exact code 400 and mentions location in response
     res_toggle_fail = client.post(
         f"/api/v1/employees/{emp.id}/toggle-active",
         headers=owner_headers,
     )
-    assert res_toggle_fail.status_code in (400, 422)
+    assert res_toggle_fail.status_code == 400
+    assert "location" in res_toggle_fail.text.lower()
     db.refresh(emp)
     assert emp.is_active is False
 
