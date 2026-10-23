@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -37,6 +38,7 @@ from app.modules.hr.models import Employee, InvitationStatus
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
 from app.modules.identity.models import (
     Company,
+    CompanyLocation,
     CompanySettings,
     CompanyStatus,
     User,
@@ -53,6 +55,7 @@ from app.modules.identity.schemas import (
     AdminCompanyUpdateRequest,
     ChangePasswordRequest,
     CompanyLocationCreate,
+    CompanyLocationUpdate,
     CompanyProfileUpdateRequest,
     CompanyRegisterRequest,
     CreateWorkspaceRequest,
@@ -63,7 +66,7 @@ from app.modules.identity.schemas import (
     TokenResponse,
 )
 from app.modules.platform.repository import IndustryPresetRepository
-from app.modules.platform.service import AuditService
+from app.modules.platform.service import AuditService, jsonable
 from app.modules.time_leave.repository import LeaveTypeRepository
 from app.workers.tasks.email import send_email_task
 
@@ -930,6 +933,14 @@ class CompanyService:
                 f"Company is not pending approval (current status: {company.status.value})."
             )
 
+        import re
+
+        hq_country = (company.country or "").strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", hq_country):
+            raise ValidationError(
+                f"Company country '{company.country}' is not a valid 2-letter ISO country code."
+            )
+
         # Acting on another tenant's data as the platform admin (8.5) — bind
         # to the target company explicitly, for clarity and auditability,
         # even though is_platform_admin=True already bypasses the check.
@@ -990,7 +1001,7 @@ class CompanyService:
             address_line1=company.address,
             city=company.city,
             state=company.state,
-            country=company.country,
+            country=hq_country,
             postal_code=company.pincode,
             is_primary=True,
         )
@@ -1306,19 +1317,333 @@ class LocationService:
     def __init__(self, db: Session):
         self.db = db
         self.location_repo = CompanyLocationRepository(db)
+        self.audit = AuditService(db)
 
-    def list_locations(self, company_id: uuid.UUID):
-        return self.location_repo.list_locations(company_id)
+    def list_locations(
+        self, company_id: uuid.UUID, is_active: bool | None = None
+    ) -> list[CompanyLocation]:
+        return self.location_repo.list_locations(company_id, is_active=is_active)
 
-    def create_location(self, company_id: uuid.UUID, data: CompanyLocationCreate):
-        return self.location_repo.create(
-            company_id=company_id,
-            name=data.name,
-            code=data.code,
-            address_line1=data.address_line1,
-            city=data.city,
-            state=data.state,
-            country=data.country,
-            postal_code=data.postal_code,
-            is_primary=data.is_primary,
+    def _lock_company(self, company_id: uuid.UUID) -> None:
+        """Rule C: Lock company row before reading/swapping head office."""
+        self.db.execute(select(Company.id).where(Company.id == company_id).with_for_update())
+
+    def create_location(
+        self, company_id: uuid.UUID, data: CompanyLocationCreate, actor: User | None = None
+    ) -> CompanyLocation:
+        # Pre-checks for clean 409 errors
+        if self.location_repo.get_by_name_lower(company_id, data.name):
+            raise ConflictError(
+                f"A location with the name '{data.name}' already exists in your company."
+            )
+        if self.location_repo.get_by_code_lower(company_id, data.code):
+            raise ConflictError(
+                f"A location with the code '{data.code}' already exists in your company."
+            )
+
+        try:
+            # If client sets is_primary = True, perform atomic head office swap with company lock
+            if data.is_primary:
+                self._lock_company(company_id)
+                old_hq = self.location_repo.get_head_office(company_id, for_update=True)
+                if old_hq:
+                    old_hq.is_primary = False
+                    self.db.flush()
+
+            location = self.location_repo.create(
+                company_id=company_id,
+                name=data.name,
+                code=data.code,
+                address_line1=data.address_line1,
+                city=data.city,
+                state=data.state,
+                country=data.country,
+                postal_code=data.postal_code,
+                is_primary=data.is_primary,
+                latitude=data.latitude,
+                longitude=data.longitude,
+                geofence_radius_meters=data.geofence_radius_meters,
+                is_remote_exempt=data.is_remote_exempt,
+                is_active=True,
+            )
+
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="LOCATION_CREATED",
+                entity_type="location",
+                entity_id=location.id,
+                details={
+                    "name": location.name,
+                    "code": location.code,
+                    "country": location.country,
+                    "is_primary": location.is_primary,
+                },
+            )
+            self.db.commit()
+            return location
+        except IntegrityError as exc:
+            self.db.rollback()
+            constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            if constraint in (
+                "uq_company_locations_lower_name",
+                "uq_company_locations_company_id_name",
+            ):
+                raise ConflictError(
+                    "A location with this name already exists in your company."
+                ) from exc
+            if constraint in (
+                "uq_company_locations_lower_code",
+                "uq_company_locations_company_id_code",
+            ):
+                raise ConflictError(
+                    "A location with this code already exists in your company."
+                ) from exc
+            if constraint == "uq_company_locations_primary_head_office":
+                raise ConflictError("A head office already exists for this company.") from exc
+            raise ConflictError("Could not save location due to a conflict.") from exc
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def update_location(
+        self,
+        company_id: uuid.UUID,
+        location_id: uuid.UUID,
+        data: CompanyLocationUpdate,
+        actor: User | None = None,
+    ) -> CompanyLocation:
+        updates = data.model_dump(exclude_unset=True)
+
+        # Lock order:
+        # If updating is_primary=True: company row FOR UPDATE -> target location FOR UPDATE ->
+        # old head office FOR UPDATE
+        # Otherwise: target location FOR UPDATE
+        # Note: deactivate_location takes only the location lock, so there is no deadlock cycle.
+        if updates.get("is_primary") is True:
+            self._lock_company(company_id)
+            location = self.location_repo.get_by_id(location_id, company_id, for_update=True)
+        else:
+            location = self.location_repo.get_by_id(location_id, company_id, for_update=True)
+
+        if location is None:
+            raise NotFoundError("Location not found.")
+
+        # Re-check on fresh state
+        if updates.get("is_primary") is True and not location.is_active:
+            raise ConflictError("Cannot set an inactive location as head office.")
+
+        # Rule B: PUT with is_primary=False on current head office is rejected
+        if updates.get("is_primary") is False and location.is_primary:
+            raise ConflictError(
+                "Cannot unset head office directly. "
+                "Set another active location as head office first."
+            )
+
+        # Merged coordinate validation (A):
+        # Determine merged latitude and longitude
+        merged_lat = updates["latitude"] if "latitude" in updates else location.latitude
+        merged_lon = updates["longitude"] if "longitude" in updates else location.longitude
+
+        if (merged_lat is None and merged_lon is not None) or (
+            merged_lat is not None and merged_lon is None
+        ):
+            raise ValidationError("Latitude and longitude must be given together.")
+
+        if merged_lat is not None and not (-90.0 <= merged_lat <= 90.0):
+            raise ValidationError("Latitude must be between -90 and 90 degrees.")
+
+        if merged_lon is not None and not (-180.0 <= merged_lon <= 180.0):
+            raise ValidationError("Longitude must be between -180 and 180 degrees.")
+
+        if "name" in updates and updates["name"].strip().lower() != location.name.lower():
+            if self.location_repo.get_by_name_lower(company_id, updates["name"]):
+                raise ConflictError(
+                    f"A location with the name '{updates['name']}' already exists in your company."
+                )
+
+        if "code" in updates and updates["code"].strip().lower() != location.code.lower():
+            if self.location_repo.get_by_code_lower(company_id, updates["code"]):
+                raise ConflictError(
+                    f"A location with the code '{updates['code']}' already exists in your company."
+                )
+
+        # Filter out no-op changes
+        real_diff = {}
+        for field, new_value in updates.items():
+            curr_val = getattr(location, field)
+            if curr_val != new_value:
+                real_diff[field] = {
+                    "from": jsonable(curr_val),
+                    "to": jsonable(new_value),
+                }
+
+        if not real_diff:
+            return location
+
+        try:
+            # If is_primary is being updated to True
+            if updates.get("is_primary") is True and not location.is_primary:
+                old_hq = self.location_repo.get_head_office(company_id, for_update=True)
+                if old_hq and old_hq.id != location.id:
+                    old_hq.is_primary = False
+                    self.db.flush()
+
+            self.location_repo.update(location, **updates)
+
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="LOCATION_UPDATED",
+                entity_type="location",
+                entity_id=location.id,
+                details=real_diff,
+            )
+            self.db.commit()
+            return location
+        except IntegrityError as exc:
+            self.db.rollback()
+            constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            if constraint in (
+                "uq_company_locations_lower_name",
+                "uq_company_locations_company_id_name",
+            ):
+                raise ConflictError(
+                    "A location with this name already exists in your company."
+                ) from exc
+            if constraint in (
+                "uq_company_locations_lower_code",
+                "uq_company_locations_company_id_code",
+            ):
+                raise ConflictError(
+                    "A location with this code already exists in your company."
+                ) from exc
+            if constraint == "uq_company_locations_primary_head_office":
+                raise ConflictError("A head office already exists for this company.") from exc
+            raise ConflictError("Could not update location due to a conflict.") from exc
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def set_head_office(
+        self, company_id: uuid.UUID, location_id: uuid.UUID, actor: User | None = None
+    ) -> CompanyLocation:
+        # Lock order: company row first, then target location FOR UPDATE,
+        # then old head office FOR UPDATE
+        # Note: deactivate takes only the location lock, so there is no cycle.
+        self._lock_company(company_id)
+        location = self.location_repo.get_by_id(location_id, company_id, for_update=True)
+        if location is None:
+            raise NotFoundError("Location not found.")
+
+        # Re-check is_active and is_primary on fresh locked state
+        if not location.is_active:
+            raise ConflictError("Cannot set an inactive location as head office.")
+
+        if location.is_primary:
+            return location
+
+        try:
+            old_hq = self.location_repo.get_head_office(company_id, for_update=True)
+            if old_hq and old_hq.id != location.id:
+                old_hq.is_primary = False
+                self.db.flush()
+
+            location.is_primary = True
+            self.db.flush()
+
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="LOCATION_HEAD_OFFICE_CHANGED",
+                entity_type="location",
+                entity_id=location.id,
+                details={
+                    "previous_head_office_id": str(old_hq.id) if old_hq else None,
+                    "new_head_office_id": str(location.id),
+                },
+            )
+            self.db.commit()
+            return location
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ConflictError("A head office already exists for this company.") from exc
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def deactivate_location(
+        self, company_id: uuid.UUID, location_id: uuid.UUID, actor: User | None = None
+    ) -> CompanyLocation:
+        # Rule F: Lock location row before counting active employees
+        location = self.location_repo.get_by_id(location_id, company_id, for_update=True)
+        if location is None:
+            raise NotFoundError("Location not found.")
+
+        # Rule 4: Head office cannot be deactivated
+        if location.is_primary:
+            raise ConflictError(
+                "The head office cannot be deactivated. "
+                "Set another active location as head office first."
+            )
+
+        # Rule 4: Reject if active employees assigned
+        active_emp_count = (
+            self.db.scalar(
+                select(func.count(Employee.id)).where(
+                    Employee.company_id == company_id,
+                    Employee.location_id == location_id,
+                    Employee.is_active == True,  # noqa: E712
+                )
+            )
+            or 0
         )
+        if active_emp_count > 0:
+            raise ConflictError(
+                f"Cannot deactivate location: {active_emp_count} "
+                "active employee(s) are assigned to it."
+            )
+
+        try:
+            location.is_active = False
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="LOCATION_DEACTIVATED",
+                entity_type="location",
+                entity_id=location.id,
+                details={"is_active": {"from": True, "to": False}},
+            )
+            self.db.commit()
+            return location
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def reactivate_location(
+        self, company_id: uuid.UUID, location_id: uuid.UUID, actor: User | None = None
+    ) -> CompanyLocation:
+        """D. POST /locations/{id}/reactivate: idempotent reactivation with audit log."""
+        location = self.location_repo.get_by_id(location_id, company_id)
+        if location is None:
+            raise NotFoundError("Location not found.")
+
+        # Idempotent no-op if already active
+        if location.is_active:
+            return location
+
+        try:
+            location.is_active = True
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="LOCATION_REACTIVATED",
+                entity_type="location",
+                entity_id=location.id,
+                details={"is_active": {"from": False, "to": True}},
+            )
+            self.db.commit()
+            return location
+        except Exception:
+            self.db.rollback()
+            raise

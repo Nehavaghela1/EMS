@@ -33,7 +33,11 @@ from app.modules.hr.schemas import (
     TerminationRequest,
 )
 from app.modules.identity.models import User, UserRole
-from app.modules.identity.repository import CompanyRepository, UserRepository
+from app.modules.identity.repository import (
+    CompanyLocationRepository,
+    CompanyRepository,
+    UserRepository,
+)
 from app.modules.platform.service import AuditService, DashboardService, jsonable
 from app.workers.tasks.email import send_email_task
 
@@ -165,6 +169,7 @@ class EmployeeService:
         self.db = db
         self.repo = EmployeeRepository(db)
         self.department_repo = DepartmentRepository(db)
+        self.location_repo = CompanyLocationRepository(db)
         self.company_repo = CompanyRepository(db)
         self.user_repo = UserRepository(db)
         self.audit = AuditService(db)
@@ -187,6 +192,16 @@ class EmployeeService:
         if self.department_repo.get_by_id(department_id, company_id) is None:
             raise InvalidReferenceError(
                 "The specified department does not exist.", details={"field": "department_id"}
+            )
+
+    def _validate_location(self, company_id: uuid.UUID, location_id: uuid.UUID | None) -> None:
+        if location_id is None:
+            return
+        loc = self.location_repo.get_by_id(location_id, company_id, for_share=True)
+        if loc is None or not loc.is_active:
+            raise InvalidReferenceError(
+                "The specified location does not exist or is inactive.",
+                details={"field": "location_id"},
             )
 
     def _validate_manager(
@@ -349,6 +364,7 @@ class EmployeeService:
         if self.repo.get_by_email(company_id, data.email):
             raise ConflictError("An employee with this email already exists in your company.")
         self._validate_department(company_id, data.department_id)
+        self._validate_location(company_id, data.location_id)
         self._validate_manager(company_id, data.reporting_manager_id)
 
         seq, company_code = self.company_repo.increment_employee_seq(company_id)
@@ -364,6 +380,7 @@ class EmployeeService:
             personal_email=data.personal_email,
             phone=data.phone,
             department_id=data.department_id,
+            location_id=data.location_id,
             position=data.position,
             level=data.level,
             reporting_manager_id=data.reporting_manager_id,
@@ -455,6 +472,8 @@ class EmployeeService:
 
         if "department_id" in updates:
             self._validate_department(company_id, updates["department_id"])
+        if "location_id" in updates and updates["location_id"] != employee.location_id:
+            self._validate_location(company_id, updates["location_id"])
         if "reporting_manager_id" in updates:
             self._validate_manager(company_id, updates["reporting_manager_id"], self_id=employee.id)
 
@@ -512,6 +531,7 @@ class EmployeeService:
         employee = self.repo.get_by_id_any_status(employee_id, company_id)
         if employee is None:
             raise NotFoundError("Employee not found.")
+        self._validate_location(company_id, employee.location_id)
         self.repo.update(employee, is_active=True)
         if employee.user_id is not None:
             user = self.user_repo.get_by_id(employee.user_id, company_id)

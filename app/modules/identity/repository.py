@@ -300,21 +300,58 @@ class CompanyLocationRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def list_locations(self, company_id: uuid.UUID) -> list[CompanyLocation]:
-        return list(
-            self.db.scalars(
-                select(CompanyLocation)
-                .where(CompanyLocation.company_id == company_id)
-                .order_by(CompanyLocation.name)
-            ).all()
-        )
+    def list_locations(
+        self, company_id: uuid.UUID, is_active: bool | None = None
+    ) -> list[CompanyLocation]:
+        stmt = select(CompanyLocation).where(CompanyLocation.company_id == company_id)
+        if is_active is not None:
+            stmt = stmt.where(CompanyLocation.is_active == is_active)
+        # Rule 9: list is ordered head office first, then name
+        stmt = stmt.order_by(CompanyLocation.is_primary.desc(), CompanyLocation.name.asc())
+        return list(self.db.scalars(stmt).all())
 
-    def get_by_id(self, location_id: uuid.UUID, company_id: uuid.UUID) -> CompanyLocation | None:
+    def get_by_id(
+        self,
+        location_id: uuid.UUID,
+        company_id: uuid.UUID,
+        for_update: bool = False,
+        for_share: bool = False,
+    ) -> CompanyLocation | None:
+        stmt = select(CompanyLocation).where(
+            CompanyLocation.id == location_id, CompanyLocation.company_id == company_id
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        elif for_share:
+            stmt = stmt.with_for_update(read=True)
+        return self.db.scalar(stmt)
+
+    def get_by_name_lower(self, company_id: uuid.UUID, name: str) -> CompanyLocation | None:
         return self.db.scalar(
             select(CompanyLocation).where(
-                CompanyLocation.id == location_id, CompanyLocation.company_id == company_id
+                CompanyLocation.company_id == company_id,
+                func.lower(CompanyLocation.name) == name.strip().lower(),
             )
         )
+
+    def get_by_code_lower(self, company_id: uuid.UUID, code: str) -> CompanyLocation | None:
+        return self.db.scalar(
+            select(CompanyLocation).where(
+                CompanyLocation.company_id == company_id,
+                func.lower(CompanyLocation.code) == code.strip().lower(),
+            )
+        )
+
+    def get_head_office(
+        self, company_id: uuid.UUID, for_update: bool = False
+    ) -> CompanyLocation | None:
+        stmt = select(CompanyLocation).where(
+            CompanyLocation.company_id == company_id,
+            CompanyLocation.is_primary == True,  # noqa: E712
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        return self.db.scalar(stmt)
 
     def create(self, **kwargs) -> CompanyLocation:
         location = CompanyLocation(**kwargs)

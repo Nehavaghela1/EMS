@@ -60,6 +60,16 @@ class CompanyRegisterRequest(BaseModel):
             v = v.strip().lower()
         return v
 
+    @field_validator("country", mode="before")
+    @classmethod
+    def _validate_country(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Country must be text.")
+        v = v.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", v):
+            raise ValueError("Country must be a valid 2-letter ISO country code.")
+        return v
+
 
 class CompanyResponse(BaseModel):
     id: uuid.UUID
@@ -126,9 +136,22 @@ class CompanyProfileUpdateRequest(BaseModel):
     address: str | None = None
     city: str | None = None
     state: str | None = None
+    country: str | None = None
     pincode: str | None = None
     website: str | None = None
     logo_url: str | None = None
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def _validate_country(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("Country must be text.")
+        v = v.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", v):
+            raise ValueError("Country must be a valid 2-letter ISO country code.")
+        return v
 
 
 class UserRoleUpdateRequest(BaseModel):
@@ -153,7 +176,6 @@ class AdminUserResponse(BaseModel):
 
 class AdminCompanyUpdateRequest(CompanyProfileUpdateRequest):
     status: CompanyStatus | None = None
-    country: str | None = None
     currency: str | None = None
     gst_number: str | None = None
     pan_number: str | None = None
@@ -361,9 +383,79 @@ class CompanyLocationCreate(BaseModel):
     address_line1: str | None = None
     city: str | None = None
     state: str | None = None
-    country: str = "India"
+    country: str = "IN"
     postal_code: str | None = None
     is_primary: bool = False
+    latitude: float | None = None
+    longitude: float | None = None
+    geofence_radius_meters: int = 150
+    is_remote_exempt: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        s = v.strip()
+        if not (1 <= len(s) <= 100):
+            raise ValueError("Location name must be between 1 and 100 characters.")
+        return s
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not re.fullmatch(r"^[A-Z0-9-]{2,20}$", s):
+            raise ValueError("Location code must be 2 to 20 letters, digits or hyphens.")
+        return s
+
+    @field_validator("country")
+    @classmethod
+    def validate_country(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not re.fullmatch(r"^[A-Z]{2}$", s):
+            raise ValueError("Country must be a 2-letter ISO code.")
+        return s
+
+    @field_validator("geofence_radius_meters")
+    @classmethod
+    def validate_radius(cls, v: int) -> int:
+        if not (10 <= v <= 5000):
+            raise ValueError("Geofence radius must be between 10 and 5000 metres.")
+        return v
+
+    @field_validator("address_line1", "city", "state", "postal_code", mode="before")
+    @classmethod
+    def _validate_address_fields(cls, v: str | None, info) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError(f"Field '{info.field_name}' must be text.")
+        s = v.strip()
+        if not s:
+            return None
+        max_lens = {
+            "address_line1": 255,
+            "city": 100,
+            "state": 100,
+            "postal_code": 20,
+        }
+        max_l = max_lens.get(info.field_name, 255)
+        if len(s) > max_l:
+            raise ValueError(f"Field '{info.field_name}' must not exceed {max_l} characters.")
+        return s
+
+    @model_validator(mode="after")
+    def validate_coordinates(self) -> "CompanyLocationCreate":
+        lat = self.latitude
+        lon = self.longitude
+        if (lat is None and lon is not None) or (lat is not None and lon is None):
+            raise ValueError("Latitude and longitude must be given together.")
+        if lat is not None:
+            if not (-90.0 <= lat <= 90.0):
+                raise ValueError("Latitude must be between -90 and 90 degrees.")
+        if lon is not None:
+            if not (-180.0 <= lon <= 180.0):
+                raise ValueError("Longitude must be between -180 and 180 degrees.")
+        return self
 
 
 class CompanyLocationUpdate(BaseModel):
@@ -375,6 +467,91 @@ class CompanyLocationUpdate(BaseModel):
     country: str | None = None
     postal_code: str | None = None
     is_primary: bool | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    geofence_radius_meters: int | None = None
+    is_remote_exempt: bool | None = None
+
+    @field_validator(
+        "name",
+        "code",
+        "country",
+        "geofence_radius_meters",
+        "is_remote_exempt",
+        "is_primary",
+        mode="wrap",
+    )
+    @classmethod
+    def validate_non_nullable(cls, v, handler, info):
+        if v is None:
+            raise ValueError(f"Field '{info.field_name}' cannot be null.")
+        return handler(v)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        s = v.strip()
+        if not (1 <= len(s) <= 100):
+            raise ValueError("Location name must be between 1 and 100 characters.")
+        return s
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not re.fullmatch(r"^[A-Z0-9-]{2,20}$", s):
+            raise ValueError("Location code must be 2 to 20 letters, digits or hyphens.")
+        return s
+
+    @field_validator("country")
+    @classmethod
+    def validate_country(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not re.fullmatch(r"^[A-Z]{2}$", s):
+            raise ValueError("Country must be a 2-letter ISO code.")
+        return s
+
+    @field_validator("geofence_radius_meters")
+    @classmethod
+    def validate_radius(cls, v: int) -> int:
+        if not (10 <= v <= 5000):
+            raise ValueError("Geofence radius must be between 10 and 5000 metres.")
+        return v
+
+    @field_validator("address_line1", "city", "state", "postal_code", mode="before")
+    @classmethod
+    def _validate_address_fields_update(cls, v: str | None, info) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError(f"Field '{info.field_name}' must be text.")
+        s = v.strip()
+        if not s:
+            return None
+        max_lens = {
+            "address_line1": 255,
+            "city": 100,
+            "state": 100,
+            "postal_code": 20,
+        }
+        max_l = max_lens.get(info.field_name, 255)
+        if len(s) > max_l:
+            raise ValueError(f"Field '{info.field_name}' must not exceed {max_l} characters.")
+        return s
+
+    @field_validator("latitude")
+    @classmethod
+    def validate_latitude_range(cls, v: float | None) -> float | None:
+        if v is not None and not (-90.0 <= v <= 90.0):
+            raise ValueError("Latitude must be between -90 and 90 degrees.")
+        return v
+
+    @field_validator("longitude")
+    @classmethod
+    def validate_longitude_range(cls, v: float | None) -> float | None:
+        if v is not None and not (-180.0 <= v <= 180.0):
+            raise ValueError("Longitude must be between -180 and 180 degrees.")
+        return v
 
 
 class CompanyLocationResponse(BaseModel):
@@ -388,5 +565,10 @@ class CompanyLocationResponse(BaseModel):
     country: str
     postal_code: str | None
     is_primary: bool
+    is_active: bool
+    latitude: float | None
+    longitude: float | None
+    geofence_radius_meters: int
+    is_remote_exempt: bool
     created_at: datetime
     updated_at: datetime
