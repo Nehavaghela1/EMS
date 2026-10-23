@@ -1782,7 +1782,7 @@ class RoleChangeService:
             emp_repo = EmployeeRepository(self.db)
             target_employee = emp_repo.get_by_user_id(company_id, target.id)
 
-        if target_role == UserRole.manager:
+        if target_role == UserRole.manager and previous_role != UserRole.manager:
             if target_employee is None or not target_employee.is_active:
                 raise ConflictError(
                     "User must have an active employee profile in the company to become a manager."

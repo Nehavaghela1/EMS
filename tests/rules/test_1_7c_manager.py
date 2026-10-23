@@ -300,22 +300,53 @@ def test_R02_authority_matrix_and_reporting_manager_decoupling(
     assert res_co_demotes_first.status_code == 403
 
     # 10. Updating employee reporting_manager_id via PUT /api/v1/employees/{id} keeps role unchanged
-    # First re-fetch or ensure emp is employee
+    # Create a second plain employee user WITH an active employee profile (role employee)
+    emp2_user = User(
+        id=uuid.uuid4(),
+        company_id=company_setup["company"].id,
+        email=f"emp2-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("PlainEmp2Pass123!"),
+        role=UserRole.employee,
+        is_active=True,
+    )
+    db.add(emp2_user)
+    db.flush()
+
+    emp2_profile = Employee(
+        id=uuid.uuid4(),
+        company_id=company_setup["company"].id,
+        user_id=emp2_user.id,
+        employee_code=f"EMP2-{uuid.uuid4().hex[:4].upper()}",
+        first_name="Second",
+        last_name="Employee",
+        email=emp2_user.email,
+        employment_type=EmploymentType.full_time,
+        hire_date=utcnow().date(),
+        is_active=True,
+    )
+    db.add(emp2_profile)
+    db.commit()
+
     db.refresh(emp)
     assert emp.role == UserRole.employee
 
-    # Let HR update employee profile reporting_manager_id to point to manager profile
+    # As HR, PUT /api/v1/employees/{id} to set reporting_manager_id to THAT plain employee's profile
     profile_id = company_setup["employee_profile"].id
-    mgr_profile_id = company_setup["manager_profile"].id
     res_put_emp = client.put(
         f"/api/v1/employees/{profile_id}",
         headers=hr_headers,
-        json={"reporting_manager_id": str(mgr_profile_id)},
+        json={"reporting_manager_id": str(emp2_profile.id)},
     )
     assert res_put_emp.status_code == 200
 
+    # Assert the plain employee's user role is still employee (refresh from db)
+    # and the updated employee's role is unchanged
+    db.refresh(emp2_user)
+    assert emp2_user.role == UserRole.employee, (
+        "Plain employee set as manager must remain employee role"
+    )
     db.refresh(emp)
-    assert emp.role == UserRole.employee, "Reporting manager assignment must never change role"
+    assert emp.role == UserRole.employee, "Updated employee must keep employee role"
 
 
 # ==============================================================================
@@ -479,13 +510,28 @@ def test_R05_target_validation_and_active_profile_requirement(
 # ==============================================================================
 
 
-def test_R06_idempotent_no_op_role_change(client: TestClient, db: Session, company_setup):
+def test_R06_idempotent_no_op_role_change(
+    client: TestClient, db: Session, company_setup, email_outbox
+):
     """R06: Setting same role returns 200 with changed=False and changes nothing:
     no audit row, no token revocation, no email.
     """
     owner_headers = _auth_headers(company_setup["owner"])
     mgr = company_setup["manager"]
     url_mgr = f"/api/v1/users/{mgr.id}/role"
+
+    # Create an active RefreshToken for the manager and clear email_outbox first
+    rt = RefreshToken(
+        id=uuid.uuid4(),
+        user_id=mgr.id,
+        token_hash=hashlib.sha256(b"fake-refresh-token-mgr").hexdigest(),
+        expires_at=utcnow() + timedelta(days=7),
+        is_revoked=False,
+    )
+    db.add(rt)
+    db.commit()
+
+    email_outbox.clear()
 
     audit_count_before = db.scalar(
         select(AuditLog)
@@ -500,12 +546,36 @@ def test_R06_idempotent_no_op_role_change(client: TestClient, db: Session, compa
     assert body["previous_role"] == "manager"
     assert body["changed"] is False
 
+    # Assert the token is still not revoked and no email was sent,
+    # as well as no new ROLE_CHANGED row
+    db.refresh(rt)
+    assert rt.is_revoked is False, "RefreshToken must not be revoked on no-op"
+    assert len(email_outbox) == 0, "No email should be sent on no-op"
+
     audit_count_after = db.scalar(
         select(AuditLog)
         .where(AuditLog.action == "ROLE_CHANGED")
         .with_only_columns(text("count(*)"))
     )
     assert audit_count_after == audit_count_before
+
+    # Second no-op case: a manager user whose employee profile is inactive
+    # asks for role "manager" and gets 200 with changed false
+    company_setup["manager_profile"].is_active = False
+    db.commit()
+
+    email_outbox.clear()
+    res_noop_inactive = client.patch(url_mgr, headers=owner_headers, json={"role": "manager"})
+    assert res_noop_inactive.status_code == 200
+    body_inact = res_noop_inactive.json()
+    assert body_inact["role"] == "manager"
+    assert body_inact["previous_role"] == "manager"
+    assert body_inact["changed"] is False
+    assert len(email_outbox) == 0
+
+    # Restore manager profile active status
+    company_setup["manager_profile"].is_active = True
+    db.commit()
 
 
 # ==============================================================================
@@ -517,9 +587,12 @@ def test_R07_session_revocation_and_notification(
     client: TestClient, db: Session, company_setup, email_outbox
 ):
     """R07: Refresh tokens revoked; email sent to target; email sent to every owner
-    when hr_admin makes change.
+    when hr_admin makes change (exactly target + all owners, none to HR actor).
     """
     emp = company_setup["employee"]
+    owner = company_setup["owner"]
+    co_owner = company_setup["co_owner"]
+    hr_admin = company_setup["hr_admin"]
 
     # Create active refresh tokens for emp
     rt = RefreshToken(
@@ -533,13 +606,19 @@ def test_R07_session_revocation_and_notification(
     db.commit()
 
     email_outbox.clear()
-    hr_headers = _auth_headers(company_setup["hr_admin"])
+    hr_headers = _auth_headers(hr_admin)
     res = client.patch(f"/api/v1/users/{emp.id}/role", headers=hr_headers, json={"role": "manager"})
     assert res.status_code == 200
 
     db.refresh(rt)
     assert rt.is_revoked is True, "Refresh tokens must be revoked on role change"
-    assert len(email_outbox) >= 1, "At least target and owner notification emails should be sent"
+
+    # Assert recipients are exactly: target's email plus the emails of both owners
+    # (first owner and co-owner), 3 emails in total, and that no email goes to the HR actor.
+    recipients = [e["to"] for e in email_outbox]
+    assert len(recipients) == 3, f"Expected exactly 3 emails, got {len(recipients)}: {recipients}"
+    assert set(recipients) == {emp.email, owner.email, co_owner.email}
+    assert hr_admin.email not in recipients
 
 
 # ==============================================================================
@@ -547,11 +626,26 @@ def test_R07_session_revocation_and_notification(
 # ==============================================================================
 
 
-def test_R08_atomic_transaction_and_rollback(client: TestClient, db: Session, company_setup):
+def test_R08_atomic_transaction_and_rollback(
+    client: TestClient, db: Session, company_setup, email_outbox
+):
     """R08: Exactly one commit inside service with row lock; errors roll back completely."""
     owner_headers = _auth_headers(company_setup["owner"])
     emp = company_setup["employee"]
     url_emp = f"/api/v1/users/{emp.id}/role"
+
+    # Create active refresh token for emp
+    rt = RefreshToken(
+        id=uuid.uuid4(),
+        user_id=emp.id,
+        token_hash=hashlib.sha256(b"fake-refresh-token-r08").hexdigest(),
+        expires_at=utcnow() + timedelta(days=7),
+        is_revoked=False,
+    )
+    db.add(rt)
+    db.commit()
+
+    email_outbox.clear()
 
     # Simulate unexpected DB failure on commit
     with pytest.MonkeyPatch.context() as m:
@@ -568,6 +662,20 @@ def test_R08_atomic_transaction_and_rollback(client: TestClient, db: Session, co
     db.rollback()
     db.refresh(emp)
     assert emp.role == UserRole.employee, "Role change must roll back on failure"
+
+    # After the simulated commit failure, assert no ROLE_CHANGED audit row exists for target,
+    # the target's refresh token is not revoked, and no email was sent.
+    audit_row = db.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_id == emp.id,
+            AuditLog.action == "ROLE_CHANGED",
+        )
+    )
+    assert audit_row is None, "No audit row should exist after rollback"
+
+    db.refresh(rt)
+    assert rt.is_revoked is False, "Target refresh token must not be revoked on failure"
+    assert len(email_outbox) == 0, "No email should be sent on failure"
 
 
 # ==============================================================================
@@ -624,7 +732,20 @@ def test_R09_audit_details_and_active_direct_reports_on_demotion(
         hire_date=utcnow().date(),
         is_active=False,  # Inactive
     )
-    db.add_all([r1, r2, r3_inactive])
+    r4_soft_deleted = Employee(
+        id=uuid.uuid4(),
+        company_id=cid,
+        reporting_manager_id=mgr_profile.id,
+        employee_code=f"R4-{uuid.uuid4().hex[:4].upper()}",
+        first_name="Report",
+        last_name="Four",
+        email=f"r4-{uuid.uuid4().hex[:6]}@example.com",
+        employment_type=EmploymentType.full_time,
+        hire_date=utcnow().date(),
+        is_active=True,
+        deleted_at=utcnow(),  # Soft-deleted
+    )
+    db.add_all([r1, r2, r3_inactive, r4_soft_deleted])
     db.commit()
 
     # Demote manager -> employee
@@ -650,6 +771,32 @@ def test_R09_audit_details_and_active_direct_reports_on_demotion(
     assert details.get("new_role") == "employee"
     assert details.get("active_direct_reports") == 2, (
         f"Expected active_direct_reports=2, got {details.get('active_direct_reports')}"
+    )
+
+    # Promotion (employee -> manager) and assert the audit details have
+    # no "active_direct_reports" key
+    emp = company_setup["employee"]
+    res_promote = client.patch(
+        f"/api/v1/users/{emp.id}/role",
+        headers=owner_headers,
+        json={"role": "manager"},
+    )
+    assert res_promote.status_code == 200
+
+    promo_audit_log = db.scalar(
+        select(AuditLog)
+        .where(
+            AuditLog.entity_id == emp.id,
+            AuditLog.action == "ROLE_CHANGED",
+        )
+        .order_by(AuditLog.created_at.desc())
+    )
+    assert promo_audit_log is not None
+    promo_details = promo_audit_log.details or {}
+    assert promo_details.get("previous_role") == "employee"
+    assert promo_details.get("new_role") == "manager"
+    assert "active_direct_reports" not in promo_details, (
+        "Promotion to manager must not include active_direct_reports in audit details"
     )
 
 
@@ -805,6 +952,32 @@ def test_R10_manager_permissions_live_approvals_and_demotion(
     )
     assert res_appr_mgr.status_code == 200
     assert res_appr_mgr.json()["status"] == "approved"
+
+    # Add a leave that belongs to a different employee who is NOT in the promoted manager's team;
+    # assert the promoted manager gets 403 when approving it.
+    other_leave_req = Leave(
+        id=uuid.uuid4(),
+        company_id=cid,
+        employee_id=company_setup["employee_profile"].id,
+        leave_type_id=leave_type.id,
+        start_date=utcnow().date(),
+        end_date=utcnow().date(),
+        total_days=1,
+        is_half_day=False,
+        reason="Other Team Leave",
+        status=LeaveStatus.pending,
+    )
+    db.add(other_leave_req)
+    db.commit()
+
+    res_appr_other = client.put(
+        f"/api/v1/leaves/{other_leave_req.id}",
+        headers=lead_headers,
+        json={"status": "approved", "rejection_reason": None},
+    )
+    assert res_appr_other.status_code == 403, (
+        "Manager must get 403 approving non-team employee leave"
+    )
 
     # Reset leave back to pending for demotion test
     leave_req.status = LeaveStatus.pending
