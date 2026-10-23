@@ -439,6 +439,14 @@ def test_R02_co_owners_first_owner_guards_and_authority_matrix(
     )
     assert res_hr_same_hr.status_code == 403
 
+    # - HR admin on co-owner target (to employee) gets 403
+    res_hr_on_co_owner = client.patch(
+        f"/api/v1/users/{fresh_co.id}/role",
+        headers=hr_actor_headers,
+        json={"role": "employee"},
+    )
+    assert res_hr_on_co_owner.status_code == 403
+
     # 12. First-owner tracking: approval and workspace creation set company.owner_user_id
     import importlib.util
     from pathlib import Path
@@ -787,11 +795,26 @@ def test_R05_target_scoping_and_uniform_404(
     res_unactivated = client.patch(url_unactivated, headers=owner_headers, json=body)
     res_platform = client.patch(url_platform, headers=owner_headers, json=body)
 
-    for r in [res_b, res_unknown, res_inactive, res_unactivated, res_platform]:
+    responses = [
+        ("res_b", res_b),
+        ("res_unknown", res_unknown),
+        ("res_inactive", res_inactive),
+        ("res_unactivated", res_unactivated),
+        ("res_platform", res_platform),
+    ]
+
+    for name, r in responses:
+        print(f"\n404 RESPONSE {name}: {r.json()}")
+
+    unknown_data = res_unknown.json()
+    unknown_data.get("error", {}).pop("request_id", None)
+
+    for name, r in responses:
         assert r.status_code == 404
-        r_body = r.json()
-        assert r_body.get("error", {}).get("code") == "not_found"
-        assert r_body.get("error", {}).get("message") == "User not found."
+        r_data = r.json()
+        r_data.get("error", {}).pop("request_id", None)
+        diff_msg = f"{name} differs from res_unknown: {r_data} != {unknown_data}"
+        assert r_data == unknown_data, diff_msg
 
     # Malformed UUID -> 422
     res_malformed = client.patch("/api/v1/users/not-a-uuid/role", headers=owner_headers, json=body)
@@ -1223,18 +1246,9 @@ def test_R10_rate_limiting_and_clean_response(client: TestClient, company_setup)
 
     # Response payload whitelist check
     res_clean = client.patch(url, headers=owner_headers, json={"role": "hr_admin"})
-    if res_clean.status_code == 200:
-        data = res_clean.json()
-        forbidden_keys = {
-            "hashed_password",
-            "password",
-            "token",
-            "refresh_token",
-            "is_superuser",
-            "is_staff",
-        }
-        for k in forbidden_keys:
-            assert k not in data, f"Response contains unsafe key: {k}"
+    assert res_clean.status_code == 200
+    data = res_clean.json()
+    assert set(data.keys()) == {"id", "role", "previous_role", "changed"}
 
     # Verify route_policy contains owner and hr_admin
     from tests.security.route_policy import POLICY
@@ -1244,3 +1258,80 @@ def test_R10_rate_limiting_and_clean_response(client: TestClient, company_setup)
     # Must allow both owner and hr_admin
     assert UserRole.owner in policy_roles
     assert UserRole.hr_admin in policy_roles
+
+
+def test_R10_approval_authority_demoted_hr_forbidden(
+    client: TestClient, db: Session, company_setup
+):
+    """Rule 10 Approvals: An hr_admin demoted to employee gets 403 on an approval-action route,
+    while a still-valid hr_admin passes the role check.
+    """
+    owner_headers = _auth_headers(company_setup["owner"])
+
+    # Create a target hr_admin who can approve leaves
+    hr_user = User(
+        id=uuid.uuid4(),
+        company_id=company_setup["company"].id,
+        email=f"hr-appr-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("ValidPassword123!"),
+        role=UserRole.hr_admin,
+        is_active=True,
+    )
+    db.add(hr_user)
+    db.commit()
+
+    hr_headers = _auth_headers(hr_user)
+
+    # Fake leave ID
+    dummy_leave_id = uuid.uuid4()
+    body = {"status": "approved", "rejection_reason": None}
+
+    # 1. As hr_admin, calling PUT /api/v1/leaves/{id} passes require_role (404, not 403)
+    res_hr = client.put(f"/api/v1/leaves/{dummy_leave_id}", headers=hr_headers, json=body)
+    assert res_hr.status_code == 404, f"Expected 404, got {res_hr.status_code}"
+
+    # 2. Demote hr_user to employee
+    res_demote = client.patch(
+        f"/api/v1/users/{hr_user.id}/role",
+        headers=owner_headers,
+        json={"role": "employee"},
+    )
+    assert res_demote.status_code == 200
+
+    # 3. Same user now gets 403 on the approval route
+    res_demoted_user = client.put(f"/api/v1/leaves/{dummy_leave_id}", headers=hr_headers, json=body)
+    assert res_demoted_user.status_code == 403, (
+        f"Expected 403 Forbidden after demotion, got {res_demoted_user.status_code}"
+    )
+
+
+def test_migration_sets_platform_admin_before_backfill(monkeypatch):
+    """Migration test: op.get_bind is patched to record executed statements.
+    upgrade() must execute 'SELECT set_config('app.is_platform_admin', 'on', true)'
+    as its first statement and BACKFILL_SQL as its second statement.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    import alembic.op as op
+
+    ver_file = "alembic/versions/b3a17e0892c1_backfill_company_owner_user_id.py"
+    migration_path = Path(__file__).resolve().parents[2] / ver_file
+    spec = importlib.util.spec_from_file_location("b3a17e0892c1_test", str(migration_path))
+    migration_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration_mod)
+
+    executed_statements = []
+
+    class DummyConnection:
+        def execute(self, statement, *args, **kwargs):
+            executed_statements.append(str(statement))
+
+    with monkeypatch.context() as m:
+        m.setattr(op, "get_bind", lambda: DummyConnection())
+        migration_mod.upgrade()
+
+    assert len(executed_statements) == 2, f"Expected 2 statements, got {len(executed_statements)}"
+    assert "app.is_platform_admin" in executed_statements[0]
+    assert "'on'" in executed_statements[0]
+    assert migration_mod.BACKFILL_SQL.strip() in executed_statements[1].strip()

@@ -1890,7 +1890,7 @@ class RoleChangeService:
                 "Role change email dispatch failed",
                 extra={
                     "event": "role_change_email_failed",
-                    "error": str(exc),
+                    "error_type": type(exc).__name__,
                     "actor_id": str(actor.id),
                     "target_id": str(target.id),
                 },

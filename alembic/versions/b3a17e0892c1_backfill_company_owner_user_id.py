@@ -34,6 +34,7 @@ WHERE c.id = sub.company_id AND c.owner_user_id IS NULL;
 def upgrade() -> None:
     # Data-only migration: backfill owner_user_id on companies where NULL with earliest owner
     conn = op.get_bind()
+    conn.execute(sa.text("SELECT set_config('app.is_platform_admin', 'on', true)"))
     conn.execute(sa.text(BACKFILL_SQL))
 
 
