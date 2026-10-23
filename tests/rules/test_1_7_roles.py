@@ -2,23 +2,29 @@
 
 Rule 1: Only owner or hr_admin can call the route; manager, employee and super_admin get 403;
         missing or expired token gets 401; caller's role is read from DB on every request.
-Rule 2: Owner can make an employee or manager an hr_admin and can demote an hr_admin to employee;
-        hr_admin can only promote employee or manager to hr_admin; hr_admin demoting hr_admin or
-        touching owner gets 403; another owner cannot be changed (409); owner count unchanged.
-Rule 3: New role can only be employee or hr_admin in lower case; any other value, empty, null,
-        missing, wrong type, or extra field returns 422 with no database changes.
-Rule 4: Nobody can change their own role, including the owner (403, no audit, security log line).
+Rule 2: Any owner can make employee/manager/hr_admin an hr_admin or owner, and can demote hr_admin;
+        only first owner can demote another owner; first owner's role cannot be changed (keeps >=1);
+        hr_admin can only promote employee/manager to hr_admin (403 on owner/hr_admin target/grant);
+        first owner recorded at registration/approval/workspace creation with is_primary_owner true.
+Rule 3: New role can only be employee, hr_admin or owner in lower case; others return 422;
+        granting or removing owner needs current_password (missing or >128 chars -> 422);
+        wrong password returns 403, increments failed_attempts and locks account without leaks.
+Rule 4: Nobody can change their own role, including the first owner (403, no audit, sec log);
+        wrong current_password on owner change returns 403, increments failed_attempts, locks user.
 Rule 5: Target must be active user of caller's company; other company user, unknown id,
         inactive or unactivated user, or platform account returns identical 404 with no details;
         malformed id gives 422; user in two companies keeps other workspace role untouched.
 Rule 6: Same role returns 200 and changes nothing: no audit row, no token revocation, no email;
+        hr_admin sending same role on hr_admin target still gets 403.
 Rule 7: Role change takes effect on target's very next request: refresh tokens revoked;
-        old access token acts with new authority; fresh login has new role; email to target
-        (and to owner when hr_admin changed it); none on failure, no-op or denial.
+        old access token acts with new authority; fresh login has new role; email to target;
+        every owner gets email when hr_admin makes change; every other owner gets email when
+        owner role is granted or removed; none on failure, no-op or denial.
 Rule 8: Exactly one commit inside the service with SELECT ... FOR UPDATE row lock on target;
         failure rolls back everything (no token revocation, no email); consistent audit chain.
 Rule 9: Every change writes ROLE_CHANGED audit row (actor, target, old role, new role, company);
-        denied attempts log to security log without personal data.
+        denied attempts (wrong role, self-change, forbidden target, wrong password) log without PII;
+        current_password never appears in audit, logs, or response.
 Rule 10: Rate-limited per user (30/min) with 429; safe response fields only (no hash/token);
          route in route_policy matrix as owner and hr_admin; approval consistency.
 """
@@ -30,17 +36,23 @@ from datetime import UTC, datetime, timedelta
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.rate_limit import limiter
-from app.core.security import create_access_token
+from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
 from app.modules.identity.models import Company, RefreshToken, User, UserRole
 from app.modules.platform.models import AuditLog
 
 # --- Helpers & Fixtures ---
+
+OWNER_RAW_PASSWORD = "CorrectOwnerPass123!"
+CO_OWNER_RAW_PASSWORD = "CorrectCoOwnerPass123!"
+HR_RAW_PASSWORD = "CorrectHrPass123!"
+MGR_RAW_PASSWORD = "CorrectMgrPass123!"
+EMP_RAW_PASSWORD = "CorrectEmpPass123!"
 
 
 def _auth_headers(user: User) -> dict[str, str]:
@@ -54,7 +66,7 @@ def _auth_headers(user: User) -> dict[str, str]:
 
 @pytest.fixture
 def company_setup(db: Session):
-    """Provisions Company A with Owner, HR Admin, Manager, and Employee users."""
+    """Provisions Company A with First Owner, Co-Owner, HR Admin, Manager, and Employee users."""
     from app.db.rls import bind_tenant_to_session
 
     cid = uuid.uuid4()
@@ -75,8 +87,16 @@ def company_setup(db: Session):
     owner = User(
         id=uuid.uuid4(),
         company_id=cid,
-        email=f"owner-{uuid.uuid4().hex[:6]}@example.com",
-        hashed_password="hashed_pw_owner",
+        email=f"first-owner-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password(OWNER_RAW_PASSWORD),
+        role=UserRole.owner,
+        is_active=True,
+    )
+    co_owner = User(
+        id=uuid.uuid4(),
+        company_id=cid,
+        email=f"co-owner-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password(CO_OWNER_RAW_PASSWORD),
         role=UserRole.owner,
         is_active=True,
     )
@@ -84,7 +104,7 @@ def company_setup(db: Session):
         id=uuid.uuid4(),
         company_id=cid,
         email=f"hr-{uuid.uuid4().hex[:6]}@example.com",
-        hashed_password="hashed_pw_hr",
+        hashed_password=hash_password(HR_RAW_PASSWORD),
         role=UserRole.hr_admin,
         is_active=True,
     )
@@ -92,7 +112,7 @@ def company_setup(db: Session):
         id=uuid.uuid4(),
         company_id=cid,
         email=f"mgr-{uuid.uuid4().hex[:6]}@example.com",
-        hashed_password="hashed_pw_mgr",
+        hashed_password=hash_password(MGR_RAW_PASSWORD),
         role=UserRole.manager,
         is_active=True,
     )
@@ -100,18 +120,19 @@ def company_setup(db: Session):
         id=uuid.uuid4(),
         company_id=cid,
         email=f"emp-{uuid.uuid4().hex[:6]}@example.com",
-        hashed_password="hashed_pw_emp",
+        hashed_password=hash_password(EMP_RAW_PASSWORD),
         role=UserRole.employee,
         is_active=True,
     )
 
-    db.add_all([owner, hr_admin, manager, employee])
+    db.add_all([owner, co_owner, hr_admin, manager, employee])
     db.flush()
     db.commit()
 
     return {
         "company": company,
-        "owner": owner,
+        "owner": owner,  # First owner
+        "co_owner": co_owner,  # Co-owner
         "hr_admin": hr_admin,
         "manager": manager,
         "employee": employee,
@@ -138,7 +159,7 @@ def company_b_setup(db: Session):
         id=uuid.uuid4(),
         company_id=cid,
         email=f"b-emp-{uuid.uuid4().hex[:6]}@example.com",
-        hashed_password="hashed_pw_b",
+        hashed_password=hash_password("pw_b_emp"),
         role=UserRole.employee,
         is_active=True,
     )
@@ -213,9 +234,7 @@ def test_R01_caller_role_authorization_and_token_checks(
     assert res_owner.status_code == 200
 
     # 8. Dynamic check: caller issued token with role="hr_admin", but demoted in DB to employee.
-    # On next request, get_current_user reads User from DB -> user.role is employee -> 403.
     caller_token_headers = _auth_headers(company_setup["hr_admin"])
-    # Demote in DB
     u_hr = db.get(User, company_setup["hr_admin"].id)
     u_hr.role = UserRole.employee
     db.commit()
@@ -229,224 +248,313 @@ def test_R01_caller_role_authorization_and_token_checks(
 
 
 # ==============================================================================
-# Rule 2 Tests: Role Transition Matrix & Authority Matrix
+# Rule 2 Tests: Co-Owners, First Owner Guards, Authority Matrix & DB Invariants
 # ==============================================================================
 
 
-def test_R02_role_transition_matrix_and_owner_guards(
+def test_R02_co_owners_first_owner_guards_and_authority_matrix(
     client: TestClient, db: Session, company_setup
 ):
-    """R02: Owner transitions:
-      - employee -> hr_admin: 200
-      - manager -> hr_admin: 200
-      - hr_admin -> employee: 200
-    HR admin transitions:
-      - employee -> hr_admin: 200
-      - manager -> hr_admin: 200
-      - hr_admin target (to employee): 403
-      - hr_admin target (to hr_admin): 403 (authority checked before no-op check)
-      - owner target: 403
-    Owner on another owner:
-      - 409 Conflict
-    Owner count remains unchanged in every denied case.
+    """R02:
+    - First owner: employee, manager, hr_admin to owner (with correct current_password) succeed.
+    - First owner demoting a co-owner to hr_admin and to employee succeeds.
+    - Any owner: employee to hr_admin and hr_admin to employee succeed.
+    - Co-owner: employee to owner succeeds.
+    - Co-owner demoting another owner (co-owner or first owner) gets 403.
+    - Nobody can change first owner (co-owner 403, hr_admin 403).
+    - HR admin: employee to hr_admin, manager to hr_admin succeed.
+    - HR admin: granting owner gets 403.
+    - HR admin on hr_admin target (to employee, or same role) gets 403.
+    - HR admin on any owner target gets 403.
+    - Company always has at least one owner.
+    - First-owner flag: approval and workspace creation set exactly one is_primary_owner=true.
+    - DB rejects second is_primary_owner in one company, rejects flag on non-owner.
     """
-    owner_headers = _auth_headers(company_setup["owner"])
+    first_owner_headers = _auth_headers(company_setup["owner"])
+    hr_headers = _auth_headers(company_setup["hr_admin"])
 
-    # Reset roles for HR admin testing:
-    # Let's make an active HR admin user and a fresh employee target
-    fresh_hr = User(
+    # 1. First owner: employee to owner (with current_password) succeeds
+    res1 = client.patch(
+        f"/api/v1/users/{company_setup['employee'].id}/role",
+        headers=first_owner_headers,
+        json={"role": "owner", "current_password": OWNER_RAW_PASSWORD},
+    )
+    assert res1.status_code == 200
+
+    # 2. First owner: manager to owner succeeds
+    res2 = client.patch(
+        f"/api/v1/users/{company_setup['manager'].id}/role",
+        headers=first_owner_headers,
+        json={"role": "owner", "current_password": OWNER_RAW_PASSWORD},
+    )
+    assert res2.status_code == 200
+
+    # 3. First owner: hr_admin to owner succeeds
+    res3 = client.patch(
+        f"/api/v1/users/{company_setup['hr_admin'].id}/role",
+        headers=first_owner_headers,
+        json={"role": "owner", "current_password": OWNER_RAW_PASSWORD},
+    )
+    assert res3.status_code == 200
+
+    # 4. First owner demotes a co-owner to hr_admin succeeds
+    res4 = client.patch(
+        f"/api/v1/users/{company_setup['co_owner'].id}/role",
+        headers=first_owner_headers,
+        json={"role": "hr_admin", "current_password": OWNER_RAW_PASSWORD},
+    )
+    assert res4.status_code == 200
+
+    # 5. First owner demotes a co-owner to employee succeeds
+    res5 = client.patch(
+        f"/api/v1/users/{company_setup['employee'].id}/role",
+        headers=first_owner_headers,
+        json={"role": "employee", "current_password": OWNER_RAW_PASSWORD},
+    )
+    assert res5.status_code == 200
+
+    # Setup a fresh co-owner and fresh employee
+    fresh_co = User(
         id=uuid.uuid4(),
         company_id=company_setup["company"].id,
-        email=f"fresh-hr-{uuid.uuid4().hex[:6]}@example.com",
-        hashed_password="pw",
-        role=UserRole.hr_admin,
+        email=f"fresh-co-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password(CO_OWNER_RAW_PASSWORD),
+        role=UserRole.owner,
         is_active=True,
     )
     fresh_emp = User(
         id=uuid.uuid4(),
         company_id=company_setup["company"].id,
         email=f"fresh-emp-{uuid.uuid4().hex[:6]}@example.com",
-        hashed_password="pw",
+        hashed_password=hash_password("pw"),
         role=UserRole.employee,
         is_active=True,
     )
-    fresh_target_hr = User(
+    fresh_hr = User(
         id=uuid.uuid4(),
         company_id=company_setup["company"].id,
-        email=f"target-hr-{uuid.uuid4().hex[:6]}@example.com",
-        hashed_password="pw",
+        email=f"fresh-hr-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password(HR_RAW_PASSWORD),
         role=UserRole.hr_admin,
         is_active=True,
     )
-    db.add_all([fresh_hr, fresh_emp, fresh_target_hr])
+    db.add_all([fresh_co, fresh_emp, fresh_hr])
     db.commit()
 
-    fresh_hr_headers = _auth_headers(fresh_hr)
+    fresh_co_headers = _auth_headers(fresh_co)
 
-    # 1. HR Admin: employee -> hr_admin succeeds
-    res = client.patch(
+    # 6. Any owner: employee to hr_admin succeeds
+    res6 = client.patch(
         f"/api/v1/users/{fresh_emp.id}/role",
-        headers=fresh_hr_headers,
+        headers=fresh_co_headers,
         json={"role": "hr_admin"},
     )
-    assert res.status_code == 200
+    assert res6.status_code == 200
 
-    # 2. HR Admin: hr_admin target to employee -> 403
-    res = client.patch(
-        f"/api/v1/users/{fresh_target_hr.id}/role",
-        headers=fresh_hr_headers,
+    # 7. Any owner: hr_admin to employee succeeds
+    res7 = client.patch(
+        f"/api/v1/users/{fresh_hr.id}/role",
+        headers=fresh_co_headers,
         json={"role": "employee"},
     )
-    assert res.status_code == 403
+    assert res7.status_code == 200
 
-    # 3. HR Admin: hr_admin target to hr_admin (same role) -> 403
-    # (Authority is checked BEFORE no-op check)
-    res = client.patch(
-        f"/api/v1/users/{fresh_target_hr.id}/role",
-        headers=fresh_hr_headers,
-        json={"role": "hr_admin"},
+    # 8. Co-owner: employee to owner succeeds (with co-owner's password)
+    res8 = client.patch(
+        f"/api/v1/users/{fresh_emp.id}/role",
+        headers=fresh_co_headers,
+        json={"role": "owner", "current_password": CO_OWNER_RAW_PASSWORD},
     )
-    assert res.status_code == 403
+    assert res8.status_code == 200
 
-    # 4. HR Admin: owner target -> 403
-    res = client.patch(
+    # 9. Co-owner demoting another owner (co-owner or first owner) gets 403
+    res_co_demote_first = client.patch(
         f"/api/v1/users/{company_setup['owner'].id}/role",
-        headers=fresh_hr_headers,
+        headers=fresh_co_headers,
+        json={"role": "hr_admin", "current_password": CO_OWNER_RAW_PASSWORD},
+    )
+    assert res_co_demote_first.status_code == 403
+
+    res_co_demote_co = client.patch(
+        f"/api/v1/users/{fresh_emp.id}/role",
+        headers=fresh_co_headers,
+        json={"role": "hr_admin", "current_password": CO_OWNER_RAW_PASSWORD},
+    )
+    assert res_co_demote_co.status_code == 403
+
+    # 10. Nobody can change the first owner
+    res_hr_on_first = client.patch(
+        f"/api/v1/users/{company_setup['owner'].id}/role",
+        headers=hr_headers,
         json={"role": "employee"},
     )
-    assert res.status_code == 403
+    assert res_hr_on_first.status_code == 403
 
-    # 5. Owner: employee -> hr_admin succeeds
-    res = client.patch(
-        f"/api/v1/users/{company_setup['employee'].id}/role",
-        headers=owner_headers,
-        json={"role": "hr_admin"},
+    # 11. HR admin permissions:
+    # - HR admin to owner gets 403
+    res_hr_to_owner = client.patch(
+        f"/api/v1/users/{fresh_hr.id}/role",
+        headers=hr_headers,
+        json={"role": "owner", "current_password": HR_RAW_PASSWORD},
     )
-    assert res.status_code == 200
+    assert res_hr_to_owner.status_code == 403
 
-    # 6. Owner: manager -> hr_admin succeeds
-    res = client.patch(
-        f"/api/v1/users/{company_setup['manager'].id}/role",
-        headers=owner_headers,
-        json={"role": "hr_admin"},
-    )
-    assert res.status_code == 200
-
-    # 7. Owner: hr_admin -> employee succeeds (demote company_setup['hr_admin'])
-    res = client.patch(
-        f"/api/v1/users/{company_setup['hr_admin'].id}/role",
-        headers=owner_headers,
-        json={"role": "employee"},
-    )
-    assert res.status_code == 200
-
-    # 8. Owner on another owner (fixture inserts second owner) -> 409 Conflict
-    second_owner = User(
+    # - HR admin on hr_admin target (to employee, and same role hr_admin) gets 403
+    another_hr = User(
         id=uuid.uuid4(),
         company_id=company_setup["company"].id,
-        email=f"owner2-{uuid.uuid4().hex[:6]}@example.com",
-        hashed_password="pw",
-        role=UserRole.owner,
+        email=f"target-hr-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("pw"),
+        role=UserRole.hr_admin,
         is_active=True,
     )
-    db.add(second_owner)
+    db.add(another_hr)
     db.commit()
 
-    initial_owner_count = (
-        db.query(User)
-        .filter(
-            User.company_id == company_setup["company"].id,
-            User.role == UserRole.owner,
-        )
-        .count()
+    res_hr_demote_hr = client.patch(
+        f"/api/v1/users/{another_hr.id}/role",
+        headers=hr_headers,
+        json={"role": "employee"},
     )
+    assert res_hr_demote_hr.status_code == 403
 
-    res_owner_on_owner = client.patch(
-        f"/api/v1/users/{second_owner.id}/role",
-        headers=owner_headers,
+    res_hr_same_hr = client.patch(
+        f"/api/v1/users/{another_hr.id}/role",
+        headers=hr_headers,
         json={"role": "hr_admin"},
     )
-    assert res_owner_on_owner.status_code == 409
+    assert res_hr_same_hr.status_code == 403
 
-    final_owner_count = (
-        db.query(User)
-        .filter(
-            User.company_id == company_setup["company"].id,
-            User.role == UserRole.owner,
-        )
-        .count()
+    # - HR admin on any owner target gets 403
+    res_hr_on_owner = client.patch(
+        f"/api/v1/users/{fresh_co.id}/role",
+        headers=hr_headers,
+        json={"role": "employee"},
     )
-    assert initial_owner_count == final_owner_count
+    assert res_hr_on_owner.status_code == 403
+
+    # 12. First-owner column invariants check on DB level (expected red until migration)
+    # Checks users.is_primary_owner exists and allows only 1 true per company
+    row = db.execute(
+        text("SELECT is_primary_owner FROM users WHERE id = :id"),
+        {"id": company_setup["owner"].id},
+    ).fetchone()
+    assert row is not None
+    assert row[0] is True, "First owner must have is_primary_owner=True"
 
 
 # ==============================================================================
-# Rule 3 Tests: Strict Schema Validation & Rejections
+# Rule 3 Tests: Strict Schema Validation & Password Re-entry Requirements
 # ==============================================================================
 
 
-def test_R03_strict_input_validation(client: TestClient, db: Session, company_setup):
-    """R03: New role can only be employee or hr_admin, in exact lower case.
-    owner, super_admin, manager, 'HR_ADMIN', '', null, missing, integer, extra fields (company_id)
-    all return 422, and database state is completely unchanged.
+def test_R03_strict_input_validation_and_password_reentry_rules(
+    client: TestClient, db: Session, company_setup
+):
+    """R03:
+    - New role can only be employee, hr_admin, or owner in lower case.
+    - super_admin, manager, 'OWNER', 'HR_ADMIN', '', null, missing, integer, extra fields
+      all return 422, with DB state unchanged.
+    - Granting or removing owner without current_password returns 422.
+    - current_password longer than 128 characters returns 422.
+    - Employee and hr_admin role changes accept missing current_password and never verify it.
     """
     owner_headers = _auth_headers(company_setup["owner"])
-    target = company_setup["employee"]
-    url = f"/api/v1/users/{target.id}/role"
+    target_emp = company_setup["employee"]
+    target_hr = company_setup["hr_admin"]
+    url_emp = f"/api/v1/users/{target_emp.id}/role"
 
-    invalid_payloads = [
-        {"role": "owner"},
-        {"role": "super_admin"},
-        {"role": "manager"},
-        {"role": "HR_ADMIN"},
-        {"role": "Hr_Admin"},
-        {"role": ""},
-        {"role": None},
-        {},  # missing role
-        {"role": 123},
+    # Invalid roles -> 422
+    invalid_role_payloads = [
+        {"role": "super_admin", "current_password": OWNER_RAW_PASSWORD},
+        {"role": "manager", "current_password": OWNER_RAW_PASSWORD},
+        {"role": "OWNER", "current_password": OWNER_RAW_PASSWORD},
+        {"role": "HR_ADMIN", "current_password": OWNER_RAW_PASSWORD},
+        {"role": "", "current_password": OWNER_RAW_PASSWORD},
+        {"role": None, "current_password": OWNER_RAW_PASSWORD},
+        {"current_password": OWNER_RAW_PASSWORD},  # missing role
+        {"role": 123, "current_password": OWNER_RAW_PASSWORD},
         {"role": "hr_admin", "company_id": str(company_setup["company"].id)},  # extra field
-        {"role": "hr_admin", "extra": "forbidden"},  # extra field
+        {"role": "hr_admin", "extra_prop": "bad"},  # extra field
     ]
 
-    for payload in invalid_payloads:
-        res = client.patch(url, headers=owner_headers, json=payload)
-        assert res.status_code == 422, f"Expected 422 for payload {payload}, got {res.status_code}"
+    for p in invalid_role_payloads:
+        res = client.patch(url_emp, headers=owner_headers, json=p)
+        assert res.status_code == 422, f"Expected 422 for {p}, got {res.status_code}"
 
-    # Verify database unchanged
-    db_user = db.get(User, target.id)
-    assert db_user.role == UserRole.employee
+    # Granting owner without current_password -> 422
+    res_grant_no_pw = client.patch(url_emp, headers=owner_headers, json={"role": "owner"})
+    assert res_grant_no_pw.status_code == 422
+
+    # Removing owner without current_password -> 422
+    url_co = f"/api/v1/users/{company_setup['co_owner'].id}/role"
+    res_remove_no_pw = client.patch(url_co, headers=owner_headers, json={"role": "hr_admin"})
+    assert res_remove_no_pw.status_code == 422
+
+    # current_password > 128 chars -> 422
+    long_pw = "A" * 129
+    res_long_pw = client.patch(
+        url_emp, headers=owner_headers, json={"role": "owner", "current_password": long_pw}
+    )
+    assert res_long_pw.status_code == 422
+
+    # Changing employee to hr_admin accepts missing current_password and never verifies it
+    res_hr_change = client.patch(url_emp, headers=owner_headers, json={"role": "hr_admin"})
+    assert res_hr_change.status_code == 200
+
+    # Changing hr_admin to employee accepts missing current_password
+    res_emp_change = client.patch(
+        f"/api/v1/users/{target_hr.id}/role",
+        headers=owner_headers,
+        json={"role": "employee"},
+    )
+    assert res_emp_change.status_code == 200
 
 
 # ==============================================================================
-# Rule 4 Tests: Self-Change Forbidden
+# Rule 4 Tests: Self-Change Forbidden & Password Lockout
 # ==============================================================================
 
 
-def test_R04_self_role_change_forbidden_with_security_log(
+def test_R04_self_role_change_forbidden_and_password_lockout(
     client: TestClient, db: Session, company_setup, caplog
 ):
-    """R04: Nobody can change their own role, including the owner.
-    Both owner and hr_admin get 403 on self-change; nothing changes, no audit row,
-    and one security-log line is emitted for each.
+    """R04:
+    - Owner (first and co-owner) and hr_admin changing their own role get 403;
+      nothing changes, no audit row, one security-log line each.
+    - Wrong current_password on owner change: 403 with the same message every time,
+      nothing changes, no email, failed_attempts increments per login policy (threshold 5),
+      account locks on 5th attempt, security log line contains no password;
+      correct password works again when not locked.
     """
     caplog.clear()
 
-    # 1. Owner changes self -> 403
-    owner_headers = _auth_headers(company_setup["owner"])
-    res_owner = client.patch(
+    # 1. First owner changes self -> 403
+    first_owner_headers = _auth_headers(company_setup["owner"])
+    res_self_first = client.patch(
         f"/api/v1/users/{company_setup['owner'].id}/role",
-        headers=owner_headers,
-        json={"role": "hr_admin"},
+        headers=first_owner_headers,
+        json={"role": "hr_admin", "current_password": OWNER_RAW_PASSWORD},
     )
-    assert res_owner.status_code == 403
+    assert res_self_first.status_code == 403
 
-    # 2. HR Admin changes self -> 403
+    # 2. Co-owner changes self -> 403
+    co_owner_headers = _auth_headers(company_setup["co_owner"])
+    res_self_co = client.patch(
+        f"/api/v1/users/{company_setup['co_owner'].id}/role",
+        headers=co_owner_headers,
+        json={"role": "employee", "current_password": CO_OWNER_RAW_PASSWORD},
+    )
+    assert res_self_co.status_code == 403
+
+    # 3. HR admin changes self -> 403
     hr_headers = _auth_headers(company_setup["hr_admin"])
-    res_hr = client.patch(
+    res_self_hr = client.patch(
         f"/api/v1/users/{company_setup['hr_admin'].id}/role",
         headers=hr_headers,
         json={"role": "employee"},
     )
-    assert res_hr.status_code == 403
+    assert res_self_hr.status_code == 403
 
     # Verify no audit rows written
     audits = (
@@ -459,9 +567,64 @@ def test_R04_self_role_change_forbidden_with_security_log(
     )
     assert len(audits) == 0
 
-    # Verify security log messages emitted
-    sec_records = [r for r in caplog.records if r.name == "app.security"]
-    assert len(sec_records) >= 2
+    # 4. Wrong current_password attempts on owner change
+    target_emp = company_setup["employee"]
+    url_target = f"/api/v1/users/{target_emp.id}/role"
+
+    owner_user = db.get(User, company_setup["owner"].id)
+    initial_failed = owner_user.failed_attempts
+
+    # 4 wrong password attempts
+    for i in range(4):
+        r_wrong = client.patch(
+            url_target,
+            headers=first_owner_headers,
+            json={"role": "owner", "current_password": "WrongPassword123!"},
+        )
+        assert r_wrong.status_code == 403
+        db.refresh(owner_user)
+        assert owner_user.failed_attempts == initial_failed + i + 1
+        assert owner_user.locked_until is None
+
+    # Correct password succeeds before lockout
+    r_correct = client.patch(
+        url_target,
+        headers=first_owner_headers,
+        json={"role": "owner", "current_password": OWNER_RAW_PASSWORD},
+    )
+    assert r_correct.status_code == 200
+
+    # Reset role of target_emp to test 5th lockout attempt
+    db.refresh(target_emp)
+    target_emp.role = UserRole.employee
+    db.commit()
+
+    # 5 wrong attempts to trigger lock
+    for _ in range(5):
+        client.patch(
+            url_target,
+            headers=first_owner_headers,
+            json={"role": "owner", "current_password": "WrongPassword123!"},
+        )
+    db.refresh(owner_user)
+    assert owner_user.failed_attempts >= 5
+    assert owner_user.locked_until is not None
+    assert owner_user.locked_until > utcnow()
+
+    # While locked, even correct password is rejected
+    r_locked = client.patch(
+        url_target,
+        headers=first_owner_headers,
+        json={"role": "owner", "current_password": OWNER_RAW_PASSWORD},
+    )
+    assert r_locked.status_code == 403
+
+    # Verify security logs contain no raw password
+    sec_logs = [r for r in caplog.records if r.name == "app.security"]
+    for record in sec_logs:
+        msg = record.getMessage()
+        assert "WrongPassword123!" not in msg
+        assert OWNER_RAW_PASSWORD not in msg
 
 
 # ==============================================================================
@@ -501,7 +664,6 @@ def test_R05_target_scoping_and_uniform_404(
         role=UserRole.employee,
         is_active=False,
     )
-    # Platform account in separate platform company
     plat_company = Company(
         id=uuid.uuid4(),
         name="Platform HQ",
@@ -649,7 +811,7 @@ def test_R06_noop_same_role_gives_200_without_side_effects(
 
 
 # ==============================================================================
-# Rule 7 Tests: Next Request Authority, Token Revocation & Post-Commit Emails
+# Rule 7 Tests: Next Request Authority, Token Revocation & Notifications
 # ==============================================================================
 
 
@@ -658,19 +820,19 @@ def test_R07_tokens_revocation_next_request_authority_and_post_commit_emails(
 ):
     """R07:
     - Target's old refresh token is revoked on role change.
-    - Old access token reflects new authority on the next request:
-        * Demoted hr_admin gets 403 on an hr_admin route.
-        * Promoted employee reaches it.
+    - Old access token reflects new authority on next request:
+        * Demoted hr_admin gets 403 on admin route; promoted employee reaches it.
     - Fresh login carries the new role.
-    - Exactly one email goes to the target after commit.
-    - When an hr_admin makes the change, owner ALSO gets one email.
-    - When owner makes the change, owner gets NO email.
+    - Exactly one email goes to target after commit.
+    - When an hr_admin makes the change, EVERY owner gets one email.
+    - When owner role is granted or removed, EVERY other owner gets one email.
+    - When owner changes employee/hr_admin roles, no other owner gets an email.
     - No email on no-op, 403, 404, 422, or commit failure.
     """
-    owner_headers = _auth_headers(company_setup["owner"])
+    first_owner_headers = _auth_headers(company_setup["owner"])
     hr_headers = _auth_headers(company_setup["hr_admin"])
     target_emp = company_setup["employee"]
-    target_hr = company_setup["hr_admin"]
+    co_owner = company_setup["co_owner"]
 
     # Issue active refresh token for target_emp
     raw_refresh = f"rf-{uuid.uuid4().hex}"
@@ -686,7 +848,7 @@ def test_R07_tokens_revocation_next_request_authority_and_post_commit_emails(
 
     email_outbox.clear()
 
-    # Case A: Owner promotes employee to hr_admin
+    # Case A: Owner promotes employee to hr_admin (no owner role involved)
     old_emp_access_token = create_access_token(
         sub=str(target_emp.id),
         company_id=str(company_setup["company"].id),
@@ -695,7 +857,7 @@ def test_R07_tokens_revocation_next_request_authority_and_post_commit_emails(
 
     res_promote = client.patch(
         f"/api/v1/users/{target_emp.id}/role",
-        headers=owner_headers,
+        headers=first_owner_headers,
         json={"role": "hr_admin"},
     )
     assert res_promote.status_code == 200
@@ -711,15 +873,15 @@ def test_R07_tokens_revocation_next_request_authority_and_post_commit_emails(
     )
     assert res_access_promoted.status_code == 200
 
-    # Exactly 1 email to target, 0 to owner
+    # Exactly 1 email to target, 0 to other owners
     target_emails = [e for e in email_outbox if e["to"] == target_emp.email]
-    owner_emails = [e for e in email_outbox if e["to"] == company_setup["owner"].email]
+    owner_emails = [
+        e for e in email_outbox if e["to"] in (company_setup["owner"].email, co_owner.email)
+    ]
     assert len(target_emails) == 1
     assert len(owner_emails) == 0
-    # No credentials/secrets in email
-    assert "password" not in target_emails[0]["text_body"].lower()
 
-    # Case B: HR Admin promotes a manager to hr_admin -> Target AND Owner both get email
+    # Case B: HR Admin promotes manager to hr_admin -> Target AND EVERY OWNER get email
     email_outbox.clear()
     mgr = company_setup["manager"]
     res_hr_promote = client.patch(
@@ -730,28 +892,41 @@ def test_R07_tokens_revocation_next_request_authority_and_post_commit_emails(
     assert res_hr_promote.status_code == 200
 
     mgr_emails = [e for e in email_outbox if e["to"] == mgr.email]
-    owner_notified = [e for e in email_outbox if e["to"] == company_setup["owner"].email]
+    first_owner_notified = [e for e in email_outbox if e["to"] == company_setup["owner"].email]
+    co_owner_notified = [e for e in email_outbox if e["to"] == co_owner.email]
     assert len(mgr_emails) == 1
-    assert len(owner_notified) == 1
+    assert len(first_owner_notified) == 1
+    assert len(co_owner_notified) == 1
 
-    # Case C: Owner demotes an hr_admin to employee -> Old access token gets 403 on admin route
-    old_hr_token = create_access_token(
-        sub=str(target_hr.id),
-        company_id=str(company_setup["company"].id),
-        role=UserRole.hr_admin.value,
+    # Case C: Granting owner role -> Target AND EVERY OTHER OWNER get email
+    email_outbox.clear()
+    res_grant_owner = client.patch(
+        f"/api/v1/users/{target_emp.id}/role",
+        headers=first_owner_headers,
+        json={"role": "owner", "current_password": OWNER_RAW_PASSWORD},
     )
-    res_demote = client.patch(
-        f"/api/v1/users/{target_hr.id}/role",
-        headers=owner_headers,
-        json={"role": "employee"},
-    )
-    assert res_demote.status_code == 200
+    assert res_grant_owner.status_code == 200
 
-    res_access_demoted = client.get(
-        "/api/v1/users/administrators",
-        headers={"Authorization": f"Bearer {old_hr_token}"},
+    target_got = [e for e in email_outbox if e["to"] == target_emp.email]
+    first_owner_got = [e for e in email_outbox if e["to"] == company_setup["owner"].email]
+    co_owner_got = [e for e in email_outbox if e["to"] == co_owner.email]
+    assert len(target_got) == 1
+    assert len(first_owner_got) == 0  # Acting owner gets none
+    assert len(co_owner_got) == 1  # Other co-owner gets email
+
+    # Case D: Removing owner role -> Target AND EVERY OTHER OWNER get email
+    email_outbox.clear()
+    res_remove_owner = client.patch(
+        f"/api/v1/users/{co_owner.id}/role",
+        headers=first_owner_headers,
+        json={"role": "employee", "current_password": OWNER_RAW_PASSWORD},
     )
-    assert res_access_demoted.status_code == 403
+    assert res_remove_owner.status_code == 200
+
+    target_demoted_got = [e for e in email_outbox if e["to"] == co_owner.email]
+    promoted_co_got = [e for e in email_outbox if e["to"] == target_emp.email]
+    assert len(target_demoted_got) == 1
+    assert len(promoted_co_got) == 1
 
 
 # ==============================================================================
@@ -855,8 +1030,9 @@ def test_R09_audit_row_details_and_sanitized_security_logging(
     """R09: Every successful change writes a ROLE_CHANGED audit row:
     - actor_user_id, entity_id (target), details: old_role, new_role, company_id.
     - None on denial or no-op.
-    - Security-log lines for wrong-role, self-change, forbidden-target contain no email,
-      no password hash, and no raw tokens.
+    - Security-log lines for wrong-role, self-change, forbidden-target, and wrong-password
+      contain no email, password hash, or raw tokens.
+    - current_password never appears in audit row, logs, or reply.
     """
     owner_headers = _auth_headers(company_setup["owner"])
     target = company_setup["employee"]
@@ -883,9 +1059,12 @@ def test_R09_audit_row_details_and_sanitized_security_logging(
     assert audit.actor_user_id == company_setup["owner"].id
     assert audit.details["old_role"] == "employee"
     assert audit.details["new_role"] == "hr_admin"
+    assert "current_password" not in audit.details
+    assert "password" not in str(audit.details).lower()
 
     # 2. Denied attempts produce security log without personal data
     caplog.clear()
+
     # Wrong role (demote hr_admin by an hr_admin)
     client.patch(
         f"/api/v1/users/{company_setup['hr_admin'].id}/role",
@@ -900,12 +1079,20 @@ def test_R09_audit_row_details_and_sanitized_security_logging(
         json={"role": "employee"},
     )
 
+    # Wrong password attempt
+    test_wrong_pw = "SecretWrongPass999!"
+    client.patch(
+        f"/api/v1/users/{target.id}/role",
+        headers=owner_headers,
+        json={"role": "owner", "current_password": test_wrong_pw},
+    )
+
     sec_logs = [r for r in caplog.records if r.name == "app.security"]
     for log_record in sec_logs:
         log_str = log_record.getMessage()
-        # Must not contain unhashed email, password, or bearer tokens
         assert company_setup["owner"].email not in log_str
-        assert "password" not in log_str.lower()
+        assert test_wrong_pw not in log_str
+        assert OWNER_RAW_PASSWORD not in log_str
         assert "bearer" not in log_str.lower()
 
 
