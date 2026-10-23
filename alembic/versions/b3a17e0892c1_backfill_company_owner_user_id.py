@@ -24,7 +24,7 @@ SET owner_user_id = sub.id
 FROM (
     SELECT DISTINCT ON (company_id) id, company_id
     FROM users
-    WHERE role = 'owner' AND deleted_at IS NULL
+    WHERE role::text = 'owner' AND deleted_at IS NULL
     ORDER BY company_id, created_at ASC, id ASC
 ) sub
 WHERE c.id = sub.company_id AND c.owner_user_id IS NULL;
