@@ -933,6 +933,14 @@ class CompanyService:
                 f"Company is not pending approval (current status: {company.status.value})."
             )
 
+        import re
+
+        hq_country = (company.country or "").strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", hq_country):
+            raise ValidationError(
+                f"Company country '{company.country}' is not a valid 2-letter ISO country code."
+            )
+
         # Acting on another tenant's data as the platform admin (8.5) — bind
         # to the target company explicitly, for clarity and auditability,
         # even though is_platform_admin=True already bypasses the check.
@@ -986,9 +994,6 @@ class CompanyService:
 
         # Provision Head Office
         location_repo = CompanyLocationRepository(self.db)
-        hq_country = (company.country or "IN").strip().upper()
-        if len(hq_country) != 2:
-            hq_country = "IN"
         head_office = location_repo.create(
             company_id=company.id,
             name="Head Office",
@@ -1443,18 +1448,12 @@ class LocationService:
         if (merged_lat is None and merged_lon is not None) or (
             merged_lat is not None and merged_lon is None
         ):
-            from app.core.exceptions import ValidationError
-
             raise ValidationError("Latitude and longitude must be given together.")
 
         if merged_lat is not None and not (-90.0 <= merged_lat <= 90.0):
-            from app.core.exceptions import ValidationError
-
             raise ValidationError("Latitude must be between -90 and 90 degrees.")
 
         if merged_lon is not None and not (-180.0 <= merged_lon <= 180.0):
-            from app.core.exceptions import ValidationError
-
             raise ValidationError("Longitude must be between -180 and 180 degrees.")
 
         if "name" in updates and updates["name"].strip().lower() != location.name.lower():
@@ -1589,8 +1588,6 @@ class LocationService:
             )
 
         # Rule 4: Reject if active employees assigned
-        from app.modules.hr.models import Employee
-
         active_emp_count = (
             self.db.scalar(
                 select(func.count(Employee.id)).where(

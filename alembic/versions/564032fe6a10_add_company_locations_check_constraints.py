@@ -84,6 +84,19 @@ def upgrade() -> None:
             f"Cannot create check constraint ck_company_locations_radius_range: invalid rows found: {bad_list}"
         )
 
+    # Head office active check: NOT is_primary OR is_active
+    bad_hqs = conn.execute(
+        sa.text(
+            "SELECT id, is_primary, is_active FROM company_locations "
+            "WHERE is_primary = true AND is_active = false"
+        )
+    ).fetchall()
+    if bad_hqs:
+        bad_list = ", ".join(f"location {r[0]}: is_primary={r[1]}, is_active={r[2]}" for r in bad_hqs)
+        raise RuntimeError(
+            f"Cannot create check constraint ck_company_locations_head_office_active: invalid rows found: {bad_list}"
+        )
+
     # 2. Add check constraints
     op.create_check_constraint(
         "ck_company_locations_country",
@@ -110,9 +123,15 @@ def upgrade() -> None:
         "company_locations",
         "geofence_radius_meters >= 10 AND geofence_radius_meters <= 5000",
     )
+    op.create_check_constraint(
+        "ck_company_locations_head_office_active",
+        "company_locations",
+        "NOT is_primary OR is_active",
+    )
 
 
 def downgrade() -> None:
+    op.drop_constraint("ck_company_locations_head_office_active", "company_locations", type_="check")
     op.drop_constraint("ck_company_locations_radius_range", "company_locations", type_="check")
     op.drop_constraint("ck_company_locations_longitude_range", "company_locations", type_="check")
     op.drop_constraint("ck_company_locations_latitude_range", "company_locations", type_="check")

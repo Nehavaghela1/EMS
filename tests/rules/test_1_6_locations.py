@@ -1608,3 +1608,149 @@ def test_part2_F_approved_company_head_office_has_2_letter_country(
     assert hq is not None
     assert hq.country == "IN"
     assert len(hq.country) == 2
+
+
+def test_part3_G_approve_company_non_2_letter_country_rejected(
+    client: TestClient, db: Session, super_admin_headers
+):
+    """G. approve_company must NOT fall back to 'IN'. A company whose country is not a
+    2-letter ISO code is rejected with 422 and a clear message, and no head office,
+    status or other state changes. Schemas accepting company country validate 2 letters."""
+    from pydantic import ValidationError as PydanticValidationError
+
+    from app.core.exceptions import ValidationError
+    from app.modules.identity.models import Company, CompanyLocation, CompanyStatus, User
+    from app.modules.identity.schemas import AdminCompanyUpdateRequest, CompanyProfileUpdateRequest
+    from app.modules.identity.service import CompanyService
+
+    # 1. Test schema validation: CompanyProfileUpdateRequest and AdminCompanyUpdateRequest
+    # Invalid country -> 422 (ValidationError)
+    with pytest.raises((ValueError, PydanticValidationError)):
+        CompanyProfileUpdateRequest(country="India")
+
+    with pytest.raises((ValueError, PydanticValidationError)):
+        AdminCompanyUpdateRequest(country="USA")
+
+    # Valid lowercase country gets stripped and uppercased
+    req_profile = CompanyProfileUpdateRequest(country=" us ")
+    assert req_profile.country == "US"
+    req_admin = AdminCompanyUpdateRequest(country=" gb ")
+    assert req_admin.country == "GB"
+
+    # 2. Test approve_company rejection: create a company in DB with invalid country directly
+    bad_comp = Company(
+        name="Bad Country Corp",
+        code=f"BCC-{uuid.uuid4().hex[:4].upper()}",
+        email=f"badcountry-{uuid.uuid4().hex[:6]}@example.com",
+        country="1A",
+        status=CompanyStatus.pending,
+    )
+    db.add(bad_comp)
+    db.commit()
+
+    admin_user = db.scalar(select(User).where(User.role == UserRole.super_admin))
+    assert admin_user is not None
+
+    svc = CompanyService(db)
+    with pytest.raises(ValidationError) as exc_info:
+        svc.approve_company(bad_comp.id, admin_id=admin_user.id)
+    assert "2-letter ISO" in str(exc_info.value) or "Country" in str(exc_info.value)
+
+    # Verify no state changes occurred (status still pending, no head office provisioned)
+    db.refresh(bad_comp)
+    assert bad_comp.status == CompanyStatus.pending
+    locs = db.scalars(
+        select(CompanyLocation).where(CompanyLocation.company_id == bad_comp.id)
+    ).all()
+    assert len(locs) == 0
+
+
+def test_part3_H_check_constraint_head_office_active(db: Session, company_setup):
+    """H. CheckConstraint ck_company_locations_head_office_active: NOT is_primary OR is_active.
+    An ORM insert or update with is_primary=true and is_active=false raises IntegrityError."""
+    from sqlalchemy.exc import IntegrityError
+
+    cid = company_setup["company"].id
+
+    # 1. Insert with is_primary=True and is_active=False -> IntegrityError
+    with pytest.raises(IntegrityError):
+        with db.begin_nested():
+            bad_loc = CompanyLocation(
+                company_id=cid,
+                name="Inactive HQ",
+                code=f"IHQ-{uuid.uuid4().hex[:4].upper()}",
+                country="IN",
+                is_primary=True,
+                is_active=False,
+            )
+            db.add(bad_loc)
+            db.flush()
+
+    # 2. Update existing active head office to is_active=False while is_primary=True ->
+    # IntegrityError
+    hq = company_setup["head_office"]
+    with pytest.raises(IntegrityError):
+        with db.begin_nested():
+            hq.is_active = False
+            db.flush()
+
+
+def test_part3_I_reactivate_employee_validates_location(
+    client: TestClient, db: Session, company_setup
+):
+    """I. reactivate_employee must call _validate_location for the employee's current
+    location_id. Reactivating an employee whose location is inactive fails and the employee
+    stays inactive."""
+    from app.modules.hr.models import EmploymentType
+    from app.modules.hr.schemas import EmployeeCreateRequest
+    from app.modules.hr.service import EmployeeService, InvalidReferenceError
+
+    headers = _auth_headers(company_setup["owner"])
+    cid = company_setup["company"].id
+
+    # Create location
+    res_loc = client.post(
+        "/api/v1/companies/locations",
+        json={
+            "name": "Branch For Reactivate",
+            "code": f"BFR-{uuid.uuid4().hex[:4].upper()}",
+            "country": "IN",
+        },
+        headers=headers,
+    )
+    assert res_loc.status_code == 201
+    loc_id = uuid.UUID(res_loc.json()["id"])
+
+    # Create employee assigned to this location
+    hr_service = EmployeeService(db)
+    emp, _ = hr_service.create_employee(
+        cid,
+        EmployeeCreateRequest(
+            first_name="Bob",
+            last_name="Reactivate",
+            email=f"bob-{uuid.uuid4().hex[:6]}@example.com",
+            location_id=loc_id,
+            employment_type=EmploymentType.full_time,
+            hire_date=date(2025, 1, 1),
+        ),
+        actor=company_setup["owner"],
+    )
+
+    # Deactivate the employee
+    hr_service.deactivate_employee(cid, emp.id, actor=company_setup["owner"])
+    db.refresh(emp)
+    assert emp.is_active is False
+
+    # Deactivate the location
+    loc_row = db.get(CompanyLocation, loc_id)
+    loc_row.is_active = False
+    db.commit()
+
+    # Attempt to reactivate employee -> InvalidReferenceError
+    with pytest.raises(InvalidReferenceError) as exc_info:
+        hr_service.reactivate_employee(cid, emp.id)
+    assert "location does not exist or is inactive" in str(exc_info.value)
+
+    # Employee must remain inactive
+    db.refresh(emp)
+    assert emp.is_active is False

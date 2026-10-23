@@ -531,6 +531,7 @@ class EmployeeService:
         employee = self.repo.get_by_id_any_status(employee_id, company_id)
         if employee is None:
             raise NotFoundError("Employee not found.")
+        self._validate_location(company_id, employee.location_id)
         self.repo.update(employee, is_active=True)
         if employee.user_id is not None:
             user = self.user_repo.get_by_id(employee.user_id, company_id)

@@ -136,9 +136,22 @@ class CompanyProfileUpdateRequest(BaseModel):
     address: str | None = None
     city: str | None = None
     state: str | None = None
+    country: str | None = None
     pincode: str | None = None
     website: str | None = None
     logo_url: str | None = None
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def _validate_country(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("Country must be text.")
+        v = v.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", v):
+            raise ValueError("Country must be a valid 2-letter ISO country code.")
+        return v
 
 
 class UserRoleUpdateRequest(BaseModel):
@@ -163,7 +176,6 @@ class AdminUserResponse(BaseModel):
 
 class AdminCompanyUpdateRequest(CompanyProfileUpdateRequest):
     status: CompanyStatus | None = None
-    country: str | None = None
     currency: str | None = None
     gst_number: str | None = None
     pan_number: str | None = None

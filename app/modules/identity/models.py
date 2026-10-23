@@ -66,6 +66,10 @@ class CompanyLocation(TenantBase):
             "geofence_radius_meters >= 10 AND geofence_radius_meters <= 5000",
             name="ck_company_locations_radius_range",
         ),
+        CheckConstraint(
+            "NOT is_primary OR is_active",
+            name="ck_company_locations_head_office_active",
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
