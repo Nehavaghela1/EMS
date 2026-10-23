@@ -165,7 +165,7 @@ class CompanyProfileUpdateRequest(BaseModel):
 class UserRoleUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    role: Literal["employee", "hr_admin", "owner"]
+    role: Literal["employee", "manager", "hr_admin", "owner"]
     current_password: str | None = Field(default=None, min_length=1, max_length=128)
 
 

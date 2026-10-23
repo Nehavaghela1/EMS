@@ -1725,16 +1725,21 @@ class RoleChangeService:
         previous_role = target.role
 
         # 4. Authority matrix
-        # Actor owner & target not owner: new role may be employee, hr_admin, or owner.
+        # Actor owner & target not owner: new role may be employee, manager, hr_admin, or owner.
         # Actor owner & target owner: allowed only if actor.id == company.owner_user_id,
         #                             target.id != actor.id, and new role in (employee, hr_admin).
-        # Actor hr_admin: allowed only when target.role in (employee, manager)
-        #                 AND new role is hr_admin.
+        # Actor hr_admin: (employee|manager -> hr_admin),
+        #                 (employee -> manager), (manager -> employee).
         # Everything else: 403 + security log
         allowed = False
         if actor.role == UserRole.owner:
             if previous_role != UserRole.owner:
-                if target_role in (UserRole.employee, UserRole.hr_admin, UserRole.owner):
+                if target_role in (
+                    UserRole.employee,
+                    UserRole.manager,
+                    UserRole.hr_admin,
+                    UserRole.owner,
+                ):
                     allowed = True
             else:
                 # target is an owner
@@ -1747,8 +1752,12 @@ class RoleChangeService:
                     allowed = True
         elif actor.role == UserRole.hr_admin:
             if (
-                previous_role in (UserRole.employee, UserRole.manager)
-                and target_role == UserRole.hr_admin
+                (
+                    previous_role in (UserRole.employee, UserRole.manager)
+                    and target_role == UserRole.hr_admin
+                )
+                or (previous_role == UserRole.employee and target_role == UserRole.manager)
+                or (previous_role == UserRole.manager and target_role == UserRole.employee)
             ):
                 allowed = True
 
@@ -1764,6 +1773,20 @@ class RoleChangeService:
                 },
             )
             raise ForbiddenError("You do not have permission to perform this role transition.")
+
+        # 4b. To become a manager, target must have an active employee profile in the same company
+        target_employee = None
+        if target_role == UserRole.manager or previous_role == UserRole.manager:
+            from app.modules.hr.repository import EmployeeRepository
+
+            emp_repo = EmployeeRepository(self.db)
+            target_employee = emp_repo.get_by_user_id(company_id, target.id)
+
+        if target_role == UserRole.manager and previous_role != UserRole.manager:
+            if target_employee is None or not target_employee.is_active:
+                raise ConflictError(
+                    "User must have an active employee profile in the company to become a manager."
+                )
 
         # 5. If granting or removing owner: current_password required and verified
         involves_owner = (target_role == UserRole.owner) or (previous_role == UserRole.owner)
@@ -1828,6 +1851,26 @@ class RoleChangeService:
                 changed=False,
             )
 
+        # Count active direct reports if demoting a manager
+        active_reports_count: int | None = None
+        if previous_role == UserRole.manager:
+            from app.modules.hr.models import Employee
+
+            if target_employee is not None:
+                active_reports_count = (
+                    self.db.scalar(
+                        select(func.count(Employee.id)).where(
+                            Employee.company_id == company_id,
+                            Employee.reporting_manager_id == target_employee.id,
+                            Employee.is_active.is_(True),
+                            Employee.deleted_at.is_(None),
+                        )
+                    )
+                    or 0
+                )
+            else:
+                active_reports_count = 0
+
         # 7. Apply: set role, revoke all active refresh tokens, write ROLE_CHANGED, commit
         try:
             target.role = target_role
@@ -1835,16 +1878,20 @@ class RoleChangeService:
             for token in active_tokens:
                 self.token_repo.revoke(token)
 
+            audit_details: dict[str, object] = {
+                "previous_role": previous_role.value,
+                "new_role": target_role.value,
+            }
+            if active_reports_count is not None:
+                audit_details["active_direct_reports"] = active_reports_count
+
             self.audit.record(
                 company_id=company_id,
                 actor=actor,
                 action="ROLE_CHANGED",
                 entity_type="user",
                 entity_id=target.id,
-                details={
-                    "previous_role": previous_role.value,
-                    "new_role": target_role.value,
-                },
+                details=audit_details,
             )
             self.db.commit()
         except Exception:
