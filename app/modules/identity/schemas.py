@@ -1,9 +1,17 @@
 import re
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.core.config import settings
 from app.modules.identity.models import CompanyStatus, UserRole
@@ -155,8 +163,19 @@ class CompanyProfileUpdateRequest(BaseModel):
 
 
 class UserRoleUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["employee", "hr_admin", "owner"]
+    current_password: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class UserRoleUpdateResponse(BaseModel):
+    id: uuid.UUID
     role: UserRole
-    website: str | None = None
+    previous_role: UserRole
+    changed: bool
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AdminUserResponse(BaseModel):

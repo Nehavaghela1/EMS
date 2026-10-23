@@ -297,6 +297,6 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/api/v1/shifts/{shift_id}"): ROLES(UserRole.hr_admin),
     ("POST", "/api/v1/shifts/{shift_id}/assign"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/users/administrators"): ROLES(UserRole.owner, UserRole.hr_admin),
-    ("PATCH", "/api/v1/users/{user_id}/role"): ROLES(UserRole.owner),
+    ("PATCH", "/api/v1/users/{user_id}/role"): ROLES(UserRole.owner, UserRole.hr_admin),
     ("GET", "/health"): PUBLIC,
 }

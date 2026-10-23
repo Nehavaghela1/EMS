@@ -186,3 +186,60 @@ def multi_company_guidance_email() -> tuple[str, str, str]:
         "<p>If you didn't request this, you can safely ignore this email.</p>"
     )
     return subject, text, html_body
+
+
+def role_changed_target_email(
+    *, company_name: str, new_role: str, previous_role: str
+) -> tuple[str, str, str]:
+    """Sent to target user after their role has been updated."""
+    subject = f"Your role at {company_name} was updated"
+    safe_company = html.escape(company_name)
+    safe_new = html.escape(new_role)
+    safe_prev = html.escape(previous_role)
+
+    text = (
+        f"Your role at {company_name} has been changed from {previous_role} to {new_role}.\n\n"
+        "For security, your active sessions have been signed out. Please sign in again to continue."
+    )
+    html_body = _wrap_html(
+        f"<p>Your role at <strong>{safe_company}</strong> has been changed from "
+        f"<strong>{safe_prev}</strong> to <strong>{safe_new}</strong>.</p>"
+        "<p>For security, your active sessions have been signed out. "
+        "Please sign in again to continue.</p>"
+    )
+    return subject, text, html_body
+
+
+def role_changed_owner_notification_email(
+    *,
+    company_name: str,
+    target_email: str,
+    actor_email: str,
+    new_role: str,
+    previous_role: str,
+) -> tuple[str, str, str]:
+    """Sent to company owners when a role change occurs that requires owner notification."""
+    subject = f"Role change notification for {company_name}"
+    safe_company = html.escape(company_name)
+    safe_target = html.escape(target_email)
+    safe_actor = html.escape(actor_email)
+    safe_new = html.escape(new_role)
+    safe_prev = html.escape(previous_role)
+
+    text = (
+        f"A role change was performed at {company_name}.\n\n"
+        f"Actor: {actor_email}\n"
+        f"Target user: {target_email}\n"
+        f"Previous role: {previous_role}\n"
+        f"New role: {new_role}\n"
+    )
+    html_body = _wrap_html(
+        f"<p>A role change was performed at <strong>{safe_company}</strong>.</p>"
+        f"<ul>"
+        f"<li><strong>Actor:</strong> {safe_actor}</li>"
+        f"<li><strong>Target user:</strong> {safe_target}</li>"
+        f"<li><strong>Previous role:</strong> {safe_prev}</li>"
+        f"<li><strong>New role:</strong> {safe_new}</li>"
+        f"</ul>"
+    )
+    return subject, text, html_body

@@ -566,6 +566,31 @@ def test_I13_leave_decision_email_escaping():
     assert html.escape(payload, quote=True) in html_part
 
 
+def test_I13_role_changed_email_escaping():
+    payload = "<script>alert('xss')</script>"
+    _sub, text, html_part = email_templates.role_changed_target_email(
+        company_name=payload,
+        new_role=payload,
+        previous_role=payload,
+    )
+    assert payload in text
+    assert payload not in html_part
+    assert "<script>" not in html_part
+    assert html.escape(payload, quote=True) in html_part
+
+    _sub_o, text_o, html_o = email_templates.role_changed_owner_notification_email(
+        company_name=payload,
+        target_email=payload,
+        actor_email=payload,
+        new_role=payload,
+        previous_role=payload,
+    )
+    assert payload in text_o
+    assert payload not in html_o
+    assert "<script>" not in html_o
+    assert html.escape(payload, quote=True) in html_o
+
+
 # ── I14: EmployeeService.resend_invite requires actor parameter ───────────────
 def test_I14_resend_invite_requires_actor_parameter(db, company_a):
     from app.modules.hr.service import EmployeeService

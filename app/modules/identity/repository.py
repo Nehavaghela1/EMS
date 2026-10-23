@@ -13,6 +13,7 @@ from app.modules.identity.models import (
     CompanyStatus,
     RefreshToken,
     User,
+    UserRole,
 )
 
 
@@ -257,8 +258,30 @@ class UserRepository:
         user.last_login_at = utcnow()
         self.db.flush()
 
+    def get_for_update(self, user_id: uuid.UUID, company_id: uuid.UUID) -> User | None:
+        return self.db.scalar(
+            select(User).where(User.id == user_id, User.company_id == company_id).with_for_update()
+        )
+
+    def list_active_owners(self, company_id: uuid.UUID) -> list[User]:
+        return list(
+            self.db.scalars(
+                select(User).where(
+                    User.company_id == company_id,
+                    User.role == UserRole.owner,
+                    User.is_active.is_(True),
+                    User.deleted_at.is_(None),
+                )
+            ).all()
+        )
+
     def lock(self, user: User, until: datetime) -> None:
         user.locked_until = until
+        self.db.flush()
+
+    def clear_failed_attempts(self, user: User) -> None:
+        user.failed_attempts = 0
+        user.locked_until = None
         self.db.flush()
 
 

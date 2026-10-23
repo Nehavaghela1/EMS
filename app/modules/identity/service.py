@@ -13,6 +13,8 @@ from app.core.email_templates import (
     company_rejected_email,
     hr_admin_credentials_email,
     password_changed_email,
+    role_changed_owner_notification_email,
+    role_changed_target_email,
 )
 from app.core.exceptions import (
     AppError,
@@ -64,6 +66,8 @@ from app.modules.identity.schemas import (
     MeResponse,
     ResetPasswordRequest,
     TokenResponse,
+    UserRoleUpdateRequest,
+    UserRoleUpdateResponse,
 )
 from app.modules.platform.repository import IndustryPresetRepository
 from app.modules.platform.service import AuditService, jsonable
@@ -986,6 +990,8 @@ class CompanyService:
             is_active=True,
             must_change_password=must_change,
         )
+        company.owner_user_id = owner_user.id
+        self.db.flush()
 
         from datetime import date
 
@@ -1236,6 +1242,8 @@ class CompanyService:
                 is_active=True,
                 must_change_password=False,
             )
+            company.owner_user_id = new_admin.id
+            self.db.flush()
 
             from datetime import date
 
@@ -1647,3 +1655,250 @@ class LocationService:
         except Exception:
             self.db.rollback()
             raise
+
+
+class RoleChangeService:
+    def __init__(self, db: Session):
+        self.db = db
+        self.user_repo = UserRepository(db)
+        self.token_repo = RefreshTokenRepository(db)
+        self.company_repo = CompanyRepository(db)
+        self.audit = AuditService(db)
+
+    def change_role(
+        self,
+        *,
+        actor: User,
+        target_user_id: uuid.UUID,
+        data: UserRoleUpdateRequest,
+    ) -> UserRoleUpdateResponse:
+        sec_logger = logging.getLogger("app.security")
+        company_id = actor.company_id
+        target_role = UserRole(data.role)
+
+        # 1. Super admin caller gets 403
+        if actor.role == UserRole.super_admin:
+            sec_logger.warning(
+                "Role change denied",
+                extra={
+                    "event": "role_change_denied",
+                    "reason": "super_admin",
+                    "actor_id": str(actor.id),
+                    "target_id": str(target_user_id),
+                    "company_id": str(company_id) if company_id else "",
+                },
+            )
+            raise ForbiddenError("Super administrators cannot modify tenant roles.")
+
+        # 2. Self-change gets 403 + security log
+        if target_user_id == actor.id:
+            sec_logger.warning(
+                "Role change denied",
+                extra={
+                    "event": "role_change_denied",
+                    "reason": "self_change",
+                    "actor_id": str(actor.id),
+                    "target_id": str(target_user_id),
+                    "company_id": str(company_id) if company_id else "",
+                },
+            )
+            raise ForbiddenError("Cannot change your own role.")
+
+        # 3. Load target with get_for_update(user_id, company_id) WHERE is_active
+        # Target must be active user of caller's company, role super_admin treated as not found
+        target = self.user_repo.get_for_update(target_user_id, company_id)
+        if target is None or not target.is_active or target.role == UserRole.super_admin:
+            sec_logger.warning(
+                "Role change denied",
+                extra={
+                    "event": "role_change_denied",
+                    "reason": "forbidden_target",
+                    "actor_id": str(actor.id),
+                    "target_id": str(target_user_id),
+                    "company_id": str(company_id) if company_id else "",
+                },
+            )
+            raise NotFoundError("User not found.")
+
+        company = target.company or self.company_repo.get_by_id(company_id)
+        first_owner_id = company.owner_user_id if company else None
+        previous_role = target.role
+
+        # 4. Authority matrix
+        # Actor owner & target not owner: new role may be employee, hr_admin, or owner.
+        # Actor owner & target owner: allowed only if actor.id == company.owner_user_id,
+        #                             target.id != actor.id, and new role in (employee, hr_admin).
+        # Actor hr_admin: allowed only when target.role in (employee, manager)
+        #                 AND new role is hr_admin.
+        # Everything else: 403 + security log
+        allowed = False
+        if actor.role == UserRole.owner:
+            if previous_role != UserRole.owner:
+                if target_role in (UserRole.employee, UserRole.hr_admin, UserRole.owner):
+                    allowed = True
+            else:
+                # target is an owner
+                if (
+                    first_owner_id is not None
+                    and actor.id == first_owner_id
+                    and target.id != actor.id
+                    and target_role in (UserRole.employee, UserRole.hr_admin)
+                ):
+                    allowed = True
+        elif actor.role == UserRole.hr_admin:
+            if (
+                previous_role in (UserRole.employee, UserRole.manager)
+                and target_role == UserRole.hr_admin
+            ):
+                allowed = True
+
+        if not allowed:
+            sec_logger.warning(
+                "Role change denied",
+                extra={
+                    "event": "role_change_denied",
+                    "reason": "forbidden_target",
+                    "actor_id": str(actor.id),
+                    "target_id": str(target.id),
+                    "company_id": str(company_id) if company_id else "",
+                },
+            )
+            raise ForbiddenError("You do not have permission to perform this role transition.")
+
+        # 5. If granting or removing owner: current_password required and verified
+        involves_owner = (target_role == UserRole.owner) or (previous_role == UserRole.owner)
+        if involves_owner:
+            if not data.current_password:
+                raise ValidationError(
+                    "Current password is required to grant or remove the owner role."
+                )
+
+            # Check if actor locked
+            if actor.locked_until and actor.locked_until > utcnow():
+                sec_logger.warning(
+                    "Role change denied",
+                    extra={
+                        "event": "role_change_denied",
+                        "reason": "locked",
+                        "actor_id": str(actor.id),
+                        "target_id": str(target.id),
+                        "company_id": str(company_id) if company_id else "",
+                    },
+                )
+                raise ForbiddenError("Password confirmation failed.")
+
+            if not verify_password(data.current_password, actor.hashed_password):
+                self.user_repo.increment_failed_attempts(actor)
+                if actor.failed_attempts == settings.MAX_LOGIN_ATTEMPTS:
+                    self.audit.record(
+                        company_id=actor.company_id,
+                        actor=actor,
+                        action="ACCOUNT_LOCKED",
+                        entity_type="user",
+                        entity_id=actor.id,
+                        details={"email": actor.email, "failed_attempts": actor.failed_attempts},
+                    )
+                if actor.failed_attempts >= settings.MAX_LOGIN_ATTEMPTS:
+                    lock_time = utcnow() + timedelta(minutes=settings.LOCKOUT_MINUTES)
+                    self.user_repo.lock(actor, lock_time)
+
+                self.db.commit()
+
+                sec_logger.warning(
+                    "Role change denied",
+                    extra={
+                        "event": "role_change_denied",
+                        "reason": "wrong_password",
+                        "actor_id": str(actor.id),
+                        "target_id": str(target.id),
+                        "company_id": str(company_id) if company_id else "",
+                    },
+                )
+                raise ForbiddenError("Password confirmation failed.")
+
+            # Password success: clear failed attempts
+            self.user_repo.clear_failed_attempts(actor)
+
+        # 6. Same role gives 200 with no side effects
+        if target_role == previous_role:
+            return UserRoleUpdateResponse(
+                id=target.id,
+                role=target.role,
+                previous_role=previous_role,
+                changed=False,
+            )
+
+        # 7. Apply: set role, revoke all active refresh tokens, write ROLE_CHANGED, commit
+        try:
+            target.role = target_role
+            active_tokens = self.token_repo.get_active_by_user(target.id)
+            for token in active_tokens:
+                self.token_repo.revoke(token)
+
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="ROLE_CHANGED",
+                entity_type="user",
+                entity_id=target.id,
+                details={
+                    "previous_role": previous_role.value,
+                    "new_role": target_role.value,
+                },
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+        # 8. AFTER commit send emails best-effort
+        try:
+            comp_name = company.name if company else "EMS"
+            sub_t, text_t, html_t = role_changed_target_email(
+                company_name=comp_name,
+                new_role=target_role.value,
+                previous_role=previous_role.value,
+            )
+            send_email_task.delay(
+                to=target.email,
+                subject=sub_t,
+                text_body=text_t,
+                html_body=html_t,
+            )
+
+            # Check if other owners should be notified
+            notify_owners = (actor.role == UserRole.hr_admin) or involves_owner
+            if notify_owners:
+                active_owners = self.user_repo.list_active_owners(company_id)
+                sub_o, text_o, html_o = role_changed_owner_notification_email(
+                    company_name=comp_name,
+                    target_email=target.email,
+                    actor_email=actor.email,
+                    new_role=target_role.value,
+                    previous_role=previous_role.value,
+                )
+                for o in active_owners:
+                    if o.id != actor.id and o.id != target.id:
+                        send_email_task.delay(
+                            to=o.email,
+                            subject=sub_o,
+                            text_body=text_o,
+                            html_body=html_o,
+                        )
+        except Exception as exc:
+            logger.warning(
+                "Role change email dispatch failed",
+                extra={
+                    "event": "role_change_email_failed",
+                    "error_type": type(exc).__name__,
+                    "actor_id": str(actor.id),
+                    "target_id": str(target.id),
+                },
+            )
+
+        return UserRoleUpdateResponse(
+            id=target.id,
+            role=target.role,
+            previous_role=previous_role,
+            changed=True,
+        )
