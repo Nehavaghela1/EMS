@@ -803,9 +803,6 @@ def test_R05_target_scoping_and_uniform_404(
         ("res_platform", res_platform),
     ]
 
-    for name, r in responses:
-        print(f"\n404 RESPONSE {name}: {r.json()}")
-
     unknown_data = res_unknown.json()
     unknown_data.get("error", {}).pop("request_id", None)
 
