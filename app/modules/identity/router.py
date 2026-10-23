@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
-from app.core.exceptions import NotFoundError
 from app.core.otp import check_and_increment_account_limit
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
@@ -39,9 +38,15 @@ from app.modules.identity.schemas import (
     TokenResponse,
     UsernameAvailabilityResponse,
     UserRoleUpdateRequest,
+    UserRoleUpdateResponse,
     UserWorkspaceResponse,
 )
-from app.modules.identity.service import AuthService, CompanyService, LocationService
+from app.modules.identity.service import (
+    AuthService,
+    CompanyService,
+    LocationService,
+    RoleChangeService,
+)
 from app.workers.tasks.identity import process_password_reset_request
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -492,36 +497,20 @@ def reactivate_company(
 users_router = APIRouter(prefix="/users", tags=["Users"])
 
 
-@users_router.patch("/{user_id}/role")
+@users_router.patch("/{user_id}/role", response_model=UserRoleUpdateResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_user_role(
     user_id: uuid.UUID,
     data: UserRoleUpdateRequest,
-    current_user: User = Depends(require_role(UserRole.owner)),
+    request: Request,
+    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
     db: Session = Depends(get_tenant_db),
 ):
-    if user_id == current_user.id:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=400, detail="Cannot change your own role.")
-
-    if data.role not in [UserRole.employee, UserRole.hr_admin]:
-        from fastapi import HTTPException
-
-        raise HTTPException(
-            status_code=400, detail="Can only promote to hr_admin or demote to employee."
-        )
-
-    user = (
-        db.query(User)
-        .filter(User.id == user_id, User.company_id == current_user.company_id)
-        .first()
+    return RoleChangeService(db).change_role(
+        actor=current_user,
+        target_user_id=user_id,
+        data=data,
     )
-    if not user:
-        raise NotFoundError("User not found.")
-
-    user.role = data.role
-    db.commit()
-    return {"message": f"User role updated to {data.role.value}"}
 
 
 @users_router.get("/administrators", response_model=list[AdminUserResponse])
