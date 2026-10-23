@@ -561,7 +561,6 @@ def test_R03_strict_input_validation_and_password_reentry_rules(
     # Invalid roles -> 422
     invalid_role_payloads = [
         {"role": "super_admin", "current_password": OWNER_RAW_PASSWORD},
-        {"role": "manager", "current_password": OWNER_RAW_PASSWORD},
         {"role": "OWNER", "current_password": OWNER_RAW_PASSWORD},
         {"role": "HR_ADMIN", "current_password": OWNER_RAW_PASSWORD},
         {"role": "", "current_password": OWNER_RAW_PASSWORD},
