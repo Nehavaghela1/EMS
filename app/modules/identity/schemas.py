@@ -36,6 +36,73 @@ def _validate_password_policy(value: str) -> str:
 PasswordStr = Annotated[str, AfterValidator(_validate_password_policy)]
 
 
+RESERVED_SUBDOMAINS: frozenset[str] = frozenset(
+    {
+        "admin",
+        "administrator",
+        "api",
+        "app",
+        "auth",
+        "billing",
+        "cdn",
+        "dashboard",
+        "dev",
+        "docs",
+        "ftp",
+        "help",
+        "imap",
+        "login",
+        "mail",
+        "ns1",
+        "ns2",
+        "platform",
+        "pop",
+        "portal",
+        "root",
+        "smtp",
+        "ssh",
+        "staging",
+        "static",
+        "status",
+        "support",
+        "test",
+        "web",
+        "webmail",
+        "www",
+        "sso",
+        "oauth",
+        "accounts",
+        "account",
+        "assets",
+        "internal",
+        "sandbox",
+        "prod",
+        "production",
+        "superadmin",
+    }
+)
+
+
+def validate_subdomain_string(v: str | None) -> str | None:
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError("Subdomain must be text.")
+    v = v.strip().lower()
+    if not v:
+        return None
+    if v in RESERVED_SUBDOMAINS:
+        raise ValueError("This subdomain is reserved.")
+    if len(v) < 3 or len(v) > 63:
+        raise ValueError("Subdomain must be between 3 and 63 characters.")
+    if not re.match(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", v):
+        raise ValueError(
+            "Subdomain must contain only lowercase letters, digits, and hyphens,"
+            " and cannot start or end with a hyphen."
+        )
+    return v
+
+
 # Company
 class CompanyRegisterRequest(BaseModel):
     """Route 12 — company self-registration. Admin password and workspace
@@ -77,6 +144,11 @@ class CompanyRegisterRequest(BaseModel):
         if not re.fullmatch(r"[A-Z]{2}", v):
             raise ValueError("Country must be a valid 2-letter ISO country code.")
         return v
+
+    @field_validator("subdomain", mode="before")
+    @classmethod
+    def _validate_subdomain(cls, v: str | None) -> str | None:
+        return validate_subdomain_string(v)
 
 
 class CompanyResponse(BaseModel):
@@ -144,22 +216,9 @@ class CompanyProfileUpdateRequest(BaseModel):
     address: str | None = None
     city: str | None = None
     state: str | None = None
-    country: str | None = None
     pincode: str | None = None
     website: str | None = None
     logo_url: str | None = None
-
-    @field_validator("country", mode="before")
-    @classmethod
-    def _validate_country(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        if not isinstance(v, str):
-            raise ValueError("Country must be text.")
-        v = v.strip().upper()
-        if not re.fullmatch(r"[A-Z]{2}", v):
-            raise ValueError("Country must be a valid 2-letter ISO country code.")
-        return v
 
 
 class UserRoleUpdateRequest(BaseModel):
@@ -196,8 +255,21 @@ class AdminUserResponse(BaseModel):
 class AdminCompanyUpdateRequest(CompanyProfileUpdateRequest):
     status: CompanyStatus | None = None
     currency: str | None = None
+    country: str | None = None
     gst_number: str | None = None
     pan_number: str | None = None
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def _validate_country(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("Country must be text.")
+        v = v.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", v):
+            raise ValueError("Country must be a valid 2-letter ISO country code.")
+        return v
 
 
 # Auth
@@ -360,21 +432,7 @@ class CreateWorkspaceRequest(BaseModel):
     @field_validator("subdomain", mode="before")
     @classmethod
     def _validate_subdomain(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        if not isinstance(v, str):
-            raise ValueError("Subdomain must be text.")
-        v = v.strip().lower()
-        if not v:
-            return None
-        if len(v) < 3 or len(v) > 63:
-            raise ValueError("Subdomain must be between 3 and 63 characters.")
-        if not re.match(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", v):
-            raise ValueError(
-                "Subdomain must contain only lowercase letters, digits, and hyphens,"
-                " and cannot start or end with a hyphen."
-            )
-        return v
+        return validate_subdomain_string(v)
 
 
 class SwitchWorkspaceRequest(BaseModel):
