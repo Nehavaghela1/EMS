@@ -986,6 +986,9 @@ class CompanyService:
 
         # Provision Head Office
         location_repo = CompanyLocationRepository(self.db)
+        hq_country = (company.country or "IN").strip().upper()
+        if len(hq_country) != 2:
+            hq_country = "IN"
         head_office = location_repo.create(
             company_id=company.id,
             name="Head Office",
@@ -993,7 +996,7 @@ class CompanyService:
             address_line1=company.address,
             city=company.city,
             state=company.state,
-            country=company.country,
+            country=hq_country,
             postal_code=company.pincode,
             is_primary=True,
         )
@@ -1405,11 +1408,25 @@ class LocationService:
         data: CompanyLocationUpdate,
         actor: User | None = None,
     ) -> CompanyLocation:
-        location = self.location_repo.get_by_id(location_id, company_id)
+        updates = data.model_dump(exclude_unset=True)
+
+        # Lock order:
+        # If updating is_primary=True: company row FOR UPDATE -> target location FOR UPDATE ->
+        # old head office FOR UPDATE
+        # Otherwise: target location FOR UPDATE
+        # Note: deactivate_location takes only the location lock, so there is no deadlock cycle.
+        if updates.get("is_primary") is True:
+            self._lock_company(company_id)
+            location = self.location_repo.get_by_id(location_id, company_id, for_update=True)
+        else:
+            location = self.location_repo.get_by_id(location_id, company_id, for_update=True)
+
         if location is None:
             raise NotFoundError("Location not found.")
 
-        updates = data.model_dump(exclude_unset=True)
+        # Re-check on fresh state
+        if updates.get("is_primary") is True and not location.is_active:
+            raise ConflictError("Cannot set an inactive location as head office.")
 
         # Rule B: PUT with is_primary=False on current head office is rejected
         if updates.get("is_primary") is False and location.is_primary:
@@ -1418,9 +1435,27 @@ class LocationService:
                 "Set another active location as head office first."
             )
 
-        # Rule B: PUT with is_primary=True on inactive location is rejected
-        if updates.get("is_primary") is True and not location.is_active:
-            raise ConflictError("Cannot set an inactive location as head office.")
+        # Merged coordinate validation (A):
+        # Determine merged latitude and longitude
+        merged_lat = updates["latitude"] if "latitude" in updates else location.latitude
+        merged_lon = updates["longitude"] if "longitude" in updates else location.longitude
+
+        if (merged_lat is None and merged_lon is not None) or (
+            merged_lat is not None and merged_lon is None
+        ):
+            from app.core.exceptions import ValidationError
+
+            raise ValidationError("Latitude and longitude must be given together.")
+
+        if merged_lat is not None and not (-90.0 <= merged_lat <= 90.0):
+            from app.core.exceptions import ValidationError
+
+            raise ValidationError("Latitude must be between -90 and 90 degrees.")
+
+        if merged_lon is not None and not (-180.0 <= merged_lon <= 180.0):
+            from app.core.exceptions import ValidationError
+
+            raise ValidationError("Longitude must be between -180 and 180 degrees.")
 
         if "name" in updates and updates["name"].strip().lower() != location.name.lower():
             if self.location_repo.get_by_name_lower(company_id, updates["name"]):
@@ -1450,7 +1485,6 @@ class LocationService:
         try:
             # If is_primary is being updated to True
             if updates.get("is_primary") is True and not location.is_primary:
-                self._lock_company(company_id)
                 old_hq = self.location_repo.get_head_office(company_id, for_update=True)
                 if old_hq and old_hq.id != location.id:
                     old_hq.is_primary = False
@@ -1495,9 +1529,15 @@ class LocationService:
     def set_head_office(
         self, company_id: uuid.UUID, location_id: uuid.UUID, actor: User | None = None
     ) -> CompanyLocation:
-        location = self.location_repo.get_by_id(location_id, company_id)
+        # Lock order: company row first, then target location FOR UPDATE,
+        # then old head office FOR UPDATE
+        # Note: deactivate takes only the location lock, so there is no cycle.
+        self._lock_company(company_id)
+        location = self.location_repo.get_by_id(location_id, company_id, for_update=True)
         if location is None:
             raise NotFoundError("Location not found.")
+
+        # Re-check is_active and is_primary on fresh locked state
         if not location.is_active:
             raise ConflictError("Cannot set an inactive location as head office.")
 
@@ -1505,7 +1545,6 @@ class LocationService:
             return location
 
         try:
-            self._lock_company(company_id)
             old_hq = self.location_repo.get_head_office(company_id, for_update=True)
             if old_hq and old_hq.id != location.id:
                 old_hq.is_primary = False

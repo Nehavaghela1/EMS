@@ -27,12 +27,14 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import create_access_token
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import Company, CompanyLocation, User, UserRole
+from app.modules.identity.repository import CompanyLocationRepository
 from app.modules.identity.schemas import CompanyLocationCreate
 from app.modules.identity.service import LocationService
 from app.modules.platform.models import AuditLog
@@ -1246,3 +1248,363 @@ def test_hardening_F_locking_in_validate_location_and_deactivate(db: Session, co
     hr_service = EmployeeService(db)
     # Ensure calling _validate_location executes cleanly with FOR SHARE
     hr_service._validate_location(cid, hq_id)
+
+
+# ==============================================================================
+# Additional Tests A through F
+# ==============================================================================
+
+
+def test_part2_A_put_coordinates_merged_validation(client: TestClient, db: Session, company_setup):
+    """A. PUT coordinates validates merged values: request value, else stored value."""
+    headers = _auth_headers(company_setup["owner"])
+
+    # Create location with both lat & lon set
+    res = client.post(
+        "/api/v1/companies/locations",
+        json={
+            "name": "Coord Test Loc",
+            "code": f"CTL-{uuid.uuid4().hex[:4].upper()}",
+            "country": "IN",
+            "latitude": 12.9716,
+            "longitude": 77.5946,
+        },
+        headers=headers,
+    )
+    assert res.status_code == 201
+    loc_id = res.json()["id"]
+
+    # 1. PUT {"latitude": null} alone with stored longitude -> 422
+    res_null_lat = client.put(
+        f"/api/v1/companies/locations/{loc_id}",
+        json={"latitude": None},
+        headers=headers,
+    )
+    assert res_null_lat.status_code == 422, res_null_lat.text
+
+    # 2. PUT {"latitude": 13.0} alone is allowed when longitude already stored -> 200
+    res_lat_only = client.put(
+        f"/api/v1/companies/locations/{loc_id}",
+        json={"latitude": 13.0},
+        headers=headers,
+    )
+    assert res_lat_only.status_code == 200, res_lat_only.text
+    assert res_lat_only.json()["latitude"] == 13.0
+    assert res_lat_only.json()["longitude"] == 77.5946
+
+    # 3. PUT with both null clears the geofence -> 200
+    res_clear = client.put(
+        f"/api/v1/companies/locations/{loc_id}",
+        json={"latitude": None, "longitude": None},
+        headers=headers,
+    )
+    assert res_clear.status_code == 200, res_clear.text
+    assert res_clear.json()["latitude"] is None
+    assert res_clear.json()["longitude"] is None
+
+    # 4. Now that both are null, sending {"latitude": 12.9} alone must fail -> 422
+    res_lat_lone = client.put(
+        f"/api/v1/companies/locations/{loc_id}",
+        json={"latitude": 12.9},
+        headers=headers,
+    )
+    assert res_lat_lone.status_code == 422, res_lat_lone.text
+
+
+def test_part2_B_address_fields_validation_and_coercion(client: TestClient, company_setup):
+    """B. address_line1 max 255, city/state max 100, postal_code max 20; strip whitespace;
+    blank -> null."""
+    headers = _auth_headers(company_setup["owner"])
+
+    # Overlength checks on create -> 422
+    overlength_payloads = [
+        {"address_line1": "A" * 256},
+        {"city": "C" * 101},
+        {"state": "S" * 101},
+        {"postal_code": "P" * 21},
+    ]
+    for bad_field in overlength_payloads:
+        res = client.post(
+            "/api/v1/companies/locations",
+            json={
+                "name": f"Len Test {uuid.uuid4().hex[:4]}",
+                "code": f"LT-{uuid.uuid4().hex[:4].upper()}",
+                "country": "IN",
+                **bad_field,
+            },
+            headers=headers,
+        )
+        assert res.status_code == 422, f"Expected 422 for {bad_field}, got {res.status_code}"
+
+    # Whitespace stripping and blank -> None on create
+    res_create = client.post(
+        "/api/v1/companies/locations",
+        json={
+            "name": f"Strip Test {uuid.uuid4().hex[:4]}",
+            "code": f"ST-{uuid.uuid4().hex[:4].upper()}",
+            "country": "IN",
+            "address_line1": "   123 Main St   ",
+            "city": "   Bangalore   ",
+            "state": "   ",
+            "postal_code": "",
+        },
+        headers=headers,
+    )
+    assert res_create.status_code == 201, res_create.text
+    body = res_create.json()
+    assert body["address_line1"] == "123 Main St"
+    assert body["city"] == "Bangalore"
+    assert body["state"] is None
+    assert body["postal_code"] is None
+    loc_id = body["id"]
+
+    # Overlength checks on update -> 422
+    for bad_field in overlength_payloads:
+        res_up = client.put(
+            f"/api/v1/companies/locations/{loc_id}",
+            json=bad_field,
+            headers=headers,
+        )
+        assert res_up.status_code == 422, f"Expected 422 for update {bad_field}"
+
+    # Update blank -> None
+    res_up_blank = client.put(
+        f"/api/v1/companies/locations/{loc_id}",
+        json={"address_line1": "   ", "city": None},
+        headers=headers,
+    )
+    assert res_up_blank.status_code == 200, res_up_blank.text
+    up_body = res_up_blank.json()
+    assert up_body["address_line1"] is None
+    assert up_body["city"] is None
+
+
+def test_part2_C_set_head_office_on_concurrently_deactivated_returns_409(
+    client: TestClient, db: Session, company_setup
+):
+    """C. set_head_office on deactivated location returns 409 and head office remains unchanged."""
+    headers = _auth_headers(company_setup["owner"])
+    current_hq_id = company_setup["head_office"].id
+
+    res = client.post(
+        "/api/v1/companies/locations",
+        json={
+            "name": "Deact Target",
+            "code": f"DT-{uuid.uuid4().hex[:4].upper()}",
+            "country": "IN",
+        },
+        headers=headers,
+    )
+    assert res.status_code == 201
+    target_id = res.json()["id"]
+
+    # Deactivate the target
+    client.delete(f"/api/v1/companies/locations/{target_id}", headers=headers)
+
+    # Attempt set_head_office on deactivated target
+    res_swap = client.post(
+        f"/api/v1/companies/locations/{target_id}/set-head-office",
+        headers=headers,
+    )
+    assert res_swap.status_code == 409, res_swap.text
+
+    # Verify head office remains unchanged
+    res_list = client.get("/api/v1/companies/locations", headers=headers)
+    assert res_list.status_code == 200
+    hqs = [loc for loc in res_list.json() if loc["is_primary"]]
+    assert len(hqs) == 1
+    assert hqs[0]["id"] == str(current_hq_id)
+
+
+def test_part2_D_employee_update_inactive_location_behaviour(
+    client: TestClient, db: Session, company_setup
+):
+    """D. Updating an employee whose location was later deactivated succeeds
+    if location_id unchanged."""
+    from app.modules.hr.models import EmploymentType
+    from app.modules.hr.schemas import EmployeeCreateRequest, EmployeeUpdateRequest
+    from app.modules.hr.service import EmployeeService
+
+    headers = _auth_headers(company_setup["owner"])
+    cid = company_setup["company"].id
+
+    # 1. Create a location and an employee assigned to it
+    res_loc = client.post(
+        "/api/v1/companies/locations",
+        json={
+            "name": "Branch Office",
+            "code": f"BO-{uuid.uuid4().hex[:4].upper()}",
+            "country": "IN",
+        },
+        headers=headers,
+    )
+    assert res_loc.status_code == 201
+    branch_id = uuid.UUID(res_loc.json()["id"])
+
+    hr_service = EmployeeService(db)
+    emp, _ = hr_service.create_employee(
+        cid,
+        EmployeeCreateRequest(
+            first_name="Alice",
+            last_name="Smith",
+            email=f"alice-{uuid.uuid4().hex[:6]}@example.com",
+            location_id=branch_id,
+            employment_type=EmploymentType.full_time,
+            hire_date=date(2025, 1, 1),
+        ),
+        actor=company_setup["owner"],
+    )
+
+    # Deactivate the branch office (simulating location deactivation)
+    loc_row = db.get(CompanyLocation, branch_id)
+    loc_row.is_active = False
+    db.commit()
+
+    # Updating other employee fields while sending the SAME location_id must succeed
+    updated_emp = hr_service.update_employee(
+        cid,
+        emp.id,
+        EmployeeUpdateRequest(
+            location_id=branch_id,
+            first_name="Alice-Updated",
+        ),
+        current_user=company_setup["owner"],
+    )
+    assert updated_emp.first_name == "Alice-Updated"
+    assert updated_emp.location_id == branch_id
+
+    # Creating another inactive location
+    res_loc2 = client.post(
+        "/api/v1/companies/locations",
+        json={
+            "name": "Branch Two",
+            "code": f"B2-{uuid.uuid4().hex[:4].upper()}",
+            "country": "IN",
+        },
+        headers=headers,
+    )
+    assert res_loc2.status_code == 201
+    branch2_id = uuid.UUID(res_loc2.json()["id"])
+    loc_row2 = db.get(CompanyLocation, branch2_id)
+    loc_row2.is_active = False
+    db.commit()
+
+    # Changing to an inactive location must fail with InvalidReferenceError
+    from app.modules.hr.service import InvalidReferenceError
+
+    with pytest.raises(InvalidReferenceError) as exc_info:
+        hr_service.update_employee(
+            cid,
+            emp.id,
+            EmployeeUpdateRequest(location_id=branch2_id),
+            current_user=company_setup["owner"],
+        )
+    assert "location does not exist or is inactive" in str(exc_info.value)
+
+
+def test_part2_E_check_constraints_enforced_at_database_level(db: Session, company_setup):
+    """E. Named CheckConstraints raise IntegrityError on invalid direct ORM inserts."""
+    from sqlalchemy.exc import IntegrityError
+
+    cid = company_setup["company"].id
+
+    # 1. ck_company_locations_country: must be 2 uppercase letters
+    with pytest.raises(IntegrityError):
+        with db.begin_nested():
+            bad_loc = CompanyLocation(
+                id=uuid.uuid4(),
+                company_id=cid,
+                name=f"Bad Country {uuid.uuid4().hex[:4]}",
+                code=f"BC-{uuid.uuid4().hex[:4].upper()}",
+                country="USA",
+            )
+            db.add(bad_loc)
+            db.flush()
+
+    # 2. ck_company_locations_coordinates_pair: both null or both set
+    with pytest.raises(IntegrityError):
+        with db.begin_nested():
+            bad_loc = CompanyLocation(
+                id=uuid.uuid4(),
+                company_id=cid,
+                name=f"Bad Pair {uuid.uuid4().hex[:4]}",
+                code=f"BP-{uuid.uuid4().hex[:4].upper()}",
+                country="IN",
+                latitude=12.97,
+                longitude=None,
+            )
+            db.add(bad_loc)
+            db.flush()
+
+    # 3. ck_company_locations_latitude_range: between -90 and 90
+    with pytest.raises(IntegrityError):
+        with db.begin_nested():
+            bad_loc = CompanyLocation(
+                id=uuid.uuid4(),
+                company_id=cid,
+                name=f"Bad Lat {uuid.uuid4().hex[:4]}",
+                code=f"BL-{uuid.uuid4().hex[:4].upper()}",
+                country="IN",
+                latitude=95.0,
+                longitude=77.0,
+            )
+            db.add(bad_loc)
+            db.flush()
+
+    # 4. ck_company_locations_longitude_range: between -180 and 180
+    with pytest.raises(IntegrityError):
+        with db.begin_nested():
+            bad_loc = CompanyLocation(
+                id=uuid.uuid4(),
+                company_id=cid,
+                name=f"Bad Lon {uuid.uuid4().hex[:4]}",
+                code=f"BO-{uuid.uuid4().hex[:4].upper()}",
+                country="IN",
+                latitude=12.0,
+                longitude=190.0,
+            )
+            db.add(bad_loc)
+            db.flush()
+
+    # 5. ck_company_locations_radius_range: between 10 and 5000
+    with pytest.raises(IntegrityError):
+        with db.begin_nested():
+            bad_loc = CompanyLocation(
+                id=uuid.uuid4(),
+                company_id=cid,
+                name=f"Bad Rad {uuid.uuid4().hex[:4]}",
+                code=f"BR-{uuid.uuid4().hex[:4].upper()}",
+                country="IN",
+                geofence_radius_meters=5,
+            )
+            db.add(bad_loc)
+            db.flush()
+
+
+def test_part2_F_approved_company_head_office_has_2_letter_country(
+    client: TestClient, db: Session, super_admin_headers
+):
+    """F. Newly approved company's head office has a 2-letter ISO country code."""
+    from app.modules.identity.models import User
+    from app.modules.identity.schemas import CompanyRegisterRequest
+    from app.modules.identity.service import CompanyService
+
+    svc = CompanyService(db)
+    comp_email = f"co2-{uuid.uuid4().hex[:6]}@example.com"
+    req = CompanyRegisterRequest(
+        company_name="Two Letter Country Corp",
+        company_email=comp_email,
+        country="in",
+        password="ValidPassword123!",
+    )
+    comp = svc.register_company(req)
+    admin_user = db.scalar(select(User).where(User.role == UserRole.super_admin))
+    assert admin_user is not None
+    comp, owner_email = svc.approve_company(comp.id, admin_id=admin_user.id)
+
+    # Check the head office country
+    loc_repo = CompanyLocationRepository(db)
+    hq = loc_repo.get_head_office(comp.id)
+    assert hq is not None
+    assert hq.country == "IN"
+    assert len(hq.country) == 2

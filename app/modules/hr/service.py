@@ -472,7 +472,7 @@ class EmployeeService:
 
         if "department_id" in updates:
             self._validate_department(company_id, updates["department_id"])
-        if "location_id" in updates:
+        if "location_id" in updates and updates["location_id"] != employee.location_id:
             self._validate_location(company_id, updates["location_id"])
         if "reporting_manager_id" in updates:
             self._validate_manager(company_id, updates["reporting_manager_id"], self_id=employee.id)

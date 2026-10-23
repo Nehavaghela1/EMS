@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     Float,
@@ -44,6 +45,26 @@ class CompanyLocation(TenantBase):
             "company_id",
             text("lower(code)"),
             unique=True,
+        ),
+        CheckConstraint(
+            "country ~ '^[A-Z]{2}$'",
+            name="ck_company_locations_country",
+        ),
+        CheckConstraint(
+            "(latitude IS NULL) = (longitude IS NULL)",
+            name="ck_company_locations_coordinates_pair",
+        ),
+        CheckConstraint(
+            "latitude IS NULL OR (latitude >= -90 AND latitude <= 90)",
+            name="ck_company_locations_latitude_range",
+        ),
+        CheckConstraint(
+            "longitude IS NULL OR (longitude >= -180 AND longitude <= 180)",
+            name="ck_company_locations_longitude_range",
+        ),
+        CheckConstraint(
+            "geofence_radius_meters >= 10 AND geofence_radius_meters <= 5000",
+            name="ck_company_locations_radius_range",
         ),
     )
 
