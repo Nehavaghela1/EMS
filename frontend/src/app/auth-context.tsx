@@ -32,7 +32,7 @@ interface TokenResponse {
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
-interface AuthContextValue {
+export interface AuthContextValue {
   status: AuthStatus;
   user: CurrentUser | null;
   login: (email: string, password: string, companyCode?: string) => Promise<void>;

@@ -2,28 +2,9 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
-import { AxiosError, type AxiosResponse } from 'axios'
 import { CreateWorkspacePage } from '../pages/CreateWorkspacePage'
 import * as apiModule from '../api'
 import * as AuthContextModule from '../../../app/auth-context'
-
-function makeAxiosError(
-  status: number,
-  errorData: { code: string; message: string; details?: Record<string, unknown> }
-) {
-  const response = {
-    status,
-    data: {
-      error: {
-        code: errorData.code,
-        message: errorData.message,
-        details: errorData.details ?? null,
-        request_id: 'test-req-id',
-      },
-    },
-  } as AxiosResponse
-  return new AxiosError('Request failed', 'ERR_BAD_REQUEST', undefined, undefined, response)
-}
 
 describe('Sub-feature 1.5: CreateWorkspacePage', () => {
   const mockEstablishSession = vi.fn()
