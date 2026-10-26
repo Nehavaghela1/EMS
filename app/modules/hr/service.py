@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -59,6 +60,7 @@ class DepartmentService:
         self.db = db
         self.repo = DepartmentRepository(db)
         self.employee_repo = EmployeeRepository(db)
+        self.audit = AuditService(db)
 
     def _get_or_404(self, company_id: uuid.UUID, department_id: uuid.UUID) -> Department:
         department = self.repo.get_by_id(department_id, company_id)
@@ -75,19 +77,59 @@ class DepartmentService:
         counts = self.repo.employee_counts(company_id, [d.id for d in items])
         return items, total, pages, counts
 
+    def _validate_head_employee(
+        self, company_id: uuid.UUID, head_employee_id: uuid.UUID | None
+    ) -> None:
+        if head_employee_id is None:
+            return
+        head = self.employee_repo.get_by_id_any_status(head_employee_id, company_id)
+        if (
+            head is None
+            or head.company_id != company_id
+            or not head.is_active
+            or head.deleted_at is not None
+        ):
+            raise InvalidReferenceError(
+                "The specified head employee does not exist or is inactive.",
+                details={"field": "head_employee_id"},
+            )
+
     def create_department(
-        self, company_id: uuid.UUID, data: DepartmentCreateRequest
+        self, company_id: uuid.UUID, data: DepartmentCreateRequest, actor: User | None = None
     ) -> tuple[Department, int]:
-        if self.repo.get_by_name(company_id, data.name):
+        clean_name = data.name.strip()
+        if self.repo.get_by_name(company_id, clean_name):
             raise ConflictError("A department with this name already exists.")
-        department = self.repo.create(
-            company_id=company_id,
-            name=data.name,
-            description=data.description,
-            clearance_function=data.clearance_function,
-        )
-        self.db.commit()
-        return department, 0
+
+        self._validate_head_employee(company_id, data.head_employee_id)
+
+        try:
+            department = self.repo.create(
+                company_id=company_id,
+                name=clean_name,
+                description=data.description,
+                head_employee_id=data.head_employee_id,
+                clearance_function=data.clearance_function,
+            )
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="DEPARTMENT_CREATED",
+                entity_type="department",
+                entity_id=department.id,
+                details={"name": clean_name},
+            )
+            self.db.commit()
+            return department, 0
+        except IntegrityError as exc:
+            self.db.rollback()
+            constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            if constraint in (
+                "uq_departments_company_lower_name",
+                "uq_departments_company_id_name",
+            ):
+                raise ConflictError("A department with this name already exists.") from exc
+            raise
 
     def get_department(
         self, company_id: uuid.UUID, department_id: uuid.UUID
@@ -97,31 +139,58 @@ class DepartmentService:
         return department, count
 
     def update_department(
-        self, company_id: uuid.UUID, department_id: uuid.UUID, data: DepartmentUpdateRequest
+        self,
+        company_id: uuid.UUID,
+        department_id: uuid.UUID,
+        data: DepartmentUpdateRequest,
+        actor: User | None = None,
     ) -> tuple[Department, int]:
         department = self._get_or_404(company_id, department_id)
         updates = data.model_dump(exclude_unset=True)
-        new_name = updates.get("name")
-        if new_name and new_name.lower() != department.name.lower():
-            if self.repo.get_by_name(company_id, new_name):
-                raise ConflictError("A department with this name already exists.")
-        if "head_employee_id" in updates and updates["head_employee_id"] is not None:
-            head = self.employee_repo.get_by_id_any_status(updates["head_employee_id"], company_id)
-            if head is None:
-                raise InvalidReferenceError(
-                    "The specified head employee does not exist.",
-                    details={"field": "head_employee_id"},
-                )
-        self.repo.update(department, **updates)
-        self.db.commit()
-        count = self.repo.count_active_employees(company_id, department_id)
-        return department, count
+        if "name" in updates and updates["name"] is not None:
+            updates["name"] = updates["name"].strip()
+            new_name = updates["name"]
+            if new_name.lower() != department.name.lower():
+                if self.repo.get_by_name(company_id, new_name):
+                    raise ConflictError("A department with this name already exists.")
 
-    def delete_department(self, company_id: uuid.UUID, department_id: uuid.UUID) -> None:
+        if "head_employee_id" in updates:
+            self._validate_head_employee(company_id, updates["head_employee_id"])
+
+        diff = {}
+        for field, new_value in updates.items():
+            old_value = getattr(department, field)
+            if old_value != new_value:
+                diff[field] = {"from": jsonable(old_value), "to": jsonable(new_value)}
+
+        try:
+            self.repo.update(department, **updates)
+            if diff:
+                self.audit.record(
+                    company_id=company_id,
+                    actor=actor,
+                    action="DEPARTMENT_UPDATED",
+                    entity_type="department",
+                    entity_id=department.id,
+                    details=diff,
+                )
+            self.db.commit()
+            count = self.repo.count_active_employees(company_id, department_id)
+            return department, count
+        except IntegrityError as exc:
+            self.db.rollback()
+            constraint = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            if constraint in (
+                "uq_departments_company_lower_name",
+                "uq_departments_company_id_name",
+            ):
+                raise ConflictError("A department with this name already exists.") from exc
+            raise
+
+    def delete_department(
+        self, company_id: uuid.UUID, department_id: uuid.UUID, actor: User | None = None
+    ) -> None:
         department = self._get_or_404(company_id, department_id)
-        # Route 35 (10.3): blocked with 409 + the count when active employees
-        # are assigned. `employees` didn't exist until this package (WP-07) —
-        # this was WP-06's one open gap, closed now.
         count = self.repo.count_active_employees(company_id, department_id)
         if count > 0:
             raise ConflictError(
@@ -129,6 +198,14 @@ class DepartmentService:
                 details={"employee_count": count},
             )
         self.repo.soft_delete(department)
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="DEPARTMENT_DELETED",
+            entity_type="department",
+            entity_id=department.id,
+            details={"name": department.name},
+        )
         self.db.commit()
 
 
@@ -499,6 +576,30 @@ class EmployeeService:
         DashboardService.invalidate_company_dashboards(company_id)
         return employee
 
+    def clear_department_heads_for_employee(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User | None = None
+    ) -> None:
+        """Clear head_employee_id from any department headed by this employee
+        and write DEPARTMENT_UPDATED audit logs without committing.
+        """
+        depts = self.db.scalars(
+            select(Department).where(
+                Department.company_id == company_id,
+                Department.head_employee_id == employee_id,
+                Department.deleted_at.is_(None),
+            )
+        ).all()
+        for dept in depts:
+            self.department_repo.update(dept, head_employee_id=None)
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="DEPARTMENT_UPDATED",
+                entity_type="department",
+                entity_id=dept.id,
+                details={"head_employee_id": {"from": str(employee_id), "to": None}},
+            )
+
     def deactivate_employee(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
     ) -> None:
@@ -508,6 +609,7 @@ class EmployeeService:
         deactivated too, so login and refresh both reject it immediately
         (9.2's "reject if is_active is false")."""
         employee = self._get_or_404(company_id, employee_id)
+        self.clear_department_heads_for_employee(company_id, employee.id, actor=actor)
         self.repo.update(employee, is_active=False)
         if employee.user_id is not None:
             user = self.user_repo.get_by_id(employee.user_id, company_id)
@@ -531,6 +633,7 @@ class EmployeeService:
         employee = self.repo.get_by_id_any_status(employee_id, company_id)
         if employee is None:
             raise NotFoundError("Employee not found.")
+        self._validate_department(company_id, employee.department_id)
         self._validate_location(company_id, employee.location_id)
         self.repo.update(employee, is_active=True)
         if employee.user_id is not None:
@@ -666,6 +769,7 @@ class EmployeeService:
         self, company_id: uuid.UUID, employee_id: uuid.UUID, data: TerminationRequest, actor: User
     ) -> Employee:
         employee = self._get_or_404(company_id, employee_id)
+        self.clear_department_heads_for_employee(company_id, employee.id, actor=actor)
         # Schedule separation / involuntary termination
         # Severance pay or notice pay in lieu can be configured
         total_severance = Decimal(str(data.severance_pay)) + Decimal(str(data.notice_pay_in_lieu))
@@ -1029,6 +1133,7 @@ class EmployeeService:
                     "Maker-Checker Enforcement: Only HR Admin or Company Owner "
                     "can authorize final fund release."
                 )
+            self.clear_department_heads_for_employee(company_id, employee.id, actor=actor)
             updates["fnf_settled_at"] = utcnow()
             # Ensure employee is marked inactive upon settlement
             updates["is_active"] = False

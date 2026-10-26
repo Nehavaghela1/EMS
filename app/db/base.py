@@ -5,6 +5,8 @@ from sqlalchemy import DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from app.core.time import utcnow
+
 
 class Base(DeclarativeBase):
     pass
@@ -20,6 +22,7 @@ class TimeStampedBase(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
+        default=utcnow,
         server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
