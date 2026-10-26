@@ -3,22 +3,45 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.modules.hr.models import EmploymentType, InvitationStatus
 
 
 class DepartmentCreateRequest(BaseModel):
-    name: str
-    description: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., max_length=150)
+    description: str | None = Field(default=None, max_length=1000)
+    head_employee_id: uuid.UUID | None = None
     clearance_function: Literal["it", "finance", "hr"] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        s = v.strip()
+        if not (2 <= len(s) <= 150):
+            raise ValueError("Department name must be between 2 and 150 characters.")
+        return s
 
 
 class DepartmentUpdateRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=150)
+    description: str | None = Field(default=None, max_length=1000)
     head_employee_id: uuid.UUID | None = None
     clearance_function: Literal["it", "finance", "hr"] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not (2 <= len(s) <= 150):
+            raise ValueError("Department name must be between 2 and 150 characters.")
+        return s
 
 
 class DepartmentResponse(BaseModel):
