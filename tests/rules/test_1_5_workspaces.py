@@ -39,7 +39,7 @@ def _create_company(
     email: str | None = None,
 ) -> Company:
     comp_email = email or f"comp-{uuid.uuid4().hex[:8]}@example.com"
-    code = f"CMP{uuid.uuid4().hex[:4].upper()}"
+    code = f"CMP{uuid.uuid4().hex[:12].upper()}"
     company = Company(
         name=name,
         code=code,
@@ -1495,7 +1495,7 @@ def test_W27_subdomain_uniqueness_and_constraint_mapping(client, db, company_a):
     # 6. Any other constraint -> 409 "Could not create workspace. Please try again."
     from sqlalchemy.exc import IntegrityError
 
-    class FakeOrig:
+    class FakeOrig(Exception):
         class FakeDiag:
             constraint_name = "companies_code_key"
 
