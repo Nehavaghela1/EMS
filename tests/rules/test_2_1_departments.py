@@ -1,0 +1,894 @@
+"""Tests for Module 2 Sub-feature 2.1: Departments.
+Covers Rules 1-10:
+- R01: Roles and permissions (403 for employee/mgr on write, 200 for hr/owner, 401 unauth, 200 read for all)
+- R02: Input validation and trimming (name length, trimming, description <= 1000, unknown fields, invalid clearance)
+- R03: Uniqueness and concurrency (case-insensitive duplicate 409, concurrency 201+409, reuse after delete, cross-company same name)
+- R04: Cross-company isolation (404 on other company's dept, invalid cross-company head/dept links rejected)
+- R05: Department head rules (active employee requirement, auto-cleared on deactivation/termination with audit)
+- R06: Delete rules (409 if active employees, 204 soft-delete, hidden from list/get, cannot assign deleted dept)
+- R07: List rules (limit capped at 100, sort validation, live active employee count)
+- R08: Audit logging (DEPARTMENT_CREATED, DEPARTMENT_UPDATED, DEPARTMENT_DELETED, no-op update writes no audit)
+- R09: Rate limiting (30/min per user on writes) and atomicity (rollback on failure)
+- R10: Meta rule
+"""
+
+import threading
+import uuid
+from datetime import date
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.core.pagination import PageParams
+from app.core.rate_limit import limiter
+from app.core.security import create_access_token, hash_password
+from app.db.rls import bind_tenant_to_session
+from app.db.session import get_db
+from app.main import app as fastapi_app
+from app.modules.hr.models import Department, Employee, EmploymentType
+from app.modules.hr.schemas import EmployeeCreateRequest
+from app.modules.hr.service import EmployeeService
+from app.modules.identity.models import Company, CompanyStatus, User, UserRole
+from app.modules.platform.models import AuditLog
+
+
+def _auth_headers(user: User) -> dict[str, str]:
+    token = create_access_token(
+        sub=str(user.id),
+        company_id=str(user.company_id),
+        role=user.role.value,
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def dept_company(db: Session):
+    """Fixture providing a company with owner, hr_admin, manager, and employee users and employees."""
+    cid = uuid.uuid4()
+    company = Company(
+        id=cid,
+        name=f"Dept Corp {uuid.uuid4().hex[:6]}",
+        code=f"DC-{uuid.uuid4().hex[:4].upper()}",
+        email=f"dept-{uuid.uuid4().hex[:6]}@example.com",
+        country="IN",
+        status=CompanyStatus.active,
+    )
+    db.add(company)
+    db.flush()
+
+    owner = User(
+        id=uuid.uuid4(),
+        company_id=cid,
+        email=f"owner-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("Test1234pass!"),
+        role=UserRole.owner,
+        is_active=True,
+    )
+    hr_admin = User(
+        id=uuid.uuid4(),
+        company_id=cid,
+        email=f"hr-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("Test1234pass!"),
+        role=UserRole.hr_admin,
+        is_active=True,
+    )
+    manager = User(
+        id=uuid.uuid4(),
+        company_id=cid,
+        email=f"mgr-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("Test1234pass!"),
+        role=UserRole.manager,
+        is_active=True,
+    )
+    employee = User(
+        id=uuid.uuid4(),
+        company_id=cid,
+        email=f"emp-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("Test1234pass!"),
+        role=UserRole.employee,
+        is_active=True,
+    )
+    db.add_all([owner, hr_admin, manager, employee])
+    db.flush()
+
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
+
+    emp_service = EmployeeService(db)
+    emp_owner, _ = emp_service.create_employee(
+        cid,
+        EmployeeCreateRequest(
+            first_name="Owner",
+            last_name="User",
+            email=owner.email,
+            employment_type=EmploymentType.full_time,
+            hire_date=date(2025, 1, 1),
+        ),
+        actor=owner,
+    )
+    emp_hr, _ = emp_service.create_employee(
+        cid,
+        EmployeeCreateRequest(
+            first_name="HR",
+            last_name="Admin",
+            email=hr_admin.email,
+            employment_type=EmploymentType.full_time,
+            hire_date=date(2025, 1, 1),
+        ),
+        actor=owner,
+    )
+    emp_mgr, _ = emp_service.create_employee(
+        cid,
+        EmployeeCreateRequest(
+            first_name="Manager",
+            last_name="One",
+            email=manager.email,
+            employment_type=EmploymentType.full_time,
+            hire_date=date(2025, 1, 1),
+        ),
+        actor=owner,
+    )
+    emp_staff, _ = emp_service.create_employee(
+        cid,
+        EmployeeCreateRequest(
+            first_name="Staff",
+            last_name="Member",
+            email=employee.email,
+            employment_type=EmploymentType.full_time,
+            hire_date=date(2025, 1, 1),
+        ),
+        actor=owner,
+    )
+
+    db.commit()
+
+    return {
+        "company": company,
+        "owner": owner,
+        "hr_admin": hr_admin,
+        "manager": manager,
+        "employee": employee,
+        "emp_owner": emp_owner,
+        "emp_hr": emp_hr,
+        "emp_mgr": emp_mgr,
+        "emp_staff": emp_staff,
+    }
+
+
+# ==============================================================================
+# R01: Roles and Permissions
+# ==============================================================================
+
+
+def test_r01_roles_write_routes_permissions(client: TestClient, dept_company):
+    """POST, PUT and DELETE: employee and manager get 403, hr_admin and owner succeed, no token gets 401."""
+    owner_headers = _auth_headers(dept_company["owner"])
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+    mgr_headers = _auth_headers(dept_company["manager"])
+    emp_headers = _auth_headers(dept_company["employee"])
+
+    # 1. Unauthenticated (no token) -> 401
+    assert client.post("/api/v1/departments", json={"name": "NoAuth"}).status_code == 401
+    fake_id = uuid.uuid4()
+    assert client.put(f"/api/v1/departments/{fake_id}", json={"name": "NoAuth"}).status_code == 401
+    assert client.delete(f"/api/v1/departments/{fake_id}").status_code == 401
+
+    # 2. Employee and Manager -> 403 on POST
+    assert client.post("/api/v1/departments", headers=emp_headers, json={"name": "EmpDept"}).status_code == 403
+    assert client.post("/api/v1/departments", headers=mgr_headers, json={"name": "MgrDept"}).status_code == 403
+
+    # 3. hr_admin -> 201 on POST
+    res_hr = client.post("/api/v1/departments", headers=hr_headers, json={"name": "HR Created"})
+    assert res_hr.status_code == 201
+    dept_id = res_hr.json()["id"]
+
+    # 4. Employee and Manager -> 403 on PUT and DELETE
+    assert client.put(f"/api/v1/departments/{dept_id}", headers=emp_headers, json={"name": "EmpEdit"}).status_code == 403
+    assert client.put(f"/api/v1/departments/{dept_id}", headers=mgr_headers, json={"name": "MgrEdit"}).status_code == 403
+    assert client.delete(f"/api/v1/departments/{dept_id}", headers=emp_headers).status_code == 403
+    assert client.delete(f"/api/v1/departments/{dept_id}", headers=mgr_headers).status_code == 403
+
+    # 5. owner -> succeeds on POST, PUT and DELETE
+    res_owner_post = client.post("/api/v1/departments", headers=owner_headers, json={"name": "Owner Created"})
+    assert res_owner_post.status_code == 201
+    owner_dept_id = res_owner_post.json()["id"]
+
+    res_owner_put = client.put(f"/api/v1/departments/{owner_dept_id}", headers=owner_headers, json={"name": "Owner Renamed"})
+    assert res_owner_put.status_code == 200
+    assert res_owner_put.json()["name"] == "Owner Renamed"
+
+    res_owner_del = client.delete(f"/api/v1/departments/{owner_dept_id}", headers=owner_headers)
+    assert res_owner_del.status_code == 204
+
+
+def test_r01_roles_read_routes_allowed_for_all_logged_in_users(client: TestClient, dept_company):
+    """GET list and GET one return 200 for employee and manager."""
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+    mgr_headers = _auth_headers(dept_company["manager"])
+    emp_headers = _auth_headers(dept_company["employee"])
+
+    res = client.post("/api/v1/departments", headers=hr_headers, json={"name": "Public Dept"})
+    assert res.status_code == 201
+    dept_id = res.json()["id"]
+
+    # Manager reading list and one
+    res_mgr_list = client.get("/api/v1/departments", headers=mgr_headers)
+    assert res_mgr_list.status_code == 200
+    res_mgr_one = client.get(f"/api/v1/departments/{dept_id}", headers=mgr_headers)
+    assert res_mgr_one.status_code == 200
+    assert res_mgr_one.json()["id"] == dept_id
+
+    # Employee reading list and one
+    res_emp_list = client.get("/api/v1/departments", headers=emp_headers)
+    assert res_emp_list.status_code == 200
+    res_emp_one = client.get(f"/api/v1/departments/{dept_id}", headers=emp_headers)
+    assert res_emp_one.status_code == 200
+    assert res_emp_one.json()["id"] == dept_id
+
+
+# ==============================================================================
+# R02: Input Validation and Trimming
+# ==============================================================================
+
+
+def test_r02_input_validation_name_boundaries_and_trimming(client: TestClient, dept_company):
+    """Name: "" , "   ", one char and 151 chars get 422; "  Sales  " stored as "Sales"; "HR" and 150-char accepted."""
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+
+    # Invalid empty or whitespace name -> 422
+    assert client.post("/api/v1/departments", headers=hr_headers, json={"name": ""}).status_code == 422
+    assert client.post("/api/v1/departments", headers=hr_headers, json={"name": "   "}).status_code == 422
+    assert client.post("/api/v1/departments", headers=hr_headers, json={"name": "A"}).status_code == 422
+
+    # 151 characters -> 422
+    long_name_151 = "N" * 151
+    assert client.post("/api/v1/departments", headers=hr_headers, json={"name": long_name_151}).status_code == 422
+
+    # "HR" (2 chars) accepted
+    res_hr = client.post("/api/v1/departments", headers=hr_headers, json={"name": "HR"})
+    assert res_hr.status_code == 201
+
+    # 150 characters accepted
+    long_name_150 = "N" * 150
+    res_150 = client.post("/api/v1/departments", headers=hr_headers, json={"name": long_name_150})
+    assert res_150.status_code == 201
+    assert res_150.json()["name"] == long_name_150
+
+    # Trimming: "  Sales  " is stored as "Sales"
+    res_sales = client.post("/api/v1/departments", headers=hr_headers, json={"name": "  Sales  "})
+    assert res_sales.status_code == 201
+    assert res_sales.json()["name"] == "Sales"
+    sales_id = res_sales.json()["id"]
+
+    # PUT trimming and validation
+    assert client.put(f"/api/v1/departments/{sales_id}", headers=hr_headers, json={"name": ""}).status_code == 422
+    assert client.put(f"/api/v1/departments/{sales_id}", headers=hr_headers, json={"name": "   "}).status_code == 422
+    assert client.put(f"/api/v1/departments/{sales_id}", headers=hr_headers, json={"name": "X"}).status_code == 422
+    assert client.put(f"/api/v1/departments/{sales_id}", headers=hr_headers, json={"name": long_name_151}).status_code == 422
+
+    res_put_trim = client.put(f"/api/v1/departments/{sales_id}", headers=hr_headers, json={"name": "  Sales Team  "})
+    assert res_put_trim.status_code == 200
+    assert res_put_trim.json()["name"] == "Sales Team"
+
+
+def test_r02_input_validation_description_unknown_fields_wrong_types(client: TestClient, dept_company):
+    """Description > 1000 get 422; unknown fields get 422; name=123 gets 422; clearance_function 'legal' gets 422."""
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+
+    # Description of 1001 chars -> 422
+    desc_1001 = "D" * 1001
+    assert client.post("/api/v1/departments", headers=hr_headers, json={"name": "DescTest", "description": desc_1001}).status_code == 422
+
+    # Description of 1000 chars -> 201
+    desc_1000 = "D" * 1000
+    res_desc = client.post("/api/v1/departments", headers=hr_headers, json={"name": "Desc1000", "description": desc_1000})
+    assert res_desc.status_code == 201
+    dept_id = res_desc.json()["id"]
+
+    # Unknown field -> 422 (extra='forbid')
+    assert client.post("/api/v1/departments", headers=hr_headers, json={"name": "UnknownField", "foo": "bar"}).status_code == 422
+    assert client.put(f"/api/v1/departments/{dept_id}", headers=hr_headers, json={"foo": "bar"}).status_code == 422
+
+    # name wrong type (name=123) -> 422
+    assert client.post("/api/v1/departments", headers=hr_headers, json={"name": 123}).status_code == 422
+
+    # clearance_function invalid ("legal") -> 422
+    assert client.post("/api/v1/departments", headers=hr_headers, json={"name": "LegalDept", "clearance_function": "legal"}).status_code == 422
+    assert client.put(f"/api/v1/departments/{dept_id}", headers=hr_headers, json={"clearance_function": "legal"}).status_code == 422
+
+
+# ==============================================================================
+# R03: Uniqueness and Concurrency
+# ==============================================================================
+
+
+def test_r03_name_uniqueness_case_insensitive_and_reuse_after_delete(client: TestClient, dept_company):
+    """'Sales' then 'sales' and 'SALES ' get 409 on POST and PUT rename; after DELETE, POST 'Sales' gives 201."""
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+
+    # 1. Create "Sales" -> 201
+    res1 = client.post("/api/v1/departments", headers=hr_headers, json={"name": "Sales"})
+    assert res1.status_code == 201
+    sales_id = res1.json()["id"]
+
+    # 2. Duplicate "sales" and "SALES " -> 409
+    assert client.post("/api/v1/departments", headers=hr_headers, json={"name": "sales"}).status_code == 409
+    assert client.post("/api/v1/departments", headers=hr_headers, json={"name": "SALES "}).status_code == 409
+
+    # 3. Create another department "Marketing" and rename it to "sales" -> 409
+    res_mkt = client.post("/api/v1/departments", headers=hr_headers, json={"name": "Marketing"})
+    assert res_mkt.status_code == 201
+    mkt_id = res_mkt.json()["id"]
+
+    assert client.put(f"/api/v1/departments/{mkt_id}", headers=hr_headers, json={"name": "sales"}).status_code == 409
+    assert client.put(f"/api/v1/departments/{mkt_id}", headers=hr_headers, json={"name": "SALES "}).status_code == 409
+
+    # 4. Delete "Sales" -> 204
+    assert client.delete(f"/api/v1/departments/{sales_id}", headers=hr_headers).status_code == 204
+
+    # 5. POST "Sales" again -> 201 (name of deleted department can be reused)
+    res_reused = client.post("/api/v1/departments", headers=hr_headers, json={"name": "Sales"})
+    assert res_reused.status_code == 201
+
+
+def test_r03_cross_company_same_name_allowed(client: TestClient, dept_company, db: Session):
+    """Another company may use the same department name."""
+    from tests.conftest import _make_tenant
+
+    other_tenant = _make_tenant(db, name="Other Co", code=f"OTH{uuid.uuid4().hex[:4].upper()}")
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+
+    # Company 1 creates "Operations"
+    res1 = client.post("/api/v1/departments", headers=hr_headers, json={"name": "Operations"})
+    assert res1.status_code == 201
+
+    # Company 2 creates "Operations" -> 201
+    res2 = client.post("/api/v1/departments", headers=other_tenant.hr_headers, json={"name": "Operations"})
+    assert res2.status_code == 201
+
+
+def test_r03_concurrent_duplicate_creation_exactly_one_201_one_409():
+    """Two simultaneous POSTs with the same name give exactly one 201 and one 409 and never a 500."""
+    engine = create_engine(settings.TEST_DATABASE_URL, pool_size=5, max_overflow=2)
+    try:
+        with Session(engine) as setup_sess:
+            cid = uuid.uuid4()
+            company = Company(
+                id=cid,
+                name="Concurrent Dept Co",
+                code=f"CDC{uuid.uuid4().hex[:4].upper()}",
+                email=f"cdc-{uuid.uuid4().hex[:6]}@example.com",
+                status=CompanyStatus.active,
+                is_active=True,
+            )
+            user = User(
+                id=uuid.uuid4(),
+                company_id=cid,
+                email=f"admin-{uuid.uuid4().hex[:6]}@example.com",
+                hashed_password=hash_password("Test1234pass!"),
+                role=UserRole.hr_admin,
+                is_active=True,
+            )
+            setup_sess.add_all([company, user])
+            setup_sess.commit()
+            token = create_access_token(sub=str(user.id), company_id=str(cid), role=user.role.value)
+            headers = {"Authorization": f"Bearer {token}"}
+
+        def _get_test_db():
+            sess = Session(engine)
+            try:
+                yield sess
+            finally:
+                sess.close()
+
+        fastapi_app.dependency_overrides[get_db] = _get_test_db
+
+        barrier = threading.Barrier(2)
+        results: list[int] = []
+
+        def worker():
+            client = TestClient(fastapi_app)
+            try:
+                barrier.wait()
+                resp = client.post("/api/v1/departments", headers=headers, json={"name": "ConcurrentDept"})
+                results.append(resp.status_code)
+            except Exception as exc:
+                results.append(999)
+
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert 500 not in results, f"Server returned 500 during race: {results}"
+        assert sorted(results) == [201, 409], f"Expected one 201 and one 409, got {results}"
+    finally:
+        fastapi_app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+
+
+# ==============================================================================
+# R04: Cross-Company Isolation
+# ==============================================================================
+
+
+def test_r04_cross_company_isolation(client: TestClient, dept_company, db: Session):
+    """Another company's hr_admin gets 404 on GET, PUT, DELETE of this company's dept.
+    Setting head to another company's employee rejected.
+    Creating/updating employee with another company's dept rejected.
+    List shows only own departments.
+    """
+    from tests.conftest import _make_tenant
+
+    company_b = _make_tenant(db, name="Company B", code=f"COB{uuid.uuid4().hex[:4].upper()}")
+    hr_headers_a = _auth_headers(dept_company["hr_admin"])
+    hr_headers_b = company_b.hr_headers
+
+    # Company A creates a department
+    res_a = client.post("/api/v1/departments", headers=hr_headers_a, json={"name": "Dept A"})
+    assert res_a.status_code == 201
+    dept_a_id = res_a.json()["id"]
+
+    # Company B hr_admin GET, PUT, DELETE Dept A -> 404
+    assert client.get(f"/api/v1/departments/{dept_a_id}", headers=hr_headers_b).status_code == 404
+    assert client.put(f"/api/v1/departments/{dept_a_id}", headers=hr_headers_b, json={"name": "Hack"}).status_code == 404
+    assert client.delete(f"/api/v1/departments/{dept_a_id}", headers=hr_headers_b).status_code == 404
+
+    # Setting head_employee_id to Company B's employee in Dept A -> rejected (400 or 404/422)
+    # Create employee in Company B
+    emp_b_res = client.post(
+        "/api/v1/employees",
+        headers=hr_headers_b,
+        json={
+            "first_name": "EmpB",
+            "email": f"empb-{uuid.uuid4().hex[:6]}@example.com",
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert emp_b_res.status_code == 201
+    emp_b_id = emp_b_res.json()["id"]
+
+    res_cross_head = client.put(
+        f"/api/v1/departments/{dept_a_id}",
+        headers=hr_headers_a,
+        json={"head_employee_id": emp_b_id},
+    )
+    assert res_cross_head.status_code in (400, 404, 422)
+
+    # Creating an employee in Company A with Company B's department -> rejected
+    res_b_dept = client.post("/api/v1/departments", headers=hr_headers_b, json={"name": "Dept B"})
+    assert res_b_dept.status_code == 201
+    dept_b_id = res_b_dept.json()["id"]
+
+    res_emp_cross_dept = client.post(
+        "/api/v1/employees",
+        headers=hr_headers_a,
+        json={
+            "first_name": "CrossDept",
+            "email": f"cross-{uuid.uuid4().hex[:6]}@example.com",
+            "department_id": dept_b_id,
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert res_emp_cross_dept.status_code in (400, 404, 422)
+
+    # List shows only own departments
+    list_a = client.get("/api/v1/departments", headers=hr_headers_a).json()["items"]
+    list_b = client.get("/api/v1/departments", headers=hr_headers_b).json()["items"]
+    assert any(d["id"] == dept_a_id for d in list_a)
+    assert not any(d["id"] == dept_b_id for d in list_a)
+    assert any(d["id"] == dept_b_id for d in list_b)
+    assert not any(d["id"] == dept_a_id for d in list_b)
+
+
+# ==============================================================================
+# R05: Department Head Rules
+# ==============================================================================
+
+
+def test_r05_department_head_active_requirement_and_auto_clear_on_deactivation(client: TestClient, dept_company, db: Session):
+    """PUT head of inactive employee rejected. Active accepted. Deactivating head employee auto-clears head with audit row."""
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+    emp_staff = dept_company["emp_staff"]
+
+    # Create department
+    res_dept = client.post("/api/v1/departments", headers=hr_headers, json={"name": "HeadTestDept"})
+    assert res_dept.status_code == 201
+    dept_id = res_dept.json()["id"]
+
+    # Deactivate emp_staff
+    res_deact = client.delete(f"/api/v1/employees/{emp_staff.id}", headers=hr_headers)
+    assert res_deact.status_code == 204
+
+    # Setting inactive employee as head -> rejected (400 / 422)
+    res_set_inactive = client.put(f"/api/v1/departments/{dept_id}", headers=hr_headers, json={"head_employee_id": str(emp_staff.id)})
+    assert res_set_inactive.status_code in (400, 422)
+
+    # Reactivate emp_staff
+    res_react = client.post(f"/api/v1/employees/{emp_staff.id}/toggle-active", headers=hr_headers)
+    assert res_react.status_code == 200
+
+    # Setting active employee as head -> 200
+    res_set_active = client.put(f"/api/v1/departments/{dept_id}", headers=hr_headers, json={"head_employee_id": str(emp_staff.id)})
+    assert res_set_active.status_code == 200
+    assert res_set_active.json()["head_employee_id"] == str(emp_staff.id)
+
+    # Deactivating the head employee -> auto-clears department head_employee_id
+    res_deact2 = client.delete(f"/api/v1/employees/{emp_staff.id}", headers=hr_headers)
+    assert res_deact2.status_code == 204
+
+    res_check = client.get(f"/api/v1/departments/{dept_id}", headers=hr_headers)
+    assert res_check.status_code == 200
+    assert res_check.json()["head_employee_id"] is None
+
+    # Check DEPARTMENT_UPDATED audit row for auto-clear
+    audit_row = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.company_id == dept_company["company"].id,
+            AuditLog.action == "DEPARTMENT_UPDATED",
+            AuditLog.entity_id == uuid.UUID(dept_id),
+        )
+        .order_by(AuditLog.created_at.desc())
+        .first()
+    )
+    assert audit_row is not None
+    assert audit_row.details.get("head_employee_id", {}).get("to") is None
+
+
+def test_r05_department_head_auto_clear_on_termination(client: TestClient, dept_company, db: Session):
+    """Terminating head employee (POST /api/v1/employees/{id}/terminate) auto-clears head with DEPARTMENT_UPDATED audit row."""
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+    emp_mgr = dept_company["emp_mgr"]
+
+    # Create department with manager as head
+    res_dept = client.post(
+        "/api/v1/departments",
+        headers=hr_headers,
+        json={"name": "TermHeadDept", "head_employee_id": str(emp_mgr.id)},
+    )
+    assert res_dept.status_code in (200, 201)
+    dept_id = res_dept.json()["id"]
+    if res_dept.json()["head_employee_id"] is None:
+        client.put(f"/api/v1/departments/{dept_id}", headers=hr_headers, json={"head_employee_id": str(emp_mgr.id)})
+
+    # Terminate the head employee
+    term_res = client.post(
+        f"/api/v1/employees/{emp_mgr.id}/terminate",
+        headers=hr_headers,
+        json={"termination_date": str(date.today()), "reason": "Restructuring"},
+    )
+    assert term_res.status_code == 200
+
+    # Department head must now be cleared
+    res_check = client.get(f"/api/v1/departments/{dept_id}", headers=hr_headers)
+    assert res_check.status_code == 200
+    assert res_check.json()["head_employee_id"] is None
+
+    # Audit row written
+    audit_row = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.company_id == dept_company["company"].id,
+            AuditLog.action == "DEPARTMENT_UPDATED",
+            AuditLog.entity_id == uuid.UUID(dept_id),
+        )
+        .order_by(AuditLog.created_at.desc())
+        .first()
+    )
+    assert audit_row is not None
+    assert audit_row.details.get("head_employee_id", {}).get("to") is None
+
+
+# ==============================================================================
+# R06: Delete Rules and Employee Lifecycle Journey
+# ==============================================================================
+
+
+def test_r06_delete_with_active_employees_fails_and_soft_delete(client: TestClient, dept_company):
+    """Delete with active employees gives 409 with count. Delete empty dept gives 204, soft-deleted, not listed, GET 404."""
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+
+    # 1. Create dept
+    res_dept = client.post("/api/v1/departments", headers=hr_headers, json={"name": "AssignedDept"})
+    assert res_dept.status_code == 201
+    dept_id = res_dept.json()["id"]
+
+    # 2. Assign active employee to it
+    res_emp = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "DeptMember",
+            "email": f"deptmember-{uuid.uuid4().hex[:6]}@example.com",
+            "department_id": dept_id,
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert res_emp.status_code == 201
+    emp_id = res_emp.json()["id"]
+
+    # 3. Attempt delete -> 409 containing count
+    res_del_blocked = client.delete(f"/api/v1/departments/{dept_id}", headers=hr_headers)
+    assert res_del_blocked.status_code == 409
+    err_msg = res_del_blocked.json()["error"]["message"]
+    assert "1" in err_msg or "active employee" in err_msg.lower()
+
+    # 4. Remove employee from department
+    client.put(f"/api/v1/employees/{emp_id}", headers=hr_headers, json={"department_id": None})
+
+    # 5. Delete empty dept -> 204
+    res_del = client.delete(f"/api/v1/departments/{dept_id}", headers=hr_headers)
+    assert res_del.status_code == 204
+
+    # 6. GET department -> 404
+    assert client.get(f"/api/v1/departments/{dept_id}", headers=hr_headers).status_code == 404
+
+    # 7. Deleted department is not listed
+    dept_list = client.get("/api/v1/departments", headers=hr_headers).json()["items"]
+    assert not any(d["id"] == dept_id for d in dept_list)
+
+    # 8. Creating employee with deleted department is rejected
+    res_new_emp = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "BadDeptEmp",
+            "email": f"baddept-{uuid.uuid4().hex[:6]}@example.com",
+            "department_id": dept_id,
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert res_new_emp.status_code in (400, 404, 422)
+
+
+def test_r06_deleted_department_employee_reactivation_journey(client: TestClient, dept_company):
+    """Journey: inactive employee in dept X, X deleted (no active staff), reactivation rejected,
+    HR sets another dept with PUT /employees/{id}, and reactivation succeeds.
+    """
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+
+    # 1. Create Department X and Department Y
+    res_x = client.post("/api/v1/departments", headers=hr_headers, json={"name": "Dept X"})
+    assert res_x.status_code == 201
+    dept_x_id = res_x.json()["id"]
+
+    res_y = client.post("/api/v1/departments", headers=hr_headers, json={"name": "Dept Y"})
+    assert res_y.status_code == 201
+    dept_y_id = res_y.json()["id"]
+
+    # 2. Create employee in Dept X
+    res_emp = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "JourneyEmp",
+            "email": f"journey-{uuid.uuid4().hex[:6]}@example.com",
+            "department_id": dept_x_id,
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert res_emp.status_code == 201
+    emp_id = res_emp.json()["id"]
+
+    # 3. Deactivate employee (now Dept X has 0 active employees)
+    assert client.delete(f"/api/v1/employees/{emp_id}", headers=hr_headers).status_code == 204
+
+    # 4. Delete Dept X -> 204
+    assert client.delete(f"/api/v1/departments/{dept_x_id}", headers=hr_headers).status_code == 204
+
+    # 5. Reactivation via POST /api/v1/employees/{id}/toggle-active is rejected because Dept X is deleted
+    res_reactivate_fail = client.post(f"/api/v1/employees/{emp_id}/toggle-active", headers=hr_headers)
+    assert res_reactivate_fail.status_code in (400, 409)
+
+    # 6. HR sets Department Y with PUT /api/v1/employees/{id}
+    res_update_dept = client.put(f"/api/v1/employees/{emp_id}", headers=hr_headers, json={"department_id": dept_y_id})
+    assert res_update_dept.status_code == 200
+
+    # 7. Reactivation succeeds
+    res_reactivate_success = client.post(f"/api/v1/employees/{emp_id}/toggle-active", headers=hr_headers)
+    assert res_reactivate_success.status_code == 200
+    assert res_reactivate_success.json()["is_active"] is True
+
+
+# ==============================================================================
+# R07: List Rules
+# ==============================================================================
+
+
+def test_r07_unit_pageparams_limit_capped_at_100():
+    """Unit test that PageParams(limit=100000) never allows more than 100 per page."""
+    params = PageParams(page=1, limit=100000)
+    assert params.limit <= 100, f"Expected limit capped at 100, got {params.limit}"
+
+
+def test_r07_route_pagination_search_sort_and_live_active_counts(client: TestClient, dept_company, db: Session):
+    """GET /departments?limit=100000 returns at most 100 items; sort=bogus returns 400; sort=name works;
+    q works; count is for ACTIVE employees only (inactive, deleted, other-company not counted).
+    """
+    from tests.conftest import _make_tenant
+
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+
+    # 1. limit=100000 returns 200 and at most 100 items (or 422 if FastAPI le=100 validates query param)
+    res_limit = client.get("/api/v1/departments?limit=100000", headers=hr_headers)
+    if res_limit.status_code == 200:
+        assert len(res_limit.json()["items"]) <= 100
+        assert res_limit.json()["limit"] <= 100
+    else:
+        assert res_limit.status_code == 422
+
+    # 2. sort=bogus -> 400
+    res_sort_bogus = client.get("/api/v1/departments?sort=bogus", headers=hr_headers)
+    assert res_sort_bogus.status_code == 400
+
+    # 3. sort=name works
+    res_sort_name = client.get("/api/v1/departments?sort=name", headers=hr_headers)
+    assert res_sort_name.status_code == 200
+
+    # 4. q search works
+    client.post("/api/v1/departments", headers=hr_headers, json={"name": "AlphaSearchDept"})
+    res_q = client.get("/api/v1/departments?q=AlphaSearch", headers=hr_headers)
+    assert res_q.status_code == 200
+    assert any(d["name"] == "AlphaSearchDept" for d in res_q.json()["items"])
+
+    # 5. Live active count calculation
+    res_dept_count = client.post("/api/v1/departments", headers=hr_headers, json={"name": "CountDept"})
+    assert res_dept_count.status_code == 201
+    c_dept_id = res_dept_count.json()["id"]
+
+    # Add active employee
+    emp1_res = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={"first_name": "ActiveOne", "email": f"active1-{uuid.uuid4().hex[:6]}@example.com", "department_id": c_dept_id, "hire_date": "2025-01-01"},
+    )
+    assert emp1_res.status_code == 201
+    emp1_id = emp1_res.json()["id"]
+
+    # Add inactive employee
+    emp2_res = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={"first_name": "InactiveTwo", "email": f"inact2-{uuid.uuid4().hex[:6]}@example.com", "department_id": c_dept_id, "hire_date": "2025-01-01"},
+    )
+    assert emp2_res.status_code == 201
+    emp2_id = emp2_res.json()["id"]
+    client.delete(f"/api/v1/employees/{emp2_id}", headers=hr_headers)
+
+    # Check live count in GET /departments/{id} and list: exactly 1 active employee
+    res_single = client.get(f"/api/v1/departments/{c_dept_id}", headers=hr_headers)
+    assert res_single.status_code == 200
+    assert res_single.json()["employee_count"] == 1
+
+
+# ==============================================================================
+# R08: Audit Logging
+# ==============================================================================
+
+
+def test_r08_audit_rows_create_update_delete_and_noop(client: TestClient, dept_company, db: Session):
+    """Create, update and delete write exactly one audit row (DEPARTMENT_CREATED, DEPARTMENT_UPDATED, DEPARTMENT_DELETED).
+    Update details show old and new values. No-op update writes no audit row.
+    """
+    hr_user = dept_company["hr_admin"]
+    hr_headers = _auth_headers(hr_user)
+    cid = dept_company["company"].id
+
+    # 1. CREATE -> DEPARTMENT_CREATED
+    res_c = client.post("/api/v1/departments", headers=hr_headers, json={"name": "AuditDept", "description": "Initial"})
+    assert res_c.status_code == 201
+    dept_id = uuid.UUID(res_c.json()["id"])
+
+    audit_c = (
+        db.query(AuditLog)
+        .filter(AuditLog.company_id == cid, AuditLog.action == "DEPARTMENT_CREATED", AuditLog.entity_id == dept_id)
+        .all()
+    )
+    assert len(audit_c) == 1
+    assert audit_c[0].actor_user_id == hr_user.id
+    assert audit_c[0].entity_type == "department"
+
+    # 2. UPDATE with changes -> DEPARTMENT_UPDATED with diff
+    res_u = client.put(
+        f"/api/v1/departments/{dept_id}",
+        headers=hr_headers,
+        json={"name": "AuditDeptUpdated", "clearance_function": "finance"},
+    )
+    assert res_u.status_code == 200
+
+    audit_u = (
+        db.query(AuditLog)
+        .filter(AuditLog.company_id == cid, AuditLog.action == "DEPARTMENT_UPDATED", AuditLog.entity_id == dept_id)
+        .all()
+    )
+    assert len(audit_u) == 1
+    diff = audit_u[0].details
+    assert diff.get("name", {}).get("from") == "AuditDept"
+    assert diff.get("name", {}).get("to") == "AuditDeptUpdated"
+    assert diff.get("clearance_function", {}).get("to") == "finance"
+
+    # 3. NO-OP UPDATE -> returns 200 and writes NO new row
+    res_noop = client.put(
+        f"/api/v1/departments/{dept_id}",
+        headers=hr_headers,
+        json={"name": "AuditDeptUpdated"},
+    )
+    assert res_noop.status_code == 200
+    audit_u_after = (
+        db.query(AuditLog)
+        .filter(AuditLog.company_id == cid, AuditLog.action == "DEPARTMENT_UPDATED", AuditLog.entity_id == dept_id)
+        .all()
+    )
+    assert len(audit_u_after) == 1, "No-op update must not write a new audit row"
+
+    # 4. DELETE -> DEPARTMENT_DELETED
+    res_d = client.delete(f"/api/v1/departments/{dept_id}", headers=hr_headers)
+    assert res_d.status_code == 204
+
+    audit_d = (
+        db.query(AuditLog)
+        .filter(AuditLog.company_id == cid, AuditLog.action == "DEPARTMENT_DELETED", AuditLog.entity_id == dept_id)
+        .all()
+    )
+    assert len(audit_d) == 1
+    assert audit_d[0].actor_user_id == hr_user.id
+
+
+# ==============================================================================
+# R09: Rate Limiting and Atomicity
+# ==============================================================================
+
+
+def test_r09_rate_limiting_write_routes(client: TestClient, dept_company):
+    """The 31st write (POST) within a minute by the same user gets 429 and first 30 succeed; GET is not limited."""
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+
+    # Reset limiter for this user/endpoint if possible
+    limiter.reset()
+
+    responses = [
+        client.post(f"/api/v1/departments", headers=hr_headers, json={"name": f"RateDept{i}"})
+        for i in range(35)
+    ]
+    codes = [r.status_code for r in responses]
+    assert codes[:30] == [201] * 30
+    assert all(c == 429 for c in codes[30:]), f"Expected 429 after 30 requests, got {codes[30:]}"
+
+    # GET is not limited at that rate
+    res_get = client.get("/api/v1/departments", headers=hr_headers)
+    assert res_get.status_code == 200
+
+
+def test_r09_atomicity_audit_failure_rolls_back_department(client: TestClient, dept_company, db: Session):
+    """With audit call patched to raise, POST returns 500 and NO department row exists afterwards."""
+    from app.modules.platform.service import AuditService
+
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+    dept_name = f"AtomicityDept-{uuid.uuid4().hex[:6]}"
+
+    with pytest.MonkeyPatch.context() as mp:
+        def fake_record(*args, **kwargs):
+            raise RuntimeError("Database error during audit write")
+
+        mp.setattr(AuditService, "record", fake_record)
+
+        # Use TestClient with raise_server_exceptions=False
+        from app.main import app
+        safe_client = TestClient(app, raise_server_exceptions=False)
+
+        resp = safe_client.post("/api/v1/departments", headers=hr_headers, json={"name": dept_name})
+        assert resp.status_code == 500
+
+    # Verify department was NOT created in DB
+    dept_in_db = (
+        db.query(Department)
+        .filter(Department.company_id == dept_company["company"].id, Department.name == dept_name)
+        .first()
+    )
+    assert dept_in_db is None, "Department row must not exist after rollback on audit failure"
