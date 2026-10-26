@@ -39,8 +39,7 @@ target_metadata = Base.metadata
 # runs as the schema owner, the API runs as ems_app (Spec 8.2). Overriding
 # here means alembic.ini itself never needs to carry a real connection
 # string or credential.
-if not config.get_main_option("sqlalchemy.url"):
-    config.set_main_option("sqlalchemy.url", settings.ALEMBIC_DATABASE_URL)
+config.set_main_option("sqlalchemy.url", settings.ALEMBIC_DATABASE_URL)
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

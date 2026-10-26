@@ -22,6 +22,10 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     conn = op.get_bind()
 
+    # Under FORCE ROW LEVEL SECURITY, alembic runs as ems_owner without tenant context.
+    # Set platform-admin context transaction-locally so the duplicate check can see rows across tenants.
+    conn.execute(sa.text("SELECT set_config('app.is_platform_admin', 'on', true)"))
+
     # 1. Fail clearly if duplicate active department names exist inside any company (case-insensitively)
     dupes = conn.execute(
         sa.text(
@@ -52,6 +56,27 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    conn = op.get_bind()
+
+    # Under FORCE ROW LEVEL SECURITY, alembic runs as ems_owner without tenant context.
+    # Set platform-admin context transaction-locally so the duplicate check can see rows across tenants.
+    conn.execute(sa.text("SELECT set_config('app.is_platform_admin', 'on', true)"))
+
+    # Fail clearly if duplicate department names exist (including soft-deleted) that would violate uq_departments_company_id_name
+    dupes = conn.execute(
+        sa.text(
+            "SELECT company_id, name, count(*) "
+            "FROM departments "
+            "GROUP BY company_id, name "
+            "HAVING count(*) > 1"
+        )
+    ).fetchall()
+    if dupes:
+        dupe_list = ", ".join(f"company {r[0]}: '{r[1]}' (x{r[2]})" for r in dupes)
+        raise RuntimeError(
+            f"Cannot restore uq_departments_company_id_name: existing duplicates found: {dupe_list}"
+        )
+
     # 1. Drop the lower() partial unique index
     op.drop_index("uq_departments_company_lower_name", table_name="departments")
 

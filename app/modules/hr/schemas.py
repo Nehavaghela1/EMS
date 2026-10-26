@@ -35,9 +35,9 @@ class DepartmentUpdateRequest(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v: str | None) -> str | None:
+    def validate_name(cls, v: str | None) -> str:
         if v is None:
-            return None
+            raise ValueError("Department name cannot be null.")
         s = v.strip()
         if not (2 <= len(s) <= 150):
             raise ValueError("Department name must be between 2 and 150 characters.")

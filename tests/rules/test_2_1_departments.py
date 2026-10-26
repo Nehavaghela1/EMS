@@ -17,10 +17,12 @@ import uuid
 from datetime import date
 
 import pytest
+from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
+from alembic import command
 from app.core.config import settings
 from app.core.pagination import page_params
 from app.core.rate_limit import limiter
@@ -33,6 +35,7 @@ from app.modules.hr.schemas import EmployeeCreateRequest
 from app.modules.hr.service import EmployeeService
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.platform.models import AuditLog
+from tests.conftest import REPO_ROOT
 
 
 def _auth_headers(user: User) -> dict[str, str]:
@@ -404,6 +407,15 @@ def test_r02_input_validation_description_unknown_fields_wrong_types(
         ).status_code
         == 422
     )
+    # T1: PUT with explicit null name -> 422
+    assert (
+        client.put(
+            f"/api/v1/departments/{dept_id}",
+            headers=hr_headers,
+            json={"name": None},
+        ).status_code
+        == 422
+    )
 
 
 # ==============================================================================
@@ -661,7 +673,8 @@ def test_r04_cross_company_isolation(client: TestClient, dept_company, db: Sessi
         headers=hr_headers_a,
         json={"head_employee_id": emp_b_id},
     )
-    assert res_cross_head.status_code in (400, 404, 422)
+    assert res_cross_head.status_code == 400
+    assert res_cross_head.json()["error"]["code"] == "invalid_reference"
 
     # Creating an employee in Company A with Company B's department -> rejected
     res_b_dept = client.post("/api/v1/departments", headers=hr_headers_b, json={"name": "Dept B"})
@@ -678,7 +691,8 @@ def test_r04_cross_company_isolation(client: TestClient, dept_company, db: Sessi
             "hire_date": "2025-01-01",
         },
     )
-    assert res_emp_cross_dept.status_code in (400, 404, 422)
+    assert res_emp_cross_dept.status_code == 400
+    assert res_emp_cross_dept.json()["error"]["code"] == "invalid_reference"
 
     # List shows only own departments
     list_a = client.get("/api/v1/departments", headers=hr_headers_a).json()["items"]
@@ -712,21 +726,23 @@ def test_r05_department_head_active_requirement_and_auto_clear_on_deactivation(
     res_deact = client.delete(f"/api/v1/employees/{emp_staff.id}", headers=hr_headers)
     assert res_deact.status_code == 204
 
-    # Setting inactive employee as head via PUT -> rejected (400 / 422)
+    # Setting inactive employee as head via PUT -> rejected (400)
     res_set_inactive = client.put(
         f"/api/v1/departments/{dept_id}",
         headers=hr_headers,
         json={"head_employee_id": str(emp_staff.id)},
     )
-    assert res_set_inactive.status_code in (400, 422)
+    assert res_set_inactive.status_code == 400
+    assert res_set_inactive.json()["error"]["code"] == "invalid_reference"
 
-    # Creating department with inactive employee as head via POST -> rejected (400 / 422)
+    # Creating department with inactive employee as head via POST -> rejected (400)
     res_post_inactive = client.post(
         "/api/v1/departments",
         headers=hr_headers,
         json={"name": "PostInactiveHeadDept", "head_employee_id": str(emp_staff.id)},
     )
-    assert res_post_inactive.status_code in (400, 422)
+    assert res_post_inactive.status_code == 400
+    assert res_post_inactive.json()["error"]["code"] == "invalid_reference"
 
     # Reactivate emp_staff
     res_react = client.post(f"/api/v1/employees/{emp_staff.id}/toggle-active", headers=hr_headers)
@@ -749,19 +765,21 @@ def test_r05_department_head_active_requirement_and_auto_clear_on_deactivation(
     assert res_check.status_code == 200
     assert res_check.json()["head_employee_id"] is None
 
-    # Check DEPARTMENT_UPDATED audit row for auto-clear
-    audit_row = (
+    # Check DEPARTMENT_UPDATED audit row for auto-clear without depending on created_at ordering
+    audit_rows = (
         db.query(AuditLog)
         .filter(
             AuditLog.company_id == dept_company["company"].id,
             AuditLog.action == "DEPARTMENT_UPDATED",
             AuditLog.entity_id == uuid.UUID(dept_id),
         )
-        .order_by(AuditLog.created_at.desc())
-        .first()
+        .all()
     )
-    assert audit_row is not None
-    assert audit_row.details.get("head_employee_id", {}).get("to") is None
+    assert any(
+        r.details.get("head_employee_id", {}).get("from") == str(emp_staff.id)
+        and r.details.get("head_employee_id", {}).get("to") is None
+        for r in audit_rows
+    ), "Audit log must contain auto-clear record with matching from/to"
 
 
 def test_r05_department_head_auto_clear_on_termination(
@@ -779,14 +797,9 @@ def test_r05_department_head_auto_clear_on_termination(
         headers=hr_headers,
         json={"name": "TermHeadDept", "head_employee_id": str(emp_mgr.id)},
     )
-    assert res_dept.status_code in (200, 201)
+    assert res_dept.status_code == 201
+    assert res_dept.json()["head_employee_id"] == str(emp_mgr.id)
     dept_id = res_dept.json()["id"]
-    if res_dept.json()["head_employee_id"] is None:
-        client.put(
-            f"/api/v1/departments/{dept_id}",
-            headers=hr_headers,
-            json={"head_employee_id": str(emp_mgr.id)},
-        )
 
     # Terminate the head employee
     term_res = client.post(
@@ -801,19 +814,125 @@ def test_r05_department_head_auto_clear_on_termination(
     assert res_check.status_code == 200
     assert res_check.json()["head_employee_id"] is None
 
-    # Audit row written
-    audit_row = (
+    # Audit row written (assert matching from and to is None without created_at ordering dependence)
+    audit_rows = (
         db.query(AuditLog)
         .filter(
             AuditLog.company_id == dept_company["company"].id,
             AuditLog.action == "DEPARTMENT_UPDATED",
             AuditLog.entity_id == uuid.UUID(dept_id),
         )
-        .order_by(AuditLog.created_at.desc())
-        .first()
+        .all()
     )
-    assert audit_row is not None
-    assert audit_row.details.get("head_employee_id", {}).get("to") is None
+    assert any(
+        r.details.get("head_employee_id", {}).get("from") == str(emp_mgr.id)
+        and r.details.get("head_employee_id", {}).get("to") is None
+        for r in audit_rows
+    ), "Audit log must contain auto-clear record with matching from/to"
+
+
+def test_r05_department_head_auto_clear_on_fnf_settlement(
+    client: TestClient, dept_company, db: Session
+):
+    """Department head is cleared with DEPARTMENT_UPDATED audit row on FnF settlement."""
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+    emp_staff = dept_company["emp_staff"]
+
+    res_dept = client.post(
+        "/api/v1/departments",
+        headers=hr_headers,
+        json={"name": f"FnFHeadDept-{uuid.uuid4().hex[:6]}", "head_employee_id": str(emp_staff.id)},
+    )
+    assert res_dept.status_code == 201
+    assert res_dept.json()["head_employee_id"] == str(emp_staff.id)
+    dept_id = res_dept.json()["id"]
+
+    # Update FnF clearance with mark_settled=True
+    res_fnf = client.put(
+        f"/api/v1/employees/{emp_staff.id}/fnf/clearance",
+        headers=hr_headers,
+        json={"mark_settled": True},
+    )
+    assert res_fnf.status_code == 200
+
+    # Department head must be cleared
+    res_check = client.get(f"/api/v1/departments/{dept_id}", headers=hr_headers)
+    assert res_check.status_code == 200
+    assert res_check.json()["head_employee_id"] is None
+
+    audit_rows = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.company_id == dept_company["company"].id,
+            AuditLog.action == "DEPARTMENT_UPDATED",
+            AuditLog.entity_id == uuid.UUID(dept_id),
+        )
+        .all()
+    )
+    assert any(
+        r.details.get("head_employee_id", {}).get("from") == str(emp_staff.id)
+        and r.details.get("head_employee_id", {}).get("to") is None
+        for r in audit_rows
+    )
+
+
+def test_r05_department_head_auto_clear_on_pip_failed(
+    client: TestClient, dept_company, db: Session
+):
+    """Department head is cleared with DEPARTMENT_UPDATED audit row when PIP fails."""
+    hr_headers = _auth_headers(dept_company["hr_admin"])
+    emp_staff = dept_company["emp_staff"]
+
+    res_dept = client.post(
+        "/api/v1/departments",
+        headers=hr_headers,
+        json={"name": f"PipHeadDept-{uuid.uuid4().hex[:6]}", "head_employee_id": str(emp_staff.id)},
+    )
+    assert res_dept.status_code == 201
+    assert res_dept.json()["head_employee_id"] == str(emp_staff.id)
+    dept_id = res_dept.json()["id"]
+
+    # Create PIP for emp_staff
+    res_pip = client.post(
+        "/api/v1/performance/pips",
+        headers=hr_headers,
+        json={
+            "employee_id": str(emp_staff.id),
+            "title": "Performance PIP",
+            "start_date": str(date.today()),
+            "end_date": str(date.today()),
+        },
+    )
+    assert res_pip.status_code == 201
+    pip_id = res_pip.json()["id"]
+
+    # Evaluate PIP with outcome failed -> deactivates employee and should clear department head!
+    res_eval = client.post(
+        f"/api/v1/performance/pips/{pip_id}/evaluate",
+        headers=hr_headers,
+        json={"outcome": "failed", "outcome_notes": "Did not meet milestones"},
+    )
+    assert res_eval.status_code == 200
+
+    # Department head must be cleared
+    res_check = client.get(f"/api/v1/departments/{dept_id}", headers=hr_headers)
+    assert res_check.status_code == 200
+    assert res_check.json()["head_employee_id"] is None
+
+    audit_rows = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.company_id == dept_company["company"].id,
+            AuditLog.action == "DEPARTMENT_UPDATED",
+            AuditLog.entity_id == uuid.UUID(dept_id),
+        )
+        .all()
+    )
+    assert any(
+        r.details.get("head_employee_id", {}).get("from") == str(emp_staff.id)
+        and r.details.get("head_employee_id", {}).get("to") is None
+        for r in audit_rows
+    )
 
 
 # ==============================================================================
@@ -877,7 +996,8 @@ def test_r06_delete_with_active_employees_fails_and_soft_delete(client: TestClie
             "hire_date": "2025-01-01",
         },
     )
-    assert res_new_emp.status_code in (400, 404, 422)
+    assert res_new_emp.status_code == 400
+    assert res_new_emp.json()["error"]["code"] == "invalid_reference"
 
     # 9. Updating an existing employee with deleted department is rejected
     res_put_emp = client.put(
@@ -885,7 +1005,8 @@ def test_r06_delete_with_active_employees_fails_and_soft_delete(client: TestClie
         headers=hr_headers,
         json={"department_id": dept_id},
     )
-    assert res_put_emp.status_code in (400, 404, 422)
+    assert res_put_emp.status_code == 400
+    assert res_put_emp.json()["error"]["code"] == "invalid_reference"
 
 
 def test_r06_deleted_department_employee_reactivation_journey(client: TestClient, dept_company):
@@ -928,7 +1049,8 @@ def test_r06_deleted_department_employee_reactivation_journey(client: TestClient
     res_reactivate_fail = client.post(
         f"/api/v1/employees/{emp_id}/toggle-active", headers=hr_headers
     )
-    assert res_reactivate_fail.status_code in (400, 409)
+    assert res_reactivate_fail.status_code == 400
+    assert res_reactivate_fail.json()["error"]["code"] == "invalid_reference"
 
     # 6. HR sets Department Y with PUT /api/v1/employees/{id}
     res_update_dept = client.put(
@@ -981,13 +1103,9 @@ def test_r07_route_pagination_search_sort_and_live_active_counts(
 
     hr_headers = _auth_headers(dept_company["hr_admin"])
 
-    # 1. limit=100000 returns 200 and <= 100 items (or 422 if FastAPI le=100 validates param)
+    # 1. limit=100000 returns exactly 422 Unprocessable Entity
     res_limit = client.get("/api/v1/departments?limit=100000", headers=hr_headers)
-    if res_limit.status_code == 200:
-        assert len(res_limit.json()["items"]) <= 100
-        assert res_limit.json()["limit"] <= 100
-    else:
-        assert res_limit.status_code == 422
+    assert res_limit.status_code == 422
 
     # 2. sort=bogus -> 400
     res_sort_bogus = client.get("/api/v1/departments?sort=bogus", headers=hr_headers)
@@ -1183,27 +1301,71 @@ def test_r08_audit_rows_create_update_delete_and_noop(
 
 
 def test_r09_rate_limiting_write_routes(client: TestClient, dept_company):
-    """The 31st write (POST) within a minute by the same user gets 429 and first 30 succeed;
-    GET is not limited.
+    """The 31st write (POST, PUT, DELETE) within a minute by the same user gets 429;
+    first 30 succeed. GET is not limited.
     """
     hr_headers = _auth_headers(dept_company["hr_admin"])
 
     limiter.enabled = True
     try:
+        # 1. POST rate limit
         limiter.reset()
-
         responses = [
             client.post("/api/v1/departments", headers=hr_headers, json={"name": f"RateDept{i}"})
             for i in range(35)
         ]
         codes = [r.status_code for r in responses]
         assert codes[:30] == [201] * 30
-        err_msg = f"Expected 429 after 30 requests, got {codes[30:]}"
-        assert all(c == 429 for c in codes[30:]), err_msg
+        assert all(c == 429 for c in codes[30:]), f"Expected 429 after 30 POSTs, got {codes[30:]}"
 
         # GET is not limited at that rate
         res_get = client.get("/api/v1/departments", headers=hr_headers)
         assert res_get.status_code == 200
+
+        # 2. PUT rate limit: 31st PUT gets 429, first 30 succeed
+        limiter.enabled = False
+        dept_res = client.post(
+            "/api/v1/departments", headers=hr_headers, json={"name": "PutRateDept"}
+        )
+        assert dept_res.status_code == 201
+        p_dept_id = dept_res.json()["id"]
+
+        limiter.enabled = True
+        limiter.reset()
+        put_responses = [
+            client.put(
+                f"/api/v1/departments/{p_dept_id}",
+                headers=hr_headers,
+                json={"description": f"desc {i}"},
+            )
+            for i in range(35)
+        ]
+        put_codes = [r.status_code for r in put_responses]
+        assert put_codes[:30] == [200] * 30
+        assert all(c == 429 for c in put_codes[30:]), (
+            f"Expected 429 after 30 PUTs, got {put_codes[30:]}"
+        )
+
+        # 3. DELETE rate limit: create 35 depts with limiter disabled, then test DELETE rate limit
+        limiter.enabled = False
+        del_ids = []
+        for i in range(35):
+            r = client.post(
+                "/api/v1/departments", headers=hr_headers, json={"name": f"DelRateDept{i}"}
+            )
+            assert r.status_code == 201
+            del_ids.append(r.json()["id"])
+
+        limiter.enabled = True
+        limiter.reset()
+        del_responses = [
+            client.delete(f"/api/v1/departments/{did}", headers=hr_headers) for did in del_ids
+        ]
+        del_codes = [r.status_code for r in del_responses]
+        assert del_codes[:30] == [204] * 30
+        assert all(c == 429 for c in del_codes[30:]), (
+            f"Expected 429 after 30 DELETEs, got {del_codes[30:]}"
+        )
     finally:
         limiter.enabled = False
         limiter.reset()
@@ -1240,3 +1402,193 @@ def test_r09_atomicity_audit_failure_rolls_back_department(
         .first()
     )
     assert dept_in_db is None, "Department row must not exist after rollback on audit failure"
+
+
+# ==============================================================================
+# T7: Migration Tests (7c8d9e0f1a2b)
+# ==============================================================================
+
+
+def test_t7_migration_departments_lower_name_index():
+    """T7: Migration tests:
+    a) at revision b3a17e0892c1, seed two ACTIVE departments whose names differ only in case
+       -> upgrade to 7c8d9e0f1a2b raises RuntimeError naming the duplicates under FORCE RLS.
+    b) a soft-deleted duplicate + an active one -> upgrade succeeds.
+    c) upgrade -> downgrade -> upgrade round trip. The index names are correct at each step.
+    d) downgrade when a soft-deleted and an active department share the exact name
+       -> raises a clear RuntimeError, not a raw DB error.
+    Leave the DB at head afterwards. Clean up anything committed.
+    """
+    assert settings.TEST_MIGRATION_URL is not None, "TEST_MIGRATION_URL must be configured"
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(settings, "ALEMBIC_DATABASE_URL", settings.TEST_MIGRATION_URL)
+
+        owner_engine = create_engine(settings.TEST_MIGRATION_URL)
+        cfg = Config(str(REPO_ROOT / "alembic.ini"))
+        comp_id = uuid.uuid4()
+        comp_code = f"MIG{comp_id.hex[:10].upper()}"
+        d1_id = uuid.uuid4()
+        d2_id = uuid.uuid4()
+
+        try:
+            # Setup company
+            with owner_engine.connect() as conn:
+                with conn.begin():
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO companies (
+                                id, name, code, email, status, country,
+                                currency, last_employee_seq, created_at, updated_at
+                            )
+                            VALUES (
+                                :comp_id, 'Migration Dept Corp', :comp_code, :email,
+                                'active', 'IN', 'INR', 0, NOW(), NOW()
+                            )
+                            """
+                        ),
+                        {
+                            "comp_id": comp_id,
+                            "comp_code": comp_code,
+                            "email": f"{comp_code.lower()}@test.test",
+                        },
+                    )
+
+            # Downgrade to b3a17e0892c1
+            command.downgrade(cfg, "b3a17e0892c1")
+
+            # --- Subtest (a): Two active departments differing only in case raise RuntimeError ---
+            with owner_engine.connect() as conn:
+                with conn.begin():
+                    conn.execute(text("ALTER TABLE departments NO FORCE ROW LEVEL SECURITY;"))
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO departments (id, company_id, name, created_at, updated_at)
+                            VALUES (:d1_id, :comp_id, 'Engineering', NOW(), NOW()),
+                                   (:d2_id, :comp_id, 'engineering', NOW(), NOW())
+                            """
+                        ),
+                        {"d1_id": d1_id, "d2_id": d2_id, "comp_id": comp_id},
+                    )
+                    conn.execute(text("ALTER TABLE departments FORCE ROW LEVEL SECURITY;"))
+
+            with pytest.raises(RuntimeError) as exc_info:
+                command.upgrade(cfg, "7c8d9e0f1a2b")
+            assert "duplicate" in str(exc_info.value).lower()
+            assert "engineering" in str(exc_info.value).lower()
+
+            # Clean up d2 so we can test (b)
+            with owner_engine.connect() as conn:
+                with conn.begin():
+                    conn.execute(text("ALTER TABLE departments NO FORCE ROW LEVEL SECURITY;"))
+                    conn.execute(
+                        text("DELETE FROM departments WHERE id = :d2_id"),
+                        {"d2_id": d2_id},
+                    )
+                    conn.execute(text("ALTER TABLE departments FORCE ROW LEVEL SECURITY;"))
+
+            # --- Subtest (b): A soft-deleted duplicate + an active one -> upgrade succeeds ---
+            with owner_engine.connect() as conn:
+                with conn.begin():
+                    conn.execute(text("ALTER TABLE departments NO FORCE ROW LEVEL SECURITY;"))
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO departments (
+                                id, company_id, name, deleted_at, created_at, updated_at
+                            )
+                            VALUES (:d2_id, :comp_id, 'engineering', NOW(), NOW(), NOW())
+                            """
+                        ),
+                        {"d2_id": d2_id, "comp_id": comp_id},
+                    )
+                    conn.execute(text("ALTER TABLE departments FORCE ROW LEVEL SECURITY;"))
+
+            # Upgrade should now succeed
+            command.upgrade(cfg, "7c8d9e0f1a2b")
+
+            # Clean up d1 and d2
+            with owner_engine.connect() as conn:
+                with conn.begin():
+                    conn.execute(text("ALTER TABLE departments NO FORCE ROW LEVEL SECURITY;"))
+                    conn.execute(
+                        text("DELETE FROM departments WHERE id IN (:d1_id, :d2_id)"),
+                        {"d1_id": d1_id, "d2_id": d2_id},
+                    )
+                    conn.execute(text("ALTER TABLE departments FORCE ROW LEVEL SECURITY;"))
+
+            # --- Subtest (c): Round trip upgrade -> downgrade -> upgrade and index verification ---
+            # Currently at 7c8d9e0f1a2b. Check index uq_departments_company_lower_name exists
+            insp = inspect(owner_engine)
+            indexes = [idx["name"] for idx in insp.get_indexes("departments")]
+            assert "uq_departments_company_lower_name" in indexes
+            assert "uq_departments_company_id_name" not in indexes
+
+            # Downgrade to b3a17e0892c1
+            command.downgrade(cfg, "b3a17e0892c1")
+            insp = inspect(owner_engine)
+            indexes = [idx["name"] for idx in insp.get_indexes("departments")]
+            assert "uq_departments_company_id_name" in indexes
+            assert "uq_departments_company_lower_name" not in indexes
+
+            # Upgrade back to 7c8d9e0f1a2b
+            command.upgrade(cfg, "7c8d9e0f1a2b")
+            insp = inspect(owner_engine)
+            indexes = [idx["name"] for idx in insp.get_indexes("departments")]
+            assert "uq_departments_company_lower_name" in indexes
+            assert "uq_departments_company_id_name" not in indexes
+
+            # --- Subtest (d): Downgrade when duplicate active & deleted exists -> RuntimeError ---
+            with owner_engine.connect() as conn:
+                with conn.begin():
+                    conn.execute(text("ALTER TABLE departments NO FORCE ROW LEVEL SECURITY;"))
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO departments (
+                                id, company_id, name, deleted_at, created_at, updated_at
+                            )
+                            VALUES (:d1_id, :comp_id, 'ExactName', NOW(), NOW(), NOW())
+                            """
+                        ),
+                        {"d1_id": d1_id, "comp_id": comp_id},
+                    )
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO departments (id, company_id, name, created_at, updated_at)
+                            VALUES (:d2_id, :comp_id, 'ExactName', NOW(), NOW())
+                            """
+                        ),
+                        {"d2_id": d2_id, "comp_id": comp_id},
+                    )
+                    conn.execute(text("ALTER TABLE departments FORCE ROW LEVEL SECURITY;"))
+
+            # Downgrade should fail with a clear RuntimeError, NOT a raw DB error
+            with pytest.raises(RuntimeError) as exc_down:
+                command.downgrade(cfg, "b3a17e0892c1")
+            assert (
+                "cannot restore" in str(exc_down.value).lower()
+                or "duplicate" in str(exc_down.value).lower()
+            )
+
+        finally:
+            # Cleanup: ensure DB is back at head and test rows removed
+            try:
+                command.upgrade(cfg, "head")
+            finally:
+                with owner_engine.connect() as conn:
+                    with conn.begin():
+                        conn.execute(text("ALTER TABLE departments NO FORCE ROW LEVEL SECURITY;"))
+                        conn.execute(
+                            text("DELETE FROM departments WHERE id IN (:d1_id, :d2_id)"),
+                            {"d1_id": d1_id, "d2_id": d2_id},
+                        )
+                        conn.execute(
+                            text("DELETE FROM companies WHERE id = :comp_id"),
+                            {"comp_id": comp_id},
+                        )
+                        conn.execute(text("ALTER TABLE departments FORCE ROW LEVEL SECURITY;"))
+                owner_engine.dispose()
