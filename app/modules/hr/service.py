@@ -296,9 +296,9 @@ class EmployeeService:
                 details={"field": "reporting_manager_id"},
             )
         mgr = self.repo.get_by_id_any_status(manager_id, company_id)
-        if mgr is None:
+        if mgr is None or not mgr.is_active or mgr.deleted_at is not None:
             raise InvalidReferenceError(
-                "The specified reporting manager does not exist.",
+                "The specified reporting manager does not exist or is inactive.",
                 details={"field": "reporting_manager_id"},
             )
         # Anti-cycle check: traverse candidate manager's reporting hierarchy upwards
@@ -321,6 +321,7 @@ class EmployeeService:
         q: str | None = None,
         exclude_id: uuid.UUID | None = None,
         limit: int = 15,
+        actor: User | None = None,
     ) -> list[dict]:
         from sqlalchemy import or_, select
 
@@ -335,6 +336,13 @@ class EmployeeService:
                 Employee.is_active.is_(True),
             )
         )
+
+        if actor is not None and actor.role == UserRole.manager:
+            caller_employee = self.repo.get_by_user_id(actor.company_id, actor.id)
+            if caller_employee is not None:
+                stmt = stmt.where(Employee.reporting_manager_id == caller_employee.id)
+            else:
+                return []
 
         if exclude_id is not None:
             stmt = stmt.where(Employee.id != exclude_id)

@@ -117,6 +117,7 @@ def _to_employee_response(
     company_map: dict[uuid.UUID, str] | None = None,
     manager: Employee | None = None,
     system_role: str | None = None,
+    viewer_user: User | None = None,
 ) -> EmployeeResponse:
     resp = EmployeeResponse.model_validate(employee)
     if system_role is not None:
@@ -131,6 +132,18 @@ def _to_employee_response(
         resp.manager_name = f"{manager.first_name} {manager.last_name or ''}".strip()
         resp.manager_email = manager.email
         resp.manager_position = manager.position
+
+    # Hide personal_email from non-HR callers (unless viewing self)
+    if viewer_user is not None:
+        is_hr_or_owner = viewer_user.role in (
+            UserRole.hr_admin,
+            UserRole.owner,
+            UserRole.super_admin,
+        )
+        is_self = employee.user_id is not None and employee.user_id == viewer_user.id
+        if not is_hr_or_owner and not is_self:
+            resp.personal_email = None
+
     return resp
 
 
@@ -158,6 +171,7 @@ def search_managers(
         q=q,
         exclude_id=exclude_id,
         limit=min(limit, 50),
+        actor=user,
     )
 
 
@@ -220,6 +234,7 @@ def list_employees(
                 e,
                 company_map,
                 system_role=user_role_map.get(e.user_id) if e.user_id else None,
+                viewer_user=user,
             )
             for e in items
         ],
@@ -299,7 +314,7 @@ def get_employee(
     system_role = None
     if employee.user_id:
         system_role = db.scalar(select(User.role).where(User.id == employee.user_id))
-    return _to_employee_response(employee, company_map, manager, system_role)
+    return _to_employee_response(employee, company_map, manager, system_role, viewer_user=user)
 
 
 @employees_router.put("/{employee_id}", response_model=EmployeeResponse)

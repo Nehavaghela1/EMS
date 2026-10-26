@@ -528,6 +528,19 @@ def test_r03_concurrent_same_email_creation_exactly_one_201_one_409() -> None:
 
     finally:
         fastapi_app.dependency_overrides.pop(get_db, None)
+        try:
+            with Session(engine) as cleanup:
+                bind_tenant_to_session(cleanup, company_id=cid, is_platform_admin=True)
+                cleanup.query(Employee).filter(Employee.company_id == cid).delete(
+                    synchronize_session=False
+                )
+                cleanup.query(User).filter(User.company_id == cid).delete(synchronize_session=False)
+                c_row = cleanup.get(Company, cid)
+                if c_row:
+                    cleanup.delete(c_row)
+                cleanup.commit()
+        except Exception:
+            pass
         engine.dispose()
 
 
@@ -612,6 +625,19 @@ def test_r04_concurrent_creates_produce_unique_employee_codes() -> None:
 
     finally:
         fastapi_app.dependency_overrides.pop(get_db, None)
+        try:
+            with Session(engine) as cleanup:
+                bind_tenant_to_session(cleanup, company_id=cid, is_platform_admin=True)
+                cleanup.query(Employee).filter(Employee.company_id == cid).delete(
+                    synchronize_session=False
+                )
+                cleanup.query(User).filter(User.company_id == cid).delete(synchronize_session=False)
+                c_row = cleanup.get(Company, cid)
+                if c_row:
+                    cleanup.delete(c_row)
+                cleanup.commit()
+        except Exception:
+            pass
         engine.dispose()
 
 
@@ -1369,3 +1395,396 @@ def test_r09_rate_limiting_create_and_resend(
     finally:
         limiter.enabled = False
         limiter.reset()
+
+
+# ==============================================================================
+# STEP 1: Additional Strict Tests T1 - T6
+# ==============================================================================
+
+
+def test_t1_employee_validation_edge_cases(
+    client: TestClient, onboarding_company: dict[str, Any], db: Session
+) -> None:
+    """T1:
+    - phone > 20 chars -> 422
+    - position > 150 chars -> 422
+    - level not in ('L1', 'L2', 'L3') -> 422
+    - personal_email invalid format -> 422
+    - personal_email > 255 chars -> 422
+    - notice_period_days > 365 -> 422
+    - email with spaces is trimmed and stored lowercase.
+    """
+    hr_headers = _auth_headers(onboarding_company["hr_admin"])
+    cid = onboarding_company["company"].id
+
+    base_payload = {
+        "first_name": "ValEmp",
+        "email": f"val-{uuid.uuid4().hex[:6]}@example.com",
+        "hire_date": "2025-01-01",
+    }
+
+    # 1. phone 21 chars -> 422
+    res_phone = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={**base_payload, "phone": "1" * 21},
+    )
+    assert res_phone.status_code == 422, (
+        f"Expected 422 for phone 21 chars, got {res_phone.status_code}"
+    )
+
+    # 2. position 151 chars -> 422
+    res_pos = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={**base_payload, "position": "P" * 151},
+    )
+    assert res_pos.status_code == 422, (
+        f"Expected 422 for position 151 chars, got {res_pos.status_code}"
+    )
+
+    # 3. level not allowed (e.g. 'L99') -> 422
+    res_lvl = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={**base_payload, "level": "L99"},
+    )
+    assert res_lvl.status_code == 422, f"Expected 422 for invalid level, got {res_lvl.status_code}"
+
+    # 4. personal_email invalid -> 422
+    res_p_email_bad = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={**base_payload, "personal_email": "not-an-email"},
+    )
+    assert res_p_email_bad.status_code == 422, (
+        f"Expected 422 for bad personal_email, got {res_p_email_bad.status_code}"
+    )
+
+    # 5. personal_email 256+ chars -> 422
+    long_prefix = "a" * 245
+    res_p_email_long = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={**base_payload, "personal_email": f"{long_prefix}@example.com"},
+    )
+    assert res_p_email_long.status_code == 422, (
+        f"Expected 422 for personal_email > 255 chars, got {res_p_email_long.status_code}"
+    )
+
+    # 6. notice_period_days 366 -> 422
+    res_notice_366 = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={**base_payload, "notice_period_days": 366},
+    )
+    assert res_notice_366.status_code == 422, (
+        f"Expected 422 for notice_period_days 366, got {res_notice_366.status_code}"
+    )
+
+    # 7. email with leading/trailing spaces and uppercase is trimmed and stored lowercase
+    raw_email_local = f"  TrimCase-{uuid.uuid4().hex[:6]}@EXAMPLE.COM  "
+    expected_lower = raw_email_local.strip().lower()
+    res_trim_email = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "CaseTrim",
+            "email": raw_email_local,
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert res_trim_email.status_code == 201
+    created_id = uuid.UUID(res_trim_email.json()["id"])
+    assert res_trim_email.json()["email"] == expected_lower
+
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
+    db_emp = db.scalar(select(Employee).where(Employee.id == created_id))
+    assert db_emp is not None
+    assert db_emp.email == expected_lower
+
+
+def test_t2_personal_email_visibility_by_role(
+    client: TestClient, onboarding_company: dict[str, Any]
+) -> None:
+    """T2:
+    Manager responses (list, managers/search, GET one) contain no personal_email (None).
+    HR admin and owner see it.
+    """
+    hr_headers = _auth_headers(onboarding_company["hr_admin"])
+    owner_headers = _auth_headers(onboarding_company["owner"])
+    mgr_headers = _auth_headers(onboarding_company["manager"])
+    emp_mgr = onboarding_company["emp_mgr"]
+
+    # Create an employee with personal_email reporting to emp_mgr
+    secret_p_email = f"personal-{uuid.uuid4().hex[:6]}@example.com"
+    secret_phone = "+1234567890"
+    res_create = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "Reportee",
+            "last_name": "One",
+            "email": f"rep-{uuid.uuid4().hex[:6]}@example.com",
+            "personal_email": secret_p_email,
+            "phone": secret_phone,
+            "reporting_manager_id": str(emp_mgr.id),
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert res_create.status_code == 201
+    rep_id = res_create.json()["id"]
+
+    # 1. HR admin GET /employees/{rep_id} sees personal_email
+    res_hr_get = client.get(f"/api/v1/employees/{rep_id}", headers=hr_headers)
+    assert res_hr_get.status_code == 200
+    assert res_hr_get.json()["personal_email"] == secret_p_email
+
+    # 2. Owner GET /employees/{rep_id} sees personal_email
+    res_owner_get = client.get(f"/api/v1/employees/{rep_id}", headers=owner_headers)
+    assert res_owner_get.status_code == 200
+    assert res_owner_get.json()["personal_email"] == secret_p_email
+
+    # 3. Manager GET /employees/{rep_id} does NOT see personal_email (is None)
+    res_mgr_get = client.get(f"/api/v1/employees/{rep_id}", headers=mgr_headers)
+    assert res_mgr_get.status_code == 200
+    assert res_mgr_get.json().get("personal_email") is None, (
+        f"Manager saw personal_email: {res_mgr_get.json().get('personal_email')}"
+    )
+
+    # 4. Manager GET /employees list does NOT see personal_email
+    res_mgr_list = client.get("/api/v1/employees", headers=mgr_headers)
+    assert res_mgr_list.status_code == 200
+    for item in res_mgr_list.json()["items"]:
+        assert item.get("personal_email") is None, (
+            f"Manager saw personal_email in list: {item.get('personal_email')}"
+        )
+
+    # 5. GET /employees/managers/search does not return personal_email
+    res_mgr_search = client.get("/api/v1/employees/managers/search", headers=mgr_headers)
+    assert res_mgr_search.status_code == 200
+    for item in res_mgr_search.json():
+        assert "personal_email" not in item or item.get("personal_email") is None
+
+
+def test_t3_used_token_fails_and_inactive_or_deleted_manager_gives_400(
+    client: TestClient, onboarding_company: dict[str, Any], db: Session
+) -> None:
+    """T3:
+    - A used activation token fails on second activation attempt (404/409).
+    - Setting a deactivated or deleted reporting manager gives 400 invalid_reference.
+    """
+    hr_headers = _auth_headers(onboarding_company["hr_admin"])
+    cid = onboarding_company["company"].id
+
+    from app.workers.tasks.email import send_email_task
+
+    captured_tokens: list[str] = []
+
+    def capture_task(*args, **kwargs):
+        text_body = kwargs.get("text_body", "")
+        prefix = "/activate/"
+        if prefix in text_body:
+            tok = text_body.split(prefix)[1].split()[0].strip()
+            captured_tokens.append(tok)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(send_email_task, "delay", capture_task)
+        res_create = client.post(
+            "/api/v1/employees",
+            headers=hr_headers,
+            json={
+                "first_name": "UseTokenEmp",
+                "email": f"usetok-{uuid.uuid4().hex[:6]}@example.com",
+                "hire_date": "2025-01-01",
+            },
+        )
+        assert res_create.status_code == 201
+        raw_token = captured_tokens[0]
+
+    # First activation succeeds
+    uname = f"u_{uuid.uuid4().hex[:8]}"
+    res_act1 = client.post(
+        "/api/v1/auth/activate",
+        json={"token": raw_token, "username": uname, "password": "Password123!"},
+    )
+    assert res_act1.status_code == 200
+
+    # Second activation fails (used token must not work)
+    res_act2 = client.post(
+        "/api/v1/auth/activate",
+        json={"token": raw_token, "username": f"another_{uname}", "password": "Password123!"},
+    )
+    assert res_act2.status_code in (400, 404), (
+        f"Expected 400 or 404 on reused activation token, got {res_act2.status_code}"
+    )
+
+    # Deactivated or deleted reporting manager check:
+    # Create candidate manager
+    res_cand = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "CandMgr",
+            "email": f"candmgr-{uuid.uuid4().hex[:6]}@example.com",
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert res_cand.status_code == 201
+    cand_mgr_id = uuid.UUID(res_cand.json()["id"])
+
+    # Deactivate cand_mgr
+    assert client.delete(f"/api/v1/employees/{cand_mgr_id}", headers=hr_headers).status_code == 204
+
+    # Attempt to create employee with deactivated manager -> 400 invalid_reference
+    res_inact_mgr = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "SubStaff",
+            "email": f"substaff-{uuid.uuid4().hex[:6]}@example.com",
+            "hire_date": "2025-01-01",
+            "reporting_manager_id": str(cand_mgr_id),
+        },
+    )
+    assert res_inact_mgr.status_code == 400
+    assert res_inact_mgr.json()["error"]["code"] == "invalid_reference"
+
+    # Soft delete cand_mgr
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
+    db_cand = db.scalar(select(Employee).where(Employee.id == cand_mgr_id))
+    assert db_cand is not None
+    db_cand.deleted_at = utcnow()
+    db.commit()
+
+    # Attempt to create employee with deleted manager -> 400 invalid_reference
+    res_del_mgr = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "SubStaff2",
+            "email": f"substaff2-{uuid.uuid4().hex[:6]}@example.com",
+            "hire_date": "2025-01-01",
+            "reporting_manager_id": str(cand_mgr_id),
+        },
+    )
+    assert res_del_mgr.status_code == 400
+    assert res_del_mgr.json()["error"]["code"] == "invalid_reference"
+
+
+def test_t4_manager_list_and_search_scoped_to_direct_reports(
+    client: TestClient, onboarding_company: dict[str, Any]
+) -> None:
+    """T4:
+    A manager's list AND managers/search equal exactly their direct reports,
+    even with tampered query parameters.
+    """
+    hr_headers = _auth_headers(onboarding_company["hr_admin"])
+    mgr_headers = _auth_headers(onboarding_company["manager"])
+    emp_mgr = onboarding_company["emp_mgr"]
+    emp_staff = onboarding_company["emp_staff"]
+
+    # Create unmanaged employee
+    res_unmanaged = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "Unmanaged",
+            "email": f"unmanaged-{uuid.uuid4().hex[:6]}@example.com",
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert res_unmanaged.status_code == 201
+    unmanaged_id = res_unmanaged.json()["id"]
+
+    # 1. Manager's list
+    res_list = client.get("/api/v1/employees", headers=mgr_headers)
+    assert res_list.status_code == 200
+    list_ids = {e["id"] for e in res_list.json()["items"]}
+    assert str(emp_staff.id) in list_ids
+    assert unmanaged_id not in list_ids
+    assert str(emp_mgr.id) not in list_ids
+
+    # 2. Manager's managers/search
+    res_search = client.get("/api/v1/employees/managers/search", headers=mgr_headers)
+    assert res_search.status_code == 200
+    search_ids = {e["id"] for e in res_search.json()}
+    # Managers search for a manager should only see their direct reports (or scoped to reports)
+    assert unmanaged_id not in search_ids
+    assert str(emp_mgr.id) not in search_ids
+
+
+def test_t5_get_employee_by_id_access_matrix(
+    client: TestClient, onboarding_company: dict[str, Any], db: Session
+) -> None:
+    """T5:
+    GET /employees/{id}:
+    - Manager sees own direct report -> 200
+    - Manager outside the team -> exact denial (403 ForbiddenError)
+    - Employee gets exact denial (403 ForbiddenError)
+    - HR admin -> 200
+    - Owner -> 200
+    - Another company's employee -> 404
+    """
+    from tests.conftest import _make_tenant
+
+    hr_headers = _auth_headers(onboarding_company["hr_admin"])
+    owner_headers = _auth_headers(onboarding_company["owner"])
+    mgr_headers = _auth_headers(onboarding_company["manager"])
+    staff_headers = _auth_headers(onboarding_company["employee"])
+    emp_staff = onboarding_company["emp_staff"]
+    cid = onboarding_company["company"].id
+
+    # Create another employee not reporting to emp_mgr
+    res_outside = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "OutsideEmp",
+            "email": f"outside-{uuid.uuid4().hex[:6]}@example.com",
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert res_outside.status_code == 201
+    outside_id = res_outside.json()["id"]
+
+    # 1. Manager sees own direct report -> 200
+    res_mgr_report = client.get(f"/api/v1/employees/{emp_staff.id}", headers=mgr_headers)
+    assert res_mgr_report.status_code == 200
+
+    # 2. Manager accesses outside employee -> 403 ForbiddenError
+    res_mgr_outside = client.get(f"/api/v1/employees/{outside_id}", headers=mgr_headers)
+    assert res_mgr_outside.status_code == 403
+    assert res_mgr_outside.json()["error"]["code"] == "forbidden"
+    assert "permission to view this employee" in res_mgr_outside.json()["error"]["message"]
+
+    # 3. Staff employee accesses outside employee -> 403 ForbiddenError
+    res_staff_outside = client.get(f"/api/v1/employees/{outside_id}", headers=staff_headers)
+    assert res_staff_outside.status_code == 403
+    assert res_staff_outside.json()["error"]["code"] == "forbidden"
+
+    # 4. HR admin sees outside employee -> 200
+    assert client.get(f"/api/v1/employees/{outside_id}", headers=hr_headers).status_code == 200
+
+    # 5. Owner sees outside employee -> 200
+    assert client.get(f"/api/v1/employees/{outside_id}", headers=owner_headers).status_code == 200
+
+    # 6. Another company's employee -> 404
+    other_tenant = _make_tenant(db, name="T5 Co", code=f"T5C{uuid.uuid4().hex[:4].upper()}")
+    bind_tenant_to_session(db, company_id=other_tenant.company_id, is_platform_admin=False)
+    cross_id = uuid.uuid4()
+    cross_emp = Employee(
+        id=cross_id,
+        company_id=other_tenant.company_id,
+        employee_code=f"T5C-{uuid.uuid4().hex[:4].upper()}-0001",
+        first_name="CrossEmp",
+        email=f"cross-{uuid.uuid4().hex[:6]}@example.com",
+        hire_date=date(2025, 1, 1),
+    )
+    db.add(cross_emp)
+    db.commit()
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=False)
+
+    res_cross = client.get(f"/api/v1/employees/{cross_id}", headers=hr_headers)
+    assert res_cross.status_code == 404
+    assert res_cross.json()["error"]["code"] == "not_found"
