@@ -15,6 +15,7 @@ Covers Rules 1-10:
 import threading
 import uuid
 from datetime import date
+from typing import Any
 
 import pytest
 from alembic.config import Config
@@ -38,6 +39,11 @@ from app.modules.platform.models import AuditLog
 from tests.conftest import REPO_ROOT
 
 
+def _get_audit_details(audit: AuditLog) -> dict[str, Any]:
+    assert audit.details is not None, f"AuditLog {audit.id} details must not be None"
+    return audit.details
+
+
 def _auth_headers(user: User) -> dict[str, str]:
     token = create_access_token(
         sub=str(user.id),
@@ -48,7 +54,7 @@ def _auth_headers(user: User) -> dict[str, str]:
 
 
 @pytest.fixture
-def dept_company(db: Session):
+def dept_company(db: Session) -> dict[str, Any]:
     """Fixture providing a company with owner, hr, manager, and employee users."""
     cid = uuid.uuid4()
     company = Company(
@@ -165,7 +171,7 @@ def dept_company(db: Session):
 # ==============================================================================
 
 
-def test_r01_roles_write_routes_permissions(client: TestClient, dept_company):
+def test_r01_roles_write_routes_permissions(client: TestClient, dept_company) -> None:
     """POST, PUT and DELETE: employee and manager get 403, hr_admin and owner succeed,
     unauthenticated get 401.
     """
@@ -234,7 +240,9 @@ def test_r01_roles_write_routes_permissions(client: TestClient, dept_company):
     assert res_owner_del.status_code == 204
 
 
-def test_r01_roles_read_routes_allowed_for_all_logged_in_users(client: TestClient, dept_company):
+def test_r01_roles_read_routes_allowed_for_all_logged_in_users(
+    client: TestClient, dept_company
+) -> None:
     """GET list and GET one return 200 for employee and manager."""
     hr_headers = _auth_headers(dept_company["hr_admin"])
     mgr_headers = _auth_headers(dept_company["manager"])
@@ -264,7 +272,9 @@ def test_r01_roles_read_routes_allowed_for_all_logged_in_users(client: TestClien
 # ==============================================================================
 
 
-def test_r02_input_validation_name_boundaries_and_trimming(client: TestClient, dept_company):
+def test_r02_input_validation_name_boundaries_and_trimming(
+    client: TestClient, dept_company
+) -> None:
     """Name: '' , '   ', one char and 151 chars get 422; '  Sales  ' stored as 'Sales';
     'HR' and 150-char accepted.
     """
@@ -343,7 +353,7 @@ def test_r02_input_validation_name_boundaries_and_trimming(client: TestClient, d
 
 def test_r02_input_validation_description_unknown_fields_wrong_types(
     client: TestClient, dept_company
-):
+) -> None:
     """Description > 1000 get 422; unknown fields get 422; name=123 gets 422;
     clearance_function 'legal' gets 422.
     """
@@ -425,7 +435,7 @@ def test_r02_input_validation_description_unknown_fields_wrong_types(
 
 def test_r03_name_uniqueness_case_insensitive_and_reuse_after_delete(
     client: TestClient, dept_company
-):
+) -> None:
     """'Sales' then 'sales' and 'SALES ' get 409 on POST and PUT rename;
     after DELETE, POST 'Sales' gives 201.
     """
@@ -472,7 +482,7 @@ def test_r03_name_uniqueness_case_insensitive_and_reuse_after_delete(
     assert res_reused.status_code == 201
 
 
-def test_r03_cross_company_same_name_allowed(client: TestClient, dept_company, db: Session):
+def test_r03_cross_company_same_name_allowed(client: TestClient, dept_company, db: Session) -> None:
     """Another company may use the same department name."""
     from tests.conftest import _make_tenant
 
@@ -490,10 +500,11 @@ def test_r03_cross_company_same_name_allowed(client: TestClient, dept_company, d
     assert res2.status_code == 201
 
 
-def test_r03_concurrent_duplicate_creation_exactly_one_201_one_409():
+def test_r03_concurrent_duplicate_creation_exactly_one_201_one_409() -> None:
     """Two simultaneous POSTs with the same name give exactly one 201
     and one 409 and never a 500.
     """
+    assert settings.TEST_DATABASE_URL is not None, "TEST_DATABASE_URL must be configured"
     engine = create_engine(settings.TEST_DATABASE_URL, pool_size=5, max_overflow=2)
     try:
         with Session(engine) as setup_sess:
@@ -556,10 +567,11 @@ def test_r03_concurrent_duplicate_creation_exactly_one_201_one_409():
         engine.dispose()
 
 
-def test_r03_concurrent_case_variant_race():
+def test_r03_concurrent_case_variant_race() -> None:
     """Concurrent case-variant race: 'Race' and 'race ' posted at the same time
     give exactly one 201 and one 409 and no 500.
     """
+    assert settings.TEST_DATABASE_URL is not None, "TEST_DATABASE_URL must be configured"
     engine = create_engine(settings.TEST_DATABASE_URL, pool_size=5, max_overflow=2)
     try:
         with Session(engine) as setup_sess:
@@ -625,7 +637,7 @@ def test_r03_concurrent_case_variant_race():
 # ==============================================================================
 
 
-def test_r04_cross_company_isolation(client: TestClient, dept_company, db: Session):
+def test_r04_cross_company_isolation(client: TestClient, dept_company, db: Session) -> None:
     """Another company's hr_admin gets 404 on GET, PUT, DELETE of this company's dept.
     Setting head to another company's employee rejected.
     Creating/updating employee with another company's dept rejected.
@@ -710,7 +722,7 @@ def test_r04_cross_company_isolation(client: TestClient, dept_company, db: Sessi
 
 def test_r05_department_head_active_requirement_and_auto_clear_on_deactivation(
     client: TestClient, dept_company, db: Session
-):
+) -> None:
     """PUT head of inactive employee rejected. Active accepted.
     Deactivating head employee auto-clears head with audit row.
     """
@@ -776,15 +788,15 @@ def test_r05_department_head_active_requirement_and_auto_clear_on_deactivation(
         .all()
     )
     assert any(
-        r.details.get("head_employee_id", {}).get("from") == str(emp_staff.id)
-        and r.details.get("head_employee_id", {}).get("to") is None
+        _get_audit_details(r).get("head_employee_id", {}).get("from") == str(emp_staff.id)
+        and _get_audit_details(r).get("head_employee_id", {}).get("to") is None
         for r in audit_rows
     ), "Audit log must contain auto-clear record with matching from/to"
 
 
 def test_r05_department_head_auto_clear_on_termination(
     client: TestClient, dept_company, db: Session
-):
+) -> None:
     """Terminating head employee (POST /api/v1/employees/{id}/terminate)
     auto-clears head with DEPARTMENT_UPDATED audit row.
     """
@@ -825,15 +837,15 @@ def test_r05_department_head_auto_clear_on_termination(
         .all()
     )
     assert any(
-        r.details.get("head_employee_id", {}).get("from") == str(emp_mgr.id)
-        and r.details.get("head_employee_id", {}).get("to") is None
+        _get_audit_details(r).get("head_employee_id", {}).get("from") == str(emp_mgr.id)
+        and _get_audit_details(r).get("head_employee_id", {}).get("to") is None
         for r in audit_rows
     ), "Audit log must contain auto-clear record with matching from/to"
 
 
 def test_r05_department_head_auto_clear_on_fnf_settlement(
     client: TestClient, dept_company, db: Session
-):
+) -> None:
     """Department head is cleared with DEPARTMENT_UPDATED audit row on FnF settlement."""
     hr_headers = _auth_headers(dept_company["hr_admin"])
     emp_staff = dept_company["emp_staff"]
@@ -870,15 +882,15 @@ def test_r05_department_head_auto_clear_on_fnf_settlement(
         .all()
     )
     assert any(
-        r.details.get("head_employee_id", {}).get("from") == str(emp_staff.id)
-        and r.details.get("head_employee_id", {}).get("to") is None
+        _get_audit_details(r).get("head_employee_id", {}).get("from") == str(emp_staff.id)
+        and _get_audit_details(r).get("head_employee_id", {}).get("to") is None
         for r in audit_rows
     )
 
 
 def test_r05_department_head_auto_clear_on_pip_failed(
     client: TestClient, dept_company, db: Session
-):
+) -> None:
     """Department head is cleared with DEPARTMENT_UPDATED audit row when PIP fails."""
     hr_headers = _auth_headers(dept_company["hr_admin"])
     emp_staff = dept_company["emp_staff"]
@@ -929,8 +941,8 @@ def test_r05_department_head_auto_clear_on_pip_failed(
         .all()
     )
     assert any(
-        r.details.get("head_employee_id", {}).get("from") == str(emp_staff.id)
-        and r.details.get("head_employee_id", {}).get("to") is None
+        _get_audit_details(r).get("head_employee_id", {}).get("from") == str(emp_staff.id)
+        and _get_audit_details(r).get("head_employee_id", {}).get("to") is None
         for r in audit_rows
     )
 
@@ -940,7 +952,9 @@ def test_r05_department_head_auto_clear_on_pip_failed(
 # ==============================================================================
 
 
-def test_r06_delete_with_active_employees_fails_and_soft_delete(client: TestClient, dept_company):
+def test_r06_delete_with_active_employees_fails_and_soft_delete(
+    client: TestClient, dept_company
+) -> None:
     """Delete with active employees gives 409 with count. Delete empty dept gives 204,
     soft-deleted, not listed, GET 404.
     """
@@ -1009,7 +1023,9 @@ def test_r06_delete_with_active_employees_fails_and_soft_delete(client: TestClie
     assert res_put_emp.json()["error"]["code"] == "invalid_reference"
 
 
-def test_r06_deleted_department_employee_reactivation_journey(client: TestClient, dept_company):
+def test_r06_deleted_department_employee_reactivation_journey(
+    client: TestClient, dept_company
+) -> None:
     """Journey: inactive employee in dept X, X deleted (no active staff), reactivation rejected,
     HR sets another dept with PUT /employees/{id}, and reactivation succeeds.
     """
@@ -1071,7 +1087,7 @@ def test_r06_deleted_department_employee_reactivation_journey(client: TestClient
 # ==============================================================================
 
 
-def test_r07_unit_pageparams_limit_capped_at_100():
+def test_r07_unit_pageparams_limit_capped_at_100() -> None:
     """Unit test that the page_params dependency capping/defaults enforce limits."""
     import inspect
 
@@ -1095,7 +1111,7 @@ def test_r07_unit_pageparams_limit_capped_at_100():
 
 def test_r07_route_pagination_search_sort_and_live_active_counts(
     client: TestClient, dept_company, db: Session
-):
+) -> None:
     """GET /departments?limit=100000 returns <=100 items; sort=bogus returns 400;
     sort=name works; q works; active employees only counted.
     """
@@ -1206,7 +1222,7 @@ def test_r07_route_pagination_search_sort_and_live_active_counts(
 
 def test_r08_audit_rows_create_update_delete_and_noop(
     client: TestClient, dept_company, db: Session
-):
+) -> None:
     """Create, update and delete write exactly one audit row
     (DEPARTMENT_CREATED, DEPARTMENT_UPDATED, DEPARTMENT_DELETED).
     Update details show old and new values. No-op update writes no audit row.
@@ -1255,7 +1271,7 @@ def test_r08_audit_rows_create_update_delete_and_noop(
         .all()
     )
     assert len(audit_u) == 1
-    diff = audit_u[0].details
+    diff = _get_audit_details(audit_u[0])
     assert diff.get("name", {}).get("from") == "AuditDept"
     assert diff.get("name", {}).get("to") == "AuditDeptUpdated"
     assert diff.get("clearance_function", {}).get("to") == "finance"
@@ -1300,7 +1316,7 @@ def test_r08_audit_rows_create_update_delete_and_noop(
 # ==============================================================================
 
 
-def test_r09_rate_limiting_write_routes(client: TestClient, dept_company):
+def test_r09_rate_limiting_write_routes(client: TestClient, dept_company) -> None:
     """The 31st write (POST, PUT, DELETE) within a minute by the same user gets 429;
     first 30 succeed. GET is not limited.
     """
@@ -1373,7 +1389,7 @@ def test_r09_rate_limiting_write_routes(client: TestClient, dept_company):
 
 def test_r09_atomicity_audit_failure_rolls_back_department(
     client: TestClient, dept_company, db: Session
-):
+) -> None:
     """With audit call patched to raise, POST returns 500 and NO department row exists."""
     from app.modules.platform.service import AuditService
 
@@ -1409,7 +1425,7 @@ def test_r09_atomicity_audit_failure_rolls_back_department(
 # ==============================================================================
 
 
-def test_t7_migration_departments_lower_name_index():
+def test_t7_migration_departments_lower_name_index() -> None:
     """T7: Migration tests:
     a) at revision b3a17e0892c1, seed two ACTIVE departments whose names differ only in case
        -> upgrade to 7c8d9e0f1a2b raises RuntimeError naming the duplicates under FORCE RLS.
