@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -528,19 +528,24 @@ def test_r03_concurrent_same_email_creation_exactly_one_201_one_409() -> None:
 
     finally:
         fastapi_app.dependency_overrides.pop(get_db, None)
+        assert settings.TEST_MIGRATION_URL is not None, "TEST_MIGRATION_URL must be configured"
+        owner_engine = create_engine(settings.TEST_MIGRATION_URL)
         try:
-            with Session(engine) as cleanup:
+            with Session(owner_engine) as cleanup:
                 bind_tenant_to_session(cleanup, company_id=cid, is_platform_admin=True)
-                cleanup.query(Employee).filter(Employee.company_id == cid).delete(
-                    synchronize_session=False
+                cleanup.execute(
+                    text("DELETE FROM audit_logs WHERE company_id = :cid"), {"cid": cid}
                 )
-                cleanup.query(User).filter(User.company_id == cid).delete(synchronize_session=False)
-                c_row = cleanup.get(Company, cid)
-                if c_row:
-                    cleanup.delete(c_row)
+                cleanup.execute(text("DELETE FROM employees WHERE company_id = :cid"), {"cid": cid})
+                cleanup.execute(text("DELETE FROM users WHERE company_id = :cid"), {"cid": cid})
+                cleanup.execute(text("DELETE FROM companies WHERE id = :cid"), {"cid": cid})
                 cleanup.commit()
-        except Exception:
-            pass
+                remaining = cleanup.execute(
+                    text("SELECT 1 FROM companies WHERE id = :cid"), {"cid": cid}
+                ).scalar()
+                assert remaining is None, f"Company {cid} was not deleted during cleanup"
+        finally:
+            owner_engine.dispose()
         engine.dispose()
 
 
@@ -625,19 +630,24 @@ def test_r04_concurrent_creates_produce_unique_employee_codes() -> None:
 
     finally:
         fastapi_app.dependency_overrides.pop(get_db, None)
+        assert settings.TEST_MIGRATION_URL is not None, "TEST_MIGRATION_URL must be configured"
+        owner_engine = create_engine(settings.TEST_MIGRATION_URL)
         try:
-            with Session(engine) as cleanup:
+            with Session(owner_engine) as cleanup:
                 bind_tenant_to_session(cleanup, company_id=cid, is_platform_admin=True)
-                cleanup.query(Employee).filter(Employee.company_id == cid).delete(
-                    synchronize_session=False
+                cleanup.execute(
+                    text("DELETE FROM audit_logs WHERE company_id = :cid"), {"cid": cid}
                 )
-                cleanup.query(User).filter(User.company_id == cid).delete(synchronize_session=False)
-                c_row = cleanup.get(Company, cid)
-                if c_row:
-                    cleanup.delete(c_row)
+                cleanup.execute(text("DELETE FROM employees WHERE company_id = :cid"), {"cid": cid})
+                cleanup.execute(text("DELETE FROM users WHERE company_id = :cid"), {"cid": cid})
+                cleanup.execute(text("DELETE FROM companies WHERE id = :cid"), {"cid": cid})
                 cleanup.commit()
-        except Exception:
-            pass
+                remaining = cleanup.execute(
+                    text("SELECT 1 FROM companies WHERE id = :cid"), {"cid": cid}
+                ).scalar()
+                assert remaining is None, f"Company {cid} was not deleted during cleanup"
+        finally:
+            owner_engine.dispose()
         engine.dispose()
 
 
@@ -1615,9 +1625,10 @@ def test_t3_used_token_fails_and_inactive_or_deleted_manager_gives_400(
         "/api/v1/auth/activate",
         json={"token": raw_token, "username": f"another_{uname}", "password": "Password123!"},
     )
-    assert res_act2.status_code in (400, 404), (
-        f"Expected 400 or 404 on reused activation token, got {res_act2.status_code}"
+    assert res_act2.status_code == 404, (
+        f"Expected 404 on reused activation token, got {res_act2.status_code}"
     )
+    assert res_act2.json()["error"]["code"] == "not_found"
 
     # Deactivated or deleted reporting manager check:
     # Create candidate manager
@@ -1681,7 +1692,6 @@ def test_t4_manager_list_and_search_scoped_to_direct_reports(
     """
     hr_headers = _auth_headers(onboarding_company["hr_admin"])
     mgr_headers = _auth_headers(onboarding_company["manager"])
-    emp_mgr = onboarding_company["emp_mgr"]
     emp_staff = onboarding_company["emp_staff"]
 
     # Create unmanaged employee
@@ -1697,21 +1707,40 @@ def test_t4_manager_list_and_search_scoped_to_direct_reports(
     assert res_unmanaged.status_code == 201
     unmanaged_id = res_unmanaged.json()["id"]
 
-    # 1. Manager's list
+    # 1. Manager's list equals EXACTLY the set of direct reports
     res_list = client.get("/api/v1/employees", headers=mgr_headers)
     assert res_list.status_code == 200
     list_ids = {e["id"] for e in res_list.json()["items"]}
-    assert str(emp_staff.id) in list_ids
-    assert unmanaged_id not in list_ids
-    assert str(emp_mgr.id) not in list_ids
+    expected_direct_reports = {str(emp_staff.id)}
+    assert list_ids == expected_direct_reports, (
+        f"Expected {expected_direct_reports}, got {list_ids}"
+    )
 
-    # 2. Manager's managers/search
+    # Tampered query parameters (e.g. reporting_manager_id) cannot leak others
+    res_tampered_list = client.get(
+        f"/api/v1/employees?reporting_manager_id={unmanaged_id}",
+        headers=mgr_headers,
+    )
+    assert res_tampered_list.status_code == 200
+    tampered_list_ids = {e["id"] for e in res_tampered_list.json()["items"]}
+    assert tampered_list_ids == expected_direct_reports
+
+    # 2. Manager's managers/search equals EXACTLY their direct reports
     res_search = client.get("/api/v1/employees/managers/search", headers=mgr_headers)
     assert res_search.status_code == 200
     search_ids = {e["id"] for e in res_search.json()}
-    # Managers search for a manager should only see their direct reports (or scoped to reports)
-    assert unmanaged_id not in search_ids
-    assert str(emp_mgr.id) not in search_ids
+    assert search_ids == expected_direct_reports, (
+        f"Expected {expected_direct_reports}, got {search_ids}"
+    )
+
+    # Tampered search query parameter cannot expand beyond direct reports
+    res_tampered_search = client.get(
+        "/api/v1/employees/managers/search?q=Unmanaged",
+        headers=mgr_headers,
+    )
+    assert res_tampered_search.status_code == 200
+    tampered_search_ids = {e["id"] for e in res_tampered_search.json()}
+    assert tampered_search_ids == set()
 
 
 def test_t5_get_employee_by_id_access_matrix(
