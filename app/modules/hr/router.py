@@ -232,7 +232,9 @@ def list_employees(
 
 
 @employees_router.post("", response_model=EmployeeCreateResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def create_employee(
+    request: Request,
     data: EmployeeCreateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
@@ -331,7 +333,9 @@ def toggle_active_employee(
 
 
 @employees_router.post("/{employee_id}/resend-invite", response_model=EmployeeCreateResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def resend_invite(
+    request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),

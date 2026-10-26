@@ -650,6 +650,8 @@ class EmployeeService:
         whatever link was already sent (a new hash overwrites the old one),
         then re-sends via _send_activation_email."""
         employee = self._get_or_404(company_id, employee_id)
+        if not employee.is_active:
+            raise ConflictError("Cannot resend invite to a deactivated employee.")
         if employee.invitation_status == InvitationStatus.activated:
             raise ConflictError("Employee account is already activated.")
         raw_token = generate_refresh_token()

@@ -61,8 +61,10 @@ class EmployeeCreateRequest(BaseModel):
     """Route 20, HR only. `employee_code` is never client-supplied — it is
     generated server-side under a row lock (11.2)."""
 
-    first_name: str
-    last_name: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    first_name: str = Field(..., max_length=100)
+    last_name: str | None = Field(default=None, max_length=100)
     email: EmailStr
     personal_email: EmailStr | None = None
     phone: str | None = None
@@ -74,8 +76,24 @@ class EmployeeCreateRequest(BaseModel):
     employment_type: EmploymentType = EmploymentType.full_time
     hire_date: date
     probation_end_date: date | None = None
-    notice_period_days: int = 30
+    notice_period_days: int = Field(default=30, ge=0)
     is_attendance_exempt: bool = False
+
+    @field_validator("first_name")
+    @classmethod
+    def validate_first_name(cls, v: str) -> str:
+        s = v.strip()
+        if not (1 <= len(s) <= 100):
+            raise ValueError("First name cannot be empty.")
+        return s
+
+    @field_validator("last_name")
+    @classmethod
+    def validate_last_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
 
 
 class EmployeeUpdateRequest(BaseModel):
