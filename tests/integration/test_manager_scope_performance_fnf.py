@@ -113,7 +113,6 @@ def test_fnf_clearance_manager_scoping(client: TestClient, db: Session, company_
         client,
         company_a.hr_headers,
         email=f"emp-{uuid.uuid4().hex[:6]}@example.com",
-        monthly_salary="50000.00",
     )
     emp_headers = _link_user_to_employee(db, company_a.company_id, emp["id"], UserRole.employee)
 

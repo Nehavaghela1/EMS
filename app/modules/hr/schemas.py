@@ -61,21 +61,56 @@ class EmployeeCreateRequest(BaseModel):
     """Route 20, HR only. `employee_code` is never client-supplied — it is
     generated server-side under a row lock (11.2)."""
 
-    first_name: str
-    last_name: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    first_name: str = Field(..., max_length=100)
+    last_name: str | None = Field(default=None, max_length=100)
     email: EmailStr
-    personal_email: EmailStr | None = None
-    phone: str | None = None
+    personal_email: EmailStr | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=20)
     department_id: uuid.UUID | None = None
     location_id: uuid.UUID | None = None
-    position: str | None = None
-    level: str | None = None
+    position: str | None = Field(default=None, max_length=150)
+    level: Literal["L1", "L2", "L3"] | None = None
     reporting_manager_id: uuid.UUID | None = None
     employment_type: EmploymentType = EmploymentType.full_time
     hire_date: date
     probation_end_date: date | None = None
-    notice_period_days: int = 30
+    notice_period_days: int = Field(default=30, ge=0, le=365)
     is_attendance_exempt: bool = False
+
+    @field_validator("first_name")
+    @classmethod
+    def validate_first_name(cls, v: str) -> str:
+        s = v.strip()
+        if not (1 <= len(s) <= 100):
+            raise ValueError("First name cannot be empty.")
+        return s
+
+    @field_validator("last_name")
+    @classmethod
+    def validate_last_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        return s or None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def validate_and_normalize_email(cls, v: str) -> str:
+        if isinstance(v, str):
+            v = v.strip().lower()
+        return v
+
+    @field_validator("personal_email", mode="before")
+    @classmethod
+    def validate_and_normalize_personal_email(cls, v: str | None) -> str | None:
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return None
+            v = v.lower()
+        return v
 
 
 class EmployeeUpdateRequest(BaseModel):
