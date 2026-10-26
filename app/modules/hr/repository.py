@@ -26,10 +26,11 @@ class DepartmentRepository:
         )
 
     def get_by_name(self, company_id: uuid.UUID, name: str) -> Department | None:
+        trimmed = name.strip() if name else ""
         return self.db.scalar(
             select(Department).where(
                 Department.company_id == company_id,
-                func.lower(Department.name) == name.lower(),
+                func.lower(Department.name) == trimmed.lower(),
                 Department.deleted_at.is_(None),
             )
         )

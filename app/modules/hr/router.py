@@ -1,11 +1,12 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
+from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.modules.hr.models import Department, Employee, EmploymentType
 from app.modules.hr.schemas import (
     DepartmentCreateRequest,
@@ -64,12 +65,14 @@ def list_departments(
 
 
 @departments_router.post("", response_model=DepartmentResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def create_department(
+    request: Request,
     data: DepartmentCreateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    department, count = DepartmentService(db).create_department(user.company_id, data)
+    department, count = DepartmentService(db).create_department(user.company_id, data, actor=user)
     return _to_department_response(department, count)
 
 
@@ -84,25 +87,29 @@ def get_department(
 
 
 @departments_router.put("/{department_id}", response_model=DepartmentResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_department(
+    request: Request,
     department_id: uuid.UUID,
     data: DepartmentUpdateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
     department, count = DepartmentService(db).update_department(
-        user.company_id, department_id, data
+        user.company_id, department_id, data, actor=user
     )
     return _to_department_response(department, count)
 
 
 @departments_router.delete("/{department_id}", status_code=204)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def delete_department(
+    request: Request,
     department_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    DepartmentService(db).delete_department(user.company_id, department_id)
+    DepartmentService(db).delete_department(user.company_id, department_id, actor=user)
 
 
 def _to_employee_response(

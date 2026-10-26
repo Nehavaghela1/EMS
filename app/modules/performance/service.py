@@ -483,25 +483,27 @@ class PerformanceService:
         )
 
         # Track C rule: "If marked Failed, automatically triggers separation/termination"
-        if data.outcome == "failed":
-            emp = self.employee_repo.get_by_id(company_id, pip.employee_id)
-            if emp:
-                from app.modules.hr.models import ResignationStatus
+        if data.outcome == "failed" and emp:
+            from app.modules.hr.models import ResignationStatus
+            from app.modules.hr.service import EmployeeService
 
-                self.employee_repo.update(
-                    emp,
-                    is_active=False,
-                    resignation_status=ResignationStatus.approved,
-                    separation_type="pip_failed",
-                    termination_reason=f"Failed Performance Improvement Plan: {pip.title}",
-                    last_working_date=utcnow().date(),
-                    notice_waived=True,
-                    notice_recovery_days=0,
-                )
-                if emp.user_id:
-                    user = self.db.scalar(select(User).where(User.id == emp.user_id))
-                    if user:
-                        user.is_active = False
+            EmployeeService(self.db).clear_department_heads_for_employee(
+                company_id, emp.id, actor=actor
+            )
+            self.employee_repo.update(
+                emp,
+                is_active=False,
+                resignation_status=ResignationStatus.approved,
+                separation_type="pip_failed",
+                termination_reason=f"Failed Performance Improvement Plan: {pip.title}",
+                last_working_date=utcnow().date(),
+                notice_waived=True,
+                notice_recovery_days=0,
+            )
+            if emp.user_id:
+                user = self.db.scalar(select(User).where(User.id == emp.user_id))
+                if user:
+                    user.is_active = False
 
         self.audit.record(
             company_id=company_id,

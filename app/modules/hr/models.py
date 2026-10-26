@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy import (
     Numeric as SANumeric,
@@ -30,7 +31,13 @@ class Department(TenantBase):
 
     __tablename__ = "departments"
     __table_args__ = (
-        Index("uq_departments_company_id_name", "company_id", "name", unique=True),
+        Index(
+            "uq_departments_company_lower_name",
+            "company_id",
+            text("lower(name)"),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
         CheckConstraint(
             "clearance_function IN ('it', 'finance', 'hr')",
             name="ck_departments_clearance_function",
