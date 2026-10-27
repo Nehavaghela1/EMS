@@ -225,11 +225,11 @@ def test_hr_can_update_hr_only_fields(client, company_a):
     resp = client.put(
         f"/api/v1/employees/{employee['id']}",
         headers=company_a.hr_headers,
-        json={"position": "Staff Engineer", "level": "L4"},
+        json={"position": "Staff Engineer", "level": "L3"},
     )
     assert resp.status_code == 200
     assert resp.json()["position"] == "Staff Engineer"
-    assert resp.json()["level"] == "L4"
+    assert resp.json()["level"] == "L3"
 
 
 def test_deactivated_employee_row_still_exists_and_stays_visible_by_id(client, company_a, db):

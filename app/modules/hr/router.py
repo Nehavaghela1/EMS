@@ -292,13 +292,9 @@ def list_resignations(
     ]
 
 
-@employees_router.get("/{employee_id}", response_model=EmployeeResponse)
-def get_employee(
-    employee_id: uuid.UUID,
-    db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
-):
-    employee = EmployeeService(db).get_employee(user.company_id, employee_id, user)
+def _build_full_employee_response(
+    db: Session, employee: Employee, viewer_user: User | None = None
+) -> EmployeeResponse:
     company_map: dict[uuid.UUID, str] = {}
     if employee.company_id:
         company = db.scalar(select(Company).where(Company.id == employee.company_id))
@@ -314,18 +310,32 @@ def get_employee(
     system_role = None
     if employee.user_id:
         system_role = db.scalar(select(User.role).where(User.id == employee.user_id))
-    return _to_employee_response(employee, company_map, manager, system_role, viewer_user=user)
+    return _to_employee_response(
+        employee, company_map, manager, system_role, viewer_user=viewer_user
+    )
+
+
+@employees_router.get("/{employee_id}", response_model=EmployeeResponse)
+def get_employee(
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    employee = EmployeeService(db).get_employee(user.company_id, employee_id, user)
+    return _build_full_employee_response(db, employee, viewer_user=user)
 
 
 @employees_router.put("/{employee_id}", response_model=EmployeeResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_employee(
+    request: Request,
     employee_id: uuid.UUID,
     data: EmployeeUpdateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
     employee = EmployeeService(db).update_employee(user.company_id, employee_id, data, user)
-    return _to_employee_response(employee)
+    return _build_full_employee_response(db, employee, viewer_user=user)
 
 
 @employees_router.delete("/{employee_id}", status_code=204)
@@ -338,13 +348,15 @@ def deactivate_employee(
 
 
 @employees_router.post("/{employee_id}/toggle-active", response_model=EmployeeResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def toggle_active_employee(
+    request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
-    employee = EmployeeService(db).reactivate_employee(user.company_id, employee_id)
-    return _to_employee_response(employee)
+    employee = EmployeeService(db).reactivate_employee(user.company_id, employee_id, actor=user)
+    return _build_full_employee_response(db, employee, viewer_user=user)
 
 
 @employees_router.post("/{employee_id}/resend-invite", response_model=EmployeeCreateResponse)

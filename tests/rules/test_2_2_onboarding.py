@@ -1453,6 +1453,40 @@ def test_t1_employee_validation_edge_cases(
         f"Expected 422 for position 151 chars, got {res_pos.status_code}"
     )
 
+    # Blank or whitespace-only phone and position -> 422
+    assert (
+        client.post(
+            "/api/v1/employees",
+            headers=hr_headers,
+            json={**base_payload, "phone": ""},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/v1/employees",
+            headers=hr_headers,
+            json={**base_payload, "phone": "   "},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/v1/employees",
+            headers=hr_headers,
+            json={**base_payload, "position": ""},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/v1/employees",
+            headers=hr_headers,
+            json={**base_payload, "position": "   "},
+        ).status_code
+        == 422
+    )
+
     # 3. level not allowed (e.g. 'L99') -> 422
     res_lvl = client.post(
         "/api/v1/employees",
