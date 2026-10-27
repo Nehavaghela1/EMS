@@ -543,7 +543,7 @@ def test_r06_trimming_lowercasing_and_probation_end_date_rules(
     body = res_trim.json()
     assert body["first_name"] == "Trimmable"
     assert body["last_name"] == "Lastname"
-    assert body["email"] == new_work_email.strip()
+    assert body["email"] == new_work_email.strip().lower()
     assert body["personal_email"] == new_personal_email.strip().lower()
     assert body["phone"] == "+1234567890"
     assert body["position"] == "Staff Engineer"
@@ -757,32 +757,53 @@ def test_r07_relationships_uniqueness_email_sync_and_revocation(
     assert "refresh_token=" in refresh_cookie
 
     # HR updates staff_emp email (G2: users.email follows on ANY change, including case variant)
-    brand_new_email = f"brandnew-{uuid.uuid4().hex[:6]}@example.com"
-    res_email_change = client.put(
-        f"/api/v1/employees/{staff_emp.id}",
-        headers=hr_headers,
-        json={"email": brand_new_email},
-    )
-    assert res_email_change.status_code == 200
-    db.refresh(staff_emp)
-    db.refresh(staff_user)
-    assert staff_emp.email == brand_new_email
-    assert staff_user.email == brand_new_email
+    # Reworked H1: seed an employee and its linked user with a MIXED-CASE stored email directly
+    # in the database (legacy row), then PUT the lowercase version: employees.email and users.email
+    # must both become the lowercase value, with one audit row; a PUT with an UPPERCASE input must
+    # be stored lowercase in both tables.
+    mixed_case_email = f"LegacyMixed-{uuid.uuid4().hex[:6]}@Example.COM"
+    staff_emp.email = mixed_case_email
+    staff_user.email = mixed_case_email
+    db.commit()
 
-    # Now change case variant only (e.g. local part case change)
-    case_variant_email = brand_new_email.upper()
-    res_case_change = client.put(
+    initial_audit_count = (
+        db.query(AuditLog)
+        .filter(AuditLog.company_id == cid, AuditLog.entity_id == staff_emp.id)
+        .count()
+    )
+
+    # 1. PUT the lowercase version
+    res_lower_put = client.put(
         f"/api/v1/employees/{staff_emp.id}",
         headers=hr_headers,
-        json={"email": case_variant_email},
+        json={"email": mixed_case_email.lower()},
     )
-    assert res_case_change.status_code == 200
+    assert res_lower_put.status_code == 200
     db.refresh(staff_emp)
     db.refresh(staff_user)
-    # Stored email in employees and users must match exactly what was stored/returned
-    assert staff_emp.email == res_case_change.json()["email"]
-    assert staff_user.email == res_case_change.json()["email"]
-    assert staff_user.email != brand_new_email
+    assert staff_emp.email == mixed_case_email.lower()
+    assert staff_user.email == mixed_case_email.lower()
+
+    # Verify exactly one audit row added
+    new_audit_count = (
+        db.query(AuditLog)
+        .filter(AuditLog.company_id == cid, AuditLog.entity_id == staff_emp.id)
+        .count()
+    )
+    assert new_audit_count == initial_audit_count + 1
+
+    # 2. PUT with an UPPERCASE input must be stored lowercase in both tables
+    upper_input = f"UPPERCASE-{uuid.uuid4().hex[:6]}@EXAMPLE.COM"
+    res_upper_put = client.put(
+        f"/api/v1/employees/{staff_emp.id}",
+        headers=hr_headers,
+        json={"email": upper_input},
+    )
+    assert res_upper_put.status_code == 200
+    db.refresh(staff_emp)
+    db.refresh(staff_user)
+    assert staff_emp.email == upper_input.lower()
+    assert staff_user.email == upper_input.lower()
 
     # Assert old refresh token is revoked
     raw_cookie_val = ""
@@ -796,7 +817,7 @@ def test_r07_relationships_uniqueness_email_sync_and_revocation(
     # Login with new email works
     res_login_new = client.post(
         "/api/v1/auth/login",
-        json={"email": brand_new_email, "password": "Test1234pass!"},
+        json={"email": upper_input.lower(), "password": "Test1234pass!"},
     )
     assert res_login_new.status_code == 200
     assert res_login_new.json()["access_token"]
@@ -1234,3 +1255,93 @@ def test_r10_concurrency_simultaneous_edits_different_fields_and_email_race() ->
         finally:
             owner_engine.dispose()
         engine.dispose()
+
+
+def test_r10_row_lock_sql_capture(
+    client: TestClient, profile_company: dict[str, Any], db: Session
+) -> None:
+    """H3: Prove the row lock: capture SQL statements emitted during PUT /employees/{id}
+    and POST /employees/{id}/toggle-active via SQLAlchemy before_cursor_execute event
+    on db.get_bind() (the test connection/engine). Assert that a SELECT on employees
+    with FOR UPDATE was executed before the UPDATE in both cases.
+    """
+    from sqlalchemy import event
+
+    hr_headers = _auth_headers(profile_company["hr_admin"])
+    staff_emp = profile_company["emp_staff"]
+    target_engine = db.get_bind()
+
+    captured_statements: list[str] = []
+
+    def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        captured_statements.append(statement)
+
+    event.listen(target_engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        # 1. PUT /employees/{id}
+        captured_statements.clear()
+        res_put = client.put(
+            f"/api/v1/employees/{staff_emp.id}",
+            headers=hr_headers,
+            json={"phone": "+1999888777"},
+        )
+        assert res_put.status_code == 200
+
+        # Find SELECT on employees with FOR UPDATE and UPDATE on employees
+        select_for_update_indices = [
+            i
+            for i, stmt in enumerate(captured_statements)
+            if "FROM employees" in stmt
+            and "FOR UPDATE" in stmt
+            and stmt.strip().upper().startswith("SELECT")
+        ]
+        update_indices = [
+            i
+            for i, stmt in enumerate(captured_statements)
+            if stmt.strip().upper().startswith("UPDATE EMPLOYEES")
+        ]
+
+        assert select_for_update_indices, (
+            f"Expected SELECT ... FOR UPDATE on employees, got queries: {captured_statements}"
+        )
+        assert update_indices, f"Expected UPDATE on employees, got queries: {captured_statements}"
+        assert select_for_update_indices[0] < update_indices[0], (
+            "SELECT ... FOR UPDATE must execute before UPDATE"
+        )
+
+        # 2. POST /employees/{id}/toggle-active
+        # First deactivate staff_emp so toggle-active performs reactivation
+        res_deact = client.delete(f"/api/v1/employees/{staff_emp.id}", headers=hr_headers)
+        assert res_deact.status_code == 204
+
+        captured_statements.clear()
+        res_toggle = client.post(
+            f"/api/v1/employees/{staff_emp.id}/toggle-active",
+            headers=hr_headers,
+        )
+        assert res_toggle.status_code == 200
+
+        select_for_update_toggle = [
+            i
+            for i, stmt in enumerate(captured_statements)
+            if "FROM employees" in stmt
+            and "FOR UPDATE" in stmt
+            and stmt.strip().upper().startswith("SELECT")
+        ]
+        update_toggle = [
+            i
+            for i, stmt in enumerate(captured_statements)
+            if stmt.strip().upper().startswith("UPDATE EMPLOYEES")
+        ]
+
+        assert select_for_update_toggle, (
+            f"Expected SELECT ... FOR UPDATE on toggle-active, got queries: {captured_statements}"
+        )
+        assert update_toggle, (
+            f"Expected UPDATE on toggle-active, got queries: {captured_statements}"
+        )
+        assert select_for_update_toggle[0] < update_toggle[0], (
+            "SELECT ... FOR UPDATE must execute before UPDATE on toggle-active"
+        )
+    finally:
+        event.remove(target_engine, "before_cursor_execute", before_cursor_execute)

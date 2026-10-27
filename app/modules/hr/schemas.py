@@ -234,8 +234,8 @@ class EmployeeUpdateRequest(BaseModel):
         if v is None:
             return None
         if isinstance(v, str):
-            v = v.strip()
-        # Validate format using Pydantic's EmailStr adapter without lowercasing the local part
+            v = v.strip().lower()
+        # Validate format using Pydantic's EmailStr adapter
         TypeAdapter(EmailStr).validate_python(v)
         return v
 

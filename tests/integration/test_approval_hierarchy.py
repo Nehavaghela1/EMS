@@ -1479,7 +1479,7 @@ def test_privilege_escalation_by_employee_blocked(
         headers=headers_emp,
         json={
             "reporting_manager_id": fake_mgr_id,
-            "level": "L10",
+            "level": "L3",
             "position": "CEO",
             "first_name": "HackedName",
             # Fields ignored or rejected
