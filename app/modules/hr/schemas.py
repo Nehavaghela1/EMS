@@ -3,7 +3,15 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from app.modules.hr.models import EmploymentType, InvitationStatus
 
@@ -95,6 +103,26 @@ class EmployeeCreateRequest(BaseModel):
         s = v.strip()
         return s or None
 
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("Phone cannot be empty string.")
+        return s
+
+    @field_validator("position")
+    @classmethod
+    def validate_position(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("Position cannot be empty string.")
+        return s
+
     @field_validator("email", mode="before")
     @classmethod
     def validate_and_normalize_email(cls, v: str) -> str:
@@ -124,7 +152,7 @@ class EmployeeUpdateRequest(BaseModel):
 
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
     last_name: str | None = Field(default=None, max_length=100)
-    email: EmailStr | None = Field(default=None, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
     personal_email: EmailStr | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=20)
     department_id: uuid.UUID | None = None
@@ -180,11 +208,35 @@ class EmployeeUpdateRequest(BaseModel):
             raise ValueError("Last name cannot be empty string.")
         return s
 
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("Phone cannot be empty string.")
+        return s
+
+    @field_validator("position")
+    @classmethod
+    def validate_position(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("Position cannot be empty string.")
+        return s
+
     @field_validator("email", mode="before")
     @classmethod
     def validate_and_normalize_email(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         if isinstance(v, str):
-            v = v.strip().lower()
+            v = v.strip()
+        # Validate format using Pydantic's EmailStr adapter without lowercasing the local part
+        TypeAdapter(EmailStr).validate_python(v)
         return v
 
     @field_validator("personal_email", mode="before")

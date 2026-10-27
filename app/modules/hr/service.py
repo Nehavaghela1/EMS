@@ -545,14 +545,17 @@ class EmployeeService:
         """Route 23: Own, HR — never Mgr. Own may set only contact fields."""
         is_hr = current_user.role in (UserRole.owner, UserRole.hr_admin)
 
-        # Lock the row for update. HR can edit deactivated employees;
-        # non-HR can only edit active self.
-        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=is_hr)
+        # Lock the row for update. Allow inactive for all lookups in the same company,
+        # then enforce permission checks below.
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
         if employee is None:
             raise NotFoundError("Employee not found.")
 
         is_own = employee.user_id == current_user.id
         if not is_hr and not is_own:
+            raise ForbiddenError("You do not have permission to update this employee.")
+
+        if not is_hr and is_own and not employee.is_active:
             raise ForbiddenError("You do not have permission to update this employee.")
 
         updates = data.model_dump(exclude_unset=True)
@@ -580,11 +583,14 @@ class EmployeeService:
 
         new_email = updates.get("email")
         email_changed = False
-        if new_email and new_email.lower() != employee.email.lower():
+        if new_email and new_email != employee.email:
             email_changed = True
             # Unique ignoring case in employees
-            if self.repo.get_by_email(company_id, new_email):
-                raise ConflictError("An employee with this email already exists in your company.")
+            if new_email.lower() != employee.email.lower():
+                if self.repo.get_by_email(company_id, new_email):
+                    raise ConflictError(
+                        "An employee with this email already exists in your company."
+                    )
             # Unique ignoring case in users
             existing_user = self.db.scalar(
                 select(User).where(
@@ -706,14 +712,16 @@ class EmployeeService:
         DashboardService.invalidate_company_dashboards(company_id)
 
     def reactivate_employee(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User | None = None
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
     ) -> Employee:
         """Route 25 (`/toggle-active`, spec's literal path name) — reactivate.
         Must look the employee up without the is_active filter, since the
         whole point is finding an already-deactivated row."""
-        employee = self.repo.get_by_id_any_status(employee_id, company_id)
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
         if employee is None:
             raise NotFoundError("Employee not found.")
+        if employee.is_active:
+            return employee
         self._validate_department(company_id, employee.department_id)
         self._validate_location(company_id, employee.location_id)
         self.repo.update(employee, is_active=True)
@@ -721,15 +729,14 @@ class EmployeeService:
             user = self.user_repo.get_by_id(employee.user_id, company_id)
             if user is not None:
                 self.user_repo.update(user, company_id, is_active=True)
-        if actor is not None:
-            self.audit.record(
-                company_id=company_id,
-                actor=actor,
-                action="EMPLOYEE_REACTIVATED",
-                entity_type="employee",
-                entity_id=employee.id,
-                details={"employee_code": employee.employee_code},
-            )
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEE_REACTIVATED",
+            entity_type="employee",
+            entity_id=employee.id,
+            details={"employee_code": employee.employee_code},
+        )
         self.db.commit()
         return employee
 

@@ -1743,7 +1743,7 @@ def test_part3_I_reactivate_employee_validates_location(
 
     # Attempt to reactivate employee -> InvalidReferenceError
     with pytest.raises(InvalidReferenceError) as exc_info:
-        hr_service.reactivate_employee(cid, emp.id)
+        hr_service.reactivate_employee(cid, emp.id, actor=company_setup["owner"])
     assert "location does not exist or is inactive" in str(exc_info.value)
 
     # Employee must remain inactive

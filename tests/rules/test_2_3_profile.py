@@ -206,13 +206,44 @@ def test_r01_employee_edits_own_contact_fields_only(
     res_no_token = client.put(f"/api/v1/employees/{staff_emp.id}", json={"last_name": "NewName"})
     assert res_no_token.status_code == 401
 
-    # 2. Employee edits colleague -> 403
+    # 2. Employee edits colleague (active) -> 403
     res_colleague = client.put(
         f"/api/v1/employees/{colleague_emp.id}",
         headers=staff_headers,
         json={"last_name": "Hacked"},
     )
     assert res_colleague.status_code == 403
+
+    # G4: Employee (non-HR) edits colleague who is DEACTIVATED -> exactly 403 (never 404)
+    # Deactivate colleague first
+    colleague_emp.is_active = False
+    db.commit()
+    res_colleague_deact = client.put(
+        f"/api/v1/employees/{colleague_emp.id}",
+        headers=staff_headers,
+        json={"last_name": "HackedDeact"},
+    )
+    assert res_colleague_deact.status_code == 403, (
+        f"Expected 403 for non-HR editing deactivated colleague, "
+        f"got {res_colleague_deact.status_code}"
+    )
+
+    # G4: Employee (non-HR) editing own deactivated profile -> exactly 403
+    staff_emp.is_active = False
+    db.commit()
+    res_own_deact = client.put(
+        f"/api/v1/employees/{staff_emp.id}",
+        headers=staff_headers,
+        json={"last_name": "OwnDeact"},
+    )
+    assert res_own_deact.status_code == 403, (
+        f"Expected 403 for non-HR editing own deactivated profile, got {res_own_deact.status_code}"
+    )
+
+    # Restore active state for subsequent tests
+    colleague_emp.is_active = True
+    staff_emp.is_active = True
+    db.commit()
 
     # 3. Employee edits phone, last_name, personal_email -> 200 and persisted
     res_edit_last = client.put(
@@ -445,6 +476,10 @@ def test_r05_manager_cannot_edit_report_but_can_edit_own_contact_fields(
         {"last_name": "B" * 101},
         {"phone": "1" * 21},
         {"position": "P" * 151},
+        {"position": ""},  # G3: blank position rejected 422
+        {"position": "   "},  # G3: whitespace-only position rejected 422
+        {"phone": ""},  # G3: blank phone rejected 422
+        {"phone": "   "},  # G3: whitespace-only phone rejected 422
         {"personal_email": "bad-email"},
         {"personal_email": f"{'a' * 250}@x.com"},
         {"email": None},
@@ -500,31 +535,36 @@ def test_r06_trimming_lowercasing_and_probation_end_date_rules(
             "last_name": "  Lastname  ",
             "email": new_work_email,
             "personal_email": new_personal_email,
+            "phone": "  +1234567890  ",
+            "position": "  Staff Engineer  ",
         },
     )
     assert res_trim.status_code == 200
     body = res_trim.json()
     assert body["first_name"] == "Trimmable"
     assert body["last_name"] == "Lastname"
-    assert body["email"] == new_work_email.strip().lower()
+    assert body["email"] == new_work_email.strip()
     assert body["personal_email"] == new_personal_email.strip().lower()
+    assert body["phone"] == "+1234567890"
+    assert body["position"] == "Staff Engineer"
 
-    # 2. probation_end_date before hire_date is rejected
+    # 2. probation_end_date before hire_date is rejected (G5a: exact status code 422)
     # Current hire_date is 2024-01-01
     res_bad_probation = client.put(
         f"/api/v1/employees/{staff_emp.id}",
         headers=hr_headers,
         json={"probation_end_date": "2023-12-31"},
     )
-    assert res_bad_probation.status_code == 400 or res_bad_probation.status_code == 422
+    assert res_bad_probation.status_code == 422
 
-    # Both hire_date and probation_end_date in same payload with probation before hire_date
+    # Both hire_date and probation_end_date in same payload
+    # with probation before hire_date (exact 422)
     res_bad_both = client.put(
         f"/api/v1/employees/{staff_emp.id}",
         headers=hr_headers,
         json={"hire_date": "2025-06-01", "probation_end_date": "2025-05-01"},
     )
-    assert res_bad_both.status_code == 400 or res_bad_both.status_code == 422
+    assert res_bad_both.status_code == 422
 
 
 # ==============================================================================
@@ -716,7 +756,7 @@ def test_r07_relationships_uniqueness_email_sync_and_revocation(
     refresh_cookie = res_login_old.headers.get("set-cookie", "")
     assert "refresh_token=" in refresh_cookie
 
-    # HR updates staff_emp email
+    # HR updates staff_emp email (G2: users.email follows on ANY change, including case variant)
     brand_new_email = f"brandnew-{uuid.uuid4().hex[:6]}@example.com"
     res_email_change = client.put(
         f"/api/v1/employees/{staff_emp.id}",
@@ -724,10 +764,25 @@ def test_r07_relationships_uniqueness_email_sync_and_revocation(
         json={"email": brand_new_email},
     )
     assert res_email_change.status_code == 200
-
-    # Assert users.email was updated in DB
+    db.refresh(staff_emp)
     db.refresh(staff_user)
+    assert staff_emp.email == brand_new_email
     assert staff_user.email == brand_new_email
+
+    # Now change case variant only (e.g. local part case change)
+    case_variant_email = brand_new_email.upper()
+    res_case_change = client.put(
+        f"/api/v1/employees/{staff_emp.id}",
+        headers=hr_headers,
+        json={"email": case_variant_email},
+    )
+    assert res_case_change.status_code == 200
+    db.refresh(staff_emp)
+    db.refresh(staff_user)
+    # Stored email in employees and users must match exactly what was stored/returned
+    assert staff_emp.email == res_case_change.json()["email"]
+    assert staff_user.email == res_case_change.json()["email"]
+    assert staff_user.email != brand_new_email
 
     # Assert old refresh token is revoked
     raw_cookie_val = ""
@@ -897,6 +952,15 @@ def test_r09_audit_rows_changed_fields_only_and_reactivation_audit(
     assert audit_reactivated is not None
     assert audit_reactivated.actor_user_id == profile_company["hr_admin"].id
 
+    # G1: Reactivating an already-active employee returns 200, changes nothing, writes NO audit row
+    count_before_idempotent = db.query(AuditLog).filter(AuditLog.company_id == cid).count()
+    res_react_already_active = client.post(
+        f"/api/v1/employees/{staff_emp.id}/toggle-active", headers=hr_headers
+    )
+    assert res_react_already_active.status_code == 200
+    assert res_react_already_active.json()["is_active"] is True
+    assert db.query(AuditLog).filter(AuditLog.company_id == cid).count() == count_before_idempotent
+
     # 5. Failed reactivation writes NO audit row
     before_failed_react = db.query(AuditLog).filter(AuditLog.company_id == cid).count()
     res_bad_react = client.post(
@@ -998,7 +1062,7 @@ def test_r10_isolation_and_editing_deactivated_employee(
     assert res_hr_deact_edit.status_code == 200
     assert res_hr_deact_edit.json()["position"] == "Archived Position"
 
-    # 3. Deactivated user's own token cannot edit
+    # 3. Deactivated user's own token cannot edit (G5c: exact 401)
     staff_token = create_access_token(
         sub=str(staff_user.id), company_id=str(cid), role=staff_user.role.value
     )
@@ -1007,7 +1071,7 @@ def test_r10_isolation_and_editing_deactivated_employee(
         headers={"Authorization": f"Bearer {staff_token}"},
         json={"phone": "+1000000000"},
     )
-    assert res_deact_user_edit.status_code in (401, 403)
+    assert res_deact_user_edit.status_code == 401
 
 
 def test_r10_concurrency_simultaneous_edits_different_fields_and_email_race() -> None:
@@ -1106,6 +1170,18 @@ def test_r10_concurrency_simultaneous_edits_different_fields_and_email_race() ->
 
         assert 500 not in results_diff, f"Server returned 500: {results_diff}"
         assert results_diff == [200, 200], f"Expected both to succeed 200, got {results_diff}"
+
+        # G5b: Reload employee and assert BOTH phone and position were saved
+        with Session(engine) as check_sess:
+            bind_tenant_to_session(check_sess, company_id=cid, is_platform_admin=True)
+            reloaded_target = check_sess.get(Employee, target_id)
+            assert reloaded_target is not None
+            assert reloaded_target.phone == "+1234567890", (
+                f"Phone was not saved: {reloaded_target.phone}"
+            )
+            assert reloaded_target.position == "Concurrent Tech Lead", (
+                f"Position was not saved: {reloaded_target.position}"
+            )
 
         # Part B: Two simultaneous edits claiming the same new email on two different employees
         shared_new_email = f"sharedrace-{uuid.uuid4().hex[:6]}@example.com"
