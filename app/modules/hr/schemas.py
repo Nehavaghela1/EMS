@@ -1,9 +1,9 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.modules.hr.models import EmploymentType, InvitationStatus
 
@@ -120,21 +120,82 @@ class EmployeeUpdateRequest(BaseModel):
     manager, dates and employment_type are HR-only (Spec 10.3 route 23).
     """
 
-    first_name: str | None = None
-    last_name: str | None = None
-    email: EmailStr | None = None
-    personal_email: EmailStr | None = None
-    phone: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, max_length=100)
+    email: EmailStr | None = Field(default=None, max_length=255)
+    personal_email: EmailStr | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=20)
     department_id: uuid.UUID | None = None
     location_id: uuid.UUID | None = None
-    position: str | None = None
-    level: str | None = None
+    position: str | None = Field(default=None, max_length=150)
+    level: Literal["L1", "L2", "L3"] | None = None
     reporting_manager_id: uuid.UUID | None = None
     employment_type: EmploymentType | None = None
     hire_date: date | None = None
     probation_end_date: date | None = None
-    notice_period_days: int | None = None
+    notice_period_days: int | None = Field(default=None, ge=0, le=365)
     is_attendance_exempt: bool | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_non_empty_and_reject_nulls_on_non_nullable(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if not data:
+            raise ValueError("At least one field must be provided for update.")
+
+        non_nullable_fields = {
+            "first_name",
+            "email",
+            "hire_date",
+            "employment_type",
+            "notice_period_days",
+            "is_attendance_exempt",
+        }
+        for field in non_nullable_fields:
+            if field in data and data[field] is None:
+                raise ValueError(f"Field '{field}' cannot be null.")
+
+        return data
+
+    @field_validator("first_name")
+    @classmethod
+    def validate_first_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not (1 <= len(s) <= 100):
+            raise ValueError("First name cannot be empty.")
+        return s
+
+    @field_validator("last_name")
+    @classmethod
+    def validate_last_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if not s:
+            raise ValueError("Last name cannot be empty string.")
+        return s
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def validate_and_normalize_email(cls, v: str | None) -> str | None:
+        if isinstance(v, str):
+            v = v.strip().lower()
+        return v
+
+    @field_validator("personal_email", mode="before")
+    @classmethod
+    def validate_and_normalize_personal_email(cls, v: str | None) -> str | None:
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return None
+            v = v.lower()
+        return v
 
 
 class EmployeeResponse(BaseModel):

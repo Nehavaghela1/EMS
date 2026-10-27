@@ -147,6 +147,19 @@ class EmployeeRepository:
             )
         )
 
+    def get_by_id_for_update(
+        self, employee_id: uuid.UUID, company_id: uuid.UUID, *, allow_inactive: bool = False
+    ) -> Employee | None:
+        """Lock employee row with SELECT ... FOR UPDATE for atomic mutations."""
+        conditions = [
+            Employee.id == employee_id,
+            Employee.company_id == company_id,
+            Employee.deleted_at.is_(None),
+        ]
+        if not allow_inactive:
+            conditions.append(Employee.is_active.is_(True))
+        return self.db.scalar(select(Employee).where(*conditions).with_for_update())
+
     def get_by_id_any_status(
         self, employee_id: uuid.UUID, company_id: uuid.UUID | None = None
     ) -> Employee | None:

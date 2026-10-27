@@ -9,7 +9,14 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.email_templates import employee_invitation_email
-from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
+from app.core.exceptions import (
+    AppError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
+from app.core.masking import mask_tail
 from app.core.pagination import PageParams
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.security import generate_refresh_token, hash_token
@@ -37,6 +44,7 @@ from app.modules.identity.models import User, UserRole
 from app.modules.identity.repository import (
     CompanyLocationRepository,
     CompanyRepository,
+    RefreshTokenRepository,
     UserRepository,
 )
 from app.modules.platform.service import AuditService, DashboardService, jsonable
@@ -535,8 +543,14 @@ class EmployeeService:
         current_user: User,
     ) -> Employee:
         """Route 23: Own, HR — never Mgr. Own may set only contact fields."""
-        employee = self._get_or_404(company_id, employee_id)
         is_hr = current_user.role in (UserRole.owner, UserRole.hr_admin)
+
+        # Lock the row for update. HR can edit deactivated employees;
+        # non-HR can only edit active self.
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=is_hr)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+
         is_own = employee.user_id == current_user.id
         if not is_hr and not is_own:
             raise ForbiddenError("You do not have permission to update this employee.")
@@ -550,38 +564,95 @@ class EmployeeService:
                     details={"fields": sorted(restricted)},
                 )
 
+        # Date sanity check: probation_end_date cannot be before hire_date
+        effective_hire_date = updates.get("hire_date") or employee.hire_date
+        effective_probation_end_date = (
+            updates.get("probation_end_date")
+            if "probation_end_date" in updates
+            else employee.probation_end_date
+        )
+        if effective_hire_date and effective_probation_end_date:
+            if effective_probation_end_date < effective_hire_date:
+                raise ValidationError(
+                    "Probation end date cannot be earlier than hire date.",
+                    details={"field": "probation_end_date"},
+                )
+
         new_email = updates.get("email")
+        email_changed = False
         if new_email and new_email.lower() != employee.email.lower():
+            email_changed = True
+            # Unique ignoring case in employees
             if self.repo.get_by_email(company_id, new_email):
                 raise ConflictError("An employee with this email already exists in your company.")
+            # Unique ignoring case in users
+            existing_user = self.db.scalar(
+                select(User).where(
+                    User.company_id == company_id,
+                    func.lower(User.email) == new_email.lower(),
+                )
+            )
+            if existing_user and (employee.user_id is None or existing_user.id != employee.user_id):
+                raise ConflictError("A user with this email already exists in your company.")
 
-        if "department_id" in updates:
+        # Links checked only when value changes
+        if "department_id" in updates and updates["department_id"] != employee.department_id:
             self._validate_department(company_id, updates["department_id"])
         if "location_id" in updates and updates["location_id"] != employee.location_id:
             self._validate_location(company_id, updates["location_id"])
-        if "reporting_manager_id" in updates:
+        if (
+            "reporting_manager_id" in updates
+            and updates["reporting_manager_id"] != employee.reporting_manager_id
+        ):
             self._validate_manager(company_id, updates["reporting_manager_id"], self_id=employee.id)
 
-        # `EmployeeUpdateRequest` (schemas.py) has no password/token/Aadhaar/
-        # PAN/bank field to begin with, so every key `updates` can contain
-        # is already safe to log by construction — still passed through
-        # AuditService.record's own denylist as the backstop, not the
-        # primary control (Spec 7.8).
-        diff = {
-            field: {"from": jsonable(getattr(employee, field)), "to": jsonable(new_value)}
-            for field, new_value in updates.items()
-        }
-        self.repo.update(employee, **updates)
-        self.audit.record(
-            company_id=company_id,
-            actor=current_user,
-            action="EMPLOYEE_UPDATED",
-            entity_type="employee",
-            entity_id=employee.id,
-            details=diff,
-        )
-        self.db.commit()
-        DashboardService.invalidate_company_dashboards(company_id)
+        # Compute real changes only
+        diff: dict[str, dict[str, Any]] = {}
+        real_updates: dict[str, Any] = {}
+        for field, new_val in updates.items():
+            old_val = getattr(employee, field)
+            # Compare JSONable representations
+            if jsonable(old_val) != jsonable(new_val):
+                real_updates[field] = new_val
+                # Personal data: audit details mask personal_email and phone with mask_tail
+                from_audit = (
+                    mask_tail(old_val)
+                    if field in ("personal_email", "phone")
+                    else jsonable(old_val)
+                )
+                to_audit = (
+                    mask_tail(new_val)
+                    if field in ("personal_email", "phone")
+                    else jsonable(new_val)
+                )
+                diff[field] = {"from": from_audit, "to": to_audit}
+
+        # Apply updates if any real changes exist
+        if real_updates:
+            self.repo.update(employee, **real_updates)
+
+            # If work email changed and employee has a linked user,
+            # update users.email and revoke refresh tokens
+            if email_changed and employee.user_id is not None:
+                linked_user = self.user_repo.get_by_id(employee.user_id, company_id)
+                if linked_user is not None:
+                    self.user_repo.update(linked_user, company_id, email=new_email)
+                    token_repo = RefreshTokenRepository(self.db)
+                    active_tokens = token_repo.get_active_by_user(linked_user.id)
+                    for token in active_tokens:
+                        token_repo.revoke(token)
+
+            self.audit.record(
+                company_id=company_id,
+                actor=current_user,
+                action="EMPLOYEE_UPDATED",
+                entity_type="employee",
+                entity_id=employee.id,
+                details=diff,
+            )
+            self.db.commit()
+            DashboardService.invalidate_company_dashboards(company_id)
+
         return employee
 
     def clear_department_heads_for_employee(
@@ -634,7 +705,9 @@ class EmployeeService:
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
 
-    def reactivate_employee(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> Employee:
+    def reactivate_employee(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User | None = None
+    ) -> Employee:
         """Route 25 (`/toggle-active`, spec's literal path name) — reactivate.
         Must look the employee up without the is_active filter, since the
         whole point is finding an already-deactivated row."""
@@ -648,6 +721,15 @@ class EmployeeService:
             user = self.user_repo.get_by_id(employee.user_id, company_id)
             if user is not None:
                 self.user_repo.update(user, company_id, is_active=True)
+        if actor is not None:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="EMPLOYEE_REACTIVATED",
+                entity_type="employee",
+                entity_id=employee.id,
+                details={"employee_code": employee.employee_code},
+            )
         self.db.commit()
         return employee
 
