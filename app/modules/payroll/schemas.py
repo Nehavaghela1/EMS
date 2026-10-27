@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.masking import mask_tail
 from app.modules.payroll.models import (
     CalculationType,
     PercentageOf,
@@ -117,11 +118,7 @@ class EmployeeSalaryResponse(BaseModel):
 
 
 def mask_payout_account_number(v: str | None) -> str | None:
-    if v is None:
-        return None
-    if len(v) <= 4:
-        return "*" * len(v)
-    return "*" * (len(v) - 4) + v[-4:]
+    return mask_tail(v)
 
 
 class StatutoryConfigResponse(BaseModel):
