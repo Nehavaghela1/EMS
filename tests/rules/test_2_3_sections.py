@@ -1597,6 +1597,336 @@ RATE_LIMIT_CASES = [
 ]
 
 
+def test_f5_post_create_row_lock_sql_capture(
+    client: TestClient, profile_company: dict[str, Any], db: Session
+) -> None:
+    """F5: Capture SQL emitted during POST /employees/{id}/{section}.
+    Assert that SELECT ... FROM employees ... FOR UPDATE executes BEFORE
+    the SELECT count(...) and INSERT into the section table.
+    """
+    from sqlalchemy import event
+
+    staff_emp = profile_company["emp_staff"]
+    hr_headers = _auth_headers(profile_company["hr_admin"])
+    target_engine = db.get_bind()
+
+    captured_statements: list[str] = []
+
+    def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        captured_statements.append(statement)
+
+    event.listen(target_engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        captured_statements.clear()
+        res = client.post(
+            f"/api/v1/employees/{staff_emp.id}/skills",
+            headers=hr_headers,
+            json={"name": "SQL Lock Test Skill", "level": "intermediate"},
+        )
+        assert res.status_code == 201
+
+        # Check SELECT ... FROM employees ... FOR UPDATE
+        emp_lock_indices = [
+            i
+            for i, stmt in enumerate(captured_statements)
+            if "FROM employees" in stmt and "FOR UPDATE" in stmt
+        ]
+        assert len(emp_lock_indices) >= 1, (
+            "Expected at least one SELECT ... FROM employees FOR UPDATE"
+        )
+        first_lock_idx = emp_lock_indices[0]
+
+        # Check count query
+        count_indices = [
+            i
+            for i, stmt in enumerate(captured_statements)
+            if "count(" in stmt.lower() and "employee_skills" in stmt
+        ]
+        assert len(count_indices) >= 1, (
+            f"Expected count query on employee_skills, statements: {captured_statements}"
+        )
+        first_count_idx = count_indices[0]
+
+        # Check insert query
+        insert_indices = [
+            i for i, stmt in enumerate(captured_statements) if "INSERT INTO employee_skills" in stmt
+        ]
+        assert len(insert_indices) >= 1, (
+            f"Expected INSERT into employee_skills, statements: {captured_statements}"
+        )
+        first_insert_idx = insert_indices[0]
+
+        assert first_lock_idx < first_count_idx, (
+            f"Lock (idx {first_lock_idx}) must execute BEFORE count (idx {first_count_idx})!"
+        )
+        assert first_lock_idx < first_insert_idx, (
+            f"Lock (idx {first_lock_idx}) must execute BEFORE insert (idx {first_insert_idx})!"
+        )
+    finally:
+        event.remove(target_engine, "before_cursor_execute", before_cursor_execute)
+
+
+def test_f3_put_date_hole_validation(client: TestClient, profile_company: dict[str, Any]) -> None:
+    """F3: On PUT for education and experience, validate the EFFECTIVE values.
+    Sending only end_date before stored start_date, or only start_date after stored end_date,
+    or a future date, must return 422 with validation error envelope, never 500.
+    """
+    staff_emp = profile_company["emp_staff"]
+    hr_headers = _auth_headers(profile_company["hr_admin"])
+
+    # 1. Create baseline education entry (start=2019-01-01, end=2021-01-01)
+    res_edu = client.post(
+        f"/api/v1/employees/{staff_emp.id}/education",
+        headers=hr_headers,
+        json={
+            "institution": "Baseline Univ",
+            "degree": "BSc",
+            "start_date": "2019-01-01",
+            "end_date": "2021-01-01",
+        },
+    )
+    assert res_edu.status_code == 201
+    edu_id = res_edu.json()["id"]
+
+    # Edu case 1: end_date before stored start_date -> 422
+    r1 = client.put(
+        f"/api/v1/employees/{staff_emp.id}/education/{edu_id}",
+        headers=hr_headers,
+        json={"end_date": "2018-01-01"},
+    )
+    assert r1.status_code == 422, (
+        f"Expected 422 for edu end before stored start, got {r1.status_code}: {r1.text}"
+    )
+    assert r1.json()["error"]["code"] == "validation_error"
+
+    # Edu case 2: start_date after stored end_date -> 422
+    r2 = client.put(
+        f"/api/v1/employees/{staff_emp.id}/education/{edu_id}",
+        headers=hr_headers,
+        json={"start_date": "2022-01-01"},
+    )
+    assert r2.status_code == 422, (
+        f"Expected 422 for edu start after stored end, got {r2.status_code}: {r2.text}"
+    )
+    assert r2.json()["error"]["code"] == "validation_error"
+
+    # Edu case 3: future start_date -> 422
+    r3 = client.put(
+        f"/api/v1/employees/{staff_emp.id}/education/{edu_id}",
+        headers=hr_headers,
+        json={"start_date": "2030-01-01"},
+    )
+    assert r3.status_code == 422, (
+        f"Expected 422 for future edu start, got {r3.status_code}: {r3.text}"
+    )
+    assert r3.json()["error"]["code"] == "validation_error"
+
+    # Edu case 4: future end_date -> 422
+    r4 = client.put(
+        f"/api/v1/employees/{staff_emp.id}/education/{edu_id}",
+        headers=hr_headers,
+        json={"end_date": "2030-01-01"},
+    )
+    assert r4.status_code == 422, (
+        f"Expected 422 for future edu end, got {r4.status_code}: {r4.text}"
+    )
+    assert r4.json()["error"]["code"] == "validation_error"
+
+    # 2. Create baseline experience entry (start=2020-01-01, end=2022-01-01)
+    res_exp = client.post(
+        f"/api/v1/employees/{staff_emp.id}/experience",
+        headers=hr_headers,
+        json={
+            "employer": "Baseline Corp",
+            "job_title": "Engineer",
+            "start_date": "2020-01-01",
+            "end_date": "2022-01-01",
+        },
+    )
+    assert res_exp.status_code == 201
+    exp_id = res_exp.json()["id"]
+
+    # Exp case 1: end_date before stored start_date -> 422
+    rx1 = client.put(
+        f"/api/v1/employees/{staff_emp.id}/experience/{exp_id}",
+        headers=hr_headers,
+        json={"end_date": "2019-01-01"},
+    )
+    assert rx1.status_code == 422, (
+        f"Expected 422 for exp end before stored start, got {rx1.status_code}: {rx1.text}"
+    )
+    assert rx1.json()["error"]["code"] == "validation_error"
+
+    # Exp case 2: start_date after stored end_date -> 422
+    rx2 = client.put(
+        f"/api/v1/employees/{staff_emp.id}/experience/{exp_id}",
+        headers=hr_headers,
+        json={"start_date": "2023-01-01"},
+    )
+    assert rx2.status_code == 422, (
+        f"Expected 422 for exp start after stored end, got {rx2.status_code}: {rx2.text}"
+    )
+    assert rx2.json()["error"]["code"] == "validation_error"
+
+    # Exp case 3: future start_date -> 422
+    rx3 = client.put(
+        f"/api/v1/employees/{staff_emp.id}/experience/{exp_id}",
+        headers=hr_headers,
+        json={"start_date": "2030-01-01"},
+    )
+    assert rx3.status_code == 422, (
+        f"Expected 422 for future exp start, got {rx3.status_code}: {rx3.text}"
+    )
+    assert rx3.json()["error"]["code"] == "validation_error"
+
+    # Exp case 4: future end_date -> 422
+    rx4 = client.put(
+        f"/api/v1/employees/{staff_emp.id}/experience/{exp_id}",
+        headers=hr_headers,
+        json={"end_date": "2030-01-01"},
+    )
+    assert rx4.status_code == 422, (
+        f"Expected 422 for future exp end, got {rx4.status_code}: {rx4.text}"
+    )
+    assert rx4.json()["error"]["code"] == "validation_error"
+
+
+def test_f4_utc_today_and_tomorrow_date_checks(
+    client: TestClient, profile_company: dict[str, Any]
+) -> None:
+    """F4: Test with date equal to tomorrow (UTC) gives 422
+    and date equal to today (UTC) gives 201.
+    """
+    from datetime import timedelta
+
+    from app.core.time import utcnow
+
+    staff_emp = profile_company["emp_staff"]
+    hr_headers = _auth_headers(profile_company["hr_admin"])
+    today_utc = utcnow().date()
+    tomorrow_utc = today_utc + timedelta(days=1)
+
+    # Tomorrow gives 422
+    res_tomorrow = client.post(
+        f"/api/v1/employees/{staff_emp.id}/experience",
+        headers=hr_headers,
+        json={
+            "employer": "Tomorrow Corp",
+            "job_title": "Engineer",
+            "start_date": tomorrow_utc.isoformat(),
+        },
+    )
+    assert res_tomorrow.status_code == 422
+    assert res_tomorrow.json()["error"]["code"] == "validation_error"
+
+    # Today gives 201
+    res_today = client.post(
+        f"/api/v1/employees/{staff_emp.id}/experience",
+        headers=hr_headers,
+        json={
+            "employer": "Today Corp",
+            "job_title": "Engineer",
+            "start_date": today_utc.isoformat(),
+        },
+    )
+    assert res_today.status_code == 201
+
+
+def test_f2_repository_filters_cross_company_entry_as_platform_admin(
+    db: Session, profile_company: dict[str, Any]
+) -> None:
+    """F2: Test that get_entry and get_entry_for_update return None when passed
+    Company B's entry id along with Company A's id and Company A's employee id,
+    even under a platform admin session (bypassing RLS).
+    """
+    from app.modules.hr.models import (
+        EmployeeAddress,
+        EmployeeEducation,
+        EmployeeEmergencyContact,
+        EmployeeExperience,
+        EmployeeSkill,
+    )
+    from app.modules.hr.repository import EmployeeSectionRepository
+    from tests.conftest import _make_tenant
+
+    cid_a = profile_company["company"].id
+
+    code_b = f"F2TB{uuid.uuid4().hex[:4].upper()}"
+    tenant_b = _make_tenant(db, name="Company F2 B", code=code_b)
+    cid_b = tenant_b.company_id
+    emp_b = Employee(
+        id=uuid.uuid4(),
+        company_id=cid_b,
+        employee_code=f"{code_b}-0001",
+        first_name="StaffB",
+        last_name="Tester",
+        email=f"staffb_{uuid.uuid4().hex[:6]}@b.com",
+        hire_date=date(2024, 1, 1),
+    )
+    db.add(emp_b)
+    db.flush()
+
+    # Seed Company B entries
+    b_addr = EmployeeAddress(
+        id=uuid.uuid4(),
+        company_id=cid_b,
+        employee_id=emp_b.id,
+        kind="current",
+        line1="B1",
+        city="C1",
+        country="India",
+    )
+    b_cont = EmployeeEmergencyContact(
+        id=uuid.uuid4(),
+        company_id=cid_b,
+        employee_id=emp_b.id,
+        name="BC",
+        relationship="Friend",
+        phone="+1987654321",
+    )
+    b_skill = EmployeeSkill(
+        id=uuid.uuid4(), company_id=cid_b, employee_id=emp_b.id, name="BSkill", level="beginner"
+    )
+    b_edu = EmployeeEducation(
+        id=uuid.uuid4(),
+        company_id=cid_b,
+        employee_id=emp_b.id,
+        institution="BUniv",
+        degree="BSc",
+        start_date=date(2020, 1, 1),
+    )
+    b_exp = EmployeeExperience(
+        id=uuid.uuid4(),
+        company_id=cid_b,
+        employee_id=emp_b.id,
+        employer="BComp",
+        job_title="Dev",
+        start_date=date(2021, 1, 1),
+    )
+    db.add_all([b_addr, b_cont, b_skill, b_edu, b_exp])
+    db.commit()
+
+    # Session bound as platform admin (RLS disabled)
+    bind_tenant_to_session(db, company_id=cid_a, is_platform_admin=True)
+
+    repo = EmployeeSectionRepository(db)
+    sections_and_entries = [
+        ("addresses", b_addr.id),
+        ("emergency-contacts", b_cont.id),
+        ("skills", b_skill.id),
+        ("education", b_edu.id),
+        ("experience", b_exp.id),
+    ]
+
+    for sec, b_entry_id in sections_and_entries:
+        assert repo.get_entry(sec, emp_b.id, b_entry_id, cid_a) is None, (
+            f"Expected get_entry({sec}) to return None for Company B entry!"
+        )
+        assert repo.get_entry_for_update(sec, emp_b.id, b_entry_id, cid_a) is None, (
+            f"Expected get_entry_for_update({sec}) to return None for Company B entry!"
+        )
+
+
 @pytest.mark.parametrize("route_type,path_template,method", RATE_LIMIT_CASES)
 def test_r10_a3_rate_limiting_exact_30_per_min(
     client: TestClient,

@@ -358,10 +358,10 @@ class EmployeeSectionRepository:
         self, section: str, employee_id: uuid.UUID, entry_id: uuid.UUID, company_id: uuid.UUID
     ) -> Any | None:
         model = self.get_model(section)
-        # MUTATION F: drop company filter
         stmt = select(model).where(
             model.id == entry_id,
             model.employee_id == employee_id,
+            model.company_id == company_id,
             model.deleted_at.is_(None),
         )
         return self.db.scalar(stmt)
@@ -370,12 +370,12 @@ class EmployeeSectionRepository:
         self, section: str, employee_id: uuid.UUID, entry_id: uuid.UUID, company_id: uuid.UUID
     ) -> Any | None:
         model = self.get_model(section)
-        # MUTATION F: drop company filter
         stmt = (
             select(model)
             .where(
                 model.id == entry_id,
                 model.employee_id == employee_id,
+                model.company_id == company_id,
                 model.deleted_at.is_(None),
             )
             .with_for_update()

@@ -1420,6 +1420,51 @@ class EmployeeSectionService:
             if existing_skill and existing_skill.id != entry.id:
                 raise ConflictError(f"Skill '{data['name']}' already exists.")
 
+        # Effective date validation for education and experience
+        if section in ("education", "experience"):
+            from fastapi.exceptions import RequestValidationError
+
+            today_utc = utcnow().date()
+            effective_start = data.get("start_date", getattr(entry, "start_date", None))
+            effective_end = data.get("end_date", getattr(entry, "end_date", None))
+
+            errors = []
+            if (
+                "start_date" in data
+                and data["start_date"] is not None
+                and data["start_date"] > today_utc
+            ):
+                errors.append(
+                    {
+                        "type": "value_error",
+                        "loc": ("body", "start_date"),
+                        "msg": "Date cannot be in the future.",
+                        "input": str(data["start_date"]),
+                    }
+                )
+            if "end_date" in data and data["end_date"] is not None and data["end_date"] > today_utc:
+                errors.append(
+                    {
+                        "type": "value_error",
+                        "loc": ("body", "end_date"),
+                        "msg": "Date cannot be in the future.",
+                        "input": str(data["end_date"]),
+                    }
+                )
+            if effective_start and effective_end and effective_end < effective_start:
+                bad_loc = "end_date" if "end_date" in data else "start_date"
+                errors.append(
+                    {
+                        "type": "value_error",
+                        "loc": ("body", bad_loc),
+                        "msg": "end_date cannot be earlier than start_date.",
+                        "input": str(data.get(bad_loc)),
+                    }
+                )
+
+            if errors:
+                raise RequestValidationError(errors=errors)
+
         # Determine real changes
         changed_fields: list[str] = []
         for k, v in data.items():

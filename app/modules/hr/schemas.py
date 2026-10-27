@@ -13,6 +13,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.core.time import utcnow
 from app.modules.hr.models import EmploymentType, InvitationStatus
 
 
@@ -661,7 +662,7 @@ class EmployeeEducationCreate(BaseModel):
     @field_validator("start_date", "end_date")
     @classmethod
     def check_dates_not_future(cls, v: date | None) -> date | None:
-        if v is not None and v > date.today():
+        if v is not None and v > utcnow().date():
             raise ValueError("Date cannot be in the future.")
         return v
 
@@ -697,7 +698,7 @@ class EmployeeEducationUpdate(BaseModel):
     @field_validator("start_date", "end_date")
     @classmethod
     def check_dates_not_future(cls, v: date | None) -> date | None:
-        if v is not None and v > date.today():
+        if v is not None and v > utcnow().date():
             raise ValueError("Date cannot be in the future.")
         return v
 
@@ -759,7 +760,7 @@ class EmployeeExperienceCreate(BaseModel):
     @field_validator("start_date", "end_date")
     @classmethod
     def check_dates_not_future(cls, v: date | None) -> date | None:
-        if v is not None and v > date.today():
+        if v is not None and v > utcnow().date():
             raise ValueError("Date cannot be in the future.")
         return v
 
@@ -794,7 +795,7 @@ class EmployeeExperienceUpdate(BaseModel):
     @field_validator("start_date", "end_date")
     @classmethod
     def check_dates_not_future(cls, v: date | None) -> date | None:
-        if v is not None and v > date.today():
+        if v is not None and v > utcnow().date():
             raise ValueError("Date cannot be in the future.")
         return v
 
