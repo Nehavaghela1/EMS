@@ -387,3 +387,444 @@ class FnFSettlementResponse(BaseModel):
     resignation_status: str = "none"
     is_active: bool = True
     total_settlement_amount: Decimal
+
+
+# ---------------------------------------------------------------------------
+# Section Schemas: addresses, emergency-contacts, skills, education, experience
+# ---------------------------------------------------------------------------
+
+
+def _strip_str(v: Any) -> Any:
+    if isinstance(v, str):
+        s = v.strip()
+        return s
+    return v
+
+
+# 1. Addresses
+class EmployeeAddressCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["current", "permanent"]
+    line1: str = Field(..., min_length=1, max_length=200)
+    line2: str | None = Field(default=None, max_length=200)
+    city: str = Field(..., min_length=1, max_length=100)
+    state: str | None = Field(default=None, max_length=100)
+    postal_code: str | None = Field(default=None, max_length=20)
+    country: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("line1", "line2", "city", "state", "postal_code", "country", mode="before")
+    @classmethod
+    def strip_and_validate(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("String field cannot be empty.")
+            return s
+        return v
+
+
+class EmployeeAddressUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["current", "permanent"] | None = None
+    line1: str | None = Field(default=None, min_length=1, max_length=200)
+    line2: str | None = Field(default=None, max_length=200)
+    city: str | None = Field(default=None, min_length=1, max_length=100)
+    state: str | None = Field(default=None, max_length=100)
+    postal_code: str | None = Field(default=None, max_length=20)
+    country: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator("line1", "line2", "city", "state", "postal_code", "country", mode="before")
+    @classmethod
+    def strip_and_validate(cls, v: Any) -> Any:
+        if v is None:
+            raise ValueError("Field cannot be null.")
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("String field cannot be empty.")
+            return s
+        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_not_empty(cls, data: Any) -> Any:
+        if isinstance(data, dict) and not data:
+            raise ValueError("Update body cannot be empty.")
+        return data
+
+
+class EmployeeAddressResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    company_id: uuid.UUID
+    kind: str
+    line1: str
+    line2: str | None = None
+    city: str
+    state: str | None = None
+    postal_code: str | None = None
+    country: str
+    created_at: datetime
+    updated_at: datetime
+
+
+# 2. Emergency Contacts
+class EmployeeEmergencyContactCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=100)
+    relationship: str = Field(..., min_length=1, max_length=100)
+    phone: str = Field(..., min_length=1, max_length=30)
+    alt_phone: str | None = Field(default=None, max_length=30)
+    email: EmailStr | None = None
+
+    @field_validator("name", "relationship", mode="before")
+    @classmethod
+    def strip_text(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("Text field cannot be empty.")
+            return s
+        return v
+
+    @field_validator("phone", "alt_phone", mode="before")
+    @classmethod
+    def validate_phone_field(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("Phone cannot be empty.")
+            # Allowed characters: digits, +, -, space, (, )
+            import re
+
+            if not re.match(r"^[0-9+\-\s()]+$", s) or not re.search(r"\d", s):
+                raise ValueError("Invalid phone format.")
+            return s
+        return v
+
+
+class EmployeeEmergencyContactUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    relationship: str | None = Field(default=None, min_length=1, max_length=100)
+    phone: str | None = Field(default=None, min_length=1, max_length=30)
+    alt_phone: str | None = Field(default=None, max_length=30)
+    email: EmailStr | None = None
+
+    @field_validator("name", "relationship", mode="before")
+    @classmethod
+    def strip_text(cls, v: Any) -> Any:
+        if v is None:
+            raise ValueError("Field cannot be null.")
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("Text field cannot be empty.")
+            return s
+        return v
+
+    @field_validator("phone", "alt_phone", mode="before")
+    @classmethod
+    def validate_phone_field(cls, v: Any) -> Any:
+        if v is None:
+            raise ValueError("Field cannot be null.")
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("Phone cannot be empty.")
+            import re
+
+            if not re.match(r"^[0-9+\-\s()]+$", s) or not re.search(r"\d", s):
+                raise ValueError("Invalid phone format.")
+            return s
+        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_not_empty(cls, data: Any) -> Any:
+        if isinstance(data, dict) and not data:
+            raise ValueError("Update body cannot be empty.")
+        return data
+
+
+class EmployeeEmergencyContactResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    company_id: uuid.UUID
+    name: str
+    relationship: str
+    phone: str
+    alt_phone: str | None = None
+    email: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# 3. Skills
+class EmployeeSkillCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=80)
+    level: Literal["beginner", "intermediate", "advanced", "expert"]
+    years_experience: int | None = Field(default=None, ge=0, le=60)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("Skill name cannot be empty.")
+            return s
+        return v
+
+
+class EmployeeSkillUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    level: Literal["beginner", "intermediate", "advanced", "expert"] | None = None
+    years_experience: int | None = Field(default=None, ge=0, le=60)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, v: Any) -> Any:
+        if v is None:
+            raise ValueError("Field cannot be null.")
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("Skill name cannot be empty.")
+            return s
+        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_not_empty(cls, data: Any) -> Any:
+        if isinstance(data, dict) and not data:
+            raise ValueError("Update body cannot be empty.")
+        return data
+
+
+class EmployeeSkillResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    company_id: uuid.UUID
+    name: str
+    level: str
+    years_experience: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# 4. Education
+class EmployeeEducationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    institution: str = Field(..., min_length=1, max_length=150)
+    degree: str = Field(..., min_length=1, max_length=150)
+    field_of_study: str | None = Field(default=None, max_length=150)
+    start_date: date
+    end_date: date | None = None
+    grade: str | None = Field(default=None, max_length=50)
+
+    @field_validator("institution", "degree", "field_of_study", "grade", mode="before")
+    @classmethod
+    def strip_text(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("Field cannot be empty.")
+            return s
+        return v
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def check_dates_not_future(cls, v: date | None) -> date | None:
+        if v is not None and v > date.today():
+            raise ValueError("Date cannot be in the future.")
+        return v
+
+    @model_validator(mode="after")
+    def check_end_after_start(self) -> "EmployeeEducationCreate":
+        if self.end_date and self.start_date and self.end_date < self.start_date:
+            raise ValueError("end_date cannot be earlier than start_date.")
+        return self
+
+
+class EmployeeEducationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    institution: str | None = Field(default=None, min_length=1, max_length=150)
+    degree: str | None = Field(default=None, min_length=1, max_length=150)
+    field_of_study: str | None = Field(default=None, max_length=150)
+    start_date: date | None = None
+    end_date: date | None = None
+    grade: str | None = Field(default=None, max_length=50)
+
+    @field_validator("institution", "degree", "field_of_study", "grade", mode="before")
+    @classmethod
+    def strip_text(cls, v: Any) -> Any:
+        if v is None:
+            raise ValueError("Field cannot be null.")
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("Field cannot be empty.")
+            return s
+        return v
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def check_dates_not_future(cls, v: date | None) -> date | None:
+        if v is not None and v > date.today():
+            raise ValueError("Date cannot be in the future.")
+        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_not_empty(cls, data: Any) -> Any:
+        if isinstance(data, dict) and not data:
+            raise ValueError("Update body cannot be empty.")
+        return data
+
+    @model_validator(mode="after")
+    def check_end_after_start(self) -> "EmployeeEducationUpdate":
+        if self.end_date and self.start_date and self.end_date < self.start_date:
+            raise ValueError("end_date cannot be earlier than start_date.")
+        return self
+
+
+class EmployeeEducationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    company_id: uuid.UUID
+    institution: str
+    degree: str
+    field_of_study: str | None = None
+    start_date: date
+    end_date: date | None = None
+    grade: str | None = None
+    verification_status: str
+    verified_by: uuid.UUID | None = None
+    verified_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# 5. Experience
+class EmployeeExperienceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employer: str = Field(..., min_length=1, max_length=150)
+    job_title: str = Field(..., min_length=1, max_length=150)
+    start_date: date
+    end_date: date | None = None
+    description: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("employer", "job_title", "description", mode="before")
+    @classmethod
+    def strip_text(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("Field cannot be empty.")
+            return s
+        return v
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def check_dates_not_future(cls, v: date | None) -> date | None:
+        if v is not None and v > date.today():
+            raise ValueError("Date cannot be in the future.")
+        return v
+
+    @model_validator(mode="after")
+    def check_end_after_start(self) -> "EmployeeExperienceCreate":
+        if self.end_date and self.start_date and self.end_date < self.start_date:
+            raise ValueError("end_date cannot be earlier than start_date.")
+        return self
+
+
+class EmployeeExperienceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employer: str | None = Field(default=None, min_length=1, max_length=150)
+    job_title: str | None = Field(default=None, min_length=1, max_length=150)
+    start_date: date | None = None
+    end_date: date | None = None
+    description: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("employer", "job_title", "description", mode="before")
+    @classmethod
+    def strip_text(cls, v: Any) -> Any:
+        if v is None:
+            raise ValueError("Field cannot be null.")
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("Field cannot be empty.")
+            return s
+        return v
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def check_dates_not_future(cls, v: date | None) -> date | None:
+        if v is not None and v > date.today():
+            raise ValueError("Date cannot be in the future.")
+        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_not_empty(cls, data: Any) -> Any:
+        if isinstance(data, dict) and not data:
+            raise ValueError("Update body cannot be empty.")
+        return data
+
+    @model_validator(mode="after")
+    def check_end_after_start(self) -> "EmployeeExperienceUpdate":
+        if self.end_date and self.start_date and self.end_date < self.start_date:
+            raise ValueError("end_date cannot be earlier than start_date.")
+        return self
+
+
+class EmployeeExperienceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    company_id: uuid.UUID
+    employer: str
+    job_title: str
+    start_date: date
+    end_date: date | None = None
+    description: str | None = None
+    verification_status: str
+    verified_by: uuid.UUID | None = None
+    verified_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime

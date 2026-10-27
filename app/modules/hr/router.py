@@ -1,6 +1,8 @@
 import uuid
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,10 +14,25 @@ from app.modules.hr.schemas import (
     DepartmentCreateRequest,
     DepartmentResponse,
     DepartmentUpdateRequest,
+    EmployeeAddressCreate,
+    EmployeeAddressResponse,
+    EmployeeAddressUpdate,
     EmployeeCreateRequest,
     EmployeeCreateResponse,
+    EmployeeEducationCreate,
+    EmployeeEducationResponse,
+    EmployeeEducationUpdate,
+    EmployeeEmergencyContactCreate,
+    EmployeeEmergencyContactResponse,
+    EmployeeEmergencyContactUpdate,
+    EmployeeExperienceCreate,
+    EmployeeExperienceResponse,
+    EmployeeExperienceUpdate,
     EmployeeInviteInfo,
     EmployeeResponse,
+    EmployeeSkillCreate,
+    EmployeeSkillResponse,
+    EmployeeSkillUpdate,
     EmployeeUpdateRequest,
     FnFClearanceUpdateRequest,
     FnFSettlementResponse,
@@ -24,7 +41,11 @@ from app.modules.hr.schemas import (
     ResignationSubmitRequest,
     TerminationRequest,
 )
-from app.modules.hr.service import DepartmentService, EmployeeService
+from app.modules.hr.service import (
+    DepartmentService,
+    EmployeeSectionService,
+    EmployeeService,
+)
 from app.modules.identity.models import Company, User, UserRole
 
 departments_router = APIRouter(prefix="/departments", tags=["Departments"])
@@ -424,3 +445,177 @@ def update_fnf_clearance(
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
 ):
     return EmployeeService(db).update_fnf_clearance(user.company_id, employee_id, data, user)
+
+
+# ---------------------------------------------------------------------------
+# Section Routes: addresses, emergency-contacts, skills, education, experience
+# ---------------------------------------------------------------------------
+
+SECTION_CREATE_SCHEMAS: dict[str, type[BaseModel]] = {
+    "addresses": EmployeeAddressCreate,
+    "emergency-contacts": EmployeeEmergencyContactCreate,
+    "skills": EmployeeSkillCreate,
+    "education": EmployeeEducationCreate,
+    "experience": EmployeeExperienceCreate,
+}
+
+SECTION_UPDATE_SCHEMAS: dict[str, type[BaseModel]] = {
+    "addresses": EmployeeAddressUpdate,
+    "emergency-contacts": EmployeeEmergencyContactUpdate,
+    "skills": EmployeeSkillUpdate,
+    "education": EmployeeEducationUpdate,
+    "experience": EmployeeExperienceUpdate,
+}
+
+SECTION_RESPONSE_SCHEMAS: dict[str, type[BaseModel]] = {
+    "addresses": EmployeeAddressResponse,
+    "emergency-contacts": EmployeeEmergencyContactResponse,
+    "skills": EmployeeSkillResponse,
+    "education": EmployeeEducationResponse,
+    "experience": EmployeeExperienceResponse,
+}
+
+
+@employees_router.get("/{employee_id}/{section}")
+def list_employee_section_entries(
+    employee_id: uuid.UUID,
+    section: str,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    entries = EmployeeSectionService(db).list_entries(user.company_id, employee_id, section, user)
+    resp_cls = SECTION_RESPONSE_SCHEMAS.get(section)
+    if resp_cls:
+        return [resp_cls.model_validate(e).model_dump(mode="json") for e in entries]
+    return entries
+
+
+@employees_router.post("/{employee_id}/{section}", status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+async def create_employee_section_entry(
+    request: Request,
+    employee_id: uuid.UUID,
+    section: str,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    schema_cls = SECTION_CREATE_SCHEMAS.get(section)
+    if not schema_cls:
+        from app.core.exceptions import NotFoundError
+
+        raise NotFoundError(f"Section {section} not found.")
+
+    raw_body = await request.json()
+    try:
+        validated = schema_cls.model_validate(raw_body)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+    entry = EmployeeSectionService(db).create_entry(
+        user.company_id, employee_id, section, validated.model_dump(mode="python"), user
+    )
+    resp_cls = SECTION_RESPONSE_SCHEMAS[section]
+    return resp_cls.model_validate(entry).model_dump(mode="json")
+
+
+@employees_router.put("/{employee_id}/{section}/{entry_id}")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+async def update_employee_section_entry(
+    request: Request,
+    employee_id: uuid.UUID,
+    section: str,
+    entry_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    schema_cls = SECTION_UPDATE_SCHEMAS.get(section)
+    if not schema_cls:
+        from app.core.exceptions import NotFoundError
+
+        raise NotFoundError(f"Section {section} not found.")
+
+    raw_body = await request.json()
+    try:
+        validated = schema_cls.model_validate(raw_body)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+    # Exclude unset fields so partial updates only change specified keys
+    data = validated.model_dump(exclude_unset=True, mode="python")
+    entry = EmployeeSectionService(db).update_entry(
+        user.company_id, employee_id, section, entry_id, data, user
+    )
+    resp_cls = SECTION_RESPONSE_SCHEMAS[section]
+    return resp_cls.model_validate(entry).model_dump(mode="json")
+
+
+@employees_router.delete("/{employee_id}/{section}/{entry_id}", status_code=204)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def delete_employee_section_entry(
+    request: Request,
+    employee_id: uuid.UUID,
+    section: str,
+    entry_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    EmployeeSectionService(db).delete_entry(user.company_id, employee_id, section, entry_id, user)
+    return None
+
+
+@employees_router.post("/{employee_id}/education/{entry_id}/verify")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def verify_education_entry(
+    request: Request,
+    employee_id: uuid.UUID,
+    entry_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    entry = EmployeeSectionService(db).set_verification(
+        user.company_id, employee_id, "education", entry_id, verified=True, actor=user
+    )
+    return EmployeeEducationResponse.model_validate(entry).model_dump(mode="json")
+
+
+@employees_router.post("/{employee_id}/education/{entry_id}/unverify")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def unverify_education_entry(
+    request: Request,
+    employee_id: uuid.UUID,
+    entry_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    entry = EmployeeSectionService(db).set_verification(
+        user.company_id, employee_id, "education", entry_id, verified=False, actor=user
+    )
+    return EmployeeEducationResponse.model_validate(entry).model_dump(mode="json")
+
+
+@employees_router.post("/{employee_id}/experience/{entry_id}/verify")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def verify_experience_entry(
+    request: Request,
+    employee_id: uuid.UUID,
+    entry_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    entry = EmployeeSectionService(db).set_verification(
+        user.company_id, employee_id, "experience", entry_id, verified=True, actor=user
+    )
+    return EmployeeExperienceResponse.model_validate(entry).model_dump(mode="json")
+
+
+@employees_router.post("/{employee_id}/experience/{entry_id}/unverify")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def unverify_experience_entry(
+    request: Request,
+    employee_id: uuid.UUID,
+    entry_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    entry = EmployeeSectionService(db).set_verification(
+        user.company_id, employee_id, "experience", entry_id, verified=False, actor=user
+    )
+    return EmployeeExperienceResponse.model_validate(entry).model_dump(mode="json")

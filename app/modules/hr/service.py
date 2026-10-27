@@ -28,7 +28,11 @@ from app.modules.hr.models import (
     InvitationStatus,
     ResignationStatus,
 )
-from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
+from app.modules.hr.repository import (
+    DepartmentRepository,
+    EmployeeRepository,
+    EmployeeSectionRepository,
+)
 from app.modules.hr.schemas import (
     DepartmentCreateRequest,
     DepartmentUpdateRequest,
@@ -1242,3 +1246,303 @@ class EmployeeService:
             self.db.commit()
 
         return self._calculate_fnf(company_id, employee_id)
+
+
+class EmployeeSectionService:
+    """Service handling profile sections:
+    addresses, emergency-contacts, skills, education, experience.
+    """
+
+    VALID_SECTIONS = {"addresses", "emergency-contacts", "skills", "education", "experience"}
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.repo = EmployeeSectionRepository(db)
+        self.emp_repo = EmployeeRepository(db)
+        self.audit = AuditService(db)
+
+    def _get_and_check_employee(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        actor: User,
+        *,
+        is_write: bool = False,
+        section: str = "",
+        lock_employee: bool = False,
+    ) -> Employee:
+        if section not in self.VALID_SECTIONS:
+            raise NotFoundError(f"Section {section} not found.")
+
+        # If actor's company is different, return 404
+        if actor.role != UserRole.super_admin and actor.company_id != company_id:
+            raise NotFoundError("Employee not found.")
+
+        # Load employee row (with row lock if requested)
+        if lock_employee:
+            employee = self.emp_repo.get_by_id_for_update(
+                employee_id, company_id, allow_inactive=True
+            )
+        else:
+            employee = self.emp_repo.get_by_id_any_status(employee_id, company_id)
+
+        if not employee:
+            raise NotFoundError("Employee not found.")
+
+        is_hr_or_owner = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        is_own = employee.user_id is not None and employee.user_id == actor.id
+
+        # Non-HR / non-owner:
+        if not is_hr_or_owner:
+            # Own record check
+            if is_own:
+                # Deactivated own record cannot read or write
+                if not employee.is_active:
+                    raise ForbiddenError(
+                        "Deactivated employees cannot view or edit profile sections."
+                    )
+                return employee
+
+            # If not own record:
+            if actor.role == UserRole.manager:
+                # Manager writes are ALWAYS forbidden
+                if is_write:
+                    raise ForbiddenError("Managers cannot modify section entries for reports.")
+                # Manager reads: ONLY skills section of a direct report
+                if section != "skills":
+                    raise ForbiddenError(f"Managers cannot access {section} of direct reports.")
+                # Check if employee is a direct report
+                mgr_emp = self.emp_repo.get_by_user_id(company_id, actor.id)
+                if not mgr_emp or employee.reporting_manager_id != mgr_emp.id:
+                    raise ForbiddenError("Employee is not a direct report.")
+                return employee
+
+            # Normal employee reading/writing colleague: 403
+            raise ForbiddenError("Employees can only view and edit their own profile.")
+
+        return employee
+
+    def list_entries(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, section: str, actor: User
+    ) -> list[Any]:
+        self._get_and_check_employee(
+            company_id, employee_id, actor, is_write=False, section=section
+        )
+        return self.repo.list_entries(section, employee_id, company_id)
+
+    def create_entry(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        section: str,
+        data: dict[str, Any],
+        actor: User,
+    ) -> Any:
+        # Lock employee row to serialize creates and enforce entry cap atomically
+        self._get_and_check_employee(
+            company_id, employee_id, actor, is_write=True, section=section, lock_employee=True
+        )
+
+        # Enforce entry caps
+        max_cap = 2 if section == "addresses" else 20
+        current_count = self.repo.count_entries(section, employee_id, company_id)
+        if current_count >= max_cap:
+            raise ConflictError(f"Maximum limit of {max_cap} entries reached for {section}.")
+
+        # Section specific uniqueness checks
+        if section == "addresses":
+            kind = data.get("kind")
+            if kind and self.repo.find_address_by_kind(employee_id, company_id, kind):
+                raise ConflictError(f"An address with kind '{kind}' already exists.")
+        elif section == "skills":
+            name = data.get("name")
+            if name and self.repo.find_skill_by_lower_name(employee_id, company_id, name):
+                raise ConflictError(f"Skill '{name}' already exists.")
+
+        # Default verification for education/experience
+        create_kwargs = dict(data)
+        if section in ("education", "experience"):
+            create_kwargs["verification_status"] = "unverified"
+            create_kwargs["verified_by"] = None
+            create_kwargs["verified_at"] = None
+
+        entry = self.repo.create_entry(
+            section,
+            company_id=company_id,
+            employee_id=employee_id,
+            **create_kwargs,
+        )
+
+        # Audit row
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEE_ENTRY_CREATED",
+            entity_type=section,
+            entity_id=employee_id,
+            details={"section": section, "entry_id": str(entry.id)},
+        )
+        self.db.commit()
+        return entry
+
+    def update_entry(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        section: str,
+        entry_id: uuid.UUID,
+        data: dict[str, Any],
+        actor: User,
+    ) -> Any:
+        self._get_and_check_employee(company_id, employee_id, actor, is_write=True, section=section)
+
+        entry = self.repo.get_entry_for_update(
+            section, employee_id=employee_id, entry_id=entry_id, company_id=company_id
+        )
+        if not entry:
+            raise NotFoundError(f"Entry {entry_id} not found in {section}.")
+
+        is_hr_or_owner = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+
+        # Uniqueness checks on update
+        if section == "addresses" and "kind" in data and data["kind"] != entry.kind:
+            existing_addr = self.repo.find_address_by_kind(employee_id, company_id, data["kind"])
+            if existing_addr and existing_addr.id != entry.id:
+                raise ConflictError(f"An address with kind '{data['kind']}' already exists.")
+        elif (
+            section == "skills"
+            and "name" in data
+            and data["name"].strip().lower() != entry.name.strip().lower()
+        ):
+            existing_skill = self.repo.find_skill_by_lower_name(
+                employee_id, company_id, data["name"]
+            )
+            if existing_skill and existing_skill.id != entry.id:
+                raise ConflictError(f"Skill '{data['name']}' already exists.")
+
+        # Determine real changes
+        changed_fields: list[str] = []
+        for k, v in data.items():
+            if hasattr(entry, k):
+                curr = getattr(entry, k)
+                if curr != v:
+                    changed_fields.append(k)
+
+        if not changed_fields:
+            # No-op update: do not write audit log
+            return entry
+
+        # Apply updates
+        for k in changed_fields:
+            setattr(entry, k, data[k])
+
+        # If an employee (non-HR/owner) edits a verified education/experience entry,
+        # reset to unverified
+        if section in ("education", "experience") and not is_hr_or_owner:
+            if entry.verification_status != "unverified":
+                entry.verification_status = "unverified"
+                entry.verified_by = None
+                entry.verified_at = None
+                if "verification_status" not in changed_fields:
+                    changed_fields.append("verification_status")
+
+        entry.updated_at = utcnow()
+        self.db.flush()
+
+        # Audit row
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEE_ENTRY_UPDATED",
+            entity_type=section,
+            entity_id=employee_id,
+            details={
+                "section": section,
+                "entry_id": str(entry.id),
+                "changed_fields": sorted(changed_fields),
+            },
+        )
+        self.db.commit()
+        return entry
+
+    def delete_entry(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        section: str,
+        entry_id: uuid.UUID,
+        actor: User,
+    ) -> None:
+        self._get_and_check_employee(company_id, employee_id, actor, is_write=True, section=section)
+
+        entry = self.repo.get_entry_for_update(
+            section, employee_id=employee_id, entry_id=entry_id, company_id=company_id
+        )
+        if not entry:
+            raise NotFoundError(f"Entry {entry_id} not found in {section}.")
+
+        self.repo.soft_delete_entry(entry)
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEE_ENTRY_DELETED",
+            entity_type=section,
+            entity_id=employee_id,
+            details={"section": section, "entry_id": str(entry.id)},
+        )
+        self.db.commit()
+
+    def set_verification(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        section: str,
+        entry_id: uuid.UUID,
+        *,
+        verified: bool,
+        actor: User,
+    ) -> Any:
+        if section not in ("education", "experience"):
+            raise NotFoundError(f"Verification not supported for section {section}.")
+
+        # Strictly HR admin or Owner
+        if actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+            raise ForbiddenError("Only HR admin or owner can verify entries.")
+
+        # Employee check (must belong to same company)
+        if actor.role != UserRole.super_admin and actor.company_id != company_id:
+            raise NotFoundError("Employee not found.")
+
+        employee = self.emp_repo.get_by_id_any_status(employee_id, company_id)
+        if not employee:
+            raise NotFoundError("Employee not found.")
+
+        entry = self.repo.get_entry_for_update(
+            section, employee_id=employee_id, entry_id=entry_id, company_id=company_id
+        )
+        if not entry:
+            raise NotFoundError(f"Entry {entry_id} not found in {section}.")
+
+        new_status = "verified" if verified else "unverified"
+        if entry.verification_status == new_status:
+            # Idempotent: no-op, no second audit row
+            return entry
+
+        entry.verification_status = new_status
+        entry.verified_by = actor.id if verified else None
+        entry.verified_at = utcnow() if verified else None
+        entry.updated_at = utcnow()
+        self.db.flush()
+
+        action = "EMPLOYEE_ENTRY_VERIFIED" if verified else "EMPLOYEE_ENTRY_UNVERIFIED"
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action=action,
+            entity_type=section,
+            entity_id=employee_id,
+            details={"section": section, "entry_id": str(entry.id)},
+        )
+        self.db.commit()
+        return entry
