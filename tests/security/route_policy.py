@@ -141,6 +141,14 @@ POLICY: dict[tuple[str, str], Any] = {
     ("DELETE", "/api/v1/employees/{employee_id}"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("GET", "/api/v1/employees/{employee_id}"): AUTHENTICATED,
     ("PUT", "/api/v1/employees/{employee_id}"): AUTHENTICATED,
+    ("GET", "/api/v1/employees/{employee_id}/{section}"): AUTHENTICATED,
+    ("POST", "/api/v1/employees/{employee_id}/{section}"): AUTHENTICATED,
+    ("PUT", "/api/v1/employees/{employee_id}/{section}/{entry_id}"): AUTHENTICATED,
+    ("DELETE", "/api/v1/employees/{employee_id}/{section}/{entry_id}"): AUTHENTICATED,
+    ("POST", "/api/v1/employees/{employee_id}/education/{entry_id}/verify"): AUTHENTICATED,
+    ("POST", "/api/v1/employees/{employee_id}/education/{entry_id}/unverify"): AUTHENTICATED,
+    ("POST", "/api/v1/employees/{employee_id}/experience/{entry_id}/verify"): AUTHENTICATED,
+    ("POST", "/api/v1/employees/{employee_id}/experience/{entry_id}/unverify"): AUTHENTICATED,
     ("GET", "/api/v1/employees/{employee_id}/fnf"): AUTHENTICATED,
     ("PUT", "/api/v1/employees/{employee_id}/fnf/clearance"): ROLES(
         UserRole.hr_admin, UserRole.manager, UserRole.super_admin

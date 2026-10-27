@@ -187,3 +187,137 @@ class Employee(TenantBase):
     hr_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     finance_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     fnf_settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EmployeeAddress(TenantBase):
+    __tablename__ = "employee_addresses"
+    __table_args__ = (
+        CheckConstraint("kind IN ('current', 'permanent')", name="ck_employee_addresses_kind"),
+        Index("ix_employee_addresses_company_employee", "company_id", "employee_id"),
+        Index(
+            "uq_employee_addresses_employee_kind",
+            "employee_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    line1: Mapped[str] = mapped_column(String(255), nullable=False)
+    line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    country: Mapped[str] = mapped_column(String(100), nullable=False)
+
+
+class EmployeeEmergencyContact(TenantBase):
+    __tablename__ = "employee_emergency_contacts"
+    __table_args__ = (
+        Index("ix_employee_emergency_contacts_company_employee", "company_id", "employee_id"),
+    )
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    relationship: Mapped[str] = mapped_column(String(100), nullable=False)
+    phone: Mapped[str] = mapped_column(String(30), nullable=False)
+    alt_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class EmployeeSkill(TenantBase):
+    __tablename__ = "employee_skills"
+    __table_args__ = (
+        CheckConstraint(
+            "level IN ('beginner', 'intermediate', 'advanced', 'expert')",
+            name="ck_employee_skills_level",
+        ),
+        CheckConstraint(
+            "years_experience >= 0 AND years_experience <= 60",
+            name="ck_employee_skills_years_experience",
+        ),
+        Index("ix_employee_skills_company_employee", "company_id", "employee_id"),
+        Index(
+            "uq_employee_skills_employee_lower_name",
+            "employee_id",
+            text("lower(name)"),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    level: Mapped[str] = mapped_column(String(20), nullable=False)
+    years_experience: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class EmployeeEducation(TenantBase):
+    __tablename__ = "employee_education"
+    __table_args__ = (
+        CheckConstraint(
+            "verification_status IN ('unverified', 'verified')",
+            name="ck_employee_education_verification_status",
+        ),
+        CheckConstraint(
+            "end_date IS NULL OR end_date >= start_date",
+            name="ck_employee_education_end_after_start",
+        ),
+        Index("ix_employee_education_company_employee", "company_id", "employee_id"),
+    )
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    institution: Mapped[str] = mapped_column(String(200), nullable=False)
+    degree: Mapped[str] = mapped_column(String(150), nullable=False)
+    field_of_study: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    grade: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    verification_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="unverified"
+    )
+    verified_by: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EmployeeExperience(TenantBase):
+    __tablename__ = "employee_experience"
+    __table_args__ = (
+        CheckConstraint(
+            "verification_status IN ('unverified', 'verified')",
+            name="ck_employee_experience_verification_status",
+        ),
+        CheckConstraint(
+            "end_date IS NULL OR end_date >= start_date",
+            name="ck_employee_experience_end_after_start",
+        ),
+        Index("ix_employee_experience_company_employee", "company_id", "employee_id"),
+    )
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), nullable=False
+    )
+    employer: Mapped[str] = mapped_column(String(200), nullable=False)
+    job_title: Mapped[str] = mapped_column(String(150), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verification_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="unverified"
+    )
+    verified_by: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

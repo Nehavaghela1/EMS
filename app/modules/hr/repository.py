@@ -1,11 +1,22 @@
 import uuid
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate, resolve_sort
 from app.core.time import utcnow
-from app.modules.hr.models import Department, Employee, EmploymentType, InvitationStatus
+from app.modules.hr.models import (
+    Department,
+    Employee,
+    EmployeeAddress,
+    EmployeeEducation,
+    EmployeeEmergencyContact,
+    EmployeeExperience,
+    EmployeeSkill,
+    EmploymentType,
+    InvitationStatus,
+)
 
 
 class DepartmentRepository:
@@ -304,3 +315,117 @@ class EmployeeRepository:
             setattr(employee, key, value)
         self.db.flush()
         return employee
+
+
+class EmployeeSectionRepository:
+    """Repository for employee profile sections:
+    addresses, emergency-contacts, skills, education, experience.
+    """
+
+    MODEL_MAP = {
+        "addresses": EmployeeAddress,
+        "emergency-contacts": EmployeeEmergencyContact,
+        "skills": EmployeeSkill,
+        "education": EmployeeEducation,
+        "experience": EmployeeExperience,
+    }
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_model(self, section: str):
+        model = self.MODEL_MAP.get(section)
+        if not model:
+            raise ValueError(f"Unknown section: {section}")
+        return model
+
+    def list_entries(
+        self, section: str, employee_id: uuid.UUID, company_id: uuid.UUID
+    ) -> list[Any]:
+        model = self.get_model(section)
+        stmt = (
+            select(model)
+            .where(
+                model.employee_id == employee_id,
+                model.company_id == company_id,
+                model.deleted_at.is_(None),
+            )
+            .order_by(model.created_at.asc())
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def get_entry(
+        self, section: str, employee_id: uuid.UUID, entry_id: uuid.UUID, company_id: uuid.UUID
+    ) -> Any | None:
+        model = self.get_model(section)
+        stmt = select(model).where(
+            model.id == entry_id,
+            model.employee_id == employee_id,
+            model.company_id == company_id,
+            model.deleted_at.is_(None),
+        )
+        return self.db.scalar(stmt)
+
+    def get_entry_for_update(
+        self, section: str, employee_id: uuid.UUID, entry_id: uuid.UUID, company_id: uuid.UUID
+    ) -> Any | None:
+        model = self.get_model(section)
+        stmt = (
+            select(model)
+            .where(
+                model.id == entry_id,
+                model.employee_id == employee_id,
+                model.company_id == company_id,
+                model.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        return self.db.scalar(stmt)
+
+    def count_entries(self, section: str, employee_id: uuid.UUID, company_id: uuid.UUID) -> int:
+        model = self.get_model(section)
+        stmt = select(func.count(model.id)).where(
+            model.employee_id == employee_id,
+            model.company_id == company_id,
+            model.deleted_at.is_(None),
+        )
+        return self.db.scalar(stmt) or 0
+
+    def find_address_by_kind(
+        self, employee_id: uuid.UUID, company_id: uuid.UUID, kind: str
+    ) -> EmployeeAddress | None:
+        stmt = select(EmployeeAddress).where(
+            EmployeeAddress.employee_id == employee_id,
+            EmployeeAddress.company_id == company_id,
+            EmployeeAddress.kind == kind,
+            EmployeeAddress.deleted_at.is_(None),
+        )
+        return self.db.scalar(stmt)
+
+    def find_skill_by_lower_name(
+        self, employee_id: uuid.UUID, company_id: uuid.UUID, name: str
+    ) -> EmployeeSkill | None:
+        stmt = select(EmployeeSkill).where(
+            EmployeeSkill.employee_id == employee_id,
+            EmployeeSkill.company_id == company_id,
+            func.lower(EmployeeSkill.name) == func.lower(name.strip()),
+            EmployeeSkill.deleted_at.is_(None),
+        )
+        return self.db.scalar(stmt)
+
+    def create_entry(self, section: str, **kwargs) -> Any:
+        model = self.get_model(section)
+        entry = model(**kwargs)
+        self.db.add(entry)
+        self.db.flush()
+        return entry
+
+    def update_entry(self, entry: Any, **kwargs) -> Any:
+        for k, v in kwargs.items():
+            setattr(entry, k, v)
+        self.db.flush()
+        return entry
+
+    def soft_delete_entry(self, entry: Any) -> None:
+        entry.deleted_at = utcnow()
+        self.db.flush()
