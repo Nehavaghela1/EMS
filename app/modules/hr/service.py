@@ -880,7 +880,14 @@ class EmployeeService:
                 succeeded.append(emp.id)
             except Exception as e:
                 sp.rollback()
-                failed.append({"id": emp_id, "code": "internal_error", "message": str(e)})
+                logger.exception("Bulk deactivation failed for employee %s: %s", emp_id, e)
+                failed.append(
+                    {
+                        "id": emp_id,
+                        "code": "internal_error",
+                        "message": "Could not process this employee.",
+                    }
+                )
 
         # Record summary audit log
         self.audit.record(
@@ -966,7 +973,14 @@ class EmployeeService:
                 succeeded.append(emp.id)
             except Exception as e:
                 sp.rollback()
-                failed.append({"id": emp_id, "code": "internal_error", "message": str(e)})
+                logger.exception("Bulk reactivation failed for employee %s: %s", emp_id, e)
+                failed.append(
+                    {
+                        "id": emp_id,
+                        "code": "internal_error",
+                        "message": "Could not process this employee.",
+                    }
+                )
 
         self.audit.record(
             company_id=company_id,
@@ -1051,7 +1065,14 @@ class EmployeeService:
                 pending_emails.append((emp, raw_token))
             except Exception as e:
                 sp.rollback()
-                failed.append({"id": emp_id, "code": "internal_error", "message": str(e)})
+                logger.exception("Bulk resend invite failed for employee %s: %s", emp_id, e)
+                failed.append(
+                    {
+                        "id": emp_id,
+                        "code": "internal_error",
+                        "message": "Could not process this employee.",
+                    }
+                )
 
         self.audit.record(
             company_id=company_id,

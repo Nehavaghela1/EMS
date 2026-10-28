@@ -9,7 +9,6 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.exceptions import NotFoundError
 from app.core.pagination import Page, PageParams, page_params
@@ -406,45 +405,21 @@ def export_employees(
     )
     db.commit()
 
-    from unittest.mock import patch
-
     from app.workers.tasks.hr import export_employees_csv_task
 
-    # If running eager mode (tests or dev), pass the active db session
-    # to avoid cross-connection isolation barrier
-    if settings.CELERY_TASK_ALWAYS_EAGER:
-        with patch("app.workers.tasks.hr.SessionLocal", return_value=db):
-            task = export_employees_csv_task.delay(
-                company_id=str(user.company_id),
-                actor_id=str(user.id),
-                actor_role=user.role.value,
-                q=data.q,
-                department_id=str(data.department_id) if data.department_id else None,
-                is_active=data.is_active,
-                level=data.level,
-                employment_type=data.employment_type.value if data.employment_type else None,
-                reporting_manager_id=str(data.reporting_manager_id)
-                if data.reporting_manager_id
-                else None,
-                role=data.role,
-                employee_ids=[str(x) for x in data.employee_ids] if data.employee_ids else None,
-            )
-    else:
-        task = export_employees_csv_task.delay(
-            company_id=str(user.company_id),
-            actor_id=str(user.id),
-            actor_role=user.role.value,
-            q=data.q,
-            department_id=str(data.department_id) if data.department_id else None,
-            is_active=data.is_active,
-            level=data.level,
-            employment_type=data.employment_type.value if data.employment_type else None,
-            reporting_manager_id=str(data.reporting_manager_id)
-            if data.reporting_manager_id
-            else None,
-            role=data.role,
-            employee_ids=[str(x) for x in data.employee_ids] if data.employee_ids else None,
-        )
+    task = export_employees_csv_task.delay(
+        company_id=str(user.company_id),
+        actor_id=str(user.id),
+        actor_role=user.role.value,
+        q=data.q,
+        department_id=str(data.department_id) if data.department_id else None,
+        is_active=data.is_active,
+        level=data.level,
+        employment_type=data.employment_type.value if data.employment_type else None,
+        reporting_manager_id=str(data.reporting_manager_id) if data.reporting_manager_id else None,
+        role=data.role,
+        employee_ids=[str(x) for x in data.employee_ids] if data.employee_ids else None,
+    )
     return EmployeeExportJobResponse(job_id=task.id)
 
 
@@ -475,14 +450,20 @@ def download_employee_export(
     if not (is_requester or is_hr_or_owner):
         raise NotFoundError("Export not found.")
 
+    file_path = result.get("file_path")
+
     # Check expiration (24h)
     expires_at_str = result.get("expires_at")
     if expires_at_str:
         expires_at = datetime.fromisoformat(expires_at_str)
         if datetime.now(UTC) > expires_at:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
             raise NotFoundError("Export file has expired.")
 
-    file_path = result.get("file_path")
     if not file_path or not os.path.exists(file_path):
         raise NotFoundError("Export file not found on disk.")
 

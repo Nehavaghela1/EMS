@@ -1,5 +1,6 @@
 import csv
 import io
+import os
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -410,7 +411,8 @@ def test_r03_bulk_mixed_batch_and_isolation(
 def test_r03_bulk_exception_in_single_employee_never_aborts_batch_or_500(
     client: TestClient, bulk_company: dict[str, Any]
 ) -> None:
-    """R3: One bad employee exception never aborts others and never gives 500."""
+    """R3 & B6: One bad employee exception never aborts others, never gives 500,
+    and returns generic error message without leaking internal exception text."""
     from app.modules.hr.service import EmployeeService
 
     hr_headers = _auth_headers(bulk_company["hr_admin"])
@@ -421,7 +423,7 @@ def test_r03_bulk_exception_in_single_employee_never_aborts_batch_or_500(
 
     def flaky_deactivate(self, company_id, employee, actor):
         if employee.id == emp1.id:
-            raise RuntimeError("Database flake on emp1")
+            raise RuntimeError("Database flake internal sensitive details on emp1")
         if orig_deactivate_single:
             return orig_deactivate_single(self, company_id, employee, actor)
         return True
@@ -435,7 +437,9 @@ def test_r03_bulk_exception_in_single_employee_never_aborts_batch_or_500(
         assert res.status_code == 200
         data = res.json()
         assert str(emp2.id) in [str(x) for x in data["succeeded"]]
-        assert any(item["id"] == str(emp1.id) for item in data["failed"])
+        failed_item = next(item for item in data["failed"] if item["id"] == str(emp1.id))
+        assert failed_item["message"] == "Could not process this employee."
+        assert "Database flake" not in failed_item["message"]
 
 
 # ==============================================================================
@@ -726,12 +730,16 @@ def test_r07_export_large_result_and_filtering(
     assert res.status_code == 202
     job_id = res.json()["job_id"]
 
-    # Verify GET /jobs/{job_id} never exposes file_path
+    # Verify GET /jobs/{job_id}: B4 check - returns only company_id, row_count, expires_at
     res_job = client.get(f"/api/v1/jobs/{job_id}", headers=hr_headers)
     assert res_job.status_code == 200
     res_data = res_job.json()
     if res_data.get("result"):
-        assert "file_path" not in res_data["result"]
+        res_res = res_data["result"]
+        assert set(res_res.keys()) == {"company_id", "row_count", "expires_at"}
+        assert "file_path" not in res_res
+        assert "file_name" not in res_res
+        assert "requester_id" not in res_res
 
     # Verify manager export scopes to direct reports only
     mgr_user = db.query(User).filter(User.id == bulk_company["manager_id"]).first()
@@ -766,7 +774,17 @@ def test_r08_export_download_authorization_and_expiry(
     res_unknown = client.get(f"/api/v1/employees/export/{fake_job_id}/download", headers=hr_headers)
     assert res_unknown.status_code == 404
 
-    # Expired job test
+    # Expired job test (B5: verifies download returns 404 AND deletes
+    # the expired file if present on disk)
+    import os
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+        tmp.write(b"expired,data")
+        tmp_expired_path = tmp.name
+
+    assert os.path.exists(tmp_expired_path)
+
     with patch("app.modules.hr.router.celery_app.AsyncResult") as mock_async:
         mock_task = MagicMock()
         mock_task.state = "SUCCESS"
@@ -774,7 +792,7 @@ def test_r08_export_download_authorization_and_expiry(
             "company_id": str(bulk_company["company_id"]),
             "requester_id": str(bulk_company["hr_admin"].id),
             "requester_role": "hr_admin",
-            "file_path": "/tmp/non_existent.csv",
+            "file_path": tmp_expired_path,
             "file_name": "test.csv",
             "expires_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
         }
@@ -783,6 +801,89 @@ def test_r08_export_download_authorization_and_expiry(
         res_expired = client.get("/api/v1/employees/export/some-job/download", headers=hr_headers)
         assert res_expired.status_code == 404
         assert "expired" in res_expired.json()["error"]["message"].lower()
+        # B5: Must be deleted from disk
+        assert not os.path.exists(tmp_expired_path)
+
+
+def test_b2_export_file_name_random_uuid4_hex_no_company_id(
+    client: TestClient, bulk_company: dict[str, Any], db: Session, monkeypatch
+) -> None:
+    """B2: Export file name on disk is random uuid4 hex with .csv, no company id,
+    no sequential parts.
+    """
+    import re
+
+    from app.workers.tasks import hr as hr_tasks
+
+    monkeypatch.setattr(hr_tasks, "get_task_db_session", lambda: db)
+
+    res = hr_tasks.export_employees_csv_task(
+        company_id=str(bulk_company["company_id"]),
+        actor_id=str(bulk_company["hr_admin"].id),
+        actor_role="hr_admin",
+    )
+    file_path = res["file_path"]
+    base_name = os.path.basename(file_path)
+    # Check that company_id is not in file_name on disk
+    assert str(bulk_company["company_id"]) not in base_name
+    assert bulk_company["company_id"].hex not in base_name
+    # Must match <uuid4_hex>.csv (32 hex characters + .csv)
+    assert re.match(r"^[0-9a-f]{32}\.csv$", base_name), (
+        f"File name {base_name} is not a 32-char hex uuid4"
+    )
+
+
+def test_b3_export_over_50000_rows_fails_without_silent_truncation(
+    client: TestClient, bulk_company: dict[str, Any], db: Session, monkeypatch
+) -> None:
+    """B3: If result exceeds cap (tested with lowered cap), job fails with clear message
+    to narrow filters.
+    """
+    from app.core.config import settings
+    from app.workers.tasks import hr as hr_tasks
+
+    monkeypatch.setattr(hr_tasks, "get_task_db_session", lambda: db)
+
+    # Set cap to 1 row; bulk_company has 5 employees
+    monkeypatch.setattr(settings, "MAX_EXPORT_ROWS", 1)
+
+    with pytest.raises(Exception) as exc_info:
+        hr_tasks.export_employees_csv_task(
+            company_id=str(bulk_company["company_id"]),
+            actor_id=str(bulk_company["hr_admin"].id),
+            actor_role="hr_admin",
+        )
+    assert "narrow" in str(exc_info.value).lower() or "exceeds" in str(exc_info.value).lower()
+
+
+def test_b5_celery_beat_task_deletes_expired_export_files(tmp_path, monkeypatch) -> None:
+    """B5: Hourly Celery beat task deletes export files older than 24 hours from EXPORT_DIR."""
+    import time
+
+    from app.core.config import settings
+    from app.workers.celery_app import celery_app
+    from app.workers.tasks.hr import delete_expired_exports_task
+
+    monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
+
+    old_file = tmp_path / f"{uuid.uuid4().hex}.csv"
+    old_file.write_text("old,data")
+    new_file = tmp_path / f"{uuid.uuid4().hex}.csv"
+    new_file.write_text("new,data")
+
+    # Set old_file modification time to 25 hours ago
+    past_mtime = time.time() - (25 * 3600)
+    os.utime(str(old_file), (past_mtime, past_mtime))
+
+    deleted_count = delete_expired_exports_task()
+    assert deleted_count >= 1
+    assert not old_file.exists()
+    assert new_file.exists()
+
+    # Verify registered in beat_schedule
+    assert "delete-expired-exports-hourly" in celery_app.conf.beat_schedule
+    entry = celery_app.conf.beat_schedule["delete-expired-exports-hourly"]
+    assert entry["task"] == "app.workers.tasks.hr.delete_expired_exports_task"
 
 
 # ==============================================================================
@@ -1049,3 +1150,139 @@ def test_r10_bulk_deactivate_row_lock_sql_capture(
         )
     finally:
         event.remove(target_engine, "before_cursor_execute", before_cursor_execute)
+
+
+# ==============================================================================
+# C1, C2, C3: Fix Round 2 Backend Tests
+# ==============================================================================
+
+
+def test_c1_job_status_safe_error_messages(
+    client: TestClient, bulk_company: dict[str, Any], db: Session, monkeypatch
+) -> None:
+    """C1: GET /jobs/{job_id}: for a failed job never return str(exception).
+    Return safe message only for ExportTooLargeError (narrow your filters),
+    and 'Export failed. Please try again.' for everything else, across all job types.
+    """
+    hr_headers = _auth_headers(bulk_company["hr_admin"])
+
+    # 1. Secret internal error / generic RuntimeError
+    with patch("app.modules.platform.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "FAILURE"
+        mock_task.result = RuntimeError("secret internal database connection string / password")
+        mock_async.return_value = mock_task
+
+        res = client.get("/api/v1/jobs/test-failed-job-1", headers=hr_headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "failure"
+        assert "secret internal" not in (data["error"] or "")
+        assert data["error"] == "Export failed. Please try again."
+
+    # 2. ExportTooLargeError via POST /employees/export then GET /jobs/{id} with lowered cap
+    from app.core.config import settings
+    from app.workers.tasks import hr as hr_tasks
+
+    monkeypatch.setattr(hr_tasks, "get_task_db_session", lambda: db)
+    monkeypatch.setattr(settings, "MAX_EXPORT_ROWS", 1)
+
+    res_post = client.post(
+        "/api/v1/employees/export",
+        headers=hr_headers,
+        json={},
+    )
+    assert res_post.status_code == 202
+    job_id = res_post.json()["job_id"]
+
+    res_job = client.get(f"/api/v1/jobs/{job_id}", headers=hr_headers)
+    assert res_job.status_code == 200
+    job_data = res_job.json()
+    assert job_data["status"] == "failure"
+    assert "narrow" in job_data["error"].lower()
+
+
+def test_c2_delete_expired_exports_deletes_only_employee_exports(tmp_path, monkeypatch) -> None:
+    """C2: delete_expired_exports_task must delete only files named like an employee export
+    (^[0-9a-f]{32}\\.csv$). Old audit_logs_x.csv and attendance_x.csv files in EXPORT_DIR
+    (older than 24 hours) stay; the old employee export is deleted.
+    """
+    import time
+
+    from app.core.config import settings
+    from app.workers.tasks.hr import delete_expired_exports_task
+
+    monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
+
+    old_emp_export = tmp_path / f"{uuid.uuid4().hex}.csv"
+    old_emp_export.write_text("emp,data")
+
+    old_audit_log = tmp_path / "audit_logs_company1_abc12345.csv"
+    old_audit_log.write_text("audit,data")
+
+    old_attendance = tmp_path / "attendance_company1_def67890.csv"
+    old_attendance.write_text("attendance,data")
+
+    # Set modification times to 25 hours ago
+    past_mtime = time.time() - (25 * 3600)
+    os.utime(str(old_emp_export), (past_mtime, past_mtime))
+    os.utime(str(old_audit_log), (past_mtime, past_mtime))
+    os.utime(str(old_attendance), (past_mtime, past_mtime))
+
+    deleted_count = delete_expired_exports_task()
+    assert deleted_count == 1
+    assert not old_emp_export.exists(), "Old employee export should have been deleted"
+    assert old_audit_log.exists(), "audit_logs_*.csv must stay untouched"
+    assert old_attendance.exists(), "attendance_*.csv must stay untouched"
+
+
+def test_c3_bulk_reactivate_and_resend_invite_generic_error_message(
+    client: TestClient, bulk_company: dict[str, Any]
+) -> None:
+    """C3: Add tests that bulk reactivate and bulk resend-invite also return
+    the generic message 'Could not process this employee.' and no exception text.
+    """
+    from app.modules.hr.repository import EmployeeRepository
+
+    hr_headers = _auth_headers(bulk_company["hr_admin"])
+    emp1 = bulk_company["emp1"]
+
+    # 1. Bulk reactivate when an internal error occurs during update
+    orig_update = EmployeeRepository.update
+
+    def flaky_update(self, obj, **kwargs):
+        if getattr(obj, "id", None) == emp1.id:
+            raise RuntimeError("Internal reactivate crash with private secrets")
+        return orig_update(self, obj, **kwargs)
+
+    # Make sure emp1 is inactive so it enters the reactivate branch
+    emp1.is_active = False
+
+    with patch.object(EmployeeRepository, "update", flaky_update):
+        res_react = client.post(
+            "/api/v1/employees/bulk/reactivate",
+            headers=hr_headers,
+            json={"employee_ids": [str(emp1.id)]},
+        )
+        assert res_react.status_code == 200
+        data_react = res_react.json()
+        failed_react = next(item for item in data_react["failed"] if item["id"] == str(emp1.id))
+        assert failed_react["message"] == "Could not process this employee."
+        assert "private secrets" not in failed_react["message"]
+
+    # 2. Bulk resend-invite when an internal error occurs
+    # Make sure emp1 is active and invitation_status is not activated
+    emp1.is_active = True
+    emp1.invitation_status = "sent"
+
+    with patch.object(EmployeeRepository, "update", flaky_update):
+        res_resend = client.post(
+            "/api/v1/employees/bulk/resend-invite",
+            headers=hr_headers,
+            json={"employee_ids": [str(emp1.id)]},
+        )
+        assert res_resend.status_code == 200
+        data_resend = res_resend.json()
+        failed_resend = next(item for item in data_resend["failed"] if item["id"] == str(emp1.id))
+        assert failed_resend["message"] == "Could not process this employee."
+        assert "private secrets" not in failed_resend["message"]

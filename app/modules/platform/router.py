@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import ExportTooLargeError, NotFoundError
 from app.core.pagination import Page, PageParams, page_params
 from app.db.session import get_db
 from app.modules.identity.models import User, UserRole
@@ -89,18 +89,42 @@ def get_job_status(job_id: str, user: User = Depends(get_current_user)) -> JobSt
         # at all.
         raise NotFoundError("Job not found.")
 
-    # Never expose internal filesystem paths in public job status response (Spec 2.4 R7)
+    # Never expose internal filesystem paths, private file names, or requester info
+    # in public job status response
     safe_result = None
     if isinstance(result, dict):
-        safe_result = {k: v for k, v in result.items() if k != "file_path"}
+        # B4: for employee exports return only company_id, row_count, expires_at.
+        # Keep requester_id, file name and file_path private (never returned).
+        if "expires_at" in result:
+            allowed_keys = {"company_id", "row_count", "expires_at"}
+            safe_result = {k: v for k, v in result.items() if k in allowed_keys}
+        else:
+            safe_result = {k: v for k, v in result.items() if k != "file_path"}
     elif result is not None:
         safe_result = result
+
+    safe_error = None
+    if status == "failure":
+        task_err = async_result.result
+        if isinstance(task_err, ExportTooLargeError):
+            safe_error = str(task_err)
+        elif isinstance(task_err, Exception):
+            if type(task_err).__name__ == "ExportTooLargeError" or "ExportTooLargeError" in str(
+                type(task_err)
+            ):
+                safe_error = str(task_err)
+            else:
+                safe_error = "Export failed. Please try again."
+        elif isinstance(task_err, str) and "ExportTooLargeError" in task_err:
+            safe_error = task_err
+        else:
+            safe_error = "Export failed. Please try again."
 
     return JobStatusResponse(
         job_id=job_id,
         status=status,
         result=safe_result,
-        error=str(async_result.result) if status == "failure" else None,
+        error=safe_error,
     )
 
 

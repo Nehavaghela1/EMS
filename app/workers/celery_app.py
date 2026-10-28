@@ -50,4 +50,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.identity.expire_activation_tokens",
         "schedule": crontab(hour=2, minute=0),
     },
+    "delete-expired-exports-hourly": {
+        "task": "app.workers.tasks.hr.delete_expired_exports_task",
+        "schedule": crontab(minute=0),
+    },
 }

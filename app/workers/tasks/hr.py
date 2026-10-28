@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.config import settings
 from app.core.csv_safety import csv_safe_cell
+from app.core.exceptions import ExportTooLargeError
 from app.db.rls import bind_tenant_to_session
 from app.db.session import SessionLocal
 from app.modules.hr.models import Employee, EmploymentType
@@ -16,6 +17,11 @@ from app.modules.identity.models import CompanyLocation, UserRole
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger("app")
+
+
+def get_task_db_session():
+    """Session factory for tasks. Overridable by tests."""
+    return SessionLocal()
 
 
 @celery_app.task(name="app.workers.tasks.hr.export_employees_csv_task")
@@ -37,7 +43,7 @@ def export_employees_csv_task(
     Streams CSV with UTF-8 BOM and formula sanitization.
     Row cap at 50,000.
     """
-    db = SessionLocal()
+    db = get_task_db_session()
     try:
         cid = uuid.UUID(company_id)
         bind_tenant_to_session(db, company_id=cid, is_platform_admin=False)
@@ -55,6 +61,8 @@ def export_employees_csv_task(
         selected_uuids = [uuid.UUID(x) for x in employee_ids] if employee_ids else None
         emp_type_enum = EmploymentType(employment_type) if employment_type else None
 
+        max_rows = getattr(settings, "MAX_EXPORT_ROWS", 50000)
+        # Fetch up to max_rows + 1 to detect overflow without silent truncation
         employees = repo.list_for_export(
             company_id=cid,
             q=q,
@@ -66,12 +74,18 @@ def export_employees_csv_task(
             role=role,
             employee_ids=selected_uuids,
             direct_report_ids=direct_report_ids,
-            limit=50000,
+            limit=max_rows + 1,
         )
 
+        if len(employees) > max_rows:
+            raise ExportTooLargeError(
+                f"Export result exceeds maximum row limit of {max_rows}. "
+                "Please narrow your search filters."
+            )
+
         os.makedirs(settings.EXPORT_DIR, exist_ok=True)
-        task_id = export_employees_csv_task.request.id or uuid.uuid4().hex
-        file_name = f"employees_{cid}_{task_id}.csv"
+        # B2: random uuid4 hex, no company id, no sequential parts
+        file_name = f"{uuid.uuid4().hex}.csv"
         file_path = os.path.join(settings.EXPORT_DIR, file_name)
 
         is_hr_or_owner = actor_role in (
@@ -198,5 +212,38 @@ def export_employees_csv_task(
             "expires_at": expires_at.isoformat(),
         }
     finally:
-        if not settings.CELERY_TASK_ALWAYS_EAGER:
-            db.close()
+        db.close()
+
+
+@celery_app.task(name="app.workers.tasks.hr.delete_expired_exports_task")
+def delete_expired_exports_task() -> int:
+    """B5: Hourly housekeeping task to delete export files older than 24 hours.
+    C2: Deletes ONLY employee export files matching ^[0-9a-f]{32}\\.csv$.
+    """
+    import re
+
+    export_dir = getattr(settings, "EXPORT_DIR", "var/exports")
+    if not os.path.exists(export_dir):
+        return 0
+
+    cutoff = datetime.now(UTC) - timedelta(hours=24)
+    cutoff_ts = cutoff.timestamp()
+    deleted_count = 0
+    emp_export_pattern = re.compile(r"^[0-9a-f]{32}\.csv$")
+
+    for fname in os.listdir(export_dir):
+        if not emp_export_pattern.match(fname):
+            continue
+        fpath = os.path.join(export_dir, fname)
+        try:
+            stat = os.stat(fpath)
+            if stat.st_mtime < cutoff_ts:
+                os.remove(fpath)
+                deleted_count += 1
+                logger.info("expired_export_file_deleted", extra={"file_path": fpath})
+        except OSError as e:
+            logger.warning(
+                "failed_to_delete_expired_export_file", extra={"file_path": fpath, "error": str(e)}
+            )
+
+    return deleted_count
