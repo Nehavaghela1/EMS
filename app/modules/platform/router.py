@@ -1,17 +1,39 @@
+import logging
+import os
 import uuid
 from datetime import UTC, date, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user, get_tenant_db, require_role
-from app.core.exceptions import ExportTooLargeError, NotFoundError
+from app.core.config import settings
+from app.core.dependencies import (
+    get_current_user,
+    get_tenant_db,
+    require_role,
+)
+from app.core.rate_limit import get_user_or_ip_key, limiter
+from app.core.roles import HR_LEVEL_ROLES
+from app.core.exceptions import (
+    ConflictError,
+    ExportTooLargeError,
+    ForbiddenError,
+    NotFoundError,
+    PayloadTooLargeError,
+    ValidationError,
+)
 from app.core.pagination import Page, PageParams, page_params
+from app.core.rate_limit import limiter
+from app.core.upload_validation import validate_document_upload
 from app.db.session import get_db
+from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
-from app.modules.platform.models import AuditLog, Notification
+from app.modules.platform.models import AuditLog, EmployeeDocument, FileObject, Notification
+from app.modules.platform.repository import EmployeeDocumentRepository, FileRepository
 from app.modules.platform.schemas import (
+    VALID_DOCUMENT_TYPES,
     AnnouncementCreate,
     AnnouncementResponse,
     AuditLogExportRequest,
@@ -356,13 +378,249 @@ def list_employee_documents(
     return EmployeeDocumentService(db).list_documents(user.company_id, employee_id, user)
 
 
-@documents_router.post("", response_model=EmployeeDocumentResponse, status_code=201)
-def attach_employee_document(
-    data: EmployeeDocumentCreate,
+@documents_router.post("/{employee_id}", response_model=EmployeeDocumentResponse, status_code=201)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
+async def upload_employee_document(
+    request: Request,
+    employee_id: uuid.UUID,
+    file: UploadFile = File(...),
+    document_type: str = Form(...),
+    name: str = Form(...),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin)),
+    user: User = Depends(get_current_user),
 ):
-    return EmployeeDocumentService(db).attach_document(user.company_id, data)
+    # 1. Access check
+    is_hr_level = user.role in HR_LEVEL_ROLES
+    if not is_hr_level:
+        caller_emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
+        if caller_emp is None or caller_emp.id != employee_id:
+            raise ForbiddenError("You do not have permission to upload documents for this employee.")
+
+    # 2. Validate document_type and name
+    clean_type = document_type.strip()
+    if clean_type not in VALID_DOCUMENT_TYPES:
+        raise ValidationError(
+            f"Invalid document_type '{document_type}'. Must be one of: {', '.join(sorted(VALID_DOCUMENT_TYPES))}"
+        )
+
+    clean_doc_name = name.strip()
+    if not clean_doc_name or len(clean_doc_name) > 255:
+        raise ValidationError("Document name must be between 1 and 255 characters.")
+
+    # 3. Early size check: Content-Length header
+    max_mb = getattr(settings, "MAX_UPLOAD_MB", 10)
+    max_bytes = max_mb * 1024 * 1024
+    content_length_header = request.headers.get("content-length")
+    if content_length_header:
+        try:
+            cl = int(content_length_header)
+            if cl > (max_mb + 1) * 1024 * 1024:
+                raise PayloadTooLargeError(
+                    f"File size exceeds maximum upload limit of {max_mb} MB."
+                )
+        except ValueError:
+            pass
+
+    # Read file in 1 MB chunks and abort if exceeding max_bytes
+    chunks = []
+    total_read = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total_read += len(chunk)
+        if total_read > max_bytes:
+            raise PayloadTooLargeError(
+                f"File size exceeds maximum upload limit of {max_mb} MB."
+            )
+        chunks.append(chunk)
+
+    file_bytes = b"".join(chunks)
+
+    # 4. Content & magic-byte validation
+    clean_filename, extension, canonical_content_type = validate_document_upload(
+        file.filename or "file", file_bytes
+    )
+
+    # 5. Lock employee row and verify tenant
+    emp_repo = EmployeeRepository(db)
+    target_emp = emp_repo.get_by_id_for_update(employee_id, user.company_id, allow_inactive=True)
+    if target_emp is None:
+        if not is_hr_level:
+            raise ForbiddenError("You do not have permission to upload documents for this employee.")
+        raise NotFoundError("Employee not found.")
+
+    # 6. Check cap 30 non-deleted documents
+    doc_repo = EmployeeDocumentRepository(db)
+    active_count = doc_repo.count_active_for_employee(user.company_id, employee_id)
+    if active_count >= 30:
+        raise ConflictError("Employee has reached maximum document limit of 30.")
+
+    # 7. Write file to disk under random uuid4 hex name
+    docs_base_dir = getattr(settings, "EMPLOYEE_DOCS_DIR", "var/employee_documents")
+    company_docs_dir = os.path.join(docs_base_dir, str(user.company_id))
+    os.makedirs(company_docs_dir, exist_ok=True)
+
+    random_file_name = f"{uuid.uuid4().hex}.{extension}"
+    storage_path = os.path.join(company_docs_dir, random_file_name)
+
+    written_to_disk = False
+    try:
+        with open(storage_path, "wb") as f:
+            f.write(file_bytes)
+        written_to_disk = True
+
+        file_repo = FileRepository(db)
+        file_obj = file_repo.create(
+            company_id=user.company_id,
+            uploaded_by=user.id,
+            file_name=clean_filename,
+            file_type=canonical_content_type,
+            file_size=len(file_bytes),
+            storage_path=storage_path,
+        )
+
+        doc = doc_repo.create(
+            company_id=user.company_id,
+            employee_id=employee_id,
+            file_object_id=file_obj.id,
+            document_type=clean_type,
+            name=clean_doc_name,
+        )
+
+        AuditService(db).record(
+            company_id=user.company_id,
+            actor=user,
+            action="EMPLOYEE_DOCUMENT_UPLOADED",
+            entity_type="employee_document",
+            entity_id=doc.id,
+            details={
+                "employee_id": str(employee_id),
+                "document_id": str(doc.id),
+                "document_type": clean_type,
+            },
+        )
+        db.commit()
+        db.refresh(doc)
+
+        resp = EmployeeDocumentResponse.model_validate(doc)
+        resp.download_url = f"/api/v1/documents/{employee_id}/{doc.id}/download"
+        return resp
+    except Exception:
+        db.rollback()
+        if written_to_disk and os.path.exists(storage_path):
+            try:
+                os.remove(storage_path)
+            except OSError:
+                pass
+        raise
+
+
+@documents_router.get(
+    "/{employee_id}/{document_id}/download",
+)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def download_employee_document(
+    request: Request,
+    employee_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    # Access check (same as viewing)
+    is_hr_level = user.role in HR_LEVEL_ROLES
+    if not is_hr_level:
+        caller_emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
+        if caller_emp is None or caller_emp.id != employee_id:
+            raise ForbiddenError("You do not have permission to download this employee's documents.")
+
+    target_emp = EmployeeRepository(db).get_by_id_any_status(employee_id, user.company_id)
+    if target_emp is None:
+        if not is_hr_level:
+            raise ForbiddenError("You do not have permission to download this employee's documents.")
+        raise NotFoundError("Employee not found.")
+
+    doc_repo = EmployeeDocumentRepository(db)
+    doc = doc_repo.get_by_id(user.company_id, employee_id, document_id)
+    if not doc:
+        raise NotFoundError("Document not found.")
+
+    file_obj = FileRepository(db).get_by_id(user.company_id, doc.file_object_id)
+    if not file_obj or not os.path.exists(file_obj.storage_path):
+        raise NotFoundError("Document file not found.")
+
+    # Path traversal protection: ensure stored path is strictly inside EMPLOYEE_DOCS_DIR
+    docs_base_dir = os.path.abspath(
+        getattr(settings, "EMPLOYEE_DOCS_DIR", "var/employee_documents")
+    )
+    resolved_path = os.path.abspath(file_obj.storage_path)
+    if not resolved_path.startswith(docs_base_dir):
+        logger.warning("Potential path traversal detected in employee document download")
+        raise NotFoundError("Document not found.")
+
+    # Audit download before returning
+    AuditService(db).record(
+        company_id=user.company_id,
+        actor=user,
+        action="EMPLOYEE_DOCUMENT_DOWNLOADED",
+        entity_type="employee_document",
+        entity_id=doc.id,
+        details={
+            "employee_id": str(employee_id),
+            "document_id": str(doc.id),
+            "document_type": doc.document_type,
+        },
+    )
+    db.commit()
+
+    return FileResponse(
+        path=resolved_path,
+        filename=file_obj.file_name,
+        media_type=file_obj.file_type,
+        content_disposition_type="attachment",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@documents_router.delete(
+    "/{employee_id}/{document_id}",
+    status_code=204,
+)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def delete_employee_document(
+    request: Request,
+    employee_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(*HR_LEVEL_ROLES)),
+):
+    target_emp = EmployeeRepository(db).get_by_id_any_status(employee_id, user.company_id)
+    if target_emp is None:
+        raise NotFoundError("Employee not found.")
+
+    doc_repo = EmployeeDocumentRepository(db)
+    doc = doc_repo.get_by_id(user.company_id, employee_id, document_id)
+    if not doc:
+        raise NotFoundError("Document not found.")
+
+    doc.deleted_at = datetime.now(UTC)
+
+    AuditService(db).record(
+        company_id=user.company_id,
+        actor=user,
+        action="EMPLOYEE_DOCUMENT_DELETED",
+        entity_type="employee_document",
+        entity_id=doc.id,
+        details={
+            "employee_id": str(employee_id),
+            "document_id": str(doc.id),
+            "document_type": doc.document_type,
+        },
+    )
+    db.commit()
 
 
 # ── Global Search (route 134) ───────────────────────────────────

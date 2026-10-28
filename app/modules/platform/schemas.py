@@ -114,6 +114,18 @@ class SignedUrlResponse(BaseModel):
 
 
 # ── Employee Documents (routes 132-133) ─────────────────────────
+VALID_DOCUMENT_TYPES = {
+    "id_proof",
+    "address_proof",
+    "kyc",
+    "offer_letter",
+    "contract",
+    "certificate",
+    "passport",
+    "other",
+}
+
+
 class EmployeeDocumentCreate(BaseModel):
     employee_id: uuid.UUID
     file_object_id: uuid.UUID

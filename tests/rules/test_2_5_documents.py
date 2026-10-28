@@ -90,7 +90,6 @@ def doc_setup(db: Session, tmp_path, monkeypatch) -> dict[str, Any]:
         role=UserRole.owner,
         is_active=True,
     )
-    company_a.owner_user_id = owner_a.id
     hr_a = User(
         id=uuid.uuid4(),
         company_id=cid_a,
@@ -132,6 +131,8 @@ def doc_setup(db: Session, tmp_path, monkeypatch) -> dict[str, Any]:
         is_active=True,
     )
     db.add_all([owner_a, hr_a, super_admin_user, manager_a, emp_user1, emp_user2])
+    db.flush()
+    company_a.owner_user_id = owner_a.id
     db.flush()
 
     bind_tenant_to_session(db, company_id=cid_a, is_platform_admin=True)
@@ -270,8 +271,11 @@ def doc_setup(db: Session, tmp_path, monkeypatch) -> dict[str, Any]:
     )
     db.add(emp_b)
     db.commit()
+    bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
 
     return {
+        "company_a_id": cid_a,
+        "company_b_id": cid_b,
         "company_a": company_a,
         "company_b": company_b,
         "owner_a": owner_a,
@@ -282,8 +286,11 @@ def doc_setup(db: Session, tmp_path, monkeypatch) -> dict[str, Any]:
         "emp_user2": emp_user2,
         "hr_b": hr_b,
         "emp1": emp1,
+        "emp1_id": emp1.id,
         "emp2": emp2,
+        "emp2_id": emp2.id,
         "emp_b": emp_b,
+        "emp_b_id": emp_b.id,
         "docs_dir": docs_dir,
     }
 
@@ -502,7 +509,7 @@ def test_r03_size_limits_empty_and_early_refusal(
         files={"file": ("large.pdf", large_pdf, "application/pdf")},
     )
     assert res_large.status_code == 413
-    assert res_large.json().get("code") == "file_too_large"
+    assert res_large.json().get("error", {}).get("code") == "file_too_large"
 
     # 3. Content-Length header early refusal: header indicates huge payload
     huge_len_headers = dict(hr_headers)
@@ -514,7 +521,7 @@ def test_r03_size_limits_empty_and_early_refusal(
         files={"file": ("huge.pdf", b"test", "application/pdf")},
     )
     assert res_early.status_code == 413
-    assert res_early.json().get("code") == "file_too_large"
+    assert res_early.json().get("error", {}).get("code") == "file_too_large"
 
 
 # ==============================================================================
@@ -601,7 +608,7 @@ def test_r05_document_record_validation_and_concurrency_cap_and_rollback(
 
     # 3. Employee of other company -> 404 (same as missing employee)
     res_other_co = client.post(
-        f"/api/v1/documents/{emp_b.id}",
+        f"/api/v1/documents/{doc_setup['emp_b_id']}",
         headers=hr_headers,
         data={"document_type": "id_proof", "name": "Other Co Employee"},
         files={"file": ("doc.pdf", pdf_data, "application/pdf")},
@@ -630,9 +637,11 @@ def test_r05_document_record_validation_and_concurrency_cap_and_rollback(
     )
 
     # 4. Failed save leaves no file behind on disk (force an error in AuditService)
-    docs_before = set(os.listdir(doc_setup["docs_dir"])) if os.path.exists(doc_setup["docs_dir"]) else set()
+    co_dir = os.path.join(doc_setup["docs_dir"], str(doc_setup["company_a_id"]))
+    files_before = set(os.listdir(co_dir)) if os.path.exists(co_dir) else set()
+    no_raise_client = TestClient(client.app, raise_server_exceptions=False)
     with patch("app.modules.platform.service.AuditService.record", side_effect=RuntimeError("Audit crash")):
-        res_fail = client.post(
+        res_fail = no_raise_client.post(
             f"/api/v1/documents/{emp1.id}",
             headers=hr_headers,
             data={"document_type": "kyc", "name": "Rollback Test Doc"},
@@ -640,25 +649,40 @@ def test_r05_document_record_validation_and_concurrency_cap_and_rollback(
         )
         assert res_fail.status_code == 500
 
-    docs_after = set(os.listdir(doc_setup["docs_dir"])) if os.path.exists(doc_setup["docs_dir"]) else set()
+    files_after = set(os.listdir(co_dir)) if os.path.exists(co_dir) else set()
     # Confirm no orphan files were left
-    assert docs_after == docs_before
+    assert files_after == files_before
 
     # 5. Cap 30 non-deleted documents per employee -> 31st gives 409
-    # Add documents up to 30
+    # Add documents up to 30 directly in DB to avoid hitting 10/min rate limiter
     existing_count = db.query(EmployeeDocument).filter(
         EmployeeDocument.employee_id == emp1.id,
         EmployeeDocument.deleted_at.is_(None)
     ).count()
 
+    from app.modules.platform.models import FileObject
     for i in range(existing_count, 30):
-        r = client.post(
-            f"/api/v1/documents/{emp1.id}",
-            headers=hr_headers,
-            data={"document_type": "certificate", "name": f"Cert {i}"},
-            files={"file": (f"cert_{i}.pdf", pdf_data, "application/pdf")},
+        fo = FileObject(
+            id=uuid.uuid4(),
+            company_id=doc_setup["company_a_id"],
+            uploaded_by=doc_setup["hr_a"].id,
+            file_name=f"seed_{i}.pdf",
+            file_type="application/pdf",
+            file_size=len(pdf_data),
+            storage_path=os.path.join(co_dir, f"seed_{i}.pdf"),
         )
-        assert r.status_code == 201
+        db.add(fo)
+        db.flush()
+        doc_item = EmployeeDocument(
+            id=uuid.uuid4(),
+            company_id=doc_setup["company_a_id"],
+            employee_id=emp1.id,
+            file_object_id=fo.id,
+            document_type="certificate",
+            name=f"Cert {i}",
+        )
+        db.add(doc_item)
+    db.commit()
 
     # 31st upload gives 409
     res_31 = client.post(
@@ -975,17 +999,17 @@ def test_r10_cross_company_isolation(
     client: TestClient, doc_setup: dict[str, Any]
 ) -> None:
     """R10: Cross-company tenant isolation on upload, list, download, delete."""
-    emp1 = doc_setup["emp1"]
+    emp1_id = doc_setup["emp1_id"]
     hr_b_headers = _auth_headers(doc_setup["hr_b"])
     pdf_data = _make_sample_pdf()
 
     # Company B HR trying to access Company A employee -> 404
     assert (
-        client.get(f"/api/v1/documents/{emp1.id}", headers=hr_b_headers).status_code == 404
+        client.get(f"/api/v1/documents/{emp1_id}", headers=hr_b_headers).status_code == 404
     )
     assert (
         client.post(
-            f"/api/v1/documents/{emp1.id}",
+            f"/api/v1/documents/{emp1_id}",
             headers=hr_b_headers,
             data={"document_type": "id_proof", "name": "Cross"},
             files={"file": ("doc.pdf", pdf_data, "application/pdf")},
@@ -1031,52 +1055,136 @@ def test_r10_upload_takes_for_update_lock_on_employee(
 
 
 def test_r10_concurrency_document_cap_30(
-    doc_setup: dict[str, Any], db: Session
+    tmp_path, monkeypatch
 ) -> None:
     """R10 Concurrency: two simultaneous uploads at 29 existing documents give
-    exactly one 201 and one 409, never 500.
+    exactly one 201 and one 409, never 500. Uses real separate DB sessions and barrier.
     """
     import threading
     from app.main import app as fastapi_app
+    from app.modules.platform.models import FileObject
+    from app.db.session import get_db
 
-    emp1 = doc_setup["emp1"]
-    hr_headers = _auth_headers(doc_setup["hr_a"])
-    pdf_data = _make_sample_pdf()
+    assert settings.TEST_DATABASE_URL is not None
+    concurrent_engine = create_engine(settings.TEST_DATABASE_URL, pool_size=5, max_overflow=2)
 
-    client = TestClient(fastapi_app)
+    docs_dir = str(tmp_path / "conc_docs")
+    monkeypatch.setattr(settings, "EMPLOYEE_DOCS_DIR", docs_dir)
 
-    # Seed up to 29 documents
-    existing_count = db.query(EmployeeDocument).filter(
-        EmployeeDocument.employee_id == emp1.id,
-        EmployeeDocument.deleted_at.is_(None)
-    ).count()
+    try:
+        cid = uuid.uuid4()
+        with Session(concurrent_engine) as setup_sess:
+            company = Company(
+                id=cid,
+                name="Conc Corp",
+                code=f"CNC{uuid.uuid4().hex[:4].upper()}",
+                email=f"cnc-{uuid.uuid4().hex[:6]}@example.com",
+                country="IN",
+                status=CompanyStatus.active,
+                is_active=True,
+            )
+            setup_sess.add(company)
+            setup_sess.flush()
 
-    for i in range(existing_count, 29):
-        r = client.post(
-            f"/api/v1/documents/{emp1.id}",
-            headers=hr_headers,
-            data={"document_type": "certificate", "name": f"Concurrent Seed {i}"},
-            files={"file": (f"seed_{i}.pdf", pdf_data, "application/pdf")},
-        )
-        assert r.status_code == 201
+            hr_user = User(
+                id=uuid.uuid4(),
+                company_id=cid,
+                email=f"cnchr-{uuid.uuid4().hex[:6]}@example.com",
+                hashed_password=hash_password("Test1234pass!"),
+                role=UserRole.hr_admin,
+                is_active=True,
+            )
+            setup_sess.add(hr_user)
+            setup_sess.flush()
+            company.owner_user_id = hr_user.id
+            setup_sess.flush()
 
-    results = []
+            bind_tenant_to_session(setup_sess, company_id=cid, is_platform_admin=True)
 
-    def upload_concurrent():
-        c = TestClient(fastapi_app)
-        res = c.post(
-            f"/api/v1/documents/{emp1.id}",
-            headers=hr_headers,
-            data={"document_type": "certificate", "name": "Concurrent Race"},
-            files={"file": ("race.pdf", pdf_data, "application/pdf")},
-        )
-        results.append(res.status_code)
+            conc_emp = Employee(
+                id=uuid.uuid4(),
+                company_id=cid,
+                user_id=hr_user.id,
+                employee_code=f"{company.code}-0001",
+                first_name="Conc",
+                last_name="Worker",
+                email=hr_user.email,
+                employment_type=EmploymentType.full_time,
+                hire_date=date(2024, 1, 1),
+                is_active=True,
+                invitation_status=InvitationStatus.activated,
+            )
+            setup_sess.add(conc_emp)
+            setup_sess.flush()
 
-    t1 = threading.Thread(target=upload_concurrent)
-    t2 = threading.Thread(target=upload_concurrent)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+            token = create_access_token(
+                sub=str(hr_user.id), company_id=str(cid), role=hr_user.role.value
+            )
+            hr_headers = {"Authorization": f"Bearer {token}"}
+            emp_id = conc_emp.id
 
-    assert sorted(results) == [201, 409], f"Expected [201, 409], got: {results}"
+            pdf_data = _make_sample_pdf()
+            co_dir = os.path.join(docs_dir, str(cid))
+            os.makedirs(co_dir, exist_ok=True)
+
+            for i in range(29):
+                fo = FileObject(
+                    id=uuid.uuid4(),
+                    company_id=cid,
+                    uploaded_by=hr_user.id,
+                    file_name=f"cseed_{i}.pdf",
+                    file_type="application/pdf",
+                    file_size=len(pdf_data),
+                    storage_path=os.path.join(co_dir, f"cseed_{i}.pdf"),
+                )
+                setup_sess.add(fo)
+                setup_sess.flush()
+                doc_item = EmployeeDocument(
+                    id=uuid.uuid4(),
+                    company_id=cid,
+                    employee_id=emp_id,
+                    file_object_id=fo.id,
+                    document_type="certificate",
+                    name=f"Concurrent Seed {i}",
+                )
+                setup_sess.add(doc_item)
+            setup_sess.commit()
+
+        def _get_test_db():
+            sess = Session(concurrent_engine)
+            try:
+                yield sess
+            finally:
+                sess.close()
+
+        fastapi_app.dependency_overrides[get_db] = _get_test_db
+
+        barrier = threading.Barrier(2)
+        results = []
+
+        def upload_concurrent():
+            c = TestClient(fastapi_app)
+            try:
+                barrier.wait()
+                res = c.post(
+                    f"/api/v1/documents/{emp_id}",
+                    headers=hr_headers,
+                    data={"document_type": "certificate", "name": "Concurrent Race"},
+                    files={"file": ("race.pdf", pdf_data, "application/pdf")},
+                )
+                results.append(res.status_code)
+            except Exception:
+                results.append(999)
+
+        t1 = threading.Thread(target=upload_concurrent)
+        t2 = threading.Thread(target=upload_concurrent)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert 500 not in results, f"Got 500 in concurrency race: {results}"
+        assert sorted(results) == [201, 409], f"Expected [201, 409], got: {results}"
+    finally:
+        fastapi_app.dependency_overrides.clear()
+        concurrent_engine.dispose()

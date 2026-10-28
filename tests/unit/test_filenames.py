@@ -16,7 +16,7 @@ def test_sanitize_filename_strips_directory_paths():
 
 def test_sanitize_filename_drops_control_and_odd_characters():
     assert sanitize_filename("file\x00name\r\n.pdf") == "filename.pdf"
-    assert sanitize_filename("my resume (1) [final]!@#$%^&*.pdf") == "my resume _1_ _final________.pdf"
+    assert sanitize_filename("my resume (1) [final]!@#$%^&*.pdf") == "my resume _1_ _final_________.pdf"
 
 
 def test_sanitize_filename_strips_leading_dots_and_spaces():
