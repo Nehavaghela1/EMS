@@ -234,6 +234,163 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
       // Personal email change must NOT show the work email sign out warning
       expect(screen.queryByText(/sign the employee out/i)).not.toBeInTheDocument();
     });
+
+    it("a) employee editing their OWN record with personal_email null sees personal email field and can type in it", async () => {
+      const regularEmployeeUser: AuthContextModule.CurrentUser = {
+        ...hrUser,
+        role: "employee",
+        id: "usr-own-emp",
+      };
+      vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+        ...defaultAuthValue,
+        user: regularEmployeeUser,
+      });
+
+      const ownRecordWithNullPersonalEmail: HrApi.Employee = {
+        id: "emp-own",
+        user_id: "usr-own-emp",
+        employee_code: "EMP-OWN",
+        first_name: "Own",
+        last_name: "User",
+        email: "own@company.com",
+        personal_email: null,
+        phone: "+1234567890",
+        department_id: "dept-1",
+        department_name: "Engineering",
+        location_id: null,
+        position: "Developer",
+        level: "L1",
+        reporting_manager_id: null,
+        employment_type: "full_time",
+        hire_date: "2024-01-01",
+        probation_end_date: null,
+        notice_period_days: 30,
+        is_active: true,
+        invitation_status: "activated",
+        created_at: "2024-01-01",
+      };
+      vi.mocked(HrApi.getEmployee).mockResolvedValue(ownRecordWithNullPersonalEmail);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/employees/emp-own/edit"]}>
+            <Routes>
+              <Route path="/employees/:id/edit" element={<EmployeeFormPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/first name \*/i)).toBeInTheDocument();
+      });
+
+      const personalEmailInput = screen.getByLabelText(/personal email/i);
+      expect(personalEmailInput).toBeInTheDocument();
+      await userEvent.type(personalEmailInput, "ownpersonal@gmail.com");
+      expect(personalEmailInput).toHaveValue("ownpersonal@gmail.com");
+    });
+
+    it("b) employee editing ANOTHER person's record with personal_email null does not see personal email field", async () => {
+      const regularEmployeeUser: AuthContextModule.CurrentUser = {
+        ...hrUser,
+        role: "employee",
+        id: "usr-own-emp",
+      };
+      vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+        ...defaultAuthValue,
+        user: regularEmployeeUser,
+      });
+
+      const otherRecordWithNullPersonalEmail: HrApi.Employee = {
+        id: "emp-other",
+        user_id: "usr-other-emp",
+        employee_code: "EMP-OTHER",
+        first_name: "Other",
+        last_name: "Colleague",
+        email: "other@company.com",
+        personal_email: null,
+        phone: "+1234567890",
+        department_id: "dept-1",
+        department_name: "Engineering",
+        location_id: null,
+        position: "Developer",
+        level: "L1",
+        reporting_manager_id: null,
+        employment_type: "full_time",
+        hire_date: "2024-01-01",
+        probation_end_date: null,
+        notice_period_days: 30,
+        is_active: true,
+        invitation_status: "activated",
+        created_at: "2024-01-01",
+      };
+      vi.mocked(HrApi.getEmployee).mockResolvedValue(otherRecordWithNullPersonalEmail);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/employees/emp-other/edit"]}>
+            <Routes>
+              <Route path="/employees/:id/edit" element={<EmployeeFormPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/first name \*/i)).toBeInTheDocument();
+      });
+
+      expect(screen.queryByLabelText(/personal email/i)).not.toBeInTheDocument();
+    });
+
+    it("c) HR admin opening any record with personal_email null sees personal email field", async () => {
+      vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+        ...defaultAuthValue,
+        user: hrUser,
+      });
+
+      const anyRecordWithNullPersonalEmail: HrApi.Employee = {
+        id: "emp-any",
+        user_id: "usr-any-emp",
+        employee_code: "EMP-ANY",
+        first_name: "Any",
+        last_name: "Employee",
+        email: "any@company.com",
+        personal_email: null,
+        phone: "+1234567890",
+        department_id: "dept-1",
+        department_name: "Engineering",
+        location_id: null,
+        position: "Developer",
+        level: "L1",
+        reporting_manager_id: null,
+        employment_type: "full_time",
+        hire_date: "2024-01-01",
+        probation_end_date: null,
+        notice_period_days: 30,
+        is_active: true,
+        invitation_status: "activated",
+        created_at: "2024-01-01",
+      };
+      vi.mocked(HrApi.getEmployee).mockResolvedValue(anyRecordWithNullPersonalEmail);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/employees/emp-any/edit"]}>
+            <Routes>
+              <Route path="/employees/:id/edit" element={<EmployeeFormPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/first name \*/i)).toBeInTheDocument();
+      });
+
+      expect(screen.getByLabelText(/personal email/i)).toBeInTheDocument();
+    });
   });
 
   describe("EmployeeListPage (F5, F6, F7)", () => {

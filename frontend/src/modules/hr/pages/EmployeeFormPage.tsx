@@ -102,6 +102,8 @@ export function EmployeeFormPage() {
     enabled: isEdit,
   });
 
+  const isOwnRecord = Boolean(user?.id) && existingQuery.data?.user_id === user?.id;
+
   const [positionMode, setPositionMode] = useState<string>("");
   const [customPosition, setCustomPosition] = useState<string>("");
 
@@ -481,7 +483,7 @@ export function EmployeeFormPage() {
               />
               {fieldErrors.email && <span className="field-error">{fieldErrors.email}</span>}
             </div>
-            {(isHRAdminOrOwner || existingQuery.data?.personal_email !== null) && (
+            {(isHRAdminOrOwner || isOwnRecord || existingQuery.data?.personal_email !== null) && (
               <div className={"field" + (fieldErrors.personal_email ? " has-error" : "")}>
                 <label htmlFor="field-personal-email">Personal email</label>
                 <input
