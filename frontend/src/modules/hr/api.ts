@@ -230,17 +230,9 @@ export interface EmployeeExportJobResponse {
   job_id: string;
 }
 
-export interface JobStatusResponse {
-  job_id: string;
-  status: "PENDING" | "STARTED" | "SUCCESS" | "FAILURE" | "RETRY" | "REVOKED";
-  result?: {
-    file_name?: string;
-    row_count?: number;
-    created_at?: string;
-    expires_at?: string;
-  } | null;
-  error?: string | null;
-}
+import type { components } from "../../shared/api/types.gen";
+
+export type JobStatusResponse = components["schemas"]["JobStatusResponse"];
 
 export async function requestEmployeeExport(
   filters: EmployeeExportRequestParams = {}

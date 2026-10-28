@@ -281,7 +281,7 @@ export function EmployeeListPage() {
       if (activeViewFilter === "inactive") exportParams.is_active = false;
 
       const { job_id } = await requestEmployeeExport(exportParams);
-      setExportState({ loading: true, jobId: job_id, status: "PENDING", error: null });
+      setExportState({ loading: true, jobId: job_id, status: "queued", error: null });
 
       // F-3: Poll every 2 seconds, give up after 2 minutes (60 attempts * 2000ms = 120s)
       let attempts = 0;
@@ -294,12 +294,12 @@ export function EmployeeListPage() {
           const statusRes = await getJobStatus(job_id);
           setExportState({ loading: true, jobId: job_id, status: statusRes.status, error: statusRes.error || null });
 
-          if (statusRes.status === "SUCCESS") {
-            const fileName = statusRes.result?.file_name || `employees_export_${new Date().toISOString().slice(0, 10)}.csv`;
+          if (statusRes.status === "success") {
+            const fileName = (statusRes.result as { file_name?: string } | undefined)?.file_name || `employees_export_${new Date().toISOString().slice(0, 10)}.csv`;
             await downloadEmployeeExport(job_id, fileName);
-            notify(`Export downloaded successfully (${statusRes.result?.row_count ?? "all"} records).`, "success");
+            notify(`Export downloaded successfully (${(statusRes.result as { row_count?: number } | undefined)?.row_count ?? "all"} records).`, "success");
             setExportState({ loading: false, jobId: null, status: "", error: null });
-          } else if (statusRes.status === "FAILURE" || statusRes.status === "REVOKED") {
+          } else if (statusRes.status === "failure") {
             const errMsg = statusRes.error || "Export generation failed.";
             setExportState({ loading: false, jobId: null, status: "", error: errMsg });
             notify(errMsg, "error");
