@@ -2,9 +2,9 @@ import csv
 import io
 import threading
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -723,6 +723,24 @@ def test_r08_export_download_authorization_and_expiry(
     # Unknown job -> 404
     res_unknown = client.get(f"/api/v1/employees/export/{fake_job_id}/download", headers=hr_headers)
     assert res_unknown.status_code == 404
+
+    # Expired job test
+    with patch("app.modules.hr.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "SUCCESS"
+        mock_task.result = {
+            "company_id": str(bulk_company["company_id"]),
+            "requester_id": str(bulk_company["hr_admin"].id),
+            "requester_role": "hr_admin",
+            "file_path": "/tmp/non_existent.csv",
+            "file_name": "test.csv",
+            "expires_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+        }
+        mock_async.return_value = mock_task
+
+        res_expired = client.get("/api/v1/employees/export/some-job/download", headers=hr_headers)
+        assert res_expired.status_code == 404
+        assert "expired" in res_expired.json()["error"]["message"].lower()
 
 
 # ==============================================================================
