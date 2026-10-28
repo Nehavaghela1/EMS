@@ -49,6 +49,23 @@ def _get_audit_details(audit: AuditLog) -> dict[str, Any]:
 
 
 @pytest.fixture
+def export_eager_session(monkeypatch, db: Session, tmp_path):
+    from unittest.mock import MagicMock
+
+    from app.core.config import settings
+    from app.workers.celery_app import celery_app
+    from app.workers.tasks import hr as hr_tasks
+
+    monkeypatch.setattr(celery_app.conf, "task_always_eager", True)
+    monkeypatch.setattr(celery_app.conf, "task_eager_propagates", False)
+
+    mock_db = MagicMock(wraps=db)
+    mock_db.close = MagicMock()
+    monkeypatch.setattr(hr_tasks, "get_task_db_session", lambda: mock_db)
+    monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
+
+
+@pytest.fixture
 def bulk_company(db: Session) -> dict[str, Any]:
     cid = uuid.uuid4()
     company = Company(
@@ -699,7 +716,7 @@ def test_r06_audit_counts_and_email_outbox(
 
 
 def test_r07_export_large_result_and_filtering(
-    client: TestClient, bulk_company: dict[str, Any], db: Session
+    client: TestClient, bulk_company: dict[str, Any], db: Session, export_eager_session
 ) -> None:
     """R7: Export over 105 employees returns all 105 (not one page);
     manager scoped to reports; no file_path in job result.
@@ -892,7 +909,7 @@ def test_b5_celery_beat_task_deletes_expired_export_files(tmp_path, monkeypatch)
 
 
 def test_r09_export_csv_headers_and_safety(
-    client: TestClient, bulk_company: dict[str, Any], db: Session
+    client: TestClient, bulk_company: dict[str, Any], db: Session, export_eager_session
 ) -> None:
     """R9: UTF-8 BOM, exact headers, phone/email scoping, csv_safe_cell sanitization,
     round trip through csv module, no token, hash, bank or PAN columns.
@@ -1082,7 +1099,7 @@ def test_r10_single_deactivate_reactivate_rate_limit_30_per_min(
 
 
 def test_r10_export_and_download_audit_rows(
-    client: TestClient, bulk_company: dict[str, Any], db: Session
+    client: TestClient, bulk_company: dict[str, Any], db: Session, export_eager_session
 ) -> None:
     """R10: Export request writes EMPLOYEES_EXPORT_REQUESTED;
     download writes EMPLOYEES_EXPORT_DOWNLOADED.
@@ -1158,7 +1175,7 @@ def test_r10_bulk_deactivate_row_lock_sql_capture(
 
 
 def test_c1_job_status_safe_error_messages(
-    client: TestClient, bulk_company: dict[str, Any], db: Session, monkeypatch
+    client: TestClient, bulk_company: dict[str, Any], db: Session, monkeypatch, export_eager_session
 ) -> None:
     """C1: GET /jobs/{job_id}: for a failed job never return str(exception).
     Return safe message only for ExportTooLargeError (narrow your filters),
@@ -1182,9 +1199,7 @@ def test_c1_job_status_safe_error_messages(
 
     # 2. ExportTooLargeError via POST /employees/export then GET /jobs/{id} with lowered cap
     from app.core.config import settings
-    from app.workers.tasks import hr as hr_tasks
 
-    monkeypatch.setattr(hr_tasks, "get_task_db_session", lambda: db)
     monkeypatch.setattr(settings, "MAX_EXPORT_ROWS", 1)
 
     res_post = client.post(
