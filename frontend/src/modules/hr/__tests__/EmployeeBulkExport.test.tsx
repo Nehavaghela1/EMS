@@ -501,11 +501,20 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
 
     it("F7: requests export, polls job status, and triggers auto-download", async () => {
       vi.mocked(HrApi.requestEmployeeExport).mockResolvedValue({ job_id: "job-123" });
-      vi.mocked(HrApi.getJobStatus).mockResolvedValue({
-        job_id: "job-123",
-        status: "SUCCESS",
-        result: { file_name: "employees.csv", row_count: 2 },
-      });
+      // First poll: queued, second poll: success with result containing company_id, row_count, expires_at (no file_name)
+      vi.mocked(HrApi.getJobStatus)
+        .mockResolvedValueOnce({
+          job_id: "job-123",
+          status: "queued",
+          result: null,
+          error: null,
+        })
+        .mockResolvedValueOnce({
+          job_id: "job-123",
+          status: "success",
+          result: { company_id: "comp-123", row_count: 6, expires_at: "2026-10-29T10:00:00Z" },
+          error: null,
+        });
       vi.mocked(HrApi.downloadEmployeeExport).mockResolvedValue();
 
       render(
@@ -537,13 +546,17 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
         );
       });
 
-      await waitFor(() => {
-        expect(HrApi.getJobStatus).toHaveBeenCalledWith("job-123");
-      });
+      await waitFor(
+        () => {
+          expect(HrApi.downloadEmployeeExport).toHaveBeenCalledWith(
+            "job-123",
+            expect.stringMatching(/^employees_export_\d{4}-\d{2}-\d{2}\.csv$/)
+          );
+        },
+        { timeout: 4000 }
+      );
 
-      await waitFor(() => {
-        expect(HrApi.downloadEmployeeExport).toHaveBeenCalledWith("job-123", "employees.csv");
-      });
+      expect(HrApi.downloadEmployeeExport).toHaveBeenCalledTimes(1);
 
       expect(mockNotify).toHaveBeenCalledWith(
         expect.stringContaining("Export downloaded successfully"),
@@ -555,8 +568,8 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
       vi.mocked(HrApi.requestEmployeeExport).mockResolvedValue({ job_id: "job-failed" });
       vi.mocked(HrApi.getJobStatus).mockResolvedValue({
         job_id: "job-failed",
-        status: "FAILURE",
-        error: "Export generation failed.",
+        status: "failure",
+        error: "Export failed. Please try again.",
       });
 
       render(
@@ -580,8 +593,10 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
       await userEvent.click(exportBtn);
 
       await waitFor(() => {
-        expect(mockNotify).toHaveBeenCalledWith("Export generation failed.", "error");
+        expect(mockNotify).toHaveBeenCalledWith("Export failed. Please try again.", "error");
       });
+
+      expect(HrApi.downloadEmployeeExport).not.toHaveBeenCalled();
     });
 
     it("F-2: bulk action selection capped at 100 with visible warning message", async () => {
