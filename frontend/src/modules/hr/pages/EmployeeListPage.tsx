@@ -8,7 +8,19 @@ import { useToast } from "../../../app/toast-context";
 import { useAuth } from "../../../app/auth-context";
 import { useHasRole } from "../../../shared/hooks/useRole";
 import { parseApiError } from "../../../shared/api/errors";
-import { listDepartments, listEmployees, updateEmployee, toggleActiveEmployee, type Employee } from "../api";
+import {
+  listDepartments,
+  listEmployees,
+  updateEmployee,
+  bulkDeactivateEmployees,
+  bulkReactivateEmployees,
+  bulkResendInviteEmployees,
+  requestEmployeeExport,
+  getJobStatus,
+  downloadEmployeeExport,
+  type Employee,
+  type BulkActionResponse,
+} from "../api";
 import { listCompanies, updateUserRole } from "../../identity/api";
 import { getPositionsForDepartment, toTitleCase } from "../constants/departmentPositions";
 
@@ -157,10 +169,24 @@ export function EmployeeListPage() {
 
   // Selection state for Zoho-style bulk operations
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkActionDropdownOpen, setBulkActionDropdownOpen] = useState(false);
   const [viewDropdownOpen, setViewDropdownOpen] = useState(false);
   const [viewSearchQuery, setViewSearchQuery] = useState("");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+
+  // Bulk actions breakdown modal state
+  const [bulkResults, setBulkResults] = useState<{
+    actionTitle: string;
+    result: BulkActionResponse;
+  } | null>(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+
+  // Export progress modal state
+  const [exportState, setExportState] = useState<{
+    loading: boolean;
+    jobId: string | null;
+    status: string;
+    error: string | null;
+  }>({ loading: false, jobId: null, status: "", error: null });
 
   // Zoho custom views
   const [activeViewFilter, setActiveViewFilter] = useState<
@@ -177,57 +203,117 @@ export function EmployeeListPage() {
     { id: "yet_to_accept", label: "Yet to Accept Portal Invite Employees", star: false },
   ]);
 
-  // Bulk actions handlers
-  async function handleBulkTogglePortal(enable: boolean) {
+  // Bulk actions handlers (F5 & F6)
+  async function handleBulkDeactivate() {
     if (selectedIds.size === 0) return;
-    setBulkActionDropdownOpen(false);
-    const count = selectedIds.size;
-    notify(`Processing portal ${enable ? "activation" : "deactivation"} for ${count} employee(s)...`, "info");
+    setBulkLoading(true);
     try {
-      // Toggle for each selected employee
-      for (const id of Array.from(selectedIds)) {
-        await toggleActiveEmployee(id).catch(() => {});
-      }
+      const res = await bulkDeactivateEmployees(Array.from(selectedIds));
+      setBulkResults({ actionTitle: "Bulk Deactivate", result: res });
       await queryClient.invalidateQueries({ queryKey: ["employees"] });
-      notify(`Portal access ${enable ? "enabled" : "disabled"} for ${count} employee(s).`, "success");
       setSelectedIds(new Set());
     } catch (err) {
-      notify("Failed to update some employee portal statuses.", "error");
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to bulk deactivate employees.", "error");
+    } finally {
+      setBulkLoading(false);
     }
   }
 
-  function handleBulkDeclaration(type: "FBP" | "IT" | "POI") {
-    const count = selectedIds.size;
-    notify(`Released ${type} Declaration window for ${count} selected employee(s).`, "success");
+  async function handleBulkReactivate() {
+    if (selectedIds.size === 0) return;
+    setBulkLoading(true);
+    try {
+      const res = await bulkReactivateEmployees(Array.from(selectedIds));
+      setBulkResults({ actionTitle: "Bulk Reactivate", result: res });
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
+      setSelectedIds(new Set());
+    } catch (err) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to bulk reactivate employees.", "error");
+    } finally {
+      setBulkLoading(false);
+    }
+  }
+
+  async function handleBulkResendInvite() {
+    if (selectedIds.size === 0) return;
+    setBulkLoading(true);
+    try {
+      const res = await bulkResendInviteEmployees(Array.from(selectedIds));
+      setBulkResults({ actionTitle: "Bulk Resend Invite", result: res });
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
+      setSelectedIds(new Set());
+    } catch (err) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to resend invites.", "error");
+    } finally {
+      setBulkLoading(false);
+    }
+  }
+
+  // Export handler (F7: server-side async export with polling and auto-download)
+  async function handleExportEmployees(onlySelected = false) {
+    setHeaderMenuOpen(false);
+    setExportState({ loading: true, jobId: null, status: "REQUESTING", error: null });
+
+    try {
+      const targetIds = onlySelected && selectedIds.size > 0 ? Array.from(selectedIds) : undefined;
+      const exportParams: any = {
+        q: debouncedQ || undefined,
+        department_id: departmentId || undefined,
+        role: roleFilter || undefined,
+        employee_ids: targetIds,
+      };
+      if (activeViewFilter === "active") exportParams.is_active = true;
+      if (activeViewFilter === "inactive") exportParams.is_active = false;
+
+      const { job_id } = await requestEmployeeExport(exportParams);
+      setExportState({ loading: true, jobId: job_id, status: "PENDING", error: null });
+
+      // Poll until SUCCESS or FAILURE
+      let attempts = 0;
+      const maxAttempts = 30; // 30 * 1000ms = 30s
+      const pollInterval = 1000;
+
+      const poll = async () => {
+        try {
+          attempts++;
+          const statusRes = await getJobStatus(job_id);
+          setExportState({ loading: true, jobId: job_id, status: statusRes.status, error: statusRes.error || null });
+
+          if (statusRes.status === "SUCCESS") {
+            const fileName = statusRes.result?.file_name || `employees_export_${new Date().toISOString().slice(0, 10)}.csv`;
+            await downloadEmployeeExport(job_id, fileName);
+            notify(`Export downloaded successfully (${statusRes.result?.row_count ?? "all"} records).`, "success");
+            setExportState({ loading: false, jobId: null, status: "", error: null });
+          } else if (statusRes.status === "FAILURE" || statusRes.status === "REVOKED") {
+            const errMsg = statusRes.error || "Export generation failed.";
+            setExportState({ loading: false, jobId: null, status: "", error: errMsg });
+            notify(errMsg, "error");
+          } else if (attempts < maxAttempts) {
+            setTimeout(poll, pollInterval);
+          } else {
+            setExportState({ loading: false, jobId: null, status: "", error: "Export timed out." });
+            notify("Export timed out. Please try again.", "error");
+          }
+        } catch (pollErr) {
+          const parsed = parseApiError(pollErr);
+          setExportState({ loading: false, jobId: null, status: "", error: parsed.message });
+          notify(parsed.message || "Failed polling export status.", "error");
+        }
+      };
+
+      setTimeout(poll, pollInterval);
+    } catch (err) {
+      const parsed = parseApiError(err);
+      setExportState({ loading: false, jobId: null, status: "", error: parsed.message });
+      notify(parsed.message || "Failed to start export.", "error");
+    }
   }
 
   function handleExportSelected() {
-    const raw = employeesQuery.data?.items || [];
-    const targets = raw.filter((e) => selectedIds.size === 0 || selectedIds.has(e.id));
-    if (targets.length === 0) {
-      notify("No employees to export.", "error");
-      return;
-    }
-    const headers = ["Employee Code", "First Name", "Last Name", "Email", "Department", "Designation", "Status"];
-    const rows = targets.map((e) => [
-      `"${e.employee_code || ""}"`,
-      `"${e.first_name || ""}"`,
-      `"${e.last_name || ""}"`,
-      `"${e.email || ""}"`,
-      `"${e.department_name || ""}"`,
-      `"${e.position || ""}"`,
-      `"${e.is_active ? "Active" : "Inactive"}"`,
-    ]);
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `employees_export_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    notify(`Exported ${targets.length} employee records to CSV.`, "success");
-    setHeaderMenuOpen(false);
+    handleExportEmployees(selectedIds.size > 0);
   }
 
   function handleSelectRow(id: string) {
@@ -880,159 +966,68 @@ export function EmployeeListPage() {
         >
           {/* Action buttons on left */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            {/* Enable Portal Split / Dropdown button */}
-            <div style={{ position: "relative", display: "inline-flex" }}>
-              <button
-                type="button"
-                onClick={() => handleBulkTogglePortal(true)}
-                style={{
-                  background: "#ffffff",
-                  border: "1px solid #cbd5e1",
-                  borderRight: "none",
-                  borderRadius: "6px 0 0 6px",
-                  padding: "6px 12px",
-                  fontSize: "0.82rem",
-                  fontWeight: 500,
-                  color: "#334155",
-                  cursor: "pointer",
-                }}
-              >
-                Enable Portal
-              </button>
-              <button
-                type="button"
-                onClick={() => setBulkActionDropdownOpen(!bulkActionDropdownOpen)}
-                style={{
-                  background: "#ffffff",
-                  border: "1px solid #cbd5e1",
-                  borderRadius: "0 6px 6px 0",
-                  padding: "6px 8px",
-                  fontSize: "0.82rem",
-                  color: "#64748b",
-                  cursor: "pointer",
-                }}
-              >
-                ▼
-              </button>
-
-              {bulkActionDropdownOpen && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: "100%",
-                    left: 0,
-                    marginTop: "4px",
-                    background: "#2563eb",
-                    borderRadius: "6px",
-                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                    zIndex: 60,
-                    minWidth: "140px",
-                    overflow: "hidden",
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => handleBulkTogglePortal(false)}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      padding: "8px 12px",
-                      border: "none",
-                      background: "transparent",
-                      color: "#ffffff",
-                      fontSize: "0.82rem",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Disable Portal
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Release FBP Declaration */}
+            {/* Bulk Deactivate Button */}
             <button
               type="button"
-              onClick={() => handleBulkDeclaration("FBP")}
+              disabled={bulkLoading}
+              onClick={handleBulkDeactivate}
+              className="btn btn-sm btn-outline"
               style={{
-                background: "#ffffff",
-                border: "1px solid #cbd5e1",
-                borderRadius: "6px",
-                padding: "6px 12px",
-                fontSize: "0.82rem",
-                fontWeight: 500,
-                color: "#334155",
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
+                borderColor: "#fca5a5",
+                color: "#dc2626",
+                background: "#fef2f2",
+                fontWeight: 600,
               }}
             >
-              <span>Release FBP Declaration</span>
-              <span style={{ fontSize: "0.65rem", color: "#64748b" }}>▼</span>
+              {bulkLoading ? "Processing…" : "Bulk Deactivate"}
             </button>
 
-            {/* Release IT Declaration */}
+            {/* Bulk Reactivate Button */}
             <button
               type="button"
-              onClick={() => handleBulkDeclaration("IT")}
+              disabled={bulkLoading}
+              onClick={handleBulkReactivate}
+              className="btn btn-sm btn-outline"
               style={{
-                background: "#ffffff",
-                border: "1px solid #cbd5e1",
-                borderRadius: "6px",
-                padding: "6px 12px",
-                fontSize: "0.82rem",
-                fontWeight: 500,
-                color: "#334155",
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
+                borderColor: "#86efac",
+                color: "#16a34a",
+                background: "#f0fdf4",
+                fontWeight: 600,
               }}
             >
-              <span>Release IT Declaration</span>
-              <span style={{ fontSize: "0.65rem", color: "#64748b" }}>▼</span>
+              {bulkLoading ? "Processing…" : "Bulk Reactivate"}
             </button>
 
-            {/* Release Proof Of Investment */}
+            {/* Bulk Resend Invite Button */}
             <button
               type="button"
-              onClick={() => handleBulkDeclaration("POI")}
+              disabled={bulkLoading}
+              onClick={handleBulkResendInvite}
+              className="btn btn-sm btn-outline"
               style={{
-                background: "#ffffff",
-                border: "1px solid #cbd5e1",
-                borderRadius: "6px",
-                padding: "6px 12px",
-                fontSize: "0.82rem",
-                fontWeight: 500,
-                color: "#334155",
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
+                borderColor: "#93c5fd",
+                color: "#2563eb",
+                background: "#eff6ff",
+                fontWeight: 600,
               }}
             >
-              <span>Release Proof Of Invest...</span>
-              <span style={{ fontSize: "0.65rem", color: "#64748b" }}>▼</span>
+              {bulkLoading ? "Processing…" : "Resend Invites"}
             </button>
 
             {/* Quick Export Selected */}
             <button
               type="button"
-              onClick={handleExportSelected}
+              disabled={exportState.loading}
+              onClick={() => handleExportEmployees(true)}
+              className="btn btn-sm btn-outline"
               style={{
+                borderColor: "#cbd5e1",
+                color: "#334155",
                 background: "#ffffff",
-                border: "1px solid #cbd5e1",
-                borderRadius: "6px",
-                padding: "6px 12px",
-                fontSize: "0.82rem",
                 fontWeight: 500,
-                color: "#2563eb",
-                cursor: "pointer",
               }}
             >
-              Export Selected
+              {exportState.loading ? "Exporting…" : "Export Selected"}
             </button>
           </div>
 
@@ -1376,6 +1371,172 @@ export function EmployeeListPage() {
                   : roleConfirm.action === "promote" ? "Confirm Promotion" : "Confirm Revoke"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* F6: Bulk Results Breakdown Modal */}
+      {bulkResults && (
+        <div
+          data-testid="bulk-results-modal"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            backgroundColor: "rgba(15, 23, 42, 0.7)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+          }}
+          onClick={() => setBulkResults(null)}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "16px",
+              width: "100%",
+              maxWidth: "520px",
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.35)",
+              border: "1px solid #e2e8f0",
+              padding: "28px",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 16px", fontSize: "1.2rem", fontWeight: 700, color: "#0f172a" }}>
+              {bulkResults.actionTitle} Results
+            </h3>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px", marginBottom: "20px" }}>
+              <div style={{ background: "#ecfdf5", border: "1px solid #bbf7d0", padding: "12px", borderRadius: "8px", textAlign: "center" }}>
+                <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "#16a34a" }}>
+                  {bulkResults.result.succeeded.length}
+                </div>
+                <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "#15803d", textTransform: "uppercase" }}>
+                  Succeeded
+                </div>
+              </div>
+              <div style={{ background: "#fffbeb", border: "1px solid #fde68a", padding: "12px", borderRadius: "8px", textAlign: "center" }}>
+                <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "#d97706" }}>
+                  {bulkResults.result.skipped.length}
+                </div>
+                <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "#b45309", textTransform: "uppercase" }}>
+                  Skipped
+                </div>
+              </div>
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", padding: "12px", borderRadius: "8px", textAlign: "center" }}>
+                <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "#dc2626" }}>
+                  {bulkResults.result.failed.length}
+                </div>
+                <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "#b91c1c", textTransform: "uppercase" }}>
+                  Failed
+                </div>
+              </div>
+            </div>
+
+            {bulkResults.result.skipped.length > 0 && (
+              <div style={{ marginBottom: "16px" }}>
+                <h4 style={{ fontSize: "0.85rem", fontWeight: 600, color: "#475569", margin: "0 0 8px" }}>
+                  Skipped Details:
+                </h4>
+                <div style={{ maxHeight: "120px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "6px" }}>
+                  {bulkResults.result.skipped.map((s, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        fontSize: "0.8rem",
+                        padding: "6px 10px",
+                        background: "#fffbeb",
+                        borderRadius: "6px",
+                        color: "#92400e",
+                        display: "flex",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <span style={{ fontFamily: "monospace" }}>{s.id.slice(0, 8)}…</span>
+                      <span>{s.reason.replace(/_/g, " ")}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {bulkResults.result.failed.length > 0 && (
+              <div style={{ marginBottom: "16px" }}>
+                <h4 style={{ fontSize: "0.85rem", fontWeight: 600, color: "#dc2626", margin: "0 0 8px" }}>
+                  Failures:
+                </h4>
+                <div style={{ maxHeight: "120px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "6px" }}>
+                  {bulkResults.result.failed.map((f, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        fontSize: "0.8rem",
+                        padding: "6px 10px",
+                        background: "#fef2f2",
+                        borderRadius: "6px",
+                        color: "#b91c1c",
+                        display: "flex",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <span style={{ fontFamily: "monospace" }}>{f.id.slice(0, 8)}…</span>
+                      <span>{f.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ textAlign: "right", marginTop: "20px" }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setBulkResults(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export Polling Status Modal */}
+      {exportState.loading && (
+        <div
+          data-testid="export-progress-modal"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            backgroundColor: "rgba(15, 23, 42, 0.7)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+          }}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "16px",
+              width: "100%",
+              maxWidth: "400px",
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.35)",
+              border: "1px solid #e2e8f0",
+              padding: "28px",
+              textAlign: "center",
+            }}
+          >
+            <div className="spinner" style={{ margin: "0 auto 16px" }} />
+            <h3 style={{ margin: "0 0 8px", fontSize: "1.1rem", fontWeight: 700, color: "#0f172a" }}>
+              Generating CSV Export…
+            </h3>
+            <p style={{ margin: 0, fontSize: "0.85rem", color: "#64748b" }}>
+              Status: <strong>{exportState.status}</strong>. Your download will start automatically once ready.
+            </p>
           </div>
         </div>
       )}

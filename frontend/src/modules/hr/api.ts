@@ -177,8 +177,100 @@ export async function deactivateEmployee(id: string): Promise<void> {
 }
 
 export async function reactivateEmployee(id: string): Promise<Employee> {
-  const { data } = await apiClient.post<Employee>(`/employees/${id}/toggle-active`);
+  const { data } = await apiClient.post<Employee>(`/employees/${id}/reactivate`);
   return data;
+}
+
+export interface BulkActionItemReason {
+  id: string;
+  reason: string;
+}
+
+export interface BulkActionItemFailure {
+  id: string;
+  code: string;
+  message: string;
+}
+
+export interface BulkActionResponse {
+  requested: number;
+  succeeded: string[];
+  skipped: BulkActionItemReason[];
+  failed: BulkActionItemFailure[];
+}
+
+export async function bulkDeactivateEmployees(employeeIds: string[]): Promise<BulkActionResponse> {
+  const { data } = await apiClient.post<BulkActionResponse>("/employees/bulk/deactivate", {
+    employee_ids: employeeIds,
+  });
+  return data;
+}
+
+export async function bulkReactivateEmployees(employeeIds: string[]): Promise<BulkActionResponse> {
+  const { data } = await apiClient.post<BulkActionResponse>("/employees/bulk/reactivate", {
+    employee_ids: employeeIds,
+  });
+  return data;
+}
+
+export async function bulkResendInviteEmployees(employeeIds: string[]): Promise<BulkActionResponse> {
+  const { data } = await apiClient.post<BulkActionResponse>("/employees/bulk/resend-invite", {
+    employee_ids: employeeIds,
+  });
+  return data;
+}
+
+export interface EmployeeExportRequestParams {
+  q?: string;
+  department_id?: string;
+  is_active?: boolean;
+  level?: string;
+  employment_type?: EmploymentType;
+  reporting_manager_id?: string;
+  role?: string;
+  employee_ids?: string[];
+}
+
+export interface EmployeeExportJobResponse {
+  job_id: string;
+}
+
+export interface JobStatusResponse {
+  job_id: string;
+  status: "PENDING" | "STARTED" | "SUCCESS" | "FAILURE" | "RETRY" | "REVOKED";
+  result?: {
+    file_name?: string;
+    row_count?: number;
+    created_at?: string;
+    expires_at?: string;
+  } | null;
+  error?: string | null;
+}
+
+export async function requestEmployeeExport(
+  filters: EmployeeExportRequestParams = {}
+): Promise<EmployeeExportJobResponse> {
+  const { data } = await apiClient.post<EmployeeExportJobResponse>("/employees/export", filters);
+  return data;
+}
+
+export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
+  const { data } = await apiClient.get<JobStatusResponse>(`/jobs/${jobId}`);
+  return data;
+}
+
+export async function downloadEmployeeExport(jobId: string, fileName = "employees.csv"): Promise<void> {
+  const response = await apiClient.get<Blob>(`/employees/export/${jobId}/download`, {
+    responseType: "blob",
+  });
+  const url = window.URL.createObjectURL(new Blob([response.data], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", fileName);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 export async function resendInvite(id: string): Promise<EmployeeCreateResponse> {

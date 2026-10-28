@@ -6,18 +6,18 @@ import { z } from "zod";
 export const employeeFormSchema = z.object({
   first_name: z.string().trim().min(1, "First name is required"),
   last_name: z.string().trim().optional(),
-  email: z.email("Enter a valid email address"),
-  personal_email: z.union([z.email("Enter a valid email address"), z.literal("")]).optional(),
+  email: z.string().trim().email("Enter a valid email address"),
+  personal_email: z.union([z.string().trim().email("Enter a valid email address"), z.literal("")]).optional(),
   phone: z.string().trim().optional(),
-  department_id: z.string().trim().min(1, "Department is required"),
+  department_id: z.string().trim().optional(),
   location_id: z.string().trim().optional(),
   reporting_manager_id: z.string().trim().optional(),
   position: z.string().trim().optional(),
-  level: z.string().trim().optional(),
+  level: z.enum(["L1", "L2", "L3"]).optional().or(z.literal("")),
   employment_type: z.enum(["full_time", "part_time", "contract", "intern"]),
   hire_date: z.string().min(1, "Hire date is required"),
   probation_end_date: z.string().optional(),
-  notice_period_days: z.coerce.number().int().min(0).optional(),
+  notice_period_days: z.coerce.number().int().min(0, "Notice period must be between 0 and 365 days").max(365, "Notice period must be between 0 and 365 days").optional(),
 });
 
 export type EmployeeFormValues = z.infer<typeof employeeFormSchema>;
