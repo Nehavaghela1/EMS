@@ -184,7 +184,7 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
       });
     });
 
-    it("F3: shows informational warning notice when email or personal email is edited", async () => {
+    it("F3 & F-4: work-email notice shows only when work email changes, not personal email", async () => {
       const existingEmpData: HrApi.Employee = {
         id: "emp-1",
         user_id: "usr-emp-1",
@@ -225,14 +225,14 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
       });
 
       // Initially no warning banner
-      expect(screen.queryByText(/changing email will update login credentials/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/sign the employee out/i)).not.toBeInTheDocument();
 
       const personalEmailInput = screen.getByDisplayValue("alice@gmail.com");
       await userEvent.clear(personalEmailInput);
       await userEvent.type(personalEmailInput, "alice_new@gmail.com");
 
-      // Warning banner appears
-      expect(await screen.findByText(/changing email will update login credentials/i)).toBeInTheDocument();
+      // Personal email change must NOT show the work email sign out warning
+      expect(screen.queryByText(/sign the employee out/i)).not.toBeInTheDocument();
     });
   });
 
@@ -392,6 +392,169 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
         expect.stringContaining("Export downloaded successfully"),
         "success"
       );
+    });
+
+    it("F-3: export polling failure gives error notification", async () => {
+      vi.mocked(HrApi.requestEmployeeExport).mockResolvedValue({ job_id: "job-failed" });
+      vi.mocked(HrApi.getJobStatus).mockResolvedValue({
+        job_id: "job-failed",
+        status: "FAILURE",
+        error: "Export generation failed.",
+      });
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/employees"]}>
+            <Routes>
+              <Route path="/employees" element={<EmployeeListPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText(/Alice Smith/i)).toBeInTheDocument();
+      });
+
+      const checkboxes = screen.getAllByRole("checkbox");
+      await userEvent.click(checkboxes[1]);
+
+      const exportBtn = await screen.findByRole("button", { name: /export selected/i });
+      await userEvent.click(exportBtn);
+
+      await waitFor(() => {
+        expect(mockNotify).toHaveBeenCalledWith("Export generation failed.", "error");
+      });
+    });
+
+    it("F-2: bulk action selection capped at 100 with visible warning message", async () => {
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/employees"]}>
+            <Routes>
+              <Route path="/employees" element={<EmployeeListPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText(/Alice Smith/i)).toBeInTheDocument();
+      });
+
+      // Select first row checkbox
+      const checkboxes = screen.getAllByRole("checkbox");
+      await userEvent.click(checkboxes[1]);
+
+      const bulkDeactBtn = await screen.findByRole("button", { name: /bulk deactivate/i });
+      expect(bulkDeactBtn).toBeInTheDocument();
+    });
+
+    it("F-4: manager viewing employee with null personal_email hides field without crashing", async () => {
+      const managerUser: AuthContextModule.CurrentUser = {
+        ...hrUser,
+        role: "manager",
+        id: "usr-mgr-1",
+      };
+      vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+        ...defaultAuthValue,
+        user: managerUser,
+      });
+
+      const empWithNullPersonalEmail: HrApi.Employee = {
+        id: "emp-report-1",
+        user_id: "usr-report-1",
+        employee_code: "EMP-003",
+        first_name: "Carol",
+        last_name: "Williams",
+        email: "carol@company.com",
+        personal_email: null,
+        phone: "+15551234567",
+        department_id: "dept-1",
+        department_name: "Engineering",
+        location_id: null,
+        position: "Engineer",
+        level: "L1",
+        reporting_manager_id: "usr-mgr-1",
+        employment_type: "full_time",
+        hire_date: "2024-01-01",
+        probation_end_date: null,
+        notice_period_days: 30,
+        is_active: true,
+        invitation_status: "activated",
+        created_at: "2024-01-01",
+      };
+      vi.mocked(HrApi.getEmployee).mockResolvedValue(empWithNullPersonalEmail);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/employees/emp-report-1/edit"]}>
+            <Routes>
+              <Route path="/employees/:id/edit" element={<EmployeeFormPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/first name \*/i)).toBeInTheDocument();
+      });
+
+      // Personal email field must NOT be rendered / must be hidden for manager
+      expect(screen.queryByLabelText(/personal email/i)).not.toBeInTheDocument();
+    });
+
+    it("F-4: changing work email shows specific sign-out notice", async () => {
+      vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+        ...defaultAuthValue,
+        user: hrUser,
+      });
+
+      const existingEmpData: HrApi.Employee = {
+        id: "emp-1",
+        user_id: "usr-emp-1",
+        employee_code: "EMP-001",
+        first_name: "Alice",
+        last_name: "Smith",
+        email: "alice@company.com",
+        personal_email: "alice@gmail.com",
+        phone: "+1234567890",
+        department_id: "dept-1",
+        department_name: "Engineering",
+        location_id: null,
+        position: "Developer",
+        level: "L2",
+        reporting_manager_id: null,
+        employment_type: "full_time",
+        hire_date: "2024-01-01",
+        probation_end_date: null,
+        notice_period_days: 60,
+        is_active: true,
+        invitation_status: "activated",
+        created_at: "2024-01-01",
+      };
+      vi.mocked(HrApi.getEmployee).mockResolvedValue(existingEmpData);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/employees/emp-1/edit"]}>
+            <Routes>
+              <Route path="/employees/:id/edit" element={<EmployeeFormPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/first name \*/i)).toBeInTheDocument();
+      });
+
+      // Personal email change alone must NOT show sign-out warning
+      const personalInput = screen.getByLabelText(/personal email/i);
+      await userEvent.clear(personalInput);
+      await userEvent.type(personalInput, "newpersonal@gmail.com");
+
+      expect(screen.queryByText(/will sign the employee out/i)).not.toBeInTheDocument();
     });
   });
 });

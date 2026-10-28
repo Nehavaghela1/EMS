@@ -203,9 +203,13 @@ export function EmployeeListPage() {
     { id: "yet_to_accept", label: "Yet to Accept Portal Invite Employees", star: false },
   ]);
 
-  // Bulk actions handlers (F5 & F6)
+  // Bulk actions handlers (F5 & F6, F-2 cap at 100)
   async function handleBulkDeactivate() {
     if (selectedIds.size === 0) return;
+    if (selectedIds.size > 100) {
+      notify("Bulk actions are limited to a maximum of 100 employees at a time.", "error");
+      return;
+    }
     setBulkLoading(true);
     try {
       const res = await bulkDeactivateEmployees(Array.from(selectedIds));
@@ -222,6 +226,10 @@ export function EmployeeListPage() {
 
   async function handleBulkReactivate() {
     if (selectedIds.size === 0) return;
+    if (selectedIds.size > 100) {
+      notify("Bulk actions are limited to a maximum of 100 employees at a time.", "error");
+      return;
+    }
     setBulkLoading(true);
     try {
       const res = await bulkReactivateEmployees(Array.from(selectedIds));
@@ -238,6 +246,10 @@ export function EmployeeListPage() {
 
   async function handleBulkResendInvite() {
     if (selectedIds.size === 0) return;
+    if (selectedIds.size > 100) {
+      notify("Bulk actions are limited to a maximum of 100 employees at a time.", "error");
+      return;
+    }
     setBulkLoading(true);
     try {
       const res = await bulkResendInviteEmployees(Array.from(selectedIds));
@@ -271,10 +283,10 @@ export function EmployeeListPage() {
       const { job_id } = await requestEmployeeExport(exportParams);
       setExportState({ loading: true, jobId: job_id, status: "PENDING", error: null });
 
-      // Poll until SUCCESS or FAILURE
+      // F-3: Poll every 2 seconds, give up after 2 minutes (60 attempts * 2000ms = 120s)
       let attempts = 0;
-      const maxAttempts = 30; // 30 * 1000ms = 30s
-      const pollInterval = 1000;
+      const maxAttempts = 60; // 60 * 2000ms = 120s (2 minutes)
+      const pollInterval = 2000;
 
       const poll = async () => {
         try {
@@ -294,8 +306,8 @@ export function EmployeeListPage() {
           } else if (attempts < maxAttempts) {
             setTimeout(poll, pollInterval);
           } else {
-            setExportState({ loading: false, jobId: null, status: "", error: "Export timed out." });
-            notify("Export timed out. Please try again.", "error");
+            setExportState({ loading: false, jobId: null, status: "", error: "Export timed out after 2 minutes. Please try again." });
+            notify("Export timed out after 2 minutes. Please try again.", "error");
           }
         } catch (pollErr) {
           const parsed = parseApiError(pollErr);
@@ -304,7 +316,8 @@ export function EmployeeListPage() {
         }
       };
 
-      setTimeout(poll, pollInterval);
+      // Poll immediately for instant resolution if task already completed, then recurring interval
+      await poll();
     } catch (err) {
       const parsed = parseApiError(err);
       setExportState({ loading: false, jobId: null, status: "", error: parsed.message });
@@ -1033,7 +1046,12 @@ export function EmployeeListPage() {
 
           {/* Right counter and dismiss: "X Selected  Esc ✕" */}
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#2563eb" }}>
+            {selectedIds.size > 100 && (
+              <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#dc2626" }}>
+                ⚠️ Maximum 100 selectable for bulk actions
+              </span>
+            )}
+            <span style={{ fontSize: "0.85rem", fontWeight: 600, color: selectedIds.size > 100 ? "#dc2626" : "#2563eb" }}>
               {selectedIds.size} Selected
             </span>
             <button

@@ -167,11 +167,6 @@ export async function searchManagers(q?: string, excludeId?: string): Promise<Ma
   return data;
 }
 
-export async function toggleActiveEmployee(id: string): Promise<Employee> {
-  const { data } = await apiClient.post<Employee>(`/employees/${id}/toggle-active`);
-  return data;
-}
-
 export async function deactivateEmployee(id: string): Promise<void> {
   await apiClient.delete(`/employees/${id}`);
 }

@@ -244,11 +244,11 @@ export function EmployeeFormPage() {
           if ((payload.last_name ?? "") !== (existing?.last_name ?? "")) diffPayload.last_name = payload.last_name ?? "";
           if (payload.email !== existing?.email) diffPayload.email = payload.email;
           if ((payload.personal_email ?? "") !== (existing?.personal_email ?? "")) diffPayload.personal_email = payload.personal_email ?? "";
-          if ((payload.phone ?? "") !== (existing?.phone ?? "")) diffPayload.phone = payload.phone ?? "";
+          if (payload.phone !== undefined && payload.phone !== (existing?.phone ?? "")) diffPayload.phone = payload.phone;
           if ((payload.department_id ?? "") !== (existing?.department_id ?? "")) diffPayload.department_id = payload.department_id;
           if ((payload.location_id ?? "") !== (existing?.location_id ?? "")) diffPayload.location_id = payload.location_id;
           if ((payload.reporting_manager_id ?? "") !== (existing?.reporting_manager_id ?? "")) diffPayload.reporting_manager_id = payload.reporting_manager_id;
-          if ((payload.position ?? "") !== (existing?.position ?? "")) diffPayload.position = payload.position;
+          if (payload.position !== undefined && payload.position !== (existing?.position ?? "")) diffPayload.position = payload.position;
           if ((payload.level ?? "") !== (existing?.level ?? "")) diffPayload.level = payload.level;
           if (payload.employment_type !== existing?.employment_type) diffPayload.employment_type = payload.employment_type;
           if (payload.hire_date !== existing?.hire_date) diffPayload.hire_date = payload.hire_date;
@@ -258,7 +258,7 @@ export function EmployeeFormPage() {
           // Non-HR caller: can only edit last_name, personal_email, phone
           if ((payload.last_name ?? "") !== (existing?.last_name ?? "")) diffPayload.last_name = payload.last_name ?? "";
           if ((payload.personal_email ?? "") !== (existing?.personal_email ?? "")) diffPayload.personal_email = payload.personal_email ?? "";
-          if ((payload.phone ?? "") !== (existing?.phone ?? "")) diffPayload.phone = payload.phone ?? "";
+          if (payload.phone !== undefined && payload.phone !== (existing?.phone ?? "")) diffPayload.phone = payload.phone;
         }
 
         if (Object.keys(diffPayload).length === 0) {
@@ -439,10 +439,10 @@ export function EmployeeFormPage() {
         <form className="card stack" onSubmit={handleStep1Submit} style={{ maxWidth: 640 }}>
           {formError && <div className="alert alert-error">{formError}</div>}
 
-          {/* F3: Informational message when changing email / personal_email */}
-          {isEdit && (form.email !== (existingQuery.data?.email ?? "") || form.personal_email !== (existingQuery.data?.personal_email ?? "")) && (
+          {/* F-4 / F3: Informational message when changing work email */}
+          {isEdit && form.email !== (existingQuery.data?.email ?? "") && (
             <div className="alert alert-info" style={{ fontSize: "0.85rem" }}>
-              ℹ️ Changing email will update login credentials and may require email re-verification.
+              ℹ️ Changing work email will sign the employee out and they must log in with the new email.
             </div>
           )}
 
@@ -451,19 +451,22 @@ export function EmployeeFormPage() {
               <label htmlFor="field-first-name">First name *</label>
               <input
                 id="field-first-name"
+                maxLength={100}
                 value={form.first_name}
                 onChange={(e) => setField("first_name", e.target.value)}
                 disabled={isEdit && !isHRAdminOrOwner}
               />
               {fieldErrors.first_name && <span className="field-error">{fieldErrors.first_name}</span>}
             </div>
-            <div className="field">
+            <div className={"field" + (fieldErrors.last_name ? " has-error" : "")}>
               <label htmlFor="field-last-name">Last name</label>
               <input
                 id="field-last-name"
+                maxLength={100}
                 value={form.last_name}
                 onChange={(e) => setField("last_name", e.target.value)}
               />
+              {fieldErrors.last_name && <span className="field-error">{fieldErrors.last_name}</span>}
             </div>
 
             <div className={"field" + (fieldErrors.email ? " has-error" : "")}>
@@ -471,35 +474,41 @@ export function EmployeeFormPage() {
               <input
                 id="field-work-email"
                 type="email"
+                maxLength={255}
                 value={form.email}
                 onChange={(e) => setField("email", e.target.value)}
                 disabled={isEdit}
               />
               {fieldErrors.email && <span className="field-error">{fieldErrors.email}</span>}
             </div>
-            <div className={"field" + (fieldErrors.personal_email ? " has-error" : "")}>
-              <label htmlFor="field-personal-email">Personal email</label>
-              <input
-                id="field-personal-email"
-                type="email"
-                value={form.personal_email}
-                onChange={(e) => setField("personal_email", e.target.value)}
-              />
-              {fieldErrors.personal_email && <span className="field-error">{fieldErrors.personal_email}</span>}
-              {!isEdit && (
-                <span className="field-hint">
-                  Activation invite is sent here. Falls back to work email if empty.
-                </span>
-              )}
-            </div>
+            {(isHRAdminOrOwner || existingQuery.data?.personal_email !== null) && (
+              <div className={"field" + (fieldErrors.personal_email ? " has-error" : "")}>
+                <label htmlFor="field-personal-email">Personal email</label>
+                <input
+                  id="field-personal-email"
+                  type="email"
+                  maxLength={255}
+                  value={form.personal_email}
+                  onChange={(e) => setField("personal_email", e.target.value)}
+                />
+                {fieldErrors.personal_email && <span className="field-error">{fieldErrors.personal_email}</span>}
+                {!isEdit && (
+                  <span className="field-hint">
+                    Activation invite is sent here. Falls back to work email if empty.
+                  </span>
+                )}
+              </div>
+            )}
 
-            <div className="field">
+            <div className={"field" + (fieldErrors.phone ? " has-error" : "")}>
               <label htmlFor="field-phone">Phone</label>
               <input
                 id="field-phone"
+                maxLength={20}
                 value={form.phone}
                 onChange={(e) => setField("phone", e.target.value)}
               />
+              {fieldErrors.phone && <span className="field-error">{fieldErrors.phone}</span>}
             </div>
 
             {/* Work Location / Branch Selection */}
@@ -580,6 +589,7 @@ export function EmployeeFormPage() {
                   </label>
                   <input
                     type="text"
+                    maxLength={150}
                     value={customPosition}
                     onChange={(e) => handleCustomPositionChange(e.target.value)}
                     disabled={isEdit && !isHRAdminOrOwner}
