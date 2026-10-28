@@ -1231,3 +1231,246 @@ def test_r10_concurrency_document_cap_30(tmp_path, monkeypatch) -> None:
     finally:
         fastapi_app.dependency_overrides.clear()
         concurrent_engine.dispose()
+
+
+# ==============================================================================
+# FIX ROUND 2.5 ADDITIONS (F1, F2, F4)
+# ==============================================================================
+
+
+def test_f1_upload_route_is_sync_def():
+    """F1: Upload route in platform/router.py must be a plain sync 'def'."""
+    import inspect
+    from app.modules.platform.router import upload_employee_document
+
+    assert not inspect.iscoroutinefunction(
+        upload_employee_document
+    ), "upload_employee_document must be a synchronous 'def', not 'async def'"
+
+
+def test_f2_evil_sibling_folder_path_traversal_refusal(
+    client: TestClient, doc_setup: dict[str, Any], db: Session
+):
+    """F2: A FileObject whose storage_path is in a sibling folder named
+    <EMPLOYEE_DOCS_DIR>_evil must return 404 on download.
+    """
+    emp1 = doc_setup["emp1"]
+    hr_headers = _auth_headers(doc_setup["hr_a"])
+    pdf_data = _make_sample_pdf()
+
+    res_up = client.post(
+        f"/api/v1/documents/{emp1.id}",
+        headers=hr_headers,
+        data={"document_type": "offer_letter", "name": "Offer Traversal"},
+        files={"file": ("offer.pdf", pdf_data, "application/pdf")},
+    )
+    assert res_up.status_code == 201
+    doc_id = res_up.json()["id"]
+
+    # Create sibling folder <EMPLOYEE_DOCS_DIR>_evil
+    docs_base_dir = doc_setup["docs_dir"]
+    evil_dir = f"{docs_base_dir}_evil"
+    os.makedirs(evil_dir, exist_ok=True)
+    evil_file = os.path.join(evil_dir, "fake.pdf")
+    with open(evil_file, "wb") as f:
+        f.write(pdf_data)
+
+    doc_obj = (
+        db.query(EmployeeDocument).filter(EmployeeDocument.id == uuid.UUID(doc_id)).first()
+    )
+    assert doc_obj is not None
+    file_obj = db.query(FileObject).filter(FileObject.id == doc_obj.file_object_id).first()
+    assert file_obj is not None
+    orig_path = file_obj.storage_path
+    file_obj.storage_path = evil_file
+    db.commit()
+
+    res_dl = client.get(
+        f"/api/v1/documents/{emp1.id}/{doc_id}/download", headers=hr_headers
+    )
+    assert (
+        res_dl.status_code == 404
+    ), f"Expected 404 for evil sibling folder, got {res_dl.status_code}"
+
+    file_obj.storage_path = orig_path
+    db.commit()
+
+
+def test_f4_no_orphan_file_or_db_records_on_rejected_uploads(
+    client: TestClient, doc_setup: dict[str, Any], db: Session
+):
+    """F4 (a): After every rejected upload (413, 422 wrong type, 422 magic mismatch,
+    422 empty, 409 over 30, 403), no new file exists in docs folder and no new FileObject
+    or EmployeeDocument row exists.
+    """
+    emp1 = doc_setup["emp1"]
+    emp2 = doc_setup["emp2"]
+    hr_headers = _auth_headers(doc_setup["hr_a"])
+    emp1_headers = _auth_headers(doc_setup["emp_user1"])
+    pdf_data = _make_sample_pdf()
+
+    co_dir = os.path.join(doc_setup["docs_dir"], str(doc_setup["company_a_id"]))
+    os.makedirs(co_dir, exist_ok=True)
+    bind_tenant_to_session(db, company_id=doc_setup["company_a_id"], is_platform_admin=True)
+
+    def _snapshot():
+        db.expire_all()
+        files = set(os.listdir(co_dir)) if os.path.exists(co_dir) else set()
+        co_id = doc_setup["company_a_id"]
+        doc_count = db.query(EmployeeDocument).filter(EmployeeDocument.company_id == co_id).count()
+        file_count = db.query(FileObject).filter(FileObject.company_id == co_id).count()
+        return files, doc_count, file_count
+
+    # 1. 422 wrong type
+    files_before, docs_before, objs_before = _snapshot()
+    r = client.post(
+        f"/api/v1/documents/{emp1.id}",
+        headers=hr_headers,
+        data={"document_type": "invalid_type", "name": "Doc"},
+        files={"file": ("test.pdf", pdf_data, "application/pdf")},
+    )
+    assert r.status_code == 422
+    assert _snapshot() == (files_before, docs_before, objs_before)
+
+    # 2. 422 magic mismatch
+    files_before, docs_before, objs_before = _snapshot()
+    r = client.post(
+        f"/api/v1/documents/{emp1.id}",
+        headers=hr_headers,
+        data={"document_type": "id_proof", "name": "Doc"},
+        files={"file": ("fake.pdf", b"NOT_A_PDF_BYTES", "application/pdf")},
+    )
+    assert r.status_code == 422
+    assert _snapshot() == (files_before, docs_before, objs_before)
+
+    # 3. 422 empty
+    files_before, docs_before, objs_before = _snapshot()
+    r = client.post(
+        f"/api/v1/documents/{emp1.id}",
+        headers=hr_headers,
+        data={"document_type": "id_proof", "name": "Doc"},
+        files={"file": ("empty.pdf", b"", "application/pdf")},
+    )
+    assert r.status_code == 422
+    assert _snapshot() == (files_before, docs_before, objs_before)
+
+    # 4. 413 file too large
+    files_before, docs_before, objs_before = _snapshot()
+    huge = b"%PDF-" + b"0" * (11 * 1024 * 1024)
+    r = client.post(
+        f"/api/v1/documents/{emp1.id}",
+        headers=hr_headers,
+        data={"document_type": "id_proof", "name": "Doc"},
+        files={"file": ("huge.pdf", huge, "application/pdf")},
+    )
+    assert r.status_code == 413
+    assert _snapshot() == (files_before, docs_before, objs_before)
+
+    # 5. 403 forbidden employee on another
+    files_before, docs_before, objs_before = _snapshot()
+    r = client.post(
+        f"/api/v1/documents/{emp2.id}",
+        headers=emp1_headers,
+        data={"document_type": "id_proof", "name": "Doc"},
+        files={"file": ("test.pdf", pdf_data, "application/pdf")},
+    )
+    assert r.status_code == 403
+    assert _snapshot() == (files_before, docs_before, objs_before)
+
+    # 6. 409 over 30 documents
+    # Seed documents up to 30 for emp2
+    curr_emp2_docs = (
+        db.query(EmployeeDocument)
+        .filter(EmployeeDocument.employee_id == emp2.id, EmployeeDocument.deleted_at.is_(None))
+        .count()
+    )
+    for i in range(curr_emp2_docs, 30):
+        fo = FileObject(
+            company_id=doc_setup["company_a_id"],
+            uploaded_by=doc_setup["hr_a"].id,
+            file_name=f"seed_{i}.pdf",
+            file_type="application/pdf",
+            file_size=10,
+            storage_path=os.path.join(co_dir, f"seed_{i}.pdf"),
+        )
+        db.add(fo)
+        db.flush()
+        ed = EmployeeDocument(
+            company_id=doc_setup["company_a_id"],
+            employee_id=emp2.id,
+            file_object_id=fo.id,
+            document_type="other",
+            name=f"Seed {i}",
+        )
+        db.add(ed)
+    db.commit()
+
+    files_before, docs_before, objs_before = _snapshot()
+    r = client.post(
+        f"/api/v1/documents/{emp2.id}",
+        headers=hr_headers,
+        data={"document_type": "id_proof", "name": "31st Doc"},
+        files={"file": ("test.pdf", pdf_data, "application/pdf")},
+    )
+    assert r.status_code == 409
+    assert _snapshot() == (files_before, docs_before, objs_before)
+
+
+def test_f4_access_restrictions_and_deleted_documents_hidden(
+    client: TestClient, doc_setup: dict[str, Any], db: Session
+):
+    """F4 (b) & (c):
+    (b) An employee cannot download or list another employee's document (403),
+        and a manager gets 403 on report's document.
+    (c) Deleted documents never appear in list for HR either.
+    """
+    emp1 = doc_setup["emp1"]
+    emp2 = doc_setup["emp2"]
+    emp1_headers = _auth_headers(doc_setup["emp_user1"])
+    emp2_headers = _auth_headers(doc_setup["emp_user2"])
+    mgr_headers = _auth_headers(doc_setup["manager_a"])
+    hr_headers = _auth_headers(doc_setup["hr_a"])
+    pdf_data = _make_sample_pdf()
+
+    # Upload document for emp1
+    res_up = client.post(
+        f"/api/v1/documents/{emp1.id}",
+        headers=hr_headers,
+        data={"document_type": "passport", "name": "Emp1 Passport"},
+        files={"file": ("passport.pdf", pdf_data, "application/pdf")},
+    )
+    assert res_up.status_code == 201
+    doc1_id = res_up.json()["id"]
+
+    # (b) Employee 2 cannot list emp1's documents (403)
+    assert client.get(f"/api/v1/documents/{emp1.id}", headers=emp2_headers).status_code == 403
+    # (b) Employee 2 cannot download emp1's document (403)
+    assert (
+        client.get(
+            f"/api/v1/documents/{emp1.id}/{doc1_id}/download", headers=emp2_headers
+        ).status_code
+        == 403
+    )
+
+    # (b) Manager cannot list direct report emp1's documents (403)
+    assert client.get(f"/api/v1/documents/{emp1.id}", headers=mgr_headers).status_code == 403
+    # (b) Manager cannot download direct report emp1's document (403)
+    assert (
+        client.get(
+            f"/api/v1/documents/{emp1.id}/{doc1_id}/download", headers=mgr_headers
+        ).status_code
+        == 403
+    )
+
+    # (c) Soft delete document
+    res_del = client.delete(
+        f"/api/v1/documents/{emp1.id}/{doc1_id}", headers=hr_headers
+    )
+    assert res_del.status_code == 204
+
+    # (c) Deleted document does NOT appear in list for HR
+    res_hr_list = client.get(f"/api/v1/documents/{emp1.id}", headers=hr_headers)
+    assert res_hr_list.status_code == 200
+    assert all(
+        d["id"] != doc1_id for d in res_hr_list.json()
+    ), "Deleted document must not appear in HR list"

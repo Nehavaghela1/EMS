@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 import uuid
 from datetime import UTC, date, datetime
 from typing import Literal
@@ -379,7 +380,7 @@ def list_employee_documents(
 
 @documents_router.post("/{employee_id}", response_model=EmployeeDocumentResponse, status_code=201)
 @limiter.limit("10/minute", key_func=get_user_or_ip_key)
-async def upload_employee_document(
+def upload_employee_document(
     request: Request,
     employee_id: uuid.UUID,
     file: UploadFile = File(...),
@@ -426,8 +427,9 @@ async def upload_employee_document(
     # Read file in 1 MB chunks and abort if exceeding max_bytes
     chunks = []
     total_read = 0
+    file_obj_stream = file.file
     while True:
-        chunk = await file.read(1024 * 1024)
+        chunk = file_obj_stream.read(1024 * 1024)
         if not chunk:
             break
         total_read += len(chunk)
@@ -459,12 +461,21 @@ async def upload_employee_document(
         raise ConflictError("Employee has reached maximum document limit of 30.")
 
     # 7. Write file to disk under random uuid4 hex name
-    docs_base_dir = getattr(settings, "EMPLOYEE_DOCS_DIR", "var/employee_documents")
-    company_docs_dir = os.path.join(docs_base_dir, str(user.company_id))
-    os.makedirs(company_docs_dir, exist_ok=True)
+    docs_base_path = Path(
+        getattr(settings, "EMPLOYEE_DOCS_DIR", "var/employee_documents")
+    ).resolve()
+    company_docs_dir = docs_base_path / str(user.company_id)
+    company_docs_dir.mkdir(parents=True, exist_ok=True)
 
     random_file_name = f"{uuid.uuid4().hex}.{extension}"
-    storage_path = os.path.join(company_docs_dir, random_file_name)
+    target_path = (company_docs_dir / random_file_name).resolve()
+
+    # Containment check where file is written
+    if not target_path.is_relative_to(docs_base_path):
+        logger.warning("Attempted path traversal when writing employee document")
+        raise ForbiddenError("Invalid file destination path.")
+
+    storage_path = str(target_path)
 
     written_to_disk = False
     try:
@@ -556,11 +567,11 @@ def download_employee_document(
         raise NotFoundError("Document file not found.")
 
     # Path traversal protection: ensure stored path is strictly inside EMPLOYEE_DOCS_DIR
-    docs_base_dir = os.path.abspath(
+    docs_base_path = Path(
         getattr(settings, "EMPLOYEE_DOCS_DIR", "var/employee_documents")
-    )
-    resolved_path = os.path.abspath(file_obj.storage_path)
-    if not resolved_path.startswith(docs_base_dir):
+    ).resolve()
+    resolved_path = Path(file_obj.storage_path).resolve()
+    if not resolved_path.is_relative_to(docs_base_path):
         logger.warning("Potential path traversal detected in employee document download")
         raise NotFoundError("Document not found.")
 

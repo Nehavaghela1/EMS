@@ -126,13 +126,6 @@ VALID_DOCUMENT_TYPES = {
 }
 
 
-class EmployeeDocumentCreate(BaseModel):
-    employee_id: uuid.UUID
-    file_object_id: uuid.UUID
-    document_type: str = Field(..., max_length=100)
-    name: str = Field(..., max_length=255)
-
-
 class EmployeeDocumentResponse(BaseModel):
     id: uuid.UUID
     company_id: uuid.UUID

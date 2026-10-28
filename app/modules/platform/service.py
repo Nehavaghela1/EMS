@@ -27,7 +27,6 @@ from app.modules.platform.repository import (
 )
 from app.modules.platform.schemas import (
     AnnouncementCreate,
-    EmployeeDocumentCreate,
     EmployeeDocumentResponse,
     GlobalSearchResponse,
     SearchResultItem,
@@ -504,26 +503,6 @@ class EmployeeDocumentService:
         from app.modules.platform.repository import EmployeeDocumentRepository
 
         self.repo = EmployeeDocumentRepository(db)
-
-    def attach_document(
-        self, company_id: uuid.UUID, data: EmployeeDocumentCreate
-    ) -> EmployeeDocumentResponse:
-        from app.modules.platform.repository import FileRepository
-
-        file_obj = FileRepository(self.db).get_by_id(company_id, data.file_object_id)
-        if not file_obj:
-            raise NotFoundError("File object not found.")
-
-        doc = self.repo.create(
-            company_id=company_id,
-            employee_id=data.employee_id,
-            file_object_id=data.file_object_id,
-            document_type=data.document_type,
-            name=data.name,
-        )
-        self.db.commit()
-        self.db.refresh(doc)
-        return EmployeeDocumentResponse.model_validate(doc)
 
     def list_documents(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, caller: User
