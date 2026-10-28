@@ -127,8 +127,12 @@ POLICY: dict[tuple[str, str], Any] = {
     ("DELETE", "/api/v1/departments/{department_id}"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/departments/{department_id}"): AUTHENTICATED,
     ("PUT", "/api/v1/departments/{department_id}"): ROLES(UserRole.hr_admin),
-    ("POST", "/api/v1/documents"): ROLES(UserRole.super_admin, UserRole.hr_admin),
+    ("POST", "/api/v1/documents/{employee_id}"): AUTHENTICATED,
     ("GET", "/api/v1/documents/{employee_id}"): AUTHENTICATED,
+    ("GET", "/api/v1/documents/{employee_id}/{document_id}/download"): AUTHENTICATED,
+    ("DELETE", "/api/v1/documents/{employee_id}/{document_id}"): ROLES(
+        UserRole.super_admin, UserRole.hr_admin, UserRole.owner
+    ),
     ("GET", "/api/v1/employees"): ROLES(UserRole.hr_admin, UserRole.manager, UserRole.super_admin),
     ("POST", "/api/v1/employees"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("GET", "/api/v1/employees/managers/search"): ROLES(

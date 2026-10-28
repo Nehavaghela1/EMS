@@ -1,15 +1,15 @@
 import io
 import os
-from pathlib import Path
 import uuid
 import zipfile
-from datetime import UTC, date, datetime
+from datetime import date
+from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -50,7 +50,10 @@ def _make_sample_pdf() -> bytes:
 
 
 def _make_sample_png() -> bytes:
-    return b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
+    return (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
+    )
 
 
 def _make_sample_jpeg() -> bytes:
@@ -369,6 +372,10 @@ def test_r01_roles_upload_view_delete(client: TestClient, doc_setup: dict[str, A
     res_emp_del = client.delete(f"/api/v1/documents/{emp1.id}/{doc1_id}", headers=emp1_headers)
     assert res_emp_del.status_code == 403
 
+    # Employee 2 attempts to delete employee 1's document -> 403
+    res_emp2_del = client.delete(f"/api/v1/documents/{emp1.id}/{doc1_id}", headers=emp2_headers)
+    assert res_emp2_del.status_code == 403
+
     # 8. HR Admin, Owner, Super Admin view & upload
     for h in [hr_headers, owner_headers, super_headers]:
         res_list = client.get(f"/api/v1/documents/{emp1.id}", headers=h)
@@ -409,7 +416,11 @@ def test_r02_allowed_types_and_magic_byte_rejections(
         ("photo.jpg", _make_sample_jpeg(), "image/jpeg"),
         ("photo.jpeg", _make_sample_jpeg(), "image/jpeg"),
         ("avatar.png", _make_sample_png(), "image/png"),
-        ("contract.docx", _make_sample_docx(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        (
+            "contract.docx",
+            _make_sample_docx(),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
     ]
     for filename, content, ctype in valid_cases:
         res = client.post(
@@ -456,7 +467,13 @@ def test_r02_allowed_types_and_magic_byte_rejections(
         f"/api/v1/documents/{emp1.id}",
         headers=hr_headers,
         data={"document_type": "contract", "name": "Bad Docx"},
-        files={"file": ("corrupt.docx", bad_docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+        files={
+            "file": (
+                "corrupt.docx",
+                bad_docx,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
     )
     assert res_bad_docx.status_code == 422
 
@@ -469,7 +486,13 @@ def test_r02_allowed_types_and_magic_byte_rejections(
         f"/api/v1/documents/{emp1.id}",
         headers=hr_headers,
         data={"document_type": "contract", "name": "Excel As Docx"},
-        files={"file": ("fake.docx", xlsx_bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+        files={
+            "file": (
+                "fake.docx",
+                xlsx_bytes,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
     )
     assert res_xlsx.status_code == 422
 
@@ -580,11 +603,10 @@ def test_r04_filename_sanitization_and_disk_isolation(
 def test_r05_document_record_validation_and_concurrency_cap_and_rollback(
     client: TestClient, doc_setup: dict[str, Any], db: Session
 ) -> None:
-    """R5: document_type from fixed list; name 1-255 trimmed; employee must belong to caller's company;
+    """R5: document_type from fixed list; name 1-255 trimmed; employee must belong to caller;
     max 30 non-deleted documents per employee (409); failed save leaves no file behind.
     """
     emp1 = doc_setup["emp1"]
-    emp_b = doc_setup["emp_b"]
     hr_headers = _auth_headers(doc_setup["hr_a"])
     emp1_headers = _auth_headers(doc_setup["emp_user1"])
     pdf_data = _make_sample_pdf()
@@ -641,7 +663,9 @@ def test_r05_document_record_validation_and_concurrency_cap_and_rollback(
     co_dir = os.path.join(doc_setup["docs_dir"], str(doc_setup["company_a_id"]))
     files_before = set(os.listdir(co_dir)) if os.path.exists(co_dir) else set()
     no_raise_client = TestClient(client.app, raise_server_exceptions=False)
-    with patch("app.modules.platform.service.AuditService.record", side_effect=RuntimeError("Audit crash")):
+    with patch(
+        "app.modules.platform.service.AuditService.record", side_effect=RuntimeError("Audit crash")
+    ):
         res_fail = no_raise_client.post(
             f"/api/v1/documents/{emp1.id}",
             headers=hr_headers,
@@ -656,12 +680,14 @@ def test_r05_document_record_validation_and_concurrency_cap_and_rollback(
 
     # 5. Cap 30 non-deleted documents per employee -> 31st gives 409
     # Add documents up to 30 directly in DB to avoid hitting 10/min rate limiter
-    existing_count = db.query(EmployeeDocument).filter(
-        EmployeeDocument.employee_id == emp1.id,
-        EmployeeDocument.deleted_at.is_(None)
-    ).count()
+    existing_count = (
+        db.query(EmployeeDocument)
+        .filter(EmployeeDocument.employee_id == emp1.id, EmployeeDocument.deleted_at.is_(None))
+        .count()
+    )
 
     from app.modules.platform.models import FileObject
+
     for i in range(existing_count, 30):
         fo = FileObject(
             id=uuid.uuid4(),
@@ -739,7 +765,9 @@ def test_r06_authenticated_download_and_file_url_refusal(
     assert res_dl_emp.headers.get("x-content-type-options") == "nosniff"
 
     # 3. Download by other employee -> 403
-    res_dl_other = client.get(f"/api/v1/documents/{emp1.id}/{doc_id}/download", headers=emp2_headers)
+    res_dl_other = client.get(
+        f"/api/v1/documents/{emp1.id}/{doc_id}/download", headers=emp2_headers
+    )
     assert res_dl_other.status_code == 403
 
     # 4. Download by HR -> 200
@@ -749,15 +777,21 @@ def test_r06_authenticated_download_and_file_url_refusal(
     # Path traversal test: file outside EMPLOYEE_DOCS_DIR returns 404
     outside_file = tmp_path / "outside.pdf"
     outside_file.write_bytes(pdf_data)
-    doc_obj_direct = db.query(EmployeeDocument).filter(EmployeeDocument.id == uuid.UUID(doc_id)).first()
+    doc_obj_direct = (
+        db.query(EmployeeDocument).filter(EmployeeDocument.id == uuid.UUID(doc_id)).first()
+    )
     assert doc_obj_direct is not None
-    file_obj_direct = db.query(FileObject).filter(FileObject.id == doc_obj_direct.file_object_id).first()
+    file_obj_direct = (
+        db.query(FileObject).filter(FileObject.id == doc_obj_direct.file_object_id).first()
+    )
     assert file_obj_direct is not None
     orig_path = file_obj_direct.storage_path
     file_obj_direct.storage_path = str(outside_file)
     db.commit()
 
-    res_dl_outside = client.get(f"/api/v1/documents/{emp1.id}/{doc_id}/download", headers=hr_headers)
+    res_dl_outside = client.get(
+        f"/api/v1/documents/{emp1.id}/{doc_id}/download", headers=hr_headers
+    )
     assert res_dl_outside.status_code == 404
     file_obj_direct.storage_path = orig_path
     db.commit()
@@ -813,11 +847,7 @@ def test_r07_soft_delete_behavior(
     assert res_dl.status_code == 404
 
     # File still exists on disk
-    doc_row = (
-        db.query(EmployeeDocument)
-        .filter(EmployeeDocument.id == uuid.UUID(doc_id))
-        .first()
-    )
+    doc_row = db.query(EmployeeDocument).filter(EmployeeDocument.id == uuid.UUID(doc_id)).first()
     assert doc_row is not None
     assert doc_row.deleted_at is not None
     file_obj = db.query(FileObject).filter(FileObject.id == doc_row.file_object_id).first()
@@ -951,7 +981,9 @@ def test_r09_rate_limiting_upload_delete_download(
             )
             upload_codes.append(r.status_code)
 
-        assert all(c != 429 for c in upload_codes[:10]), f"First 10 upload calls: {upload_codes[:10]}"
+        assert all(c != 429 for c in upload_codes[:10]), (
+            f"First 10 upload calls: {upload_codes[:10]}"
+        )
         assert all(c == 429 for c in upload_codes[10:]), f"Calls 11+ upload: {upload_codes[10:]}"
 
         # 2. Download 30/min -> 31st gives 429
@@ -991,7 +1023,6 @@ def test_r10_inactive_employee_documents_visible_to_hr(
     """
     emp1 = doc_setup["emp1"]
     hr_headers = _auth_headers(doc_setup["hr_a"])
-    emp1_headers = _auth_headers(doc_setup["emp_user1"])
     pdf_data = _make_sample_pdf()
 
     res_up = client.post(
@@ -1012,18 +1043,14 @@ def test_r10_inactive_employee_documents_visible_to_hr(
     assert len(res_hr.json()) >= 1
 
 
-def test_r10_cross_company_isolation(
-    client: TestClient, doc_setup: dict[str, Any]
-) -> None:
+def test_r10_cross_company_isolation(client: TestClient, doc_setup: dict[str, Any]) -> None:
     """R10: Cross-company tenant isolation on upload, list, download, delete."""
     emp1_id = doc_setup["emp1_id"]
     hr_b_headers = _auth_headers(doc_setup["hr_b"])
     pdf_data = _make_sample_pdf()
 
     # Company B HR trying to access Company A employee -> 404
-    assert (
-        client.get(f"/api/v1/documents/{emp1_id}", headers=hr_b_headers).status_code == 404
-    )
+    assert client.get(f"/api/v1/documents/{emp1_id}", headers=hr_b_headers).status_code == 404
     assert (
         client.post(
             f"/api/v1/documents/{emp1_id}",
@@ -1071,16 +1098,15 @@ def test_r10_upload_takes_for_update_lock_on_employee(
         event.remove(target_engine, "before_cursor_execute", before_cursor_execute)
 
 
-def test_r10_concurrency_document_cap_30(
-    tmp_path, monkeypatch
-) -> None:
+def test_r10_concurrency_document_cap_30(tmp_path, monkeypatch) -> None:
     """R10 Concurrency: two simultaneous uploads at 29 existing documents give
     exactly one 201 and one 409, never 500. Uses real separate DB sessions and barrier.
     """
     import threading
+
+    from app.db.session import get_db
     from app.main import app as fastapi_app
     from app.modules.platform.models import FileObject
-    from app.db.session import get_db
 
     assert settings.TEST_DATABASE_URL is not None
     concurrent_engine = create_engine(settings.TEST_DATABASE_URL, pool_size=5, max_overflow=2)

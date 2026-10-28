@@ -1,8 +1,6 @@
 import logging
 import os
 import uuid
-
-logger = logging.getLogger(__name__)
 from datetime import UTC, date, datetime
 from typing import Literal
 
@@ -16,8 +14,6 @@ from app.core.dependencies import (
     get_tenant_db,
     require_role,
 )
-from app.core.rate_limit import get_user_or_ip_key, limiter
-from app.core.roles import HR_LEVEL_ROLES
 from app.core.exceptions import (
     ConflictError,
     ExportTooLargeError,
@@ -27,12 +23,13 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.pagination import Page, PageParams, page_params
-from app.core.rate_limit import limiter
+from app.core.rate_limit import get_user_or_ip_key, limiter
+from app.core.roles import HR_LEVEL_ROLES
 from app.core.upload_validation import validate_document_upload
 from app.db.session import get_db
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
-from app.modules.platform.models import AuditLog, EmployeeDocument, FileObject, Notification
+from app.modules.platform.models import AuditLog, FileObject, Notification
 from app.modules.platform.repository import EmployeeDocumentRepository, FileRepository
 from app.modules.platform.schemas import (
     VALID_DOCUMENT_TYPES,
@@ -41,7 +38,6 @@ from app.modules.platform.schemas import (
     AuditLogExportRequest,
     AuditLogResponse,
     DashboardResponse,
-    EmployeeDocumentCreate,
     EmployeeDocumentResponse,
     FileUploadResponse,
     GlobalSearchResponse,
@@ -63,6 +59,8 @@ from app.modules.platform.service import (
     NotificationService,
 )
 from app.workers.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 dashboard_router = APIRouter(tags=["Dashboard"])
@@ -336,7 +334,6 @@ def download_file(
     from fastapi.responses import FileResponse
 
     from app.core.config import settings
-    from app.modules.platform.models import FileObject
 
     # 1. Check expiration
     if int(datetime.now(UTC).timestamp()) > expires:
@@ -396,13 +393,16 @@ async def upload_employee_document(
     if not is_hr_level:
         caller_emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
         if caller_emp is None or caller_emp.id != employee_id:
-            raise ForbiddenError("You do not have permission to upload documents for this employee.")
+            raise ForbiddenError(
+                "You do not have permission to upload documents for this employee."
+            )
 
     # 2. Validate document_type and name
     clean_type = document_type.strip()
     if clean_type not in VALID_DOCUMENT_TYPES:
+        valid_str = ", ".join(sorted(VALID_DOCUMENT_TYPES))
         raise ValidationError(
-            f"Invalid document_type '{document_type}'. Must be one of: {', '.join(sorted(VALID_DOCUMENT_TYPES))}"
+            f"Invalid document_type '{document_type}'. Must be one of: {valid_str}"
         )
 
     clean_doc_name = name.strip()
@@ -432,9 +432,7 @@ async def upload_employee_document(
             break
         total_read += len(chunk)
         if total_read > max_bytes:
-            raise PayloadTooLargeError(
-                f"File size exceeds maximum upload limit of {max_mb} MB."
-            )
+            raise PayloadTooLargeError(f"File size exceeds maximum upload limit of {max_mb} MB.")
         chunks.append(chunk)
 
     file_bytes = b"".join(chunks)
@@ -449,7 +447,9 @@ async def upload_employee_document(
     target_emp = emp_repo.get_by_id_for_update(employee_id, user.company_id, allow_inactive=True)
     if target_emp is None:
         if not is_hr_level:
-            raise ForbiddenError("You do not have permission to upload documents for this employee.")
+            raise ForbiddenError(
+                "You do not have permission to upload documents for this employee."
+            )
         raise NotFoundError("Employee not found.")
 
     # 6. Check cap 30 non-deleted documents
@@ -534,12 +534,16 @@ def download_employee_document(
     if not is_hr_level:
         caller_emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
         if caller_emp is None or caller_emp.id != employee_id:
-            raise ForbiddenError("You do not have permission to download this employee's documents.")
+            raise ForbiddenError(
+                "You do not have permission to download this employee's documents."
+            )
 
     target_emp = EmployeeRepository(db).get_by_id_any_status(employee_id, user.company_id)
     if target_emp is None:
         if not is_hr_level:
-            raise ForbiddenError("You do not have permission to download this employee's documents.")
+            raise ForbiddenError(
+                "You do not have permission to download this employee's documents."
+            )
         raise NotFoundError("Employee not found.")
 
     doc_repo = EmployeeDocumentRepository(db)

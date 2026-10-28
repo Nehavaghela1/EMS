@@ -523,9 +523,7 @@ class EmployeeDocumentRepository:
         )
         return list(self.db.scalars(stmt))
 
-    def count_active_for_employee(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID
-    ) -> int:
+    def count_active_for_employee(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> int:
         stmt = (
             select(func.count())
             .select_from(EmployeeDocument)
@@ -540,14 +538,11 @@ class EmployeeDocumentRepository:
     def get_by_id(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, document_id: uuid.UUID
     ) -> EmployeeDocument | None:
-        stmt = (
-            select(EmployeeDocument)
-            .where(
-                EmployeeDocument.id == document_id,
-                EmployeeDocument.company_id == company_id,
-                EmployeeDocument.employee_id == employee_id,
-                EmployeeDocument.deleted_at.is_(None),
-            )
+        stmt = select(EmployeeDocument).where(
+            EmployeeDocument.id == document_id,
+            EmployeeDocument.company_id == company_id,
+            EmployeeDocument.employee_id == employee_id,
+            EmployeeDocument.deleted_at.is_(None),
         )
         return self.db.scalar(stmt)
 

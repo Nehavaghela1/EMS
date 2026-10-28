@@ -473,7 +473,7 @@ class FileService:
         if not file_obj:
             raise NotFoundError("File object not found.")
 
-        # Design 7: if the file object belongs to ANY employee_documents row (deleted or not), answer 404
+        # Design 7: if file object belongs to ANY employee_documents row, answer 404
         from app.modules.platform.repository import EmployeeDocumentRepository
 
         if EmployeeDocumentRepository(self.db).is_file_attached_to_employee_document(file_id):
