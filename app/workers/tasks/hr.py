@@ -140,7 +140,9 @@ def export_employees_csv_task(
                 status_str = "Active" if emp.is_active else "Inactive"
                 dept_name = dept_map.get(emp.department_id, "") if emp.department_id else ""
                 loc_name = loc_map.get(emp.location_id, "") if emp.location_id else ""
-                mgr_name = mgr_map.get(emp.reporting_manager_id, "") if emp.reporting_manager_id else ""
+                mgr_name = (
+                    mgr_map.get(emp.reporting_manager_id, "") if emp.reporting_manager_id else ""
+                )
                 hire_str = emp.hire_date.isoformat() if emp.hire_date else ""
 
                 if is_hr_or_owner:
