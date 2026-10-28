@@ -874,4 +874,3 @@ class EmployeeExportRequest(BaseModel):
 
 class EmployeeExportJobResponse(BaseModel):
     job_id: str
-

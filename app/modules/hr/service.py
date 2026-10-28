@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import timedelta
 from decimal import Decimal
@@ -53,6 +54,8 @@ from app.modules.identity.repository import (
 )
 from app.modules.platform.service import AuditService, DashboardService, jsonable
 from app.workers.tasks.email import send_email_task
+
+logger = logging.getLogger("app")
 
 
 class InvalidReferenceError(AppError):
@@ -807,9 +810,7 @@ class EmployeeService:
 
     # ── Bulk Actions (Spec 2.4) ──────────────────────────────────
 
-    def _deactivate_single(
-        self, company_id: uuid.UUID, emp: Employee, actor: User
-    ) -> None:
+    def _deactivate_single(self, company_id: uuid.UUID, emp: Employee, actor: User) -> None:
         self.clear_department_heads_for_employee(company_id, emp.id, actor=actor)
         self.repo.update(emp, is_active=False)
         if emp.user_id is not None:
@@ -849,7 +850,9 @@ class EmployeeService:
             try:
                 emp = self.repo.get_by_id_for_update(emp_id, company_id, allow_inactive=True)
                 if emp is None:
-                    failed.append({"id": emp_id, "code": "not_found", "message": "Employee not found."})
+                    failed.append(
+                        {"id": emp_id, "code": "not_found", "message": "Employee not found."}
+                    )
                     sp.commit()
                     continue
 
@@ -925,7 +928,9 @@ class EmployeeService:
             try:
                 emp = self.repo.get_by_id_for_update(emp_id, company_id, allow_inactive=True)
                 if emp is None:
-                    failed.append({"id": emp_id, "code": "not_found", "message": "Employee not found."})
+                    failed.append(
+                        {"id": emp_id, "code": "not_found", "message": "Employee not found."}
+                    )
                     sp.commit()
                     continue
 
@@ -1009,7 +1014,9 @@ class EmployeeService:
             try:
                 emp = self.repo.get_by_id_for_update(emp_id, company_id, allow_inactive=True)
                 if emp is None:
-                    failed.append({"id": emp_id, "code": "not_found", "message": "Employee not found."})
+                    failed.append(
+                        {"id": emp_id, "code": "not_found", "message": "Employee not found."}
+                    )
                     sp.commit()
                     continue
 
@@ -1028,7 +1035,8 @@ class EmployeeService:
                     emp,
                     invitation_status=InvitationStatus.sent,
                     activation_token_hash=hash_token(raw_token),
-                    activation_expires_at=utcnow() + timedelta(days=settings.INVITE_TOKEN_EXPIRE_DAYS),
+                    activation_expires_at=utcnow()
+                    + timedelta(days=settings.INVITE_TOKEN_EXPIRE_DAYS),
                 )
                 self.audit.record(
                     company_id=company_id,
@@ -1075,7 +1083,6 @@ class EmployeeService:
             "skipped": skipped,
             "failed": failed,
         }
-
 
     # ── Resignation & Full-and-Final (Routes 27-30) ─────────────────
     def submit_resignation(

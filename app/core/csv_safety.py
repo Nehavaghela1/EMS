@@ -19,4 +19,3 @@ def csv_safe_cell(value: object) -> str:
     if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
         return f"'{s}"
     return s
-

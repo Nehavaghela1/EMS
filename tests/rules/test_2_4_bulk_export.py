@@ -1,6 +1,5 @@
 import csv
 import io
-import threading
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -8,15 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
-from app.db.session import get_db
-from app.main import app as fastapi_app
 from app.modules.hr.models import (
     Department,
     Employee,
@@ -279,28 +274,47 @@ def test_r01_bulk_routes_role_access(
 
 
 def test_r01_export_roles_access(client: TestClient, bulk_company: dict[str, Any]) -> None:
-    """R1: Export: HR admin and owner get everyone, manager only own direct reports, employee 403."""
+    """R1: Export: HR admin and owner get everyone, manager only own direct reports,
+    employee 403.
+    """
     export_url = "/api/v1/employees/export"
 
     # 401 without token
     assert client.post(export_url, json={}).status_code == 401
 
     # 403 for employee
-    assert client.post(export_url, headers=_auth_headers(bulk_company["emp_user1"]), json={}).status_code == 403
+    assert (
+        client.post(
+            export_url, headers=_auth_headers(bulk_company["emp_user1"]), json={}
+        ).status_code
+        == 403
+    )
 
     # 202 for manager
-    assert client.post(export_url, headers=_auth_headers(bulk_company["manager"]), json={}).status_code == 202
+    assert (
+        client.post(export_url, headers=_auth_headers(bulk_company["manager"]), json={}).status_code
+        == 202
+    )
 
     # 202 for HR admin
-    assert client.post(export_url, headers=_auth_headers(bulk_company["hr_admin"]), json={}).status_code == 202
+    assert (
+        client.post(
+            export_url, headers=_auth_headers(bulk_company["hr_admin"]), json={}
+        ).status_code
+        == 202
+    )
 
     # 202 for Owner
-    assert client.post(export_url, headers=_auth_headers(bulk_company["owner"]), json={}).status_code == 202
+    assert (
+        client.post(export_url, headers=_auth_headers(bulk_company["owner"]), json={}).status_code
+        == 202
+    )
 
 
 # ==============================================================================
 # R2: Request Validation and Id Deduplication
 # ==============================================================================
+
 
 @pytest.mark.parametrize("route", BULK_ROUTES)
 def test_r02_bulk_bad_bodies_give_422(
@@ -331,7 +345,9 @@ def test_r02_bulk_bad_bodies_give_422(
     assert "employee_ids" in errs3
 
     # 4. Unknown field (extra forbidden) -> 422 on extra
-    r4 = client.post(route, headers=hr_headers, json={"employee_ids": [str(uuid.uuid4())], "extra": 123})
+    r4 = client.post(
+        route, headers=hr_headers, json={"employee_ids": [str(uuid.uuid4())], "extra": 123}
+    )
     assert r4.status_code == 422
     errs4 = str(r4.json())
     assert "extra" in errs4
@@ -361,6 +377,7 @@ def test_r02_bulk_deduplicates_duplicate_ids(
 # R3: Atomic Per-Employee Isolation & Partial Success
 # ==============================================================================
 
+
 def test_r03_bulk_mixed_batch_and_isolation(
     client: TestClient, bulk_company: dict[str, Any], db: Session
 ) -> None:
@@ -373,7 +390,6 @@ def test_r03_bulk_mixed_batch_and_isolation(
     emp2.is_active = False
     db.commit()
 
-    other_cid = uuid.uuid4()
     random_id = str(uuid.uuid4())
 
     payload = {"employee_ids": [str(emp1.id), str(emp2.id), random_id]}
@@ -384,7 +400,10 @@ def test_r03_bulk_mixed_batch_and_isolation(
     assert data["action"] == "deactivate"
     assert data["requested"] == 3
     assert str(emp1.id) in [str(x) for x in data["succeeded"]]
-    assert any(item["id"] == str(emp2.id) and item["reason"] == "already_inactive" for item in data["skipped"])
+    assert any(
+        item["id"] == str(emp2.id) and item["reason"] == "already_inactive"
+        for item in data["skipped"]
+    )
     assert any(item["id"] == random_id and item["code"] == "not_found" for item in data["failed"])
 
 
@@ -422,6 +441,7 @@ def test_r03_bulk_exception_in_single_employee_never_aborts_batch_or_500(
 # ==============================================================================
 # R4: Single Action Equivalence & Invariant Protections
 # ==============================================================================
+
 
 def test_r04_deactivate_and_reactivate_invariants(
     client: TestClient, bulk_company: dict[str, Any], db: Session
@@ -461,7 +481,9 @@ def test_r04_deactivate_and_reactivate_invariants(
     )
     assert res_react_bad.status_code == 200
     failed_items = res_react_bad.json()["failed"]
-    assert any(item["id"] == str(emp1.id) and item["code"] == "invalid_reference" for item in failed_items)
+    assert any(
+        item["id"] == str(emp1.id) and item["code"] == "invalid_reference" for item in failed_items
+    )
 
     # Restore location and reactivate succeeds
     loc.is_active = True
@@ -494,7 +516,10 @@ def test_r04_self_and_owner_protections(
         json={"employee_ids": [str(emp_owner.id)]},
     )
     assert res_bulk.status_code == 200
-    assert any(item["id"] == str(emp_owner.id) and item["reason"] in ("is_self", "is_company_owner") for item in res_bulk.json()["skipped"])
+    assert any(
+        item["id"] == str(emp_owner.id) and item["reason"] in ("is_self", "is_company_owner")
+        for item in res_bulk.json()["skipped"]
+    )
 
     # Single DELETE on self gives 409
     res_del_self = client.delete(f"/api/v1/employees/{emp_hr.id}", headers=hr_headers)
@@ -528,26 +553,23 @@ def test_r04_deleting_already_inactive_returns_204_no_audit(
 def test_r04_reactivate_single_route_and_deprecated_toggle_active(
     client: TestClient, bulk_company: dict[str, Any], db: Session
 ) -> None:
-    """R4: POST /employees/{id}/reactivate behaves identically to /toggle-active."""
+    """R4: POST /employees/{id}/reactivate behaves identically to /toggle-active (reactivation)."""
     hr_headers = _auth_headers(bulk_company["hr_admin"])
     emp1 = bulk_company["emp1"]
     emp1.is_active = False
     db.commit()
 
-    # /reactivate
+    # /reactivate activates inactive employee
     res_react = client.post(f"/api/v1/employees/{emp1.id}/reactivate", headers=hr_headers)
     assert res_react.status_code == 200
     db.refresh(emp1)
     assert emp1.is_active is True
 
-    # toggle-active back to inactive then active
-    res_toggle1 = client.post(f"/api/v1/employees/{emp1.id}/toggle-active", headers=hr_headers)
-    assert res_toggle1.status_code == 200
-    db.refresh(emp1)
-    assert emp1.is_active is False
-
-    res_toggle2 = client.post(f"/api/v1/employees/{emp1.id}/toggle-active", headers=hr_headers)
-    assert res_toggle2.status_code == 200
+    # /toggle-active (deprecated alias) also reactivates an inactive employee
+    emp1.is_active = False
+    db.commit()
+    res_toggle = client.post(f"/api/v1/employees/{emp1.id}/toggle-active", headers=hr_headers)
+    assert res_toggle.status_code == 200
     db.refresh(emp1)
     assert emp1.is_active is True
 
@@ -559,7 +581,7 @@ def test_r04_resend_invite_skips_activated_and_inactive(
     hr_headers = _auth_headers(bulk_company["hr_admin"])
     emp1 = bulk_company["emp1"]  # activated
     emp2 = bulk_company["emp2"]  # invited
-    emp2.is_active = False       # inactive
+    emp2.is_active = False  # inactive
     db.commit()
 
     res = client.post(
@@ -569,13 +591,16 @@ def test_r04_resend_invite_skips_activated_and_inactive(
     )
     assert res.status_code == 200
     skipped = res.json()["skipped"]
-    assert any(item["id"] == str(emp1.id) and item["reason"] == "already_activated" for item in skipped)
+    assert any(
+        item["id"] == str(emp1.id) and item["reason"] == "already_activated" for item in skipped
+    )
     assert any(item["id"] == str(emp2.id) and item["reason"] == "inactive" for item in skipped)
 
 
 # ==============================================================================
 # R5: Tenant Boundary Isolation (REAL Second Company)
 # ==============================================================================
+
 
 def test_r05_cross_company_isolation(
     client: TestClient, bulk_company: dict[str, Any], db: Session
@@ -619,15 +644,20 @@ def test_r05_cross_company_isolation(
     assert emp_b_refreshed is not None
     assert emp_b_refreshed.is_active is True
 
-    # Direct repository check under platform admin: get_by_id_for_update must respect company_id filter
+    # Direct repository check under platform admin:
+    # get_by_id_for_update must respect company_id filter
     from app.modules.hr.repository import EmployeeRepository
+
     repo = EmployeeRepository(db)
-    assert repo.get_by_id_for_update(emp_b_id, bulk_company["company"].id, allow_inactive=True) is None
+    assert (
+        repo.get_by_id_for_update(emp_b_id, bulk_company["company"].id, allow_inactive=True) is None
+    )
 
 
 # ==============================================================================
 # R6: Audit Logs & Outbox Emails
 # ==============================================================================
+
 
 def test_r06_audit_counts_and_email_outbox(
     client: TestClient, bulk_company: dict[str, Any], db: Session
@@ -638,7 +668,7 @@ def test_r06_audit_counts_and_email_outbox(
     cid = bulk_company["company"].id
     bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
 
-    with patch("app.core.email.send_email") as mock_send_email:
+    with patch("app.core.email.send_email"):
         res = client.post(
             "/api/v1/employees/bulk/deactivate",
             headers=hr_headers,
@@ -646,7 +676,8 @@ def test_r06_audit_counts_and_email_outbox(
         )
         assert res.status_code == 200
 
-        # Audit check: exactly one single employee deactivate row + one summary EMPLOYEES_BULK_ACTION
+        # Audit check: exactly one single employee deactivate row
+        # plus one summary EMPLOYEES_BULK_ACTION
         summary_audit = (
             db.query(AuditLog)
             .filter(AuditLog.company_id == cid, AuditLog.action == "EMPLOYEES_BULK_ACTION")
@@ -662,10 +693,13 @@ def test_r06_audit_counts_and_email_outbox(
 # R7: Background Export & Filtering
 # ==============================================================================
 
+
 def test_r07_export_large_result_and_filtering(
     client: TestClient, bulk_company: dict[str, Any], db: Session
 ) -> None:
-    """R7: Export over 105 employees returns all 105 (not one page); manager scoped to reports; no file_path in job result."""
+    """R7: Export over 105 employees returns all 105 (not one page);
+    manager scoped to reports; no file_path in job result.
+    """
     cid = bulk_company["company"].id
     bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
 
@@ -718,10 +752,13 @@ def test_r07_export_large_result_and_filtering(
 # R8: Authenticated Secure Download
 # ==============================================================================
 
+
 def test_r08_export_download_authorization_and_expiry(
     client: TestClient, bulk_company: dict[str, Any]
 ) -> None:
-    """R8: Download works for requester / HR / owner; other company / non-requester / expired gives 404."""
+    """R8: Download works for requester / HR / owner;
+    other company / non-requester / expired gives 404.
+    """
     hr_headers = _auth_headers(bulk_company["hr_admin"])
     fake_job_id = str(uuid.uuid4())
 
@@ -751,6 +788,7 @@ def test_r08_export_download_authorization_and_expiry(
 # ==============================================================================
 # R9: Export CSV Content & Formula Injection Protection
 # ==============================================================================
+
 
 def test_r09_export_csv_headers_and_safety(
     client: TestClient, bulk_company: dict[str, Any], db: Session
@@ -793,9 +831,12 @@ def test_r09_export_csv_headers_and_safety(
     for row in rows_hr[1:]:
         for cell in row:
             if cell:
-                assert not (cell.startswith("=") or cell.startswith("+") or cell.startswith("-") or cell.startswith("@")), (
-                    f"Unescaped cell in export: {cell}"
-                )
+                assert not (
+                    cell.startswith("=")
+                    or cell.startswith("+")
+                    or cell.startswith("-")
+                    or cell.startswith("@")
+                ), f"Unescaped cell in export: {cell}"
 
     expected_hr_header = [
         "Employee Code",
@@ -813,7 +854,9 @@ def test_r09_export_csv_headers_and_safety(
         "Phone",
         "Personal Email",
     ]
-    assert header_hr == expected_hr_header, f"HR Header mismatch: {header_hr} != {expected_hr_header}"
+    assert header_hr == expected_hr_header, (
+        f"HR Header mismatch: {header_hr} != {expected_hr_header}"
+    )
 
     # Verify no sensitive columns
     for col in header_hr:
@@ -858,6 +901,7 @@ def test_r09_export_csv_headers_and_safety(
 # ==============================================================================
 # R10: Rate Limiting & Row Lock SQL Capture
 # ==============================================================================
+
 
 @pytest.mark.parametrize("route", BULK_ROUTES)
 def test_r10_bulk_rate_limiting_5_per_min(
@@ -939,7 +983,9 @@ def test_r10_single_deactivate_reactivate_rate_limit_30_per_min(
 def test_r10_export_and_download_audit_rows(
     client: TestClient, bulk_company: dict[str, Any], db: Session
 ) -> None:
-    """R10: Export request writes EMPLOYEES_EXPORT_REQUESTED; download writes EMPLOYEES_EXPORT_DOWNLOADED."""
+    """R10: Export request writes EMPLOYEES_EXPORT_REQUESTED;
+    download writes EMPLOYEES_EXPORT_DOWNLOADED.
+    """
     hr_headers = _auth_headers(bulk_company["hr_admin"])
     cid = bulk_company["company"].id
     bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)

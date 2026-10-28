@@ -9,7 +9,9 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
+from app.core.exceptions import NotFoundError
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.modules.hr.models import Department, Employee, EmploymentType
@@ -53,11 +55,9 @@ from app.modules.hr.service import (
     EmployeeSectionService,
     EmployeeService,
 )
-from app.core.config import settings
-from app.core.exceptions import NotFoundError
+from app.modules.identity.models import Company, User, UserRole
 from app.modules.platform.service import AuditService
 from app.workers.celery_app import celery_app
-from app.modules.identity.models import Company, User, UserRole
 
 departments_router = APIRouter(prefix="/departments", tags=["Departments"])
 employees_router = APIRouter(prefix="/employees", tags=["Employees"])
@@ -389,7 +389,9 @@ def export_employees(
     request: Request,
     data: EmployeeExportRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin)),
+    user: User = Depends(
+        require_role(UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin)
+    ),
 ):
     # Record EMPLOYEES_EXPORT_REQUESTED audit row
     AuditService(db).record(
@@ -404,10 +406,12 @@ def export_employees(
     )
     db.commit()
 
-    from app.workers.tasks.hr import export_employees_csv_task
     from unittest.mock import patch
 
-    # If running eager mode (tests or dev), pass the active db session to avoid cross-connection isolation barrier
+    from app.workers.tasks.hr import export_employees_csv_task
+
+    # If running eager mode (tests or dev), pass the active db session
+    # to avoid cross-connection isolation barrier
     if settings.CELERY_TASK_ALWAYS_EAGER:
         with patch("app.workers.tasks.hr.SessionLocal", return_value=db):
             task = export_employees_csv_task.delay(
@@ -419,7 +423,9 @@ def export_employees(
                 is_active=data.is_active,
                 level=data.level,
                 employment_type=data.employment_type.value if data.employment_type else None,
-                reporting_manager_id=str(data.reporting_manager_id) if data.reporting_manager_id else None,
+                reporting_manager_id=str(data.reporting_manager_id)
+                if data.reporting_manager_id
+                else None,
                 role=data.role,
                 employee_ids=[str(x) for x in data.employee_ids] if data.employee_ids else None,
             )
@@ -433,7 +439,9 @@ def export_employees(
             is_active=data.is_active,
             level=data.level,
             employment_type=data.employment_type.value if data.employment_type else None,
-            reporting_manager_id=str(data.reporting_manager_id) if data.reporting_manager_id else None,
+            reporting_manager_id=str(data.reporting_manager_id)
+            if data.reporting_manager_id
+            else None,
             role=data.role,
             employee_ids=[str(x) for x in data.employee_ids] if data.employee_ids else None,
         )
@@ -444,7 +452,9 @@ def export_employees(
 def download_employee_export(
     job_id: str,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin)),
+    user: User = Depends(
+        require_role(UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin)
+    ),
 ):
     async_result = celery_app.AsyncResult(job_id)
     if async_result.state != "SUCCESS":
@@ -555,7 +565,7 @@ def toggle_active_employee(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
 ):
-    employee = EmployeeService(db).toggle_active_employee(user.company_id, employee_id, actor=user)
+    employee = EmployeeService(db).reactivate_employee(user.company_id, employee_id, actor=user)
     return _build_full_employee_response(db, employee, viewer_user=user)
 
 

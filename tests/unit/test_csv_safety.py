@@ -25,4 +25,3 @@ from app.core.csv_safety import csv_safe_cell
 )
 def test_csv_safe_cell(input_val, expected):
     assert csv_safe_cell(input_val) == expected
-

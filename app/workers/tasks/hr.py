@@ -12,7 +12,7 @@ from app.db.rls import bind_tenant_to_session
 from app.db.session import SessionLocal
 from app.modules.hr.models import Employee, EmploymentType
 from app.modules.hr.repository import EmployeeRepository
-from app.modules.identity.models import CompanyLocation, User, UserRole
+from app.modules.identity.models import CompanyLocation, UserRole
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger("app")
@@ -74,7 +74,11 @@ def export_employees_csv_task(
         file_name = f"employees_{cid}_{task_id}.csv"
         file_path = os.path.join(settings.EXPORT_DIR, file_name)
 
-        is_hr_or_owner = actor_role in (UserRole.owner.value, UserRole.hr_admin.value, UserRole.super_admin.value)
+        is_hr_or_owner = actor_role in (
+            UserRole.owner.value,
+            UserRole.hr_admin.value,
+            UserRole.super_admin.value,
+        )
 
         # Build department & location & manager lookup maps
         dept_ids = {e.department_id for e in employees if e.department_id}
@@ -82,10 +86,15 @@ def export_employees_csv_task(
         mgr_ids = {e.reporting_manager_id for e in employees if e.reporting_manager_id}
 
         from app.modules.hr.models import Department
+
         depts = db.query(Department).filter(Department.id.in_(dept_ids)).all() if dept_ids else []
         dept_map = {d.id: d.name for d in depts}
 
-        locs = db.query(CompanyLocation).filter(CompanyLocation.id.in_(loc_ids)).all() if loc_ids else []
+        locs = (
+            db.query(CompanyLocation).filter(CompanyLocation.id.in_(loc_ids)).all()
+            if loc_ids
+            else []
+        )
         loc_map = {loc.id: loc.name for loc in locs}
 
         mgrs = db.query(Employee).filter(Employee.id.in_(mgr_ids)).all() if mgr_ids else []
@@ -129,9 +138,9 @@ def export_employees_csv_task(
             writer.writerow(headers)
             for emp in employees:
                 status_str = "Active" if emp.is_active else "Inactive"
-                dept_name = dept_map.get(emp.department_id, "")
-                loc_name = loc_map.get(emp.location_id, "")
-                mgr_name = mgr_map.get(emp.reporting_manager_id, "")
+                dept_name = dept_map.get(emp.department_id, "") if emp.department_id else ""
+                loc_name = loc_map.get(emp.location_id, "") if emp.location_id else ""
+                mgr_name = mgr_map.get(emp.reporting_manager_id, "") if emp.reporting_manager_id else ""
                 hire_str = emp.hire_date.isoformat() if emp.hire_date else ""
 
                 if is_hr_or_owner:
