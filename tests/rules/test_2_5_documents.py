@@ -1241,11 +1241,12 @@ def test_r10_concurrency_document_cap_30(tmp_path, monkeypatch) -> None:
 def test_f1_upload_route_is_sync_def():
     """F1: Upload route in platform/router.py must be a plain sync 'def'."""
     import inspect
+
     from app.modules.platform.router import upload_employee_document
 
-    assert not inspect.iscoroutinefunction(
-        upload_employee_document
-    ), "upload_employee_document must be a synchronous 'def', not 'async def'"
+    assert not inspect.iscoroutinefunction(upload_employee_document), (
+        "upload_employee_document must be a synchronous 'def', not 'async def'"
+    )
 
 
 def test_f2_evil_sibling_folder_path_traversal_refusal(
@@ -1275,9 +1276,7 @@ def test_f2_evil_sibling_folder_path_traversal_refusal(
     with open(evil_file, "wb") as f:
         f.write(pdf_data)
 
-    doc_obj = (
-        db.query(EmployeeDocument).filter(EmployeeDocument.id == uuid.UUID(doc_id)).first()
-    )
+    doc_obj = db.query(EmployeeDocument).filter(EmployeeDocument.id == uuid.UUID(doc_id)).first()
     assert doc_obj is not None
     file_obj = db.query(FileObject).filter(FileObject.id == doc_obj.file_object_id).first()
     assert file_obj is not None
@@ -1285,12 +1284,10 @@ def test_f2_evil_sibling_folder_path_traversal_refusal(
     file_obj.storage_path = evil_file
     db.commit()
 
-    res_dl = client.get(
-        f"/api/v1/documents/{emp1.id}/{doc_id}/download", headers=hr_headers
+    res_dl = client.get(f"/api/v1/documents/{emp1.id}/{doc_id}/download", headers=hr_headers)
+    assert res_dl.status_code == 404, (
+        f"Expected 404 for evil sibling folder, got {res_dl.status_code}"
     )
-    assert (
-        res_dl.status_code == 404
-    ), f"Expected 404 for evil sibling folder, got {res_dl.status_code}"
 
     file_obj.storage_path = orig_path
     db.commit()
@@ -1425,8 +1422,6 @@ def test_f4_access_restrictions_and_deleted_documents_hidden(
     (c) Deleted documents never appear in list for HR either.
     """
     emp1 = doc_setup["emp1"]
-    emp2 = doc_setup["emp2"]
-    emp1_headers = _auth_headers(doc_setup["emp_user1"])
     emp2_headers = _auth_headers(doc_setup["emp_user2"])
     mgr_headers = _auth_headers(doc_setup["manager_a"])
     hr_headers = _auth_headers(doc_setup["hr_a"])
@@ -1463,14 +1458,12 @@ def test_f4_access_restrictions_and_deleted_documents_hidden(
     )
 
     # (c) Soft delete document
-    res_del = client.delete(
-        f"/api/v1/documents/{emp1.id}/{doc1_id}", headers=hr_headers
-    )
+    res_del = client.delete(f"/api/v1/documents/{emp1.id}/{doc1_id}", headers=hr_headers)
     assert res_del.status_code == 204
 
     # (c) Deleted document does NOT appear in list for HR
     res_hr_list = client.get(f"/api/v1/documents/{emp1.id}", headers=hr_headers)
     assert res_hr_list.status_code == 200
-    assert all(
-        d["id"] != doc1_id for d in res_hr_list.json()
-    ), "Deleted document must not appear in HR list"
+    assert all(d["id"] != doc1_id for d in res_hr_list.json()), (
+        "Deleted document must not appear in HR list"
+    )
