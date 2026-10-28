@@ -1,5 +1,6 @@
 import io
 import os
+from pathlib import Path
 import uuid
 import zipfile
 from datetime import UTC, date, datetime
@@ -700,7 +701,7 @@ def test_r05_document_record_validation_and_concurrency_cap_and_rollback(
 
 
 def test_r06_authenticated_download_and_file_url_refusal(
-    client: TestClient, doc_setup: dict[str, Any], db: Session
+    client: TestClient, doc_setup: dict[str, Any], db: Session, tmp_path: Path
 ) -> None:
     """R6: Download works for employee and HR; 404 for deleted/other-company/unknown;
     response headers (attachment, nosniff, no-store); list has no signed link and no storage path;
@@ -744,6 +745,22 @@ def test_r06_authenticated_download_and_file_url_refusal(
     # 4. Download by HR -> 200
     res_dl_hr = client.get(f"/api/v1/documents/{emp1.id}/{doc_id}/download", headers=hr_headers)
     assert res_dl_hr.status_code == 200
+
+    # Path traversal test: file outside EMPLOYEE_DOCS_DIR returns 404
+    outside_file = tmp_path / "outside.pdf"
+    outside_file.write_bytes(pdf_data)
+    doc_obj_direct = db.query(EmployeeDocument).filter(EmployeeDocument.id == uuid.UUID(doc_id)).first()
+    assert doc_obj_direct is not None
+    file_obj_direct = db.query(FileObject).filter(FileObject.id == doc_obj_direct.file_object_id).first()
+    assert file_obj_direct is not None
+    orig_path = file_obj_direct.storage_path
+    file_obj_direct.storage_path = str(outside_file)
+    db.commit()
+
+    res_dl_outside = client.get(f"/api/v1/documents/{emp1.id}/{doc_id}/download", headers=hr_headers)
+    assert res_dl_outside.status_code == 404
+    file_obj_direct.storage_path = orig_path
+    db.commit()
 
     # 5. GET /files/{file_id}/url refusal (Design 7): returns 404 for employee document files
     doc_obj = db.query(EmployeeDocument).filter(EmployeeDocument.id == uuid.UUID(doc_id)).first()

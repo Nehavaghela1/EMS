@@ -1,6 +1,8 @@
 import logging
 import os
 import uuid
+
+logger = logging.getLogger(__name__)
 from datetime import UTC, date, datetime
 from typing import Literal
 
