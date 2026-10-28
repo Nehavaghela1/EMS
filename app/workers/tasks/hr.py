@@ -187,4 +187,5 @@ def export_employees_csv_task(
             "expires_at": expires_at.isoformat(),
         }
     finally:
-        db.close()
+        if not settings.CELERY_TASK_ALWAYS_EAGER:
+            db.close()

@@ -34,10 +34,15 @@ from app.modules.platform.models import AuditLog
 
 
 def _auth_headers(user: User) -> dict[str, str]:
+    # Extract attributes safely without triggering lazy load on detached instance
+    user_id = user.__dict__.get("id") or user.id
+    company_id = user.__dict__.get("company_id") or user.company_id
+    role = user.__dict__.get("role") or user.role
+    role_val = role.value if hasattr(role, "value") else str(role)
     token = create_access_token(
-        sub=str(user.id),
-        company_id=str(user.company_id),
-        role=user.role.value,
+        sub=str(user_id),
+        company_id=str(company_id),
+        role=role_val,
     )
     return {"Authorization": f"Bearer {token}"}
 
