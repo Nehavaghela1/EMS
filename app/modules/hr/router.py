@@ -1,7 +1,10 @@
+import os
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +14,8 @@ from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.modules.hr.models import Department, Employee, EmploymentType
 from app.modules.hr.schemas import (
+    BulkActionRequest,
+    BulkActionResponse,
     DepartmentCreateRequest,
     DepartmentResponse,
     DepartmentUpdateRequest,
@@ -28,6 +33,8 @@ from app.modules.hr.schemas import (
     EmployeeExperienceCreate,
     EmployeeExperienceResponse,
     EmployeeExperienceUpdate,
+    EmployeeExportJobResponse,
+    EmployeeExportRequest,
     EmployeeInviteInfo,
     EmployeeResponse,
     EmployeeSkillCreate,
@@ -46,6 +53,9 @@ from app.modules.hr.service import (
     EmployeeSectionService,
     EmployeeService,
 )
+from app.core.exceptions import NotFoundError
+from app.modules.platform.service import AuditService
+from app.workers.celery_app import celery_app
 from app.modules.identity.models import Company, User, UserRole
 
 departments_router = APIRouter(prefix="/departments", tags=["Departments"])
@@ -336,6 +346,150 @@ def _build_full_employee_response(
     )
 
 
+# ── Bulk Actions & Export (Spec 2.4) ──────────────────────────
+
+
+@employees_router.post("/bulk/deactivate", response_model=BulkActionResponse)
+@limiter.limit("5/minute", key_func=get_user_or_ip_key)
+def bulk_deactivate_employees(
+    request: Request,
+    data: BulkActionRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+):
+    return EmployeeService(db).bulk_deactivate(user.company_id, data.employee_ids, actor=user)
+
+
+@employees_router.post("/bulk/reactivate", response_model=BulkActionResponse)
+@limiter.limit("5/minute", key_func=get_user_or_ip_key)
+def bulk_reactivate_employees(
+    request: Request,
+    data: BulkActionRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+):
+    return EmployeeService(db).bulk_reactivate(user.company_id, data.employee_ids, actor=user)
+
+
+@employees_router.post("/bulk/resend-invite", response_model=BulkActionResponse)
+@limiter.limit("5/minute", key_func=get_user_or_ip_key)
+def bulk_resend_invite_employees(
+    request: Request,
+    data: BulkActionRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+):
+    return EmployeeService(db).bulk_resend_invite(user.company_id, data.employee_ids, actor=user)
+
+
+@employees_router.post("/export", response_model=EmployeeExportJobResponse, status_code=202)
+@limiter.limit("5/hour", key_func=get_user_or_ip_key)
+def export_employees(
+    request: Request,
+    data: EmployeeExportRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin)),
+):
+    # Record EMPLOYEES_EXPORT_REQUESTED audit row
+    AuditService(db).record(
+        company_id=user.company_id,
+        actor=user,
+        action="EMPLOYEES_EXPORT_REQUESTED",
+        entity_type="employee",
+        entity_id=None,
+        details={
+            "filters": data.model_dump(exclude_none=True, mode="json"),
+        },
+    )
+    db.commit()
+
+    from app.workers.tasks.hr import export_employees_csv_task
+
+    task = export_employees_csv_task.delay(
+        company_id=str(user.company_id),
+        actor_id=str(user.id),
+        actor_role=user.role.value,
+        q=data.q,
+        department_id=str(data.department_id) if data.department_id else None,
+        is_active=data.is_active,
+        level=data.level,
+        employment_type=data.employment_type.value if data.employment_type else None,
+        reporting_manager_id=str(data.reporting_manager_id) if data.reporting_manager_id else None,
+        role=data.role,
+        employee_ids=[str(x) for x in data.employee_ids] if data.employee_ids else None,
+    )
+    return EmployeeExportJobResponse(job_id=task.id)
+
+
+@employees_router.get("/export/{job_id}/download")
+def download_employee_export(
+    job_id: str,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin)),
+):
+    async_result = celery_app.AsyncResult(job_id)
+    if async_result.state != "SUCCESS":
+        raise NotFoundError("Export not found or still processing.")
+
+    result = async_result.result
+    if not isinstance(result, dict):
+        raise NotFoundError("Export data not found.")
+
+    # Cross-company isolation
+    if user.role != UserRole.super_admin and result.get("company_id") != str(user.company_id):
+        raise NotFoundError("Export not found.")
+
+    # Authorization: Requester, or HR Admin / Owner of same company
+    requester_id = result.get("requester_id")
+    is_requester = requester_id and str(user.id) == requester_id
+    is_hr_or_owner = user.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+    if not (is_requester or is_hr_or_owner):
+        raise NotFoundError("Export not found.")
+
+    # Check expiration (24h)
+    expires_at_str = result.get("expires_at")
+    if expires_at_str:
+        expires_at = datetime.fromisoformat(expires_at_str)
+        if datetime.now(UTC) > expires_at:
+            raise NotFoundError("Export file has expired.")
+
+    file_path = result.get("file_path")
+    if not file_path or not os.path.exists(file_path):
+        raise NotFoundError("Export file not found on disk.")
+
+    file_name = result.get("file_name", "employees.csv")
+
+    # Audit download
+    AuditService(db).record(
+        company_id=user.company_id,
+        actor=user,
+        action="EMPLOYEES_EXPORT_DOWNLOADED",
+        entity_type="employee",
+        entity_id=None,
+        details={"job_id": job_id, "file_name": file_name},
+    )
+    db.commit()
+
+    return FileResponse(
+        path=file_path,
+        filename=file_name,
+        media_type="text/csv",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@employees_router.post("/{employee_id}/reactivate", response_model=EmployeeResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def reactivate_employee(
+    request: Request,
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+):
+    employee = EmployeeService(db).reactivate_employee(user.company_id, employee_id, actor=user)
+    return _build_full_employee_response(db, employee, viewer_user=user)
+
+
 @employees_router.get("/{employee_id}", response_model=EmployeeResponse)
 def get_employee(
     employee_id: uuid.UUID,
@@ -360,23 +514,29 @@ def update_employee(
 
 
 @employees_router.delete("/{employee_id}", status_code=204)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def deactivate_employee(
+    request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
 ):
     EmployeeService(db).deactivate_employee(user.company_id, employee_id, user)
 
 
-@employees_router.post("/{employee_id}/toggle-active", response_model=EmployeeResponse)
+@employees_router.post(
+    "/{employee_id}/toggle-active",
+    response_model=EmployeeResponse,
+    deprecated=True,
+)
 @limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def toggle_active_employee(
     request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
 ):
-    employee = EmployeeService(db).reactivate_employee(user.company_id, employee_id, actor=user)
+    employee = EmployeeService(db).toggle_active_employee(user.company_id, employee_id, actor=user)
     return _build_full_employee_response(db, employee, viewer_user=user)
 
 
@@ -386,7 +546,7 @@ def resend_invite(
     request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
 ):
     employee, sent_to = EmployeeService(db).resend_invite(user.company_id, employee_id, actor=user)
     return _to_employee_create_response(employee, sent_to)

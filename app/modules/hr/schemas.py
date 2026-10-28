@@ -829,3 +829,49 @@ class EmployeeExperienceResponse(BaseModel):
     verified_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# ── Bulk Actions & Export (Spec 2.4) ──────────────────────────
+
+
+class BulkActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_ids: list[uuid.UUID] = Field(..., min_length=1, max_length=100)
+
+
+class BulkActionItemReason(BaseModel):
+    id: uuid.UUID
+    reason: str
+
+
+class BulkActionItemFailure(BaseModel):
+    id: uuid.UUID
+    code: str
+    message: str
+
+
+class BulkActionResponse(BaseModel):
+    action: str
+    requested: int
+    succeeded: list[uuid.UUID]
+    skipped: list[BulkActionItemReason]
+    failed: list[BulkActionItemFailure]
+
+
+class EmployeeExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    q: str | None = None
+    department_id: uuid.UUID | None = None
+    is_active: bool | None = None
+    level: str | None = None
+    employment_type: EmploymentType | None = None
+    reporting_manager_id: uuid.UUID | None = None
+    role: str | None = None
+    employee_ids: list[uuid.UUID] | None = Field(default=None, max_length=1000)
+
+
+class EmployeeExportJobResponse(BaseModel):
+    job_id: str
+

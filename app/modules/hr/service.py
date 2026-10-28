@@ -697,7 +697,24 @@ class EmployeeService:
         `get_by_id`, so it 404s by id afterward. The linked user (if any) is
         deactivated too, so login and refresh both reject it immediately
         (9.2's "reject if is_active is false")."""
-        employee = self._get_or_404(company_id, employee_id)
+        # Lock employee row for update
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+
+        # Self-deactivation protection (R4)
+        if actor.id and employee.user_id == actor.id:
+            raise ConflictError("You cannot deactivate your own account.")
+
+        # Company owner protection (R4)
+        company = self.company_repo.get_by_id(company_id)
+        if company and company.owner_user_id and employee.user_id == company.owner_user_id:
+            raise ConflictError("Cannot deactivate the company owner.")
+
+        # Already inactive: 204 no-op, no new audit log
+        if not employee.is_active:
+            return
+
         self.clear_department_heads_for_employee(company_id, employee.id, actor=actor)
         self.repo.update(employee, is_active=False)
         if employee.user_id is not None:
@@ -718,9 +735,7 @@ class EmployeeService:
     def reactivate_employee(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
     ) -> Employee:
-        """Route 25 (`/toggle-active`, spec's literal path name) — reactivate.
-        Must look the employee up without the is_active filter, since the
-        whole point is finding an already-deactivated row."""
+        """Reactivates an inactive employee. Validates location and department."""
         employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
         if employee is None:
             raise NotFoundError("Employee not found.")
@@ -743,6 +758,22 @@ class EmployeeService:
         )
         self.db.commit()
         return employee
+
+    def toggle_active_employee(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
+    ) -> Employee:
+        """Route 25 (`/toggle-active`, deprecated alias) — toggles active state."""
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+        if employee.is_active:
+            self.deactivate_employee(company_id, employee_id, actor)
+            # Re-fetch after deactivate committed
+            reloaded = self.repo.get_by_id_any_status(employee_id, company_id)
+            assert reloaded is not None
+            return reloaded
+        else:
+            return self.reactivate_employee(company_id, employee_id, actor)
 
     def resend_invite(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
@@ -773,6 +804,278 @@ class EmployeeService:
         self.db.commit()
         sent_to = self._send_activation_email(company_id, employee, raw_token)
         return employee, sent_to
+
+    # ── Bulk Actions (Spec 2.4) ──────────────────────────────────
+
+    def _deactivate_single(
+        self, company_id: uuid.UUID, emp: Employee, actor: User
+    ) -> None:
+        self.clear_department_heads_for_employee(company_id, emp.id, actor=actor)
+        self.repo.update(emp, is_active=False)
+        if emp.user_id is not None:
+            u = self.user_repo.get_by_id(emp.user_id, company_id)
+            if u is not None:
+                self.user_repo.update(u, company_id, is_active=False)
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEE_DEACTIVATED",
+            entity_type="employee",
+            entity_id=emp.id,
+            details={"employee_code": emp.employee_code},
+        )
+
+    def bulk_deactivate(
+        self, company_id: uuid.UUID, employee_ids: list[uuid.UUID], actor: User
+    ) -> dict[str, Any]:
+        """Bulk soft-deactivation. Deduplicates IDs, processes per savepoint.
+        Skips self, company owner, already inactive.
+        Failed for not found or error.
+        Emits individual audits + summary EMPLOYEES_BULK_ACTION.
+        """
+        unique_ids = list(dict.fromkeys(employee_ids))
+        requested = len(unique_ids)
+        succeeded: list[uuid.UUID] = []
+        skipped: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        company = self.company_repo.get_by_id(company_id)
+        company_owner_id = company.owner_user_id if company else None
+
+        for emp_id in unique_ids:
+            # Per-employee isolation via savepoint
+            sp = self.db.begin_nested()
+            try:
+                emp = self.repo.get_by_id_for_update(emp_id, company_id, allow_inactive=True)
+                if emp is None:
+                    failed.append({"id": emp_id, "code": "not_found", "message": "Employee not found."})
+                    sp.commit()
+                    continue
+
+                # Check self
+                if actor.id and emp.user_id == actor.id:
+                    skipped.append({"id": emp_id, "reason": "is_self"})
+                    sp.commit()
+                    continue
+
+                # Check company owner
+                if company_owner_id and emp.user_id == company_owner_id:
+                    skipped.append({"id": emp_id, "reason": "is_company_owner"})
+                    sp.commit()
+                    continue
+
+                # Check already inactive
+                if not emp.is_active:
+                    skipped.append({"id": emp_id, "reason": "already_inactive"})
+                    sp.commit()
+                    continue
+
+                # Perform deactivation
+                self._deactivate_single(company_id, emp, actor=actor)
+                sp.commit()
+                succeeded.append(emp.id)
+            except Exception as e:
+                sp.rollback()
+                failed.append({"id": emp_id, "code": "internal_error", "message": str(e)})
+
+        # Record summary audit log
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEES_BULK_ACTION",
+            entity_type="employee",
+            entity_id=None,
+            details={
+                "action": "deactivate",
+                "requested_count": requested,
+                "succeeded_count": len(succeeded),
+                "skipped_count": len(skipped),
+                "failed_count": len(failed),
+            },
+        )
+        self.db.commit()
+        if succeeded:
+            DashboardService.invalidate_company_dashboards(company_id)
+
+        return {
+            "action": "deactivate",
+            "requested": requested,
+            "succeeded": succeeded,
+            "skipped": skipped,
+            "failed": failed,
+        }
+
+    def bulk_reactivate(
+        self, company_id: uuid.UUID, employee_ids: list[uuid.UUID], actor: User
+    ) -> dict[str, Any]:
+        """Bulk reactivation. Deduplicates IDs, processes per savepoint.
+        Skips already active.
+        Validates location/department; if inactive or invalid -> failed.
+        Emits individual audits + summary EMPLOYEES_BULK_ACTION.
+        """
+        unique_ids = list(dict.fromkeys(employee_ids))
+        requested = len(unique_ids)
+        succeeded: list[uuid.UUID] = []
+        skipped: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        for emp_id in unique_ids:
+            sp = self.db.begin_nested()
+            try:
+                emp = self.repo.get_by_id_for_update(emp_id, company_id, allow_inactive=True)
+                if emp is None:
+                    failed.append({"id": emp_id, "code": "not_found", "message": "Employee not found."})
+                    sp.commit()
+                    continue
+
+                if emp.is_active:
+                    skipped.append({"id": emp_id, "reason": "already_active"})
+                    sp.commit()
+                    continue
+
+                # Validate department and location
+                try:
+                    self._validate_department(company_id, emp.department_id)
+                    self._validate_location(company_id, emp.location_id)
+                except (InvalidReferenceError, ValidationError) as ve:
+                    failed.append({"id": emp_id, "code": "invalid_reference", "message": str(ve)})
+                    sp.rollback()
+                    continue
+
+                self.repo.update(emp, is_active=True)
+                if emp.user_id is not None:
+                    u = self.user_repo.get_by_id(emp.user_id, company_id)
+                    if u is not None:
+                        self.user_repo.update(u, company_id, is_active=True)
+
+                self.audit.record(
+                    company_id=company_id,
+                    actor=actor,
+                    action="EMPLOYEE_REACTIVATED",
+                    entity_type="employee",
+                    entity_id=emp.id,
+                    details={"employee_code": emp.employee_code},
+                )
+                sp.commit()
+                succeeded.append(emp.id)
+            except Exception as e:
+                sp.rollback()
+                failed.append({"id": emp_id, "code": "internal_error", "message": str(e)})
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEES_BULK_ACTION",
+            entity_type="employee",
+            entity_id=None,
+            details={
+                "action": "reactivate",
+                "requested_count": requested,
+                "succeeded_count": len(succeeded),
+                "skipped_count": len(skipped),
+                "failed_count": len(failed),
+            },
+        )
+        self.db.commit()
+        if succeeded:
+            DashboardService.invalidate_company_dashboards(company_id)
+
+        return {
+            "action": "reactivate",
+            "requested": requested,
+            "succeeded": succeeded,
+            "skipped": skipped,
+            "failed": failed,
+        }
+
+    def bulk_resend_invite(
+        self, company_id: uuid.UUID, employee_ids: list[uuid.UUID], actor: User
+    ) -> dict[str, Any]:
+        """Bulk resend invite. Deduplicates IDs, processes per savepoint.
+        Skips already activated, inactive.
+        Emails dispatched only after employee save succeeded.
+        Emits individual audits + summary EMPLOYEES_BULK_ACTION.
+        """
+        unique_ids = list(dict.fromkeys(employee_ids))
+        requested = len(unique_ids)
+        succeeded: list[uuid.UUID] = []
+        skipped: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        pending_emails: list[tuple[Employee, str]] = []
+
+        for emp_id in unique_ids:
+            sp = self.db.begin_nested()
+            try:
+                emp = self.repo.get_by_id_for_update(emp_id, company_id, allow_inactive=True)
+                if emp is None:
+                    failed.append({"id": emp_id, "code": "not_found", "message": "Employee not found."})
+                    sp.commit()
+                    continue
+
+                if not emp.is_active:
+                    skipped.append({"id": emp_id, "reason": "inactive"})
+                    sp.commit()
+                    continue
+
+                if emp.invitation_status == InvitationStatus.activated:
+                    skipped.append({"id": emp_id, "reason": "already_activated"})
+                    sp.commit()
+                    continue
+
+                raw_token = generate_refresh_token()
+                self.repo.update(
+                    emp,
+                    invitation_status=InvitationStatus.sent,
+                    activation_token_hash=hash_token(raw_token),
+                    activation_expires_at=utcnow() + timedelta(days=settings.INVITE_TOKEN_EXPIRE_DAYS),
+                )
+                self.audit.record(
+                    company_id=company_id,
+                    actor=actor,
+                    action="EMPLOYEE_INVITE_RESENT",
+                    entity_type="employee",
+                    entity_id=emp.id,
+                    details={"employee_code": emp.employee_code, "email": emp.email},
+                )
+                sp.commit()
+                succeeded.append(emp.id)
+                pending_emails.append((emp, raw_token))
+            except Exception as e:
+                sp.rollback()
+                failed.append({"id": emp_id, "code": "internal_error", "message": str(e)})
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEES_BULK_ACTION",
+            entity_type="employee",
+            entity_id=None,
+            details={
+                "action": "resend-invite",
+                "requested_count": requested,
+                "succeeded_count": len(succeeded),
+                "skipped_count": len(skipped),
+                "failed_count": len(failed),
+            },
+        )
+        self.db.commit()
+
+        # Send activation emails for succeeded employees only
+        for emp, raw_token in pending_emails:
+            try:
+                self._send_activation_email(company_id, emp, raw_token)
+            except Exception as e:
+                logger.error("Failed to queue activation email for %s: %s", emp.id, e)
+
+        return {
+            "action": "resend-invite",
+            "requested": requested,
+            "succeeded": succeeded,
+            "skipped": skipped,
+            "failed": failed,
+        }
+
 
     # ── Resignation & Full-and-Final (Routes 27-30) ─────────────────
     def submit_resignation(

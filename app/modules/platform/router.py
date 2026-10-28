@@ -88,10 +88,18 @@ def get_job_status(job_id: str, user: User = Depends(get_current_user)) -> JobSt
         # (10.1): the caller should not learn that a job with this id exists
         # at all.
         raise NotFoundError("Job not found.")
+
+    # Never expose internal filesystem paths in public job status response (Spec 2.4 R7)
+    safe_result = None
+    if isinstance(result, dict):
+        safe_result = {k: v for k, v in result.items() if k != "file_path"}
+    elif result is not None:
+        safe_result = result
+
     return JobStatusResponse(
         job_id=job_id,
         status=status,
-        result=result,
+        result=safe_result,
         error=str(async_result.result) if status == "failure" else None,
     )
 

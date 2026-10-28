@@ -23,11 +23,13 @@ celery_app = Celery(
         "app.workers.tasks.email",
         "app.workers.tasks.identity",
         "app.workers.tasks.platform",
+        "app.workers.tasks.hr",
     ],
 )
 
 celery_app.conf.update(
     task_always_eager=settings.CELERY_TASK_ALWAYS_EAGER,
+    task_store_eager_result=True,
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],

@@ -70,6 +70,10 @@ def bulk_company(db: Session) -> dict[str, Any]:
         role=UserRole.owner,
         is_active=True,
     )
+    db.add(owner)
+    db.flush()
+    company.owner_user_id = owner.id
+    db.flush()
     hr_admin = User(
         id=uuid.uuid4(),
         company_id=cid,
@@ -102,7 +106,7 @@ def bulk_company(db: Session) -> dict[str, Any]:
         role=UserRole.employee,
         is_active=True,
     )
-    db.add_all([owner, hr_admin, manager, emp_user1, emp_user2])
+    db.add_all([hr_admin, manager, emp_user1, emp_user2])
     db.flush()
 
     bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
@@ -584,22 +588,25 @@ def test_r05_cross_company_isolation(
         is_active=True,
     )
     db.add(emp_b)
+    emp_b_id = emp_b.id
     db.commit()
 
     random_id = str(uuid.uuid4())
     res = client.post(
         "/api/v1/employees/bulk/deactivate",
         headers=hr_headers,
-        json={"employee_ids": [str(emp_b.id), random_id]},
+        json={"employee_ids": [str(emp_b_id), random_id]},
     )
     assert res.status_code == 200
     failed = res.json()["failed"]
     # Both Company B ID and Random ID return identical not_found
-    assert any(item["id"] == str(emp_b.id) and item["code"] == "not_found" for item in failed)
+    assert any(item["id"] == str(emp_b_id) and item["code"] == "not_found" for item in failed)
     assert any(item["id"] == random_id and item["code"] == "not_found" for item in failed)
 
-    db.refresh(emp_b)
-    assert emp_b.is_active is True
+    bind_tenant_to_session(db, company_id=cid_b, is_platform_admin=True)
+    emp_b_refreshed = db.query(Employee).filter(Employee.id == emp_b_id).first()
+    assert emp_b_refreshed is not None
+    assert emp_b_refreshed.is_active is True
 
 
 # ==============================================================================
