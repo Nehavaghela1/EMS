@@ -211,6 +211,12 @@ def bulk_company(db: Session) -> dict[str, Any]:
     db.commit()
 
     return {
+        "company_id": cid,
+        "owner_id": owner.id,
+        "hr_admin_id": hr_admin.id,
+        "manager_id": manager.id,
+        "emp_user1_id": emp_user1.id,
+        "emp_user2_id": emp_user2.id,
         "company": company,
         "owner": owner,
         "hr_admin": hr_admin,
@@ -608,6 +614,11 @@ def test_r05_cross_company_isolation(
     assert emp_b_refreshed is not None
     assert emp_b_refreshed.is_active is True
 
+    # Direct repository check under platform admin: get_by_id_for_update must respect company_id filter
+    from app.modules.hr.repository import EmployeeRepository
+    repo = EmployeeRepository(db)
+    assert repo.get_by_id_for_update(emp_b_id, bulk_company["company"].id, allow_inactive=True) is None
+
 
 # ==============================================================================
 # R6: Audit Logs & Outbox Emails
@@ -683,6 +694,20 @@ def test_r07_export_large_result_and_filtering(
     if res_data.get("result"):
         assert "file_path" not in res_data["result"]
 
+    # Verify manager export scopes to direct reports only
+    mgr_user = db.query(User).filter(User.id == bulk_company["manager_id"]).first()
+    assert mgr_user is not None
+    mgr_headers = _auth_headers(mgr_user)
+    res_mgr_exp = client.post("/api/v1/employees/export", headers=mgr_headers, json={})
+    assert res_mgr_exp.status_code == 202
+    job_id_mgr = res_mgr_exp.json()["job_id"]
+    res_mgr_dl = client.get(f"/api/v1/employees/export/{job_id_mgr}/download", headers=mgr_headers)
+    assert res_mgr_dl.status_code == 200
+    rows_mgr = list(csv.reader(io.StringIO(res_mgr_dl.content.decode("utf-8-sig"))))
+    # manager has emp1 and emp2 as direct reports (from bulk_company fixture), not all 105+
+    # Header is row 0, data rows must be <= 3 (reports only)
+    assert len(rows_mgr) - 1 <= 3
+
 
 # ==============================================================================
 # R8: Authenticated Secure Download
@@ -705,7 +730,7 @@ def test_r08_export_download_authorization_and_expiry(
 # ==============================================================================
 
 def test_r09_export_csv_headers_and_safety(
-    client: TestClient, bulk_company: dict[str, Any]
+    client: TestClient, bulk_company: dict[str, Any], db: Session
 ) -> None:
     """R9: UTF-8 BOM, exact headers, phone/email scoping, csv_safe_cell sanitization,
     round trip through csv module, no token, hash, bank or PAN columns.
@@ -717,6 +742,11 @@ def test_r09_export_csv_headers_and_safety(
     assert csv_safe_cell("+cmd") == "'+cmd"
     assert csv_safe_cell("-calc") == "'-calc"
     assert csv_safe_cell("@SUM") == "'@SUM"
+
+    # Add employee with formula prefix in position
+    emp1 = bulk_company["emp1"]
+    emp1.position = "=SUM(A1:B1)"
+    db.commit()
 
     # 2. Trigger export as HR
     hr_headers = _auth_headers(bulk_company["hr_admin"])
@@ -735,6 +765,14 @@ def test_r09_export_csv_headers_and_safety(
     rows_hr = list(reader_hr)
     assert len(rows_hr) >= 1
     header_hr = rows_hr[0]
+
+    # Verify formula-injected values in data rows are escaped with single quote
+    for row in rows_hr[1:]:
+        for cell in row:
+            if cell:
+                assert not (cell.startswith("=") or cell.startswith("+") or cell.startswith("-") or cell.startswith("@")), (
+                    f"Unescaped cell in export: {cell}"
+                )
 
     expected_hr_header = [
         "Employee Code",

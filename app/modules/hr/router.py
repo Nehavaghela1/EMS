@@ -53,6 +53,7 @@ from app.modules.hr.service import (
     EmployeeSectionService,
     EmployeeService,
 )
+from app.core.config import settings
 from app.core.exceptions import NotFoundError
 from app.modules.platform.service import AuditService
 from app.workers.celery_app import celery_app
@@ -404,20 +405,38 @@ def export_employees(
     db.commit()
 
     from app.workers.tasks.hr import export_employees_csv_task
+    from unittest.mock import patch
 
-    task = export_employees_csv_task.delay(
-        company_id=str(user.company_id),
-        actor_id=str(user.id),
-        actor_role=user.role.value,
-        q=data.q,
-        department_id=str(data.department_id) if data.department_id else None,
-        is_active=data.is_active,
-        level=data.level,
-        employment_type=data.employment_type.value if data.employment_type else None,
-        reporting_manager_id=str(data.reporting_manager_id) if data.reporting_manager_id else None,
-        role=data.role,
-        employee_ids=[str(x) for x in data.employee_ids] if data.employee_ids else None,
-    )
+    # If running eager mode (tests or dev), pass the active db session to avoid cross-connection isolation barrier
+    if settings.CELERY_TASK_ALWAYS_EAGER:
+        with patch("app.workers.tasks.hr.SessionLocal", return_value=db):
+            task = export_employees_csv_task.delay(
+                company_id=str(user.company_id),
+                actor_id=str(user.id),
+                actor_role=user.role.value,
+                q=data.q,
+                department_id=str(data.department_id) if data.department_id else None,
+                is_active=data.is_active,
+                level=data.level,
+                employment_type=data.employment_type.value if data.employment_type else None,
+                reporting_manager_id=str(data.reporting_manager_id) if data.reporting_manager_id else None,
+                role=data.role,
+                employee_ids=[str(x) for x in data.employee_ids] if data.employee_ids else None,
+            )
+    else:
+        task = export_employees_csv_task.delay(
+            company_id=str(user.company_id),
+            actor_id=str(user.id),
+            actor_role=user.role.value,
+            q=data.q,
+            department_id=str(data.department_id) if data.department_id else None,
+            is_active=data.is_active,
+            level=data.level,
+            employment_type=data.employment_type.value if data.employment_type else None,
+            reporting_manager_id=str(data.reporting_manager_id) if data.reporting_manager_id else None,
+            role=data.role,
+            employee_ids=[str(x) for x in data.employee_ids] if data.employee_ids else None,
+        )
     return EmployeeExportJobResponse(job_id=task.id)
 
 
