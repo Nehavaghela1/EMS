@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { parseApiError, fieldErrorsFromDetails } from "../../../shared/api/errors";
 import { useToast } from "../../../app/toast-context";
+import { useAuth } from "../../../app/auth-context";
 import {
   createEmployee,
   getEmployee,
@@ -60,6 +61,8 @@ export function EmployeeFormPage() {
   const isEdit = Boolean(id);
   const navigate = useNavigate();
   const { notify } = useToast();
+  const { user } = useAuth();
+  const isHRAdminOrOwner = user?.role === "hr_admin" || user?.role === "owner" || user?.role === "super_admin";
 
   // Wizard step: 1 = Basic & Job Role, 2 = Compensation & Payroll Breakdown
   const [wizardStep, setWizardStep] = useState<1 | 2>(1);
@@ -98,6 +101,8 @@ export function EmployeeFormPage() {
     queryFn: () => getEmployee(id as string),
     enabled: isEdit,
   });
+
+  const isOwnRecord = Boolean(user?.id) && existingQuery.data?.user_id === user?.id;
 
   const [positionMode, setPositionMode] = useState<string>("");
   const [customPosition, setCustomPosition] = useState<string>("");
@@ -200,7 +205,7 @@ export function EmployeeFormPage() {
       employment_type: form.employment_type,
       hire_date: form.hire_date,
       probation_end_date: form.probation_end_date || undefined,
-      notice_period_days: form.notice_period_days || undefined,
+      notice_period_days: form.notice_period_days ? Number(form.notice_period_days) : undefined,
     });
     if (!parsed.success) {
       const errors: Record<string, string> = {};
@@ -232,7 +237,39 @@ export function EmployeeFormPage() {
     setSubmitting(true);
     try {
       if (isEdit && id) {
-        await updateEmployee(id, payload);
+        // F2: Send ONLY changed fields in the payload. If caller is non-HR, restrict strictly to last_name, personal_email, phone.
+        const existing = existingQuery.data;
+        const diffPayload: Partial<EmployeeCreateInput> = {};
+
+        if (isHRAdminOrOwner) {
+          if (payload.first_name !== existing?.first_name) diffPayload.first_name = payload.first_name;
+          if ((payload.last_name ?? "") !== (existing?.last_name ?? "")) diffPayload.last_name = payload.last_name ?? "";
+          if (payload.email !== existing?.email) diffPayload.email = payload.email;
+          if ((payload.personal_email ?? "") !== (existing?.personal_email ?? "")) diffPayload.personal_email = payload.personal_email ?? "";
+          if (payload.phone !== undefined && payload.phone !== (existing?.phone ?? "")) diffPayload.phone = payload.phone;
+          if ((payload.department_id ?? "") !== (existing?.department_id ?? "")) diffPayload.department_id = payload.department_id;
+          if ((payload.location_id ?? "") !== (existing?.location_id ?? "")) diffPayload.location_id = payload.location_id;
+          if ((payload.reporting_manager_id ?? "") !== (existing?.reporting_manager_id ?? "")) diffPayload.reporting_manager_id = payload.reporting_manager_id;
+          if (payload.position !== undefined && payload.position !== (existing?.position ?? "")) diffPayload.position = payload.position;
+          if ((payload.level ?? "") !== (existing?.level ?? "")) diffPayload.level = payload.level;
+          if (payload.employment_type !== existing?.employment_type) diffPayload.employment_type = payload.employment_type;
+          if (payload.hire_date !== existing?.hire_date) diffPayload.hire_date = payload.hire_date;
+          if ((payload.probation_end_date ?? "") !== (existing?.probation_end_date ?? "")) diffPayload.probation_end_date = payload.probation_end_date;
+          if (payload.notice_period_days !== existing?.notice_period_days) diffPayload.notice_period_days = payload.notice_period_days;
+        } else {
+          // Non-HR caller: can only edit last_name, personal_email, phone
+          if ((payload.last_name ?? "") !== (existing?.last_name ?? "")) diffPayload.last_name = payload.last_name ?? "";
+          if ((payload.personal_email ?? "") !== (existing?.personal_email ?? "")) diffPayload.personal_email = payload.personal_email ?? "";
+          if (payload.phone !== undefined && payload.phone !== (existing?.phone ?? "")) diffPayload.phone = payload.phone;
+        }
+
+        if (Object.keys(diffPayload).length === 0) {
+          notify("No changes detected.");
+          navigate(`/employees/${id}`);
+          return;
+        }
+
+        await updateEmployee(id, diffPayload as EmployeeCreateInput);
         notify("Employee updated.");
         navigate(`/employees/${id}`);
       } else {
@@ -404,45 +441,76 @@ export function EmployeeFormPage() {
         <form className="card stack" onSubmit={handleStep1Submit} style={{ maxWidth: 640 }}>
           {formError && <div className="alert alert-error">{formError}</div>}
 
+          {/* F-4 / F3: Informational message when changing work email */}
+          {isEdit && form.email !== (existingQuery.data?.email ?? "") && (
+            <div className="alert alert-info" style={{ fontSize: "0.85rem" }}>
+              ℹ️ Changing work email will sign the employee out and they must log in with the new email.
+            </div>
+          )}
+
           <div className="form-grid">
             <div className={"field" + (fieldErrors.first_name ? " has-error" : "")}>
-              <label>First name *</label>
-              <input value={form.first_name} onChange={(e) => setField("first_name", e.target.value)} />
+              <label htmlFor="field-first-name">First name *</label>
+              <input
+                id="field-first-name"
+                maxLength={100}
+                value={form.first_name}
+                onChange={(e) => setField("first_name", e.target.value)}
+                disabled={isEdit && !isHRAdminOrOwner}
+              />
               {fieldErrors.first_name && <span className="field-error">{fieldErrors.first_name}</span>}
             </div>
-            <div className="field">
-              <label>Last name</label>
-              <input value={form.last_name} onChange={(e) => setField("last_name", e.target.value)} />
+            <div className={"field" + (fieldErrors.last_name ? " has-error" : "")}>
+              <label htmlFor="field-last-name">Last name</label>
+              <input
+                id="field-last-name"
+                maxLength={100}
+                value={form.last_name}
+                onChange={(e) => setField("last_name", e.target.value)}
+              />
+              {fieldErrors.last_name && <span className="field-error">{fieldErrors.last_name}</span>}
             </div>
 
             <div className={"field" + (fieldErrors.email ? " has-error" : "")}>
-              <label>Work email *</label>
+              <label htmlFor="field-work-email">Work email *</label>
               <input
+                id="field-work-email"
                 type="email"
+                maxLength={255}
                 value={form.email}
                 onChange={(e) => setField("email", e.target.value)}
                 disabled={isEdit}
               />
               {fieldErrors.email && <span className="field-error">{fieldErrors.email}</span>}
             </div>
-            <div className={"field" + (fieldErrors.personal_email ? " has-error" : "")}>
-              <label>Personal email</label>
-              <input
-                type="email"
-                value={form.personal_email}
-                onChange={(e) => setField("personal_email", e.target.value)}
-              />
-              {fieldErrors.personal_email && <span className="field-error">{fieldErrors.personal_email}</span>}
-              {!isEdit && (
-                <span className="field-hint">
-                  Activation invite is sent here. Falls back to work email if empty.
-                </span>
-              )}
-            </div>
+            {(isHRAdminOrOwner || isOwnRecord || existingQuery.data?.personal_email !== null) && (
+              <div className={"field" + (fieldErrors.personal_email ? " has-error" : "")}>
+                <label htmlFor="field-personal-email">Personal email</label>
+                <input
+                  id="field-personal-email"
+                  type="email"
+                  maxLength={255}
+                  value={form.personal_email}
+                  onChange={(e) => setField("personal_email", e.target.value)}
+                />
+                {fieldErrors.personal_email && <span className="field-error">{fieldErrors.personal_email}</span>}
+                {!isEdit && (
+                  <span className="field-hint">
+                    Activation invite is sent here. Falls back to work email if empty.
+                  </span>
+                )}
+              </div>
+            )}
 
-            <div className="field">
-              <label>Phone</label>
-              <input value={form.phone} onChange={(e) => setField("phone", e.target.value)} />
+            <div className={"field" + (fieldErrors.phone ? " has-error" : "")}>
+              <label htmlFor="field-phone">Phone</label>
+              <input
+                id="field-phone"
+                maxLength={20}
+                value={form.phone}
+                onChange={(e) => setField("phone", e.target.value)}
+              />
+              {fieldErrors.phone && <span className="field-error">{fieldErrors.phone}</span>}
             </div>
 
             {/* Work Location / Branch Selection */}
@@ -451,6 +519,7 @@ export function EmployeeFormPage() {
               <select
                 value={form.location_id}
                 onChange={(e) => setField("location_id", e.target.value)}
+                disabled={isEdit && !isHRAdminOrOwner}
               >
                 <option value="">— Unassigned (Remote/Corporate) —</option>
                 {locationsQuery.data?.map((loc) => (
@@ -466,10 +535,12 @@ export function EmployeeFormPage() {
             
             {/* Mandatory Department Selection */}
             <div className={"field" + (fieldErrors.department_id ? " has-error" : "")}>
-              <label>Department *</label>
+              <label htmlFor="field-department">Department *</label>
               <select
+                id="field-department"
                 value={form.department_id}
                 onChange={(e) => handleDepartmentChange(e.target.value)}
+                disabled={isEdit && !isHRAdminOrOwner}
               >
                 <option value="">— Select Department (Mandatory) —</option>
                 {departmentsQuery.data?.items.map((d) => (
@@ -497,7 +568,7 @@ export function EmployeeFormPage() {
               <select
                 value={positionMode}
                 onChange={(e) => handlePositionSelectChange(e.target.value)}
-                disabled={!form.department_id}
+                disabled={!form.department_id || (isEdit && !isHRAdminOrOwner)}
               >
                 <option value="">
                   {form.department_id ? "— Select Designation —" : "— Select Department First —"}
@@ -520,8 +591,10 @@ export function EmployeeFormPage() {
                   </label>
                   <input
                     type="text"
+                    maxLength={150}
                     value={customPosition}
                     onChange={(e) => handleCustomPositionChange(e.target.value)}
+                    disabled={isEdit && !isHRAdminOrOwner}
                     onBlur={() => {
                       // Auto-trim and format to Title Case on blur
                       const formatted = toTitleCase(customPosition);
@@ -551,6 +624,7 @@ export function EmployeeFormPage() {
                 excludeId={id}
                 initialManagerName={existingQuery.data?.manager_name ?? undefined}
                 initialManagerPosition={existingQuery.data?.manager_position ?? undefined}
+                disabled={isEdit && !isHRAdminOrOwner}
               />
               {fieldErrors.reporting_manager_id && (
                 <span className="field-error">{fieldErrors.reporting_manager_id}</span>
@@ -561,9 +635,11 @@ export function EmployeeFormPage() {
             </div>
 
             <div className="field">
-              <label>Level (Band)</label>
+              <label htmlFor="field-level">Level (Band)</label>
               <select
+                id="field-level"
                 value={form.level}
+                disabled={isEdit && !isHRAdminOrOwner}
                 onChange={(e) => {
                   const newLevel = e.target.value;
                   setField("level", newLevel);
@@ -585,6 +661,7 @@ export function EmployeeFormPage() {
               <label>Employment type</label>
               <select
                 value={form.employment_type}
+                disabled={isEdit && !isHRAdminOrOwner}
                 onChange={(e) => setField("employment_type", e.target.value as EmploymentType)}
               >
                 {EMPLOYMENT_TYPES.map((t) => (
@@ -596,7 +673,12 @@ export function EmployeeFormPage() {
             </div>
             <div className={"field" + (fieldErrors.hire_date ? " has-error" : "")}>
               <label>Hire date *</label>
-              <input type="date" value={form.hire_date} onChange={(e) => setField("hire_date", e.target.value)} />
+              <input
+                type="date"
+                value={form.hire_date}
+                disabled={isEdit && !isHRAdminOrOwner}
+                onChange={(e) => setField("hire_date", e.target.value)}
+              />
               {fieldErrors.hire_date && <span className="field-error">{fieldErrors.hire_date}</span>}
             </div>
 
@@ -605,6 +687,7 @@ export function EmployeeFormPage() {
               <input
                 type="date"
                 value={form.probation_end_date}
+                disabled={isEdit && !isHRAdminOrOwner}
                 onChange={(e) => {
                   const probDate = e.target.value;
                   setField("probation_end_date", probDate);
@@ -619,14 +702,18 @@ export function EmployeeFormPage() {
               />
               <span className="field-hint">During probation period, policy notice is 15 days.</span>
             </div>
-            <div className="field">
-              <label>Notice period (days)</label>
+            <div className={"field" + (fieldErrors.notice_period_days ? " has-error" : "")}>
+              <label htmlFor="field-notice-period">Notice period (days)</label>
               <input
+                id="field-notice-period"
                 type="number"
-                min={0}
+                disabled={isEdit && !isHRAdminOrOwner}
                 value={form.notice_period_days}
                 onChange={(e) => setField("notice_period_days", e.target.value)}
               />
+              {fieldErrors.notice_period_days && (
+                <span className="field-error">{fieldErrors.notice_period_days}</span>
+              )}
               <span className="field-hint">Defaulted from band/probation policy; adjustable as needed.</span>
             </div>
           </div>

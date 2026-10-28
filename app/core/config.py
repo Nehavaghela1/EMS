@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     # (STORAGE_BACKEND=local). A real object-store path is a WP-08+/S3
     # concern; this is the interim, explicit, settings-driven location.
     EXPORT_DIR: str = "var/exports"
+    MAX_EXPORT_ROWS: int = 50000
 
     # ── Dashboard cache (Spec 11.10) ─────────────────────────────
     DASHBOARD_CACHE_TTL_SECONDS: int = 60

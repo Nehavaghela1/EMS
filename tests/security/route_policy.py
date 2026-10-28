@@ -138,7 +138,27 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/employees/resignations"): ROLES(
         UserRole.hr_admin, UserRole.manager, UserRole.super_admin
     ),
-    ("DELETE", "/api/v1/employees/{employee_id}"): ROLES(UserRole.hr_admin, UserRole.super_admin),
+    ("POST", "/api/v1/employees/bulk/deactivate"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
+    ),
+    ("POST", "/api/v1/employees/bulk/reactivate"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
+    ),
+    ("POST", "/api/v1/employees/bulk/resend-invite"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
+    ),
+    ("POST", "/api/v1/employees/export"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin
+    ),
+    ("GET", "/api/v1/employees/export/{job_id}/download"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin
+    ),
+    ("POST", "/api/v1/employees/{employee_id}/reactivate"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
+    ),
+    ("DELETE", "/api/v1/employees/{employee_id}"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
+    ),
     ("GET", "/api/v1/employees/{employee_id}"): AUTHENTICATED,
     ("PUT", "/api/v1/employees/{employee_id}"): AUTHENTICATED,
     ("GET", "/api/v1/employees/{employee_id}/{section}"): AUTHENTICATED,
@@ -154,7 +174,7 @@ POLICY: dict[tuple[str, str], Any] = {
         UserRole.hr_admin, UserRole.manager, UserRole.super_admin
     ),
     ("POST", "/api/v1/employees/{employee_id}/resend-invite"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin
+        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
     ),
     ("POST", "/api/v1/employees/{employee_id}/resignation"): AUTHENTICATED,
     ("PUT", "/api/v1/employees/{employee_id}/resignation/approve"): ROLES(
@@ -164,7 +184,7 @@ POLICY: dict[tuple[str, str], Any] = {
         UserRole.hr_admin, UserRole.super_admin
     ),
     ("POST", "/api/v1/employees/{employee_id}/toggle-active"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin
+        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
     ),
     ("GET", "/api/v1/files/download/{file_id}"): PUBLIC,
     ("POST", "/api/v1/files/upload"): AUTHENTICATED,

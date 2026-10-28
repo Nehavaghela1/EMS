@@ -304,6 +304,58 @@ class EmployeeRepository:
         stmt = stmt.order_by(order)
         return paginate(self.db, stmt, page_params)
 
+    def list_for_export(
+        self,
+        *,
+        company_id: uuid.UUID | None = None,
+        q: str | None = None,
+        department_id: uuid.UUID | None = None,
+        is_active: bool | None = None,
+        level: str | None = None,
+        employment_type: EmploymentType | None = None,
+        reporting_manager_id: uuid.UUID | None = None,
+        role: str | None = None,
+        employee_ids: list[uuid.UUID] | None = None,
+        direct_report_ids: list[uuid.UUID] | None = None,
+        limit: int = 50000,
+    ) -> list[Employee]:
+        stmt = select(Employee).where(Employee.deleted_at.is_(None))
+        if company_id is not None:
+            stmt = stmt.where(Employee.company_id == company_id)
+        if direct_report_ids is not None:
+            stmt = stmt.where(Employee.id.in_(direct_report_ids))
+        if employee_ids is not None and len(employee_ids) > 0:
+            stmt = stmt.where(Employee.id.in_(employee_ids))
+        if role and role.strip() and role.strip().lower() != "all":
+            from sqlalchemy import String, cast
+
+            from app.modules.identity.models import User
+
+            role_clean = role.strip().lower().replace(" ", "_")
+            stmt = stmt.join(User, Employee.user_id == User.id).where(
+                func.lower(cast(User.role, String)) == role_clean
+            )
+        if q:
+            pattern = f"%{q.lower()}%"
+            stmt = stmt.where(
+                func.lower(Employee.first_name).like(pattern)
+                | func.lower(func.coalesce(Employee.last_name, "")).like(pattern)
+                | func.lower(Employee.email).like(pattern)
+                | func.lower(Employee.employee_code).like(pattern)
+            )
+        if department_id is not None:
+            stmt = stmt.where(Employee.department_id == department_id)
+        if is_active is not None:
+            stmt = stmt.where(Employee.is_active.is_(is_active))
+        if level is not None:
+            stmt = stmt.where(Employee.level == level)
+        if employment_type is not None:
+            stmt = stmt.where(Employee.employment_type == employment_type)
+        if reporting_manager_id is not None:
+            stmt = stmt.where(Employee.reporting_manager_id == reporting_manager_id)
+        stmt = stmt.order_by(Employee.created_at.desc()).limit(limit)
+        return list(self.db.scalars(stmt).all())
+
     def create(self, **kwargs) -> Employee:
         employee = Employee(**kwargs)
         self.db.add(employee)

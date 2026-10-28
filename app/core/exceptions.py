@@ -56,6 +56,13 @@ class RateLimitedError(AppError):
     code = "rate_limited"
 
 
+class ExportTooLargeError(AppError):
+    """Raised when an export query exceeds the system-configured maximum row count."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    code = "export_too_large"
+
+
 def _envelope(code: str, message: str, *, details: dict | None, request_id: str) -> dict:
     return {
         "error": {
