@@ -1422,8 +1422,6 @@ class EmployeeSectionService:
 
         # Effective date validation for education and experience
         if section in ("education", "experience"):
-            from fastapi.exceptions import RequestValidationError
-
             today_utc = utcnow().date()
             effective_start = data.get("start_date", getattr(entry, "start_date", None))
             effective_end = data.get("end_date", getattr(entry, "end_date", None))
@@ -1463,7 +1461,7 @@ class EmployeeSectionService:
                 )
 
             if errors:
-                raise RequestValidationError(errors=errors)
+                raise ValidationError("Validation error", details={"errors": errors})
 
         # Determine real changes
         changed_fields: list[str] = []
