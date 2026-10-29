@@ -908,6 +908,101 @@ def test_r05_foreign_reference_validation_and_anti_cycle(
     assert "circular" in res_cycle.json()["error"]["message"].lower()
 
 
+def test_f5_any_active_employee_can_be_reporting_manager(
+    client: TestClient, onboarding_company: dict[str, Any], db: Session
+) -> None:
+    """F5: An employee whose login role is plain 'employee' (and one with no login at all)
+    can be set as reporting manager on create and on update; result 201/200 and manager_id saved.
+    """
+    hr_headers = _auth_headers(onboarding_company["hr_admin"])
+    cid = onboarding_company["company"].id
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
+
+    # 1. Create an employee with no login at all (just onboarded, invited/active)
+    mgr_no_login_res = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "NoLogin",
+            "last_name": "Manager",
+            "email": f"nologin-mgr-{uuid.uuid4().hex[:6]}@example.com",
+            "hire_date": "2025-01-01",
+        },
+    )
+    assert mgr_no_login_res.status_code == 201
+    mgr_no_login_id = mgr_no_login_res.json()["id"]
+
+    # 2. Create an employee who has an associated user with role 'employee'
+    emp_user = User(
+        company_id=cid,
+        email=f"emp-role-{uuid.uuid4().hex[:6]}@example.com",
+        username=f"emp_role_{uuid.uuid4().hex[:6]}",
+        hashed_password=hash_password("EmpPassword123!"),
+        role=UserRole.employee,
+        is_active=True,
+    )
+    db.add(emp_user)
+    db.flush()
+
+    mgr_with_emp_role = Employee(
+        company_id=cid,
+        user_id=emp_user.id,
+        employee_code=f"EMP{uuid.uuid4().hex[:4].upper()}",
+        first_name="PlainEmp",
+        last_name="Manager",
+        email=emp_user.email,
+        hire_date=date(2025, 1, 1),
+        employment_type=EmploymentType.full_time,
+        invitation_status=InvitationStatus.activated,
+        is_active=True,
+    )
+    db.add(mgr_with_emp_role)
+    db.commit()
+    mgr_role_emp_id = str(mgr_with_emp_role.id)
+
+    # Test A: Create employee with reporting_manager_id = mgr_no_login_id -> 201 & saved
+    res_create_a = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "ReportA",
+            "last_name": "Test",
+            "email": f"report-a-{uuid.uuid4().hex[:6]}@example.com",
+            "hire_date": "2025-01-01",
+            "reporting_manager_id": mgr_no_login_id,
+        },
+    )
+    assert res_create_a.status_code == 201
+    data_a = res_create_a.json()
+    assert data_a["reporting_manager_id"] == mgr_no_login_id
+    emp_a_id = data_a["id"]
+
+    # Test B: Update employee to have reporting_manager_id = mgr_role_emp_id -> 200 & saved
+    res_update_a = client.put(
+        f"/api/v1/employees/{emp_a_id}",
+        headers=hr_headers,
+        json={"reporting_manager_id": mgr_role_emp_id},
+    )
+    assert res_update_a.status_code == 200
+    data_update = res_update_a.json()
+    assert data_update["reporting_manager_id"] == mgr_role_emp_id
+
+    # Test C: Create employee with reporting_manager_id = mgr_role_emp_id -> 201 & saved
+    res_create_b = client.post(
+        "/api/v1/employees",
+        headers=hr_headers,
+        json={
+            "first_name": "ReportB",
+            "last_name": "Test",
+            "email": f"report-b-{uuid.uuid4().hex[:6]}@example.com",
+            "hire_date": "2025-01-01",
+            "reporting_manager_id": mgr_role_emp_id,
+        },
+    )
+    assert res_create_b.status_code == 201
+    assert res_create_b.json()["reporting_manager_id"] == mgr_role_emp_id
+
+
 # ==============================================================================
 # R06: Invite Token Lifecycle & Enqueue
 # ==============================================================================

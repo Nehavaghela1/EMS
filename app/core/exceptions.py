@@ -63,6 +63,13 @@ class ExportTooLargeError(AppError):
     code = "export_too_large"
 
 
+class PayloadTooLargeError(AppError):
+    """Raised when an upload exceeds the system-configured maximum payload size."""
+
+    status_code = status.HTTP_413_CONTENT_TOO_LARGE
+    code = "file_too_large"
+
+
 def _envelope(code: str, message: str, *, details: dict | None, request_id: str) -> dict:
     return {
         "error": {

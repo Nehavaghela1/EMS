@@ -523,6 +523,37 @@ class EmployeeDocumentRepository:
         )
         return list(self.db.scalars(stmt))
 
+    def count_active_for_employee(self, company_id: uuid.UUID, employee_id: uuid.UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(EmployeeDocument)
+            .where(
+                EmployeeDocument.company_id == company_id,
+                EmployeeDocument.employee_id == employee_id,
+                EmployeeDocument.deleted_at.is_(None),
+            )
+        )
+        return self.db.scalar(stmt) or 0
+
+    def get_by_id(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, document_id: uuid.UUID
+    ) -> EmployeeDocument | None:
+        stmt = select(EmployeeDocument).where(
+            EmployeeDocument.id == document_id,
+            EmployeeDocument.company_id == company_id,
+            EmployeeDocument.employee_id == employee_id,
+            EmployeeDocument.deleted_at.is_(None),
+        )
+        return self.db.scalar(stmt)
+
+    def is_file_attached_to_employee_document(self, file_object_id: uuid.UUID) -> bool:
+        stmt = (
+            select(EmployeeDocument.id)
+            .where(EmployeeDocument.file_object_id == file_object_id)
+            .limit(1)
+        )
+        return self.db.scalar(stmt) is not None
+
 
 class SearchRepository:
     def __init__(self, db: Session):

@@ -27,7 +27,6 @@ from app.modules.platform.repository import (
 )
 from app.modules.platform.schemas import (
     AnnouncementCreate,
-    EmployeeDocumentCreate,
     EmployeeDocumentResponse,
     GlobalSearchResponse,
     SearchResultItem,
@@ -473,6 +472,12 @@ class FileService:
         if not file_obj:
             raise NotFoundError("File object not found.")
 
+        # Design 7: if file object belongs to ANY employee_documents row, answer 404
+        from app.modules.platform.repository import EmployeeDocumentRepository
+
+        if EmployeeDocumentRepository(self.db).is_file_attached_to_employee_document(file_id):
+            raise NotFoundError("File object not found.")
+
         # HMAC signed token valid for 3600 seconds
         import hashlib
         import hmac
@@ -499,26 +504,6 @@ class EmployeeDocumentService:
 
         self.repo = EmployeeDocumentRepository(db)
 
-    def attach_document(
-        self, company_id: uuid.UUID, data: EmployeeDocumentCreate
-    ) -> EmployeeDocumentResponse:
-        from app.modules.platform.repository import FileRepository
-
-        file_obj = FileRepository(self.db).get_by_id(company_id, data.file_object_id)
-        if not file_obj:
-            raise NotFoundError("File object not found.")
-
-        doc = self.repo.create(
-            company_id=company_id,
-            employee_id=data.employee_id,
-            file_object_id=data.file_object_id,
-            document_type=data.document_type,
-            name=data.name,
-        )
-        self.db.commit()
-        self.db.refresh(doc)
-        return EmployeeDocumentResponse.model_validate(doc)
-
     def list_documents(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, caller: User
     ) -> list[EmployeeDocumentResponse]:
@@ -538,12 +523,11 @@ class EmployeeDocumentService:
             raise NotFoundError("Employee not found.")
 
         docs = self.repo.list_for_employee(company_id, employee_id)
-        file_service = FileService(self.db)
         results = []
         for doc in docs:
             resp = EmployeeDocumentResponse.model_validate(doc)
-            signed = file_service.generate_signed_url(company_id, doc.file_object_id)
-            resp.download_url = signed.url
+            # Design 9: Stop generating signed links; set download_url to the relative route path
+            resp.download_url = f"/api/v1/documents/{employee_id}/{doc.id}/download"
             results.append(resp)
         return results
 
