@@ -117,10 +117,15 @@ def test_fnf_clearance_manager_scoping(client: TestClient, db: Session, company_
     emp_headers = _link_user_to_employee(db, company_a.company_id, emp["id"], UserRole.employee)
 
     # Resignation
+    from datetime import date, timedelta
+    today = date.today()
     res_post = client.post(
         f"/api/v1/employees/{emp['id']}/resignation",
         headers=emp_headers,
-        json={"resignation_date": "2026-09-01", "last_working_date": "2026-10-01"},
+        json={
+            "resignation_date": str(today - timedelta(days=10)),
+            "last_working_date": str(today + timedelta(days=20)),
+        },
     )
     assert res_post.status_code == 200
     client.put(
