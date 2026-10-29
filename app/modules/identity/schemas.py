@@ -209,6 +209,14 @@ class CompanyApproveResponse(BaseModel):
     hr_admin_email: str
 
 
+class NoticePeriodDefaults(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    L1: int = Field(default=30, ge=0, le=365)
+    L2: int = Field(default=30, ge=0, le=365)
+    L3: int = Field(default=30, ge=0, le=365)
+
+
 class CompanyProfileUpdateRequest(BaseModel):
     name: str | None = None
     phone: str | None = None

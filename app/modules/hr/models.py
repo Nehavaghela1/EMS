@@ -20,6 +20,7 @@ from sqlalchemy import (
 from sqlalchemy import (
     Numeric as SANumeric,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -162,6 +163,7 @@ class Employee(TenantBase):
         default=ResignationStatus.none,
     )
     resignation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    resignation_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     last_working_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     notice_waived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     notice_recovery_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -171,6 +173,7 @@ class Employee(TenantBase):
         String(50), nullable=True
     )  # voluntary, involuntary, pip_failed
     termination_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    termination_notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     severance_pay: Mapped[Decimal | None] = mapped_column(
         SANumeric(14, 2), nullable=True, default=Decimal("0.00")
     )
@@ -186,6 +189,12 @@ class Employee(TenantBase):
     it_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     hr_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     finance_clearance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    clearance_signoffs: Mapped[dict | None] = mapped_column(
+        JSONB(astext_type=Text()), nullable=True
+    )
+    fnf_snapshot: Mapped[dict | None] = mapped_column(
+        JSONB(astext_type=Text()), nullable=True
+    )
     fnf_settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
