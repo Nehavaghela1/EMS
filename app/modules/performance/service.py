@@ -495,7 +495,7 @@ class PerformanceService:
                 notice_waived=True,
                 notice_recovery_days=0,
             )
-            EmployeeService(self.db).apply_exit(company_id, emp.id, actor=actor)
+            EmployeeService(self.db).apply_exit(company_id, emp.id, actor=actor, commit=False)
 
         self.audit.record(
             company_id=company_id,

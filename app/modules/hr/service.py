@@ -237,7 +237,7 @@ def get_policy_notice_days(
     custom_days: int | None = None,
     company_defaults: dict[str, int] | None = None,
 ) -> int:
-    """Calculate contractual notice period by level/band or probation according to policy:
+    """Calculate contractual notice period by level/band according to policy:
     - Explicit custom_days always wins.
     - If no custom_days sent:
       - Uses company notice defaults for the level if configured (L1/L2/L3)
@@ -250,14 +250,6 @@ def get_policy_notice_days(
     if level in ("L1", "L2", "L3") and level in defaults:
         return int(defaults[level])
 
-    if is_probation:
-        return 15
-    if level == "L3":
-        return defaults.get("L3", 90)
-    if level == "L2":
-        return defaults.get("L2", 60)
-    if level == "L1":
-        return defaults.get("L1", 30)
     return 30
 
 
@@ -1131,14 +1123,36 @@ class EmployeeService:
         company_id: uuid.UUID,
         employee_id: uuid.UUID,
         actor: User | None = None,
+        commit: bool = True,
     ) -> Employee | None:
         """Applies an exit: employee inactive, linked user inactive, all refresh tokens
         revoked, department head cleared (with its existing audit), audit row EMPLOYEE_EXIT_APPLIED.
-        Idempotent: safe to run multiple times.
+        Idempotent: if the employee is already inactive, the login already inactive, and no active
+        refresh tokens exist, do nothing and write no audit row.
         """
         employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
         if employee is None:
             return None
+
+        linked_user = None
+        active_tokens: list[RefreshToken] = []
+        if employee.user_id:
+            linked_user = self.db.scalar(select(User).where(User.id == employee.user_id))
+            if linked_user:
+                active_tokens = list(
+                    self.db.scalars(
+                        select(RefreshToken).where(
+                            RefreshToken.user_id == linked_user.id,
+                            RefreshToken.is_revoked.is_(False),
+                        )
+                    ).all()
+                )
+
+        # Idempotency check: if employee already inactive, user inactive (or no user),
+        # and no active tokens
+        user_already_inactive = linked_user is None or not linked_user.is_active
+        if not employee.is_active and user_already_inactive and not active_tokens:
+            return employee
 
         # 1. Clear department head assignments if any
         self.clear_department_heads_for_employee(company_id, employee.id, actor=actor)
@@ -1147,19 +1161,11 @@ class EmployeeService:
         self.repo.update(employee, is_active=False)
 
         # 3. Deactivate linked login and revoke all refresh tokens
-        if employee.user_id:
-            user = self.db.scalar(select(User).where(User.id == employee.user_id))
-            if user:
-                user.is_active = False
-                tokens = self.db.scalars(
-                    select(RefreshToken).where(
-                        RefreshToken.user_id == user.id,
-                        RefreshToken.is_revoked.is_(False),
-                    )
-                ).all()
-                for token in tokens:
-                    token.is_revoked = True
-                    token.revoked_at = utcnow()
+        if linked_user:
+            linked_user.is_active = False
+            for token in active_tokens:
+                token.is_revoked = True
+                token.revoked_at = utcnow()
 
         # 4. Audit row EMPLOYEE_EXIT_APPLIED
         self.audit.record(
@@ -1170,7 +1176,8 @@ class EmployeeService:
             entity_id=employee.id,
             details={"employee_id": str(employee.id)},
         )
-        self.db.commit()
+        if commit:
+            self.db.commit()
         return employee
 
     def submit_resignation(
@@ -1227,7 +1234,9 @@ class EmployeeService:
 
         # Calculate served days and notice recovery shortfall
         served_days = max(0, (data.last_working_date - data.resignation_date).days)
-        notice_required = employee.notice_period_days or 30
+        notice_required = (
+            employee.notice_period_days if employee.notice_period_days is not None else 30
+        )
         shortfall_days = max(0, notice_required - served_days)
 
         self.repo.update(
@@ -1380,7 +1389,10 @@ class EmployeeService:
             served_days = (
                 max(0, (new_lwd - (employee.resignation_date or new_lwd)).days) if new_lwd else 0
             )
-            shortfall = max(0, (employee.notice_period_days or 30) - served_days)
+            req_notice = (
+                employee.notice_period_days if employee.notice_period_days is not None else 30
+            )
+            shortfall = max(0, req_notice - served_days)
             recovery_days = 0 if data.notice_waived else min(data.notice_recovery_days, shortfall)
 
             self.repo.update(
@@ -1428,7 +1440,10 @@ class EmployeeService:
             served_days = (
                 max(0, (new_lwd - (employee.resignation_date or new_lwd)).days) if new_lwd else 0
             )
-            shortfall = max(0, (employee.notice_period_days or 30) - served_days)
+            req_notice = (
+                employee.notice_period_days if employee.notice_period_days is not None else 30
+            )
+            shortfall = max(0, req_notice - served_days)
             recovery_days = 0 if data.notice_waived else min(data.notice_recovery_days, shortfall)
 
             self.repo.update(
@@ -1522,11 +1537,11 @@ class EmployeeService:
                 "termination_date": str(data.termination_date),
             },
         )
-        self.db.commit()
 
         if is_immediate:
-            self.apply_exit(company_id, employee.id, actor=actor)
+            self.apply_exit(company_id, employee.id, actor=actor, commit=False)
 
+        self.db.commit()
         return employee
 
     def _calculate_fnf(
@@ -1687,7 +1702,7 @@ class EmployeeService:
                     PayrollItem.employee_id == employee.id,
                     PayrollRun.month == last_working.month,
                     PayrollRun.year == last_working.year,
-                    PayrollRun.status == PayrollRunStatus.approved,
+                    PayrollRun.status.in_([PayrollRunStatus.approved, PayrollRunStatus.paid]),
                     PayrollItem.deleted_at.is_(None),
                 )
             )
@@ -1901,6 +1916,7 @@ class EmployeeService:
         now_iso = utcnow().isoformat()
         updates: dict[str, Any] = {}
         audit_fields: dict[str, Any] = {"employee_id": str(employee.id)}
+        amount_fields_updated: list[str] = []
 
         # 1. IT Clearance
         if data.it_clearance is not None:
@@ -1953,18 +1969,21 @@ class EmployeeService:
                     "Only Finance Managers or HR Admin/Owner can adjust severance pay."
                 )
             updates["severance_pay"] = data.severance_pay
+            amount_fields_updated.append("severance_pay")
         if data.pending_reimbursements is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
                 raise ForbiddenError(
                     "Only Finance Managers or HR Admin/Owner can adjust reimbursements."
                 )
             updates["pending_reimbursements"] = data.pending_reimbursements
+            amount_fields_updated.append("pending_reimbursements")
         if data.gratuity_bonus is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
                 raise ForbiddenError(
                     "Only Finance Managers or HR Admin/Owner can adjust gratuity/bonus."
                 )
             updates["gratuity_bonus"] = data.gratuity_bonus
+            amount_fields_updated.append("gratuity_bonus")
         if data.asset_deductions is not None:
             if not (
                 is_executive or (actor.role == UserRole.manager and (is_fin_dept or is_it_dept))
@@ -1973,6 +1992,7 @@ class EmployeeService:
                     "Only Finance/IT Managers or HR Admin/Owner can adjust asset deductions."
                 )
             updates["asset_deductions"] = data.asset_deductions
+            amount_fields_updated.append("asset_deductions")
 
         # 5. Settlement: Only HR-level, only on/after lwd, only if all 3 clearances are true
         if data.mark_settled:
@@ -1996,9 +2016,7 @@ class EmployeeService:
                     "All three clearances (IT, HR, Finance) must be approved before settlement."
                 )
 
-            self.clear_department_heads_for_employee(company_id, employee.id, actor=actor)
             updates["fnf_settled_at"] = utcnow()
-            updates["is_active"] = False
 
         if signoffs:
             updates["clearance_signoffs"] = signoffs
@@ -2006,7 +2024,32 @@ class EmployeeService:
         if updates:
             self.repo.update(employee, **updates)
 
-        # If settling, snapshot the full calculation now
+        # Audit money changes if amounts were updated
+        if amount_fields_updated:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="FNF_AMOUNTS_UPDATED",
+                entity_type="employee",
+                entity_id=employee.id,
+                details={
+                    "employee_id": str(employee.id),
+                    "fields": amount_fields_updated,
+                },
+            )
+
+        # Audit clearance update if clearance flags were modified
+        if any(k in audit_fields for k in ("it_clearance", "hr_clearance", "finance_clearance")):
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="CLEARANCE_UPDATED",
+                entity_type="employee",
+                entity_id=employee.id,
+                details=audit_fields,
+            )
+
+        # If settling, snapshot the full calculation and apply exit (access off, etc.)
         full_fnf = self._calculate_fnf(company_id, employee_id)
         if data.mark_settled:
             snapshot_dict = full_fnf.model_dump(mode="json")
@@ -2022,15 +2065,7 @@ class EmployeeService:
                     "total_settlement_amount": str(full_fnf.total_settlement_amount),
                 },
             )
-        elif any(k in audit_fields for k in ("it_clearance", "hr_clearance", "finance_clearance")):
-            self.audit.record(
-                company_id=company_id,
-                actor=actor,
-                action="CLEARANCE_UPDATED",
-                entity_type="employee",
-                entity_id=employee.id,
-                details=audit_fields,
-            )
+            self.apply_exit(company_id, employee.id, actor=actor, commit=False)
 
         self.db.commit()
 

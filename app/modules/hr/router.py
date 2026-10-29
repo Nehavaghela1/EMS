@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
@@ -44,6 +44,10 @@ from app.modules.hr.schemas import (
     EmployeeSkillUpdate,
     EmployeeUpdateRequest,
     FnFClearanceUpdateRequest,
+    FnFFinanceClearanceResponse,
+    FnFHRClearanceResponse,
+    FnFITClearanceResponse,
+    FnFSettlementResponse,
     ManagerSearchResponse,
     ResignationApproveRequest,
     ResignationSubmitRequest,
@@ -492,8 +496,8 @@ def download_employee_export(
 @limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def get_clearance_queue(
     request: Request,
-    page: int = 1,
-    limit: int = 50,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_tenant_db),
     user: User = Depends(
         require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)
@@ -502,7 +506,7 @@ def get_clearance_queue(
     items, total = EmployeeService(db).list_clearance_queue(
         user.company_id, user, page=page, limit=limit
     )
-    pages = (total + limit - 1) // limit if total else 0
+    pages = (total + limit - 1) // limit if total and limit > 0 else 0
     return Page(
         items=[ClearanceQueueItemResponse.model_validate(i) for i in items],
         page=page,
@@ -643,7 +647,15 @@ def terminate_employee(
     return _to_employee_response(employee)
 
 
-@employees_router.get("/{employee_id}/fnf")
+FnFRouteResponse = (
+    FnFSettlementResponse
+    | FnFFinanceClearanceResponse
+    | FnFITClearanceResponse
+    | FnFHRClearanceResponse
+)
+
+
+@employees_router.get("/{employee_id}/fnf", response_model=FnFRouteResponse)
 @limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def get_fnf_settlement(
     request: Request,
@@ -654,7 +666,7 @@ def get_fnf_settlement(
     return EmployeeService(db).calculate_fnf(user.company_id, employee_id, user)
 
 
-@employees_router.put("/{employee_id}/fnf/clearance")
+@employees_router.put("/{employee_id}/fnf/clearance", response_model=FnFRouteResponse)
 @limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_fnf_clearance(
     request: Request,
