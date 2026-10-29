@@ -18,7 +18,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, INET
+from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -167,6 +167,9 @@ class Company(TimeStampedBase):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     deactivation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_employee_seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    notice_period_defaults: Mapped[dict | None] = mapped_column(
+        JSONB(astext_type=Text()), nullable=True
+    )
 
     # `approved_by` and `owner_user_id` are FK paths between companies and users
     users: Mapped[list["User"]] = relationship(

@@ -12,13 +12,19 @@ def test_resignation_and_fnf_workflow(client: TestClient, db: Session, company_a
     emp_id = emp["id"]
     assert emp["notice_period_days"] == 30
 
-    # 1. Submit early resignation: 2026-09-17 to 2026-10-01 (14 days served)
+    from datetime import date, timedelta
+
+    today = date.today()
+    res_date = today - timedelta(days=14)
+    lwd_date = today
+
+    # 1. Submit early resignation: 14 days served
     # Expected shortfall = 30 - 14 = 16 days
     res_sub = client.post(
         f"/api/v1/employees/{emp_id}/resignation",
         json={
-            "resignation_date": "2026-09-17",
-            "last_working_date": "2026-10-01",
+            "resignation_date": str(res_date),
+            "last_working_date": str(lwd_date),
             "reason": "Better opportunity",
         },
         headers=hr_headers,
@@ -104,9 +110,12 @@ def test_resignation_and_fnf_workflow(client: TestClient, db: Session, company_a
     assert Decimal(str(fnf_data["per_day_salary"])) == Decimal("391.67")
     # 16 days notice shortfall recovery = 16 * 391.67 = 6266.72
     assert Decimal(str(fnf_data["notice_recovery_amount"])) == Decimal("6266.72")
-    # 1 day unpaid salary = 1 * 391.67 = 391.67
-    assert Decimal(str(fnf_data["unpaid_salary_days"])) == 1
-    assert Decimal(str(fnf_data["unpaid_salary_amount"])) == Decimal("391.67")
+    expected_unpaid_days = min(lwd_date.day, 30)
+    assert Decimal(str(fnf_data["unpaid_salary_days"])) == expected_unpaid_days
+    expected_unpaid_amount = (Decimal(expected_unpaid_days) * Decimal("391.67")).quantize(
+        Decimal("0.01")
+    )
+    assert Decimal(str(fnf_data["unpaid_salary_amount"])) == expected_unpaid_amount
     assert "total_settlement_amount" in fnf_data
 
     # 5. Test Waive Notice behavior
@@ -209,16 +218,27 @@ def test_department_clearance_function_authorization(client: TestClient, db: Ses
     # 5. Create employee undergoing resignation
     emp = _create_employee(client, hr_headers, email="target-resigning@example.com")
     emp_id = emp["id"]
+    from datetime import date, timedelta
+
+    today = date.today()
     res_sub = client.post(
         f"/api/v1/employees/{emp_id}/resignation",
         json={
-            "resignation_date": "2026-09-17",
-            "last_working_date": "2026-10-01",
+            "resignation_date": str(today - timedelta(days=10)),
+            "last_working_date": str(today + timedelta(days=20)),
             "reason": "Relocation",
         },
         headers=hr_headers,
     )
     assert res_sub.status_code == 200
+
+    # Approve resignation so clearance can be processed
+    res_app = client.put(
+        f"/api/v1/employees/{emp_id}/resignation/approve",
+        json={"approved": True},
+        headers=hr_headers,
+    )
+    assert res_app.status_code == 200
 
     # 6. Audit manager (null clearance_function) CANNOT sign off IT clearance -> 403
     res_audit_clear = client.put(
@@ -339,13 +359,22 @@ def test_put_department_clearance_function_and_authorization(
     # 7. Resigning employee for clearance testing
     target_emp = _create_employee(client, hr_headers, email="target-finance-clear@example.com")
     target_id = target_emp["id"]
+    from datetime import date, timedelta
+
+    today = date.today()
     client.post(
         f"/api/v1/employees/{target_id}/resignation",
         json={
-            "resignation_date": "2026-09-17",
-            "last_working_date": "2026-10-01",
+            "resignation_date": str(today - timedelta(days=10)),
+            "last_working_date": str(today + timedelta(days=20)),
             "reason": "New Offer",
         },
+        headers=hr_headers,
+    )
+    # Approve exit so clearance can be processed
+    client.put(
+        f"/api/v1/employees/{target_id}/resignation/approve",
+        json={"approved": True},
         headers=hr_headers,
     )
 
@@ -450,11 +479,14 @@ def test_department_head_can_review_resignation_using_department_repo(
     sub_id = subordinate["id"]
 
     # 4. Subordinate submits resignation
+    from datetime import date, timedelta
+
+    today = date.today()
     res_sub = client.post(
         f"/api/v1/employees/{sub_id}/resignation",
         json={
-            "resignation_date": "2026-09-20",
-            "last_working_date": "2026-10-20",
+            "resignation_date": str(today - timedelta(days=10)),
+            "last_working_date": str(today + timedelta(days=20)),
             "reason": "Moving on",
         },
         headers=hr_headers,
@@ -464,7 +496,7 @@ def test_department_head_can_review_resignation_using_department_repo(
     # 5. Department Head approves resignation (exercises EmployeeService.department_repo.get_by_id)
     app_res = client.put(
         f"/api/v1/employees/{sub_id}/resignation/approve",
-        json={"approved": True, "notice_waived": True},
+        json={"approved": True},
         headers=head_mgr_headers,
     )
     assert app_res.status_code == 200

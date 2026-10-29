@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
@@ -17,6 +17,7 @@ from app.modules.hr.models import Department, Employee, EmploymentType
 from app.modules.hr.schemas import (
     BulkActionRequest,
     BulkActionResponse,
+    ClearanceQueueItemResponse,
     DepartmentCreateRequest,
     DepartmentResponse,
     DepartmentUpdateRequest,
@@ -43,6 +44,9 @@ from app.modules.hr.schemas import (
     EmployeeSkillUpdate,
     EmployeeUpdateRequest,
     FnFClearanceUpdateRequest,
+    FnFFinanceClearanceResponse,
+    FnFHRClearanceResponse,
+    FnFITClearanceResponse,
     FnFSettlementResponse,
     ManagerSearchResponse,
     ResignationApproveRequest,
@@ -488,6 +492,31 @@ def download_employee_export(
     )
 
 
+@employees_router.get("/clearance-queue", response_model=Page[ClearanceQueueItemResponse])
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def get_clearance_queue(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(
+        require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)
+    ),
+):
+    items, total = EmployeeService(db).list_clearance_queue(
+        user.company_id, user, page=page, limit=limit
+    )
+    pages = (total + limit - 1) // limit if total and limit > 0 else 0
+    return Page(
+        items=[ClearanceQueueItemResponse.model_validate(i) for i in items],
+        page=page,
+        limit=limit,
+        total=total,
+        pages=pages,
+        has_next=page < pages,
+    )
+
+
 @employees_router.post("/{employee_id}/reactivate", response_model=EmployeeResponse)
 @limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def reactivate_employee(
@@ -566,7 +595,9 @@ def resend_invite(
 
 
 @employees_router.post("/{employee_id}/resignation", response_model=EmployeeResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def submit_resignation(
+    request: Request,
     employee_id: uuid.UUID,
     data: ResignationSubmitRequest,
     db: Session = Depends(get_tenant_db),
@@ -576,30 +607,58 @@ def submit_resignation(
     return _to_employee_response(employee)
 
 
+@employees_router.post("/{employee_id}/resignation/withdraw", response_model=EmployeeResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
+def withdraw_resignation(
+    request: Request,
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    employee = EmployeeService(db).withdraw_resignation(user.company_id, employee_id, user)
+    return _to_employee_response(employee)
+
+
 @employees_router.put("/{employee_id}/resignation/approve", response_model=EmployeeResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def approve_resignation(
+    request: Request,
     employee_id: uuid.UUID,
     data: ResignationApproveRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
+    user: User = Depends(
+        require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)
+    ),
 ):
     employee = EmployeeService(db).approve_resignation(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
 
 
 @employees_router.post("/{employee_id}/terminate", response_model=EmployeeResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def terminate_employee(
+    request: Request,
     employee_id: uuid.UUID,
     data: TerminationRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
 ):
     employee = EmployeeService(db).terminate_employee(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
 
 
-@employees_router.get("/{employee_id}/fnf", response_model=FnFSettlementResponse)
+FnFRouteResponse = (
+    FnFSettlementResponse
+    | FnFFinanceClearanceResponse
+    | FnFITClearanceResponse
+    | FnFHRClearanceResponse
+)
+
+
+@employees_router.get("/{employee_id}/fnf", response_model=FnFRouteResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def get_fnf_settlement(
+    request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
@@ -607,12 +666,16 @@ def get_fnf_settlement(
     return EmployeeService(db).calculate_fnf(user.company_id, employee_id, user)
 
 
-@employees_router.put("/{employee_id}/fnf/clearance", response_model=FnFSettlementResponse)
+@employees_router.put("/{employee_id}/fnf/clearance", response_model=FnFRouteResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_fnf_clearance(
+    request: Request,
     employee_id: uuid.UUID,
     data: FnFClearanceUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
+    user: User = Depends(
+        require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)
+    ),
 ):
     return EmployeeService(db).update_fnf_clearance(user.company_id, employee_id, data, user)
 

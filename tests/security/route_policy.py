@@ -111,6 +111,12 @@ POLICY: dict[tuple[str, str], Any] = {
     ),
     ("GET", "/api/v1/companies/me"): AUTHENTICATED,
     ("PUT", "/api/v1/companies/me"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/companies/notice-period-defaults"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
+    ),
+    ("PUT", "/api/v1/companies/notice-period-defaults"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
+    ),
     ("POST", "/api/v1/companies/register"): PUBLIC,
     ("POST", "/api/v1/companies/workspaces"): ROLES(UserRole.owner, UserRole.hr_admin),
     ("GET", "/api/v1/companies/{company_id}"): ROLES(UserRole.super_admin),
@@ -135,6 +141,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ),
     ("GET", "/api/v1/employees"): ROLES(UserRole.hr_admin, UserRole.manager, UserRole.super_admin),
     ("POST", "/api/v1/employees"): ROLES(UserRole.hr_admin, UserRole.super_admin),
+    ("GET", "/api/v1/employees/clearance-queue"): ROLES(
+        UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin
+    ),
     ("GET", "/api/v1/employees/managers/search"): ROLES(
         UserRole.hr_admin, UserRole.manager, UserRole.super_admin
     ),
@@ -175,17 +184,18 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/employees/{employee_id}/experience/{entry_id}/unverify"): AUTHENTICATED,
     ("GET", "/api/v1/employees/{employee_id}/fnf"): AUTHENTICATED,
     ("PUT", "/api/v1/employees/{employee_id}/fnf/clearance"): ROLES(
-        UserRole.hr_admin, UserRole.manager, UserRole.super_admin
+        UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin
     ),
     ("POST", "/api/v1/employees/{employee_id}/resend-invite"): ROLES(
         UserRole.hr_admin, UserRole.owner, UserRole.super_admin
     ),
     ("POST", "/api/v1/employees/{employee_id}/resignation"): AUTHENTICATED,
+    ("POST", "/api/v1/employees/{employee_id}/resignation/withdraw"): AUTHENTICATED,
     ("PUT", "/api/v1/employees/{employee_id}/resignation/approve"): ROLES(
-        UserRole.hr_admin, UserRole.manager, UserRole.super_admin
+        UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin
     ),
     ("POST", "/api/v1/employees/{employee_id}/terminate"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin
+        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
     ),
     ("POST", "/api/v1/employees/{employee_id}/toggle-active"): ROLES(
         UserRole.hr_admin, UserRole.owner, UserRole.super_admin

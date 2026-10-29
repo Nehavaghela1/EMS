@@ -6,6 +6,8 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
+
 from app.core.config import settings
 from app.core.csv_safety import csv_safe_cell
 from app.core.exceptions import ExportTooLargeError
@@ -247,3 +249,48 @@ def delete_expired_exports_task() -> int:
             )
 
     return deleted_count
+
+
+@celery_app.task(name="app.workers.tasks.hr.apply_due_exits_task")
+def apply_due_exits_task() -> dict[str, int]:
+    """D4: Hourly scheduled job to apply exits for approved exits whose last working date
+    is before today (UTC) and whose employee is still active.
+    Processes one employee at a time with row lock and independent commit.
+    """
+    from app.modules.hr.models import Employee, ResignationStatus
+    from app.modules.hr.service import EmployeeService
+
+    db = get_task_db_session()
+    applied_count = 0
+    error_count = 0
+    try:
+        bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
+        today_utc = datetime.now(UTC).date()
+
+        # Query candidates: active employees with approved exit and last_working_date < today
+        candidates = db.execute(
+            select(Employee.id, Employee.company_id).where(
+                Employee.is_active.is_(True),
+                Employee.resignation_status == ResignationStatus.approved,
+                Employee.last_working_date < today_utc,
+                Employee.deleted_at.is_(None),
+            )
+        ).all()
+
+        for emp_id, co_id in candidates:
+            try:
+                emp_service = EmployeeService(db)
+                applied_emp = emp_service.apply_exit(co_id, emp_id, actor=None)
+                if applied_emp:
+                    applied_count += 1
+            except Exception as e:
+                db.rollback()
+                error_count += 1
+                logger.warning(
+                    "failed_to_apply_due_exit",
+                    extra={"employee_id": str(emp_id), "company_id": str(co_id), "error": str(e)},
+                )
+    finally:
+        db.close()
+
+    return {"applied_count": applied_count, "error_count": error_count}

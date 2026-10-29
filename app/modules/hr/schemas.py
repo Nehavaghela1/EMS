@@ -85,7 +85,7 @@ class EmployeeCreateRequest(BaseModel):
     employment_type: EmploymentType = EmploymentType.full_time
     hire_date: date
     probation_end_date: date | None = None
-    notice_period_days: int = Field(default=30, ge=0, le=365)
+    notice_period_days: int | None = Field(default=None, ge=0, le=365)
     is_attendance_exempt: bool = False
 
     @field_validator("first_name")
@@ -276,11 +276,13 @@ class EmployeeResponse(BaseModel):
     invitation_status: InvitationStatus
     resignation_status: str
     resignation_date: date | None = None
+    resignation_reason: str | None = None
     last_working_date: date | None = None
     notice_waived: bool = False
     notice_recovery_days: int = 0
     separation_type: str | None = None
     termination_reason: str | None = None
+    termination_notes: str | None = None
     severance_pay: Decimal | None = None
     pending_reimbursements: Decimal | None = None
     gratuity_bonus: Decimal | None = None
@@ -328,35 +330,175 @@ class ManagerSearchResponse(BaseModel):
 
 # Resignation & FnF (Routes 27-30)
 class ResignationSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     resignation_date: date
     last_working_date: date
     reason: str | None = None
 
+    @field_validator("reason", mode="before")
+    @classmethod
+    def validate_reason(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            return str(v)
+        s = v.strip()
+        if len(s) > 500:
+            raise ValueError("Reason must be at most 500 characters.")
+        return s or None
+
 
 class ResignationApproveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     approved: bool
     last_working_date: date | None = None
     notice_waived: bool = False
-    notice_recovery_days: int = 0
+    notice_recovery_days: int = Field(default=0, ge=0, le=365)
 
 
 class TerminationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     termination_date: date
-    reason: str
-    severance_pay: Decimal = Decimal("0.00")
-    notice_pay_in_lieu: Decimal = Decimal("0.00")
-    notes: str | None = None
+    reason: str = Field(..., max_length=255)
+    severance_pay: Decimal = Field(
+        default=Decimal("0.00"), ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
+    notice_pay_in_lieu: Decimal = Field(
+        default=Decimal("0.00"), ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
+    notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, v: str) -> str:
+        s = v.strip()
+        if not (1 <= len(s) <= 255):
+            raise ValueError("Reason must be between 1 and 255 characters.")
+        return s
+
+    @field_validator("notes")
+    @classmethod
+    def validate_notes(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if len(s) > 1000:
+            raise ValueError("Notes must be at most 1000 characters.")
+        return s or None
 
 
 class FnFClearanceUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     it_clearance: bool | None = None
     hr_clearance: bool | None = None
     finance_clearance: bool | None = None
-    severance_pay: Decimal | None = None
-    pending_reimbursements: Decimal | None = None
-    gratuity_bonus: Decimal | None = None
-    asset_deductions: Decimal | None = None
+    severance_pay: Decimal | None = Field(
+        default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
+    pending_reimbursements: Decimal | None = Field(
+        default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
+    gratuity_bonus: Decimal | None = Field(
+        default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
+    asset_deductions: Decimal | None = Field(
+        default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
     mark_settled: bool | None = None
+    remark: str | None = Field(default=None, max_length=255)
+
+    @field_validator("remark")
+    @classmethod
+    def validate_remark(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip()
+        if len(s) > 255:
+            raise ValueError("Remark must be at most 255 characters.")
+        return s or None
+
+
+class ClearanceQueueItemResponse(BaseModel):
+    id: uuid.UUID
+    employee_code: str
+    name: str
+    department_name: str | None = None
+    last_working_date: date | None = None
+    it_clearance: bool = False
+    hr_clearance: bool = False
+    finance_clearance: bool = False
+    own_clearance_flag: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FnFHRClearanceResponse(BaseModel):
+    employee_id: uuid.UUID
+    employee_name: str
+    last_working_date: date
+    separation_type: str | None = "voluntary"
+    notice_days_required: int
+    notice_days_served: int
+    notice_waived: bool
+    notice_recovery_days: int
+    it_clearance: bool = False
+    hr_clearance: bool = False
+    finance_clearance: bool = False
+    fnf_settled_at: datetime | None = None
+    resignation_status: str = "none"
+    is_active: bool = True
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FnFITClearanceResponse(BaseModel):
+    employee_id: uuid.UUID
+    employee_name: str
+    last_working_date: date
+    separation_type: str | None = "voluntary"
+    it_clearance: bool = False
+    hr_clearance: bool = False
+    finance_clearance: bool = False
+    asset_deductions: Decimal = Decimal("0.00")
+    fnf_settled_at: datetime | None = None
+    resignation_status: str = "none"
+    is_active: bool = True
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FnFFinanceClearanceResponse(BaseModel):
+    employee_id: uuid.UUID
+    employee_name: str
+    last_working_date: date
+    separation_type: str | None = "voluntary"
+    notice_days_required: int
+    notice_days_served: int
+    notice_waived: bool
+    notice_recovery_days: int
+    notice_recovery_amount: Decimal
+    encashable_leave_days: Decimal
+    leave_encashment_amount: Decimal
+    unpaid_salary_days: int
+    unpaid_salary_amount: Decimal
+    severance_pay: Decimal = Decimal("0.00")
+    pending_reimbursements: Decimal = Decimal("0.00")
+    gratuity_bonus: Decimal = Decimal("0.00")
+    asset_deductions: Decimal = Decimal("0.00")
+    it_clearance: bool = False
+    hr_clearance: bool = False
+    finance_clearance: bool = False
+    can_release_settlement: bool = False
+    fnf_settled_at: datetime | None = None
+    resignation_status: str = "none"
+    is_active: bool = True
+    total_settlement_amount: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FnFSettlementResponse(BaseModel):
@@ -388,6 +530,8 @@ class FnFSettlementResponse(BaseModel):
     resignation_status: str = "none"
     is_active: bool = True
     total_settlement_amount: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------------------------------------------------------------------------
