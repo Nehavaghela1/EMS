@@ -45,7 +45,7 @@ from app.modules.hr.schemas import (
     ResignationSubmitRequest,
     TerminationRequest,
 )
-from app.modules.identity.models import User, UserRole
+from app.modules.identity.models import RefreshToken, User, UserRole
 from app.modules.identity.repository import (
     CompanyLocationRepository,
     CompanyRepository,
@@ -232,26 +232,33 @@ CONTACT_FIELDS = {"last_name", "personal_email", "phone"}
 
 
 def get_policy_notice_days(
-    level: str | None, is_probation: bool = False, custom_days: int | None = None
+    level: str | None,
+    is_probation: bool = False,
+    custom_days: int | None = None,
+    company_defaults: dict[str, int] | None = None,
 ) -> int:
     """Calculate contractual notice period by level/band or probation according to policy:
-    - Probation: 15 days
-    - L1: 30 days
-    - L2: 60 days
-    - L3+: 90 days
-    - Default: 30 days
-    If custom_days is explicitly non-standard (>0 and != 30), respect it."""
-    if custom_days and custom_days not in (0, 30):
+    - Explicit custom_days always wins.
+    - If no custom_days sent:
+      - Uses company notice defaults for the level if configured (L1/L2/L3)
+      - Fallback to 30 days if level or default not configured.
+    """
+    if custom_days is not None:
         return custom_days
+
+    defaults = company_defaults or {}
+    if level in ("L1", "L2", "L3") and level in defaults:
+        return int(defaults[level])
+
     if is_probation:
         return 15
     if level == "L3":
-        return 90
+        return defaults.get("L3", 90)
     if level == "L2":
-        return 60
+        return defaults.get("L2", 60)
     if level == "L1":
-        return 30
-    return custom_days if custom_days else 30
+        return defaults.get("L1", 30)
+    return 30
 
 
 class EmployeeService:
@@ -470,6 +477,9 @@ class EmployeeService:
         seq, company_code = self.company_repo.increment_employee_seq(company_id)
         employee_code = f"{company_code}-{seq:04d}"
 
+        company = self.company_repo.get_by_id(company_id)
+        company_notice_defaults = company.notice_period_defaults if company else None
+
         raw_token = generate_refresh_token()
         employee = self.repo.create(
             company_id=company_id,
@@ -493,6 +503,7 @@ class EmployeeService:
                     data.probation_end_date and data.probation_end_date > data.hire_date
                 ),
                 custom_days=data.notice_period_days,
+                company_defaults=company_notice_defaults,
             ),
             is_attendance_exempt=data.is_attendance_exempt,
             invitation_status=InvitationStatus.sent,
@@ -587,6 +598,10 @@ class EmployeeService:
                     "Probation end date cannot be earlier than hire date.",
                     details={"field": "probation_end_date"},
                 )
+
+        if "notice_period_days" in updates:
+            if employee.resignation_status in (ResignationStatus.submitted, ResignationStatus.approved):
+                raise ConflictError("Notice period cannot be edited while an exit is submitted or approved.")
 
         new_email = updates.get("email")
         email_changed = False
@@ -1106,6 +1121,53 @@ class EmployeeService:
         }
 
     # ── Resignation & Full-and-Final (Routes 27-30) ─────────────────
+    def apply_exit(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        actor: User | None = None,
+    ) -> Employee | None:
+        """Applies an exit: employee inactive, linked user inactive, all refresh tokens
+        revoked, department head cleared (with its existing audit), audit row EMPLOYEE_EXIT_APPLIED.
+        Idempotent: safe to run multiple times.
+        """
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
+        if employee is None:
+            return None
+
+        # 1. Clear department head assignments if any
+        self.clear_department_heads_for_employee(company_id, employee.id, actor=actor)
+
+        # 2. Deactivate employee
+        self.repo.update(employee, is_active=False)
+
+        # 3. Deactivate linked login and revoke all refresh tokens
+        if employee.user_id:
+            user = self.db.scalar(select(User).where(User.id == employee.user_id))
+            if user:
+                user.is_active = False
+                tokens = self.db.scalars(
+                    select(RefreshToken).where(
+                        RefreshToken.user_id == user.id,
+                        RefreshToken.is_revoked.is_(False),
+                    )
+                ).all()
+                for token in tokens:
+                    token.is_revoked = True
+                    token.revoked_at = utcnow()
+
+        # 4. Audit row EMPLOYEE_EXIT_APPLIED
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="EMPLOYEE_EXIT_APPLIED",
+            entity_type="employee",
+            entity_id=employee.id,
+            details={"employee_id": str(employee.id)},
+        )
+        self.db.commit()
+        return employee
+
     def submit_resignation(
         self,
         company_id: uuid.UUID,
@@ -1118,9 +1180,41 @@ class EmployeeService:
             if actor_emp is None or employee_id != actor_emp.id:
                 raise ForbiddenError("You do not have permission to submit this resignation.")
 
-        employee = self._get_or_404(company_id, employee_id)
-        if employee.resignation_status == ResignationStatus.submitted:
-            raise ConflictError("Resignation is already submitted.")
+        # Lock row FOR UPDATE
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+
+        # Company owner cannot resign (409)
+        company = self.company_repo.get_by_id(company_id)
+        is_owner_user = False
+        if company and company.owner_user_id and employee.user_id == company.owner_user_id:
+            is_owner_user = True
+        elif employee.user_id:
+            u = self.user_repo.get_by_id(employee.user_id, company_id)
+            if u and u.role == UserRole.owner:
+                is_owner_user = True
+        if is_owner_user:
+            raise ConflictError("The company owner cannot resign.")
+
+        # Inactive or already separating gives 409
+        if not employee.is_active:
+            raise ConflictError("An inactive employee cannot submit a resignation.")
+        if employee.resignation_status in (ResignationStatus.submitted, ResignationStatus.approved):
+            raise ConflictError(f"Employee is already separating (status: {employee.resignation_status.value}).")
+
+        # Validate dates per Rule 2
+        today = utcnow().date()
+        if data.resignation_date > today:
+            raise ValidationError("Resignation date cannot be in the future.")
+        if data.resignation_date < today - timedelta(days=30):
+            raise ValidationError("Resignation date cannot be more than 30 days in the past.")
+        if data.last_working_date < today:
+            raise ValidationError("Last working date must be today or later.")
+        if data.last_working_date < data.resignation_date:
+            raise ValidationError("Last working date cannot be before resignation date.")
+        if data.last_working_date > data.resignation_date + timedelta(days=365):
+            raise ValidationError("Last working date cannot be more than 365 days after resignation date.")
 
         # Calculate served days and notice recovery shortfall
         served_days = max(0, (data.last_working_date - data.resignation_date).days)
@@ -1131,10 +1225,83 @@ class EmployeeService:
             employee,
             resignation_status=ResignationStatus.submitted,
             resignation_date=data.resignation_date,
+            resignation_reason=data.reason,
             last_working_date=data.last_working_date,
             separation_type="voluntary",
             notice_recovery_days=shortfall_days,
             notice_waived=False,
+        )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="RESIGNATION_SUBMITTED",
+            entity_type="employee",
+            entity_id=employee.id,
+            details={
+                "employee_id": str(employee.id),
+                "resignation_date": str(data.resignation_date),
+                "last_working_date": str(data.last_working_date),
+            },
+        )
+        self.db.commit()
+        return employee
+
+    def withdraw_resignation(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        actor: User,
+    ) -> Employee:
+        """Route to withdraw a resignation.
+        Submitted: employee can withdraw own; HR-level can withdraw.
+        Approved: only HR-level can withdraw, only before last working date, only voluntary exit, never after settlement.
+        """
+        is_hr_level = actor.role in HR_LEVEL_ROLES
+        if not is_hr_level:
+            actor_emp = self.repo.get_by_user_id(company_id, actor.id)
+            if actor_emp is None or employee_id != actor_emp.id:
+                raise ForbiddenError("You do not have permission to withdraw this resignation.")
+
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+
+        if employee.fnf_settled_at is not None:
+            raise ConflictError("Cannot withdraw a resignation after full and final settlement.")
+
+        today = utcnow().date()
+        if employee.resignation_status == ResignationStatus.submitted:
+            # Both employee and HR-level can withdraw
+            pass
+        elif employee.resignation_status == ResignationStatus.approved:
+            if not is_hr_level:
+                raise ForbiddenError("Only HR admin, owner, or super admin can withdraw an approved resignation.")
+            if employee.separation_type != "voluntary":
+                raise ConflictError("Only voluntary resignations can be withdrawn.")
+            if employee.last_working_date and employee.last_working_date < today:
+                raise ConflictError("Cannot withdraw an approved resignation after the last working date.")
+        else:
+            raise ConflictError(f"No active resignation to withdraw (status: {employee.resignation_status.value}).")
+
+        self.repo.update(
+            employee,
+            resignation_status=ResignationStatus.none,
+            resignation_date=None,
+            resignation_reason=None,
+            last_working_date=None,
+            notice_waived=False,
+            notice_recovery_days=0,
+            separation_type=None,
+        )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="RESIGNATION_WITHDRAWN",
+            entity_type="employee",
+            entity_id=employee.id,
+            details={"employee_id": str(employee.id)},
         )
         self.db.commit()
         return employee
@@ -1146,15 +1313,16 @@ class EmployeeService:
         data: ResignationApproveRequest,
         actor: User,
     ) -> Employee:
-        employee = self._get_or_404(company_id, employee_id)
-        if employee.user_id == actor.id:
-            if actor.role not in (UserRole.owner, UserRole.super_admin):
-                msg = "Self-approval is forbidden. You cannot approve your own resignation."
-                raise ForbiddenError(msg)
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
 
-        # Multi-tenant and Role Hierarchy verification
-        if actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
-            # Check if actor is Department Head
+        if employee.user_id == actor.id:
+            msg = "Self-approval is forbidden. You cannot approve your own resignation."
+            raise ForbiddenError(msg)
+
+        is_admin_role = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        if not is_admin_role:
             is_dept_head = False
             actor_emp = self.repo.get_by_user_id(company_id, actor.id)
             if actor_emp and employee.department_id:
@@ -1167,34 +1335,95 @@ class EmployeeService:
 
                 can_approve_for(self.db, actor, employee)
 
-        # State checks:
-        # 1. If already approved and actor is hr_admin, owner, or super_admin: allow as amendment
-        is_admin_role = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
-        if employee.resignation_status == ResignationStatus.approved and is_admin_role:
+            # Rule 3: a manager or department head approving cannot waive or set recovery days (403)
+            if data.notice_waived or data.notice_recovery_days > 0:
+                raise ForbiddenError("Only HR admin, owner, or super admin can waive notice or adjust notice recovery days.")
+
+        # If already settled -> 409
+        if employee.fnf_settled_at is not None:
+            raise ConflictError("Cannot amend resignation after settlement.")
+
+        today = utcnow().date()
+        # State check:
+        if employee.resignation_status == ResignationStatus.approved:
+            if not is_admin_role:
+                raise ConflictError("Resignation is not pending decision (current status: approved).")
+            # HR-level amendment until settled
+            new_lwd = data.last_working_date or employee.last_working_date
+            if new_lwd and employee.resignation_date and new_lwd < employee.resignation_date:
+                raise ValidationError("Last working date cannot be before resignation date.")
+            if new_lwd and new_lwd < today:
+                raise ValidationError("Last working date cannot be amended to the past.")
+
+            # Calculate shortfall if notice not waived
+            served_days = max(0, (new_lwd - (employee.resignation_date or new_lwd)).days) if new_lwd else 0
+            shortfall = max(0, (employee.notice_period_days or 30) - served_days)
+            recovery_days = 0 if data.notice_waived else min(data.notice_recovery_days, shortfall)
+
             self.repo.update(
                 employee,
-                resignation_status=ResignationStatus.approved,
-                last_working_date=data.last_working_date or employee.last_working_date,
+                last_working_date=new_lwd,
                 notice_waived=data.notice_waived,
-                notice_recovery_days=data.notice_recovery_days if not data.notice_waived else 0,
+                notice_recovery_days=recovery_days,
+            )
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="RESIGNATION_APPROVED",
+                entity_type="employee",
+                entity_id=employee.id,
+                details={
+                    "employee_id": str(employee.id),
+                    "approved": True,
+                    "last_working_date": str(new_lwd) if new_lwd else None,
+                },
             )
             self.db.commit()
             return employee
 
-        # 2. For non-submitted status (including approved for non-admin, rejected, none): 409
         if employee.resignation_status != ResignationStatus.submitted:
             st = employee.resignation_status.value
             raise ConflictError(f"Resignation is not pending decision (current status: {st}).")
 
         if not data.approved:
             self.repo.update(employee, resignation_status=ResignationStatus.rejected)
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="RESIGNATION_REJECTED",
+                entity_type="employee",
+                entity_id=employee.id,
+                details={"employee_id": str(employee.id), "approved": False},
+            )
         else:
+            new_lwd = data.last_working_date or employee.last_working_date
+            if new_lwd and employee.resignation_date and new_lwd < employee.resignation_date:
+                raise ValidationError("Last working date cannot be before resignation date.")
+            if new_lwd and new_lwd < today:
+                raise ValidationError("Last working date cannot be in the past.")
+
+            served_days = max(0, (new_lwd - (employee.resignation_date or new_lwd)).days) if new_lwd else 0
+            shortfall = max(0, (employee.notice_period_days or 30) - served_days)
+            recovery_days = 0 if data.notice_waived else min(data.notice_recovery_days, shortfall)
+
             self.repo.update(
                 employee,
                 resignation_status=ResignationStatus.approved,
-                last_working_date=data.last_working_date or employee.last_working_date,
+                last_working_date=new_lwd,
                 notice_waived=data.notice_waived,
-                notice_recovery_days=data.notice_recovery_days if not data.notice_waived else 0,
+                notice_recovery_days=recovery_days,
+            )
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="RESIGNATION_APPROVED",
+                entity_type="employee",
+                entity_id=employee.id,
+                details={
+                    "employee_id": str(employee.id),
+                    "approved": True,
+                    "last_working_date": str(new_lwd) if new_lwd else None,
+                },
             )
         self.db.commit()
         return employee
@@ -1202,27 +1431,54 @@ class EmployeeService:
     def terminate_employee(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, data: TerminationRequest, actor: User
     ) -> Employee:
-        employee = self._get_or_404(company_id, employee_id)
-        self.clear_department_heads_for_employee(company_id, employee.id, actor=actor)
-        # Schedule separation / involuntary termination
-        # Severance pay or notice pay in lieu can be configured
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+
+        # Not yourself (409)
+        if actor.id and employee.user_id == actor.id:
+            raise ConflictError("You cannot terminate yourself.")
+
+        # Not the company owner (409)
+        company = self.company_repo.get_by_id(company_id)
+        is_owner_user = False
+        if company and company.owner_user_id and employee.user_id == company.owner_user_id:
+            is_owner_user = True
+        elif employee.user_id:
+            u = self.user_repo.get_by_id(employee.user_id, company_id)
+            if u and u.role == UserRole.owner:
+                is_owner_user = True
+        if is_owner_user:
+            raise ConflictError("The company owner cannot be terminated.")
+
+        # Active employee only; not already separating or settled (409)
+        if not employee.is_active:
+            raise ConflictError("An inactive employee cannot be terminated.")
+        if employee.resignation_status in (ResignationStatus.submitted, ResignationStatus.approved) or employee.fnf_settled_at:
+            raise ConflictError("Employee is already separating or settled.")
+
+        # Termination date from today up to today + notice_period_days
+        today = utcnow().date()
+        if data.termination_date < today:
+            raise ValidationError("Termination date cannot be in the past.")
+        max_term_date = today + timedelta(days=employee.notice_period_days)
+        if data.termination_date > max_term_date:
+            raise ValidationError(f"Termination date cannot exceed notice period ({employee.notice_period_days} days).")
+
         total_severance = Decimal(str(data.severance_pay)) + Decimal(str(data.notice_pay_in_lieu))
+
+        is_immediate = data.termination_date == today
         self.repo.update(
             employee,
-            is_active=False,
             resignation_status=ResignationStatus.approved,
             separation_type="involuntary",
             termination_reason=data.reason,
+            termination_notes=data.notes,
             last_working_date=data.termination_date,
             severance_pay=total_severance,
             notice_waived=True,
             notice_recovery_days=0,
         )
-        # If employee has user account, deactivate it on termination date
-        if employee.user_id and data.termination_date <= utcnow().date():
-            user = self.db.scalar(select(User).where(User.id == employee.user_id))
-            if user:
-                user.is_active = False
 
         self.audit.record(
             company_id=company_id,
@@ -1231,12 +1487,15 @@ class EmployeeService:
             entity_type="employee",
             entity_id=employee.id,
             details={
-                "reason": data.reason,
+                "employee_id": str(employee.id),
                 "termination_date": str(data.termination_date),
-                "severance": str(total_severance),
             },
         )
         self.db.commit()
+
+        if is_immediate:
+            self.apply_exit(company_id, employee.id, actor=actor)
+
         return employee
 
     def _calculate_fnf(
@@ -1385,7 +1644,25 @@ class EmployeeService:
                     encashable_days += available
 
         leave_encashment_amount = (encashable_days * per_day_basic).quantize(Decimal("0.01"))
-        unpaid_salary_days = last_working.day
+        # Check if payslip already exists for last working month
+        from app.modules.payroll.models import PayrollItem, PayrollRun, PayrollRunStatus
+        existing_paid_slip = (
+            self.db.scalar(
+                select(PayrollItem.id)
+                .join(PayrollRun, PayrollItem.payroll_run_id == PayrollRun.id)
+                .where(
+                    PayrollItem.company_id == company_id,
+                    PayrollItem.employee_id == employee.id,
+                    PayrollRun.month == last_working.month,
+                    PayrollRun.year == last_working.year,
+                    PayrollRun.status == PayrollRunStatus.approved,
+                    PayrollItem.deleted_at.is_(None),
+                )
+            )
+            is not None
+        )
+
+        unpaid_salary_days = 0 if existing_paid_slip else min(last_working.day, 30)
         unpaid_salary_amount = (Decimal(str(unpaid_salary_days)) * per_day_gross).quantize(
             Decimal("0.01")
         )
@@ -1451,10 +1728,67 @@ class EmployeeService:
 
     def calculate_fnf(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
-    ) -> FnFSettlementResponse:
+    ) -> Any:
+        employee = self._get_or_404(company_id, employee_id)
+
+        # Post-settlement snapshot read
+        if employee.fnf_settled_at and employee.fnf_snapshot:
+            # Employee can read own settlement after settled
+            if actor.role not in HR_LEVEL_ROLES:
+                actor_emp = self.repo.get_by_user_id(company_id, actor.id)
+                if actor_emp is None or actor_emp.id != employee.id:
+                    raise ForbiddenError("You do not have permission to view full-and-final settlement.")
+            return FnFSettlementResponse(**employee.fnf_snapshot)
+
+        # Before settlement: only HR-level can view full settlement
         if actor.role not in HR_LEVEL_ROLES:
             raise ForbiddenError("You do not have permission to view full-and-final settlement.")
         return self._calculate_fnf(company_id, employee_id)
+
+    def list_clearance_queue(
+        self,
+        company_id: uuid.UUID,
+        actor: User,
+        page: int = 1,
+        limit: int = 50,
+    ) -> tuple[list[dict[str, Any]], int]:
+        actor_emp = self.repo.get_by_user_id(company_id, actor.id)
+        is_executive = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+
+        function: str | None = None
+        if not is_executive:
+            if not actor_emp or not actor_emp.department_id:
+                raise ForbiddenError("Only department managers with a designated clearance function can view queue.")
+            dept = self.department_repo.get_by_id(actor_emp.department_id, company_id)
+            if not dept or not dept.clearance_function:
+                raise ForbiddenError("Only department managers with a designated clearance function can view queue.")
+            function = dept.clearance_function
+
+        emp_rows, total = self.repo.list_clearance_queue(company_id, function=function, page=page, limit=min(limit, 100))
+        items: list[dict[str, Any]] = []
+        for emp, dept_name in emp_rows:
+            own_flag = False
+            if function == "it":
+                own_flag = emp.it_clearance
+            elif function == "finance":
+                own_flag = emp.finance_clearance
+            elif function == "hr":
+                own_flag = emp.hr_clearance
+            else:
+                own_flag = emp.it_clearance and emp.finance_clearance and emp.hr_clearance
+
+            items.append({
+                "id": emp.id,
+                "employee_code": emp.employee_code,
+                "name": f"{emp.first_name} {emp.last_name or ''}".strip(),
+                "department_name": dept_name,
+                "last_working_date": emp.last_working_date,
+                "it_clearance": emp.it_clearance,
+                "hr_clearance": emp.hr_clearance,
+                "finance_clearance": emp.finance_clearance,
+                "own_clearance_flag": own_flag,
+            })
+        return items, total
 
     def update_fnf_clearance(
         self,
@@ -1462,15 +1796,26 @@ class EmployeeService:
         employee_id: uuid.UUID,
         data: FnFClearanceUpdateRequest,
         actor: User,
-    ) -> FnFSettlementResponse:
-        employee = self._get_or_404(company_id, employee_id)
-        actor_emp = self.repo.get_by_user_id(company_id, actor.id)
+    ) -> Any:
+        is_executive = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        if data.mark_settled and not is_executive:
+            raise ForbiddenError(
+                "Maker-Checker Enforcement: Only HR Admin or Company Owner can authorize final fund release."
+            )
 
-        # Disallow an employee/manager from approving their own clearance
+        employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+
+        # Allowed only for approved exit that is not settled
+        if employee.fnf_settled_at is not None:
+            raise ConflictError("Full-and-final settlement is already settled; changes are frozen.")
+        if employee.resignation_status != ResignationStatus.approved:
+            raise ConflictError("Clearance can only be updated for employees with an approved exit.")
+
+        actor_emp = self.repo.get_by_user_id(company_id, actor.id)
         if actor_emp and actor_emp.id == employee.id:
             raise ForbiddenError("You cannot sign off on your own clearance or settlement.")
-
-        is_executive = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
 
         # Resolve actor's department clearance function if available
         dept_clearance_function: str | None = None
@@ -1479,7 +1824,10 @@ class EmployeeService:
             if dept:
                 dept_clearance_function = dept.clearance_function
 
-        # A manager whose department has no clearance_function cannot access clearance
+        is_it_dept = dept_clearance_function == "it"
+        is_fin_dept = dept_clearance_function == "finance"
+        is_hr_dept = dept_clearance_function == "hr"
+
         if actor.role == UserRole.manager and not dept_clearance_function:
             if data.it_clearance is not None:
                 raise ForbiddenError(
@@ -1487,96 +1835,148 @@ class EmployeeService:
                 )
             if data.hr_clearance is not None:
                 raise ForbiddenError(
-                    "Only HR Department Managers or HR Admin/Owner can sign off "
-                    "HR policy clearance."
+                    "Only HR Department Managers or HR Admin/Owner can sign off HR policy clearance."
                 )
-            if data.finance_clearance is not None:
+            if data.finance_clearance is not None or data.severance_pay is not None or data.pending_reimbursements is not None or data.gratuity_bonus is not None or data.asset_deductions is not None:
                 raise ForbiddenError(
-                    "Only Finance & Accounts Managers or HR Admin/Owner can sign off "
-                    "Finance clearance."
+                    "Only Finance & Accounts Managers or HR Admin/Owner can sign off Finance clearance."
                 )
             raise ForbiddenError(
-                "Only department managers with a designated clearance function "
-                "can access clearance."
+                "Only department managers with a designated clearance function can access clearance."
             )
 
-        is_it_dept = dept_clearance_function == "it"
-        is_fin_dept = dept_clearance_function == "finance"
-        is_hr_dept = dept_clearance_function == "hr"
-
+        signoffs = dict(employee.clearance_signoffs or {})
+        now_iso = utcnow().isoformat()
         updates: dict[str, Any] = {}
+        audit_fields: dict[str, Any] = {"employee_id": str(employee.id)}
 
-        # 1. IT Clearance: IT Department leads or HR Admin/Owner
+        # 1. IT Clearance
         if data.it_clearance is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_it_dept)):
                 raise ForbiddenError(
                     "Only IT Department Managers or HR Admin/Owner can sign off IT asset clearance."
                 )
             updates["it_clearance"] = data.it_clearance
+            signoffs["it"] = {
+                "by": str(actor.id),
+                "at": now_iso,
+                "remark": data.remark,
+            }
+            audit_fields["it_clearance"] = data.it_clearance
 
-        # 2. HR Clearance: HR Department leads or HR Admin/Owner
+        # 2. HR Clearance
         if data.hr_clearance is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_hr_dept)):
                 raise ForbiddenError(
-                    "Only HR Department Managers or HR Admin/Owner can sign off "
-                    "HR policy clearance."
+                    "Only HR Department Managers or HR Admin/Owner can sign off HR policy clearance."
                 )
             updates["hr_clearance"] = data.hr_clearance
+            signoffs["hr"] = {
+                "by": str(actor.id),
+                "at": now_iso,
+                "remark": data.remark,
+            }
+            audit_fields["hr_clearance"] = data.hr_clearance
 
-        # 3. Finance Clearance: Finance Department leads or HR Admin/Owner
+        # 3. Finance Clearance
         if data.finance_clearance is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
                 raise ForbiddenError(
-                    "Only Finance & Accounts Managers or HR Admin/Owner can sign off "
-                    "Finance clearance."
+                    "Only Finance & Accounts Managers or HR Admin/Owner can sign off Finance clearance."
                 )
             updates["finance_clearance"] = data.finance_clearance
+            signoffs["finance"] = {
+                "by": str(actor.id),
+                "at": now_iso,
+                "remark": data.remark,
+            }
+            audit_fields["finance_clearance"] = data.finance_clearance
 
-        # 4. Financial Ledger Adjustments: Finance Manager or HR Admin/Owner
+        # 4. Financial Ledger Adjustments
         if data.severance_pay is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
-                raise ForbiddenError(
-                    "Only Finance Managers or HR Admin/Owner can adjust severance pay."
-                )
+                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust severance pay.")
             updates["severance_pay"] = data.severance_pay
         if data.pending_reimbursements is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
-                raise ForbiddenError(
-                    "Only Finance Managers or HR Admin/Owner can adjust reimbursements."
-                )
+                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust reimbursements.")
             updates["pending_reimbursements"] = data.pending_reimbursements
         if data.gratuity_bonus is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
-                raise ForbiddenError(
-                    "Only Finance Managers or HR Admin/Owner can adjust gratuity/bonus."
-                )
+                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust gratuity/bonus.")
             updates["gratuity_bonus"] = data.gratuity_bonus
         if data.asset_deductions is not None:
-            if not (
-                is_executive or (actor.role == UserRole.manager and (is_fin_dept or is_it_dept))
-            ):
-                raise ForbiddenError(
-                    "Only Finance/IT Managers or HR Admin/Owner can adjust asset deductions."
-                )
+            if not (is_executive or (actor.role == UserRole.manager and (is_fin_dept or is_it_dept))):
+                raise ForbiddenError("Only Finance/IT Managers or HR Admin/Owner can adjust asset deductions.")
             updates["asset_deductions"] = data.asset_deductions
 
-        # 5. Maker-Checker Final Settlement Release: strictly Executive (HR Admin & Owner)
+        # 5. Settlement: Only HR-level, only on/after lwd, only if all 3 clearances are true, only once
         if data.mark_settled:
             if not is_executive:
                 raise ForbiddenError(
-                    "Maker-Checker Enforcement: Only HR Admin or Company Owner "
-                    "can authorize final fund release."
+                    "Maker-Checker Enforcement: Only HR Admin or Company Owner can authorize final fund release."
                 )
+            today = utcnow().date()
+            if employee.last_working_date and today < employee.last_working_date:
+                raise ConflictError("Full-and-final settlement can only be settled on or after the last working date.")
+
+            effective_it = updates.get("it_clearance", employee.it_clearance)
+            effective_hr = updates.get("hr_clearance", employee.hr_clearance)
+            effective_fin = updates.get("finance_clearance", employee.finance_clearance)
+            if not (effective_it and effective_hr and effective_fin):
+                raise ConflictError("All three clearances (IT, HR, Finance) must be approved before settlement.")
+
             self.clear_department_heads_for_employee(company_id, employee.id, actor=actor)
             updates["fnf_settled_at"] = utcnow()
-            # Ensure employee is marked inactive upon settlement
             updates["is_active"] = False
+
+        if signoffs:
+            updates["clearance_signoffs"] = signoffs
 
         if updates:
             self.repo.update(employee, **updates)
-            self.db.commit()
 
-        return self._calculate_fnf(company_id, employee_id)
+        # If settling, snapshot the full calculation now
+        full_fnf = self._calculate_fnf(company_id, employee_id)
+        if data.mark_settled:
+            snapshot_dict = full_fnf.model_dump(mode="json")
+            self.repo.update(employee, fnf_snapshot=snapshot_dict)
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="FNF_SETTLED",
+                entity_type="employee",
+                entity_id=employee.id,
+                details={
+                    "employee_id": str(employee.id),
+                    "total_settlement_amount": str(full_fnf.total_settlement_amount),
+                },
+            )
+        elif any(k in audit_fields for k in ("it_clearance", "hr_clearance", "finance_clearance")):
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="CLEARANCE_UPDATED",
+                entity_type="employee",
+                entity_id=employee.id,
+                details=audit_fields,
+            )
+
+        self.db.commit()
+
+        # Limited clearance replies for clearance managers
+        if is_executive:
+            return full_fnf
+        if is_it_dept:
+            from app.modules.hr.schemas import FnFITClearanceResponse
+            return FnFITClearanceResponse.model_validate(full_fnf)
+        if is_hr_dept:
+            from app.modules.hr.schemas import FnFHRClearanceResponse
+            return FnFHRClearanceResponse.model_validate(full_fnf)
+        if is_fin_dept:
+            from app.modules.hr.schemas import FnFFinanceClearanceResponse
+            return FnFFinanceClearanceResponse.model_validate(full_fnf)
+        return full_fnf
 
 
 class EmployeeSectionService:

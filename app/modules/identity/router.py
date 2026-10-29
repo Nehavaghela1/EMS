@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
+from app.core.roles import HR_LEVEL_ROLES
 from app.core.otp import check_and_increment_account_limit
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
@@ -33,6 +34,7 @@ from app.modules.identity.schemas import (
     ForgotPasswordRequest,
     LoginRequest,
     MeResponse,
+    NoticePeriodDefaults,
     ResetPasswordRequest,
     SwitchWorkspaceRequest,
     TokenResponse,
@@ -339,6 +341,29 @@ def update_my_company(
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
     return CompanyService(db).update_my_company(user.company_id, data)
+
+
+@companies_router.get("/notice-period-defaults", response_model=NoticePeriodDefaults)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def get_notice_period_defaults(
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(*HR_LEVEL_ROLES)),
+):
+    return CompanyService(db).get_notice_period_defaults(user.company_id)
+
+
+@companies_router.put("/notice-period-defaults", response_model=NoticePeriodDefaults)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def update_notice_period_defaults(
+    request: Request,
+    data: NoticePeriodDefaults,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+):
+    return CompanyService(db).update_notice_period_defaults(
+        user.company_id, data.model_dump(), actor=user
+    )
 
 
 # --- Locations (defined before /{company_id} routes to prevent path capture) ---

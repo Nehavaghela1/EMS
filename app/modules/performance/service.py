@@ -487,12 +487,8 @@ class PerformanceService:
             from app.modules.hr.models import ResignationStatus
             from app.modules.hr.service import EmployeeService
 
-            EmployeeService(self.db).clear_department_heads_for_employee(
-                company_id, emp.id, actor=actor
-            )
             self.employee_repo.update(
                 emp,
-                is_active=False,
                 resignation_status=ResignationStatus.approved,
                 separation_type="pip_failed",
                 termination_reason=f"Failed Performance Improvement Plan: {pip.title}",
@@ -500,10 +496,7 @@ class PerformanceService:
                 notice_waived=True,
                 notice_recovery_days=0,
             )
-            if emp.user_id:
-                user = self.db.scalar(select(User).where(User.id == emp.user_id))
-                if user:
-                    user.is_active = False
+            EmployeeService(self.db).apply_exit(company_id, emp.id, actor=actor)
 
         self.audit.record(
             company_id=company_id,

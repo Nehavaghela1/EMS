@@ -1166,6 +1166,42 @@ class CompanyService:
         self.db.commit()
         return company
 
+    def get_notice_period_defaults(self, company_id: uuid.UUID) -> dict[str, int]:
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+        defaults = company.notice_period_defaults or {}
+        return {
+            "L1": int(defaults.get("L1", 30)),
+            "L2": int(defaults.get("L2", 30)),
+            "L3": int(defaults.get("L3", 30)),
+        }
+
+    def update_notice_period_defaults(
+        self, company_id: uuid.UUID, data: dict[str, int], actor: User
+    ) -> dict[str, int]:
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+        cleaned = {
+            "L1": int(data.get("L1", 30)),
+            "L2": int(data.get("L2", 30)),
+            "L3": int(data.get("L3", 30)),
+        }
+        self.company_repo.update(company, notice_period_defaults=cleaned)
+        from app.modules.platform.service import AuditService
+
+        AuditService(self.db).record(
+            company_id=company_id,
+            actor=actor,
+            action="NOTICE_PERIOD_DEFAULTS_UPDATED",
+            entity_type="company",
+            entity_id=company.id,
+            details={"L1": cleaned["L1"], "L2": cleaned["L2"], "L3": cleaned["L3"]},
+        )
+        self.db.commit()
+        return cleaned
+
     def update_company_by_admin(
         self, company_id: uuid.UUID, data: AdminCompanyUpdateRequest
     ) -> Company:

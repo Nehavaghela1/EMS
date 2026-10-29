@@ -54,4 +54,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.hr.delete_expired_exports_task",
         "schedule": crontab(minute=0),
     },
+    "apply-due-exits-hourly": {
+        "task": "app.workers.tasks.hr.apply_due_exits_task",
+        "schedule": crontab(minute=15),
+    },
 }

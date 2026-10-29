@@ -16,6 +16,7 @@ from app.modules.hr.models import (
     EmployeeSkill,
     EmploymentType,
     InvitationStatus,
+    ResignationStatus,
 )
 
 
@@ -367,6 +368,50 @@ class EmployeeRepository:
             setattr(employee, key, value)
         self.db.flush()
         return employee
+
+    def list_clearance_queue(
+        self,
+        company_id: uuid.UUID,
+        function: str | None = None,
+        page: int = 1,
+        limit: int = 50,
+    ) -> tuple[list[tuple[Employee, str | None]], int]:
+        """List employees with approved, unsettled exit whose function clearance is pending.
+        Returns tuples of (Employee, department_name) and total count.
+        """
+        conditions = [
+            Employee.company_id == company_id,
+            Employee.resignation_status == ResignationStatus.approved,
+            Employee.fnf_settled_at.is_(None),
+            Employee.deleted_at.is_(None),
+        ]
+        if function == "it":
+            conditions.append(Employee.it_clearance.is_(False))
+        elif function == "finance":
+            conditions.append(Employee.finance_clearance.is_(False))
+        elif function == "hr":
+            conditions.append(Employee.hr_clearance.is_(False))
+        else:
+            conditions.append(
+                (Employee.it_clearance.is_(False))
+                | (Employee.finance_clearance.is_(False))
+                | (Employee.hr_clearance.is_(False))
+            )
+
+        total = self.db.scalar(
+            select(func.count(Employee.id)).where(*conditions)
+        ) or 0
+
+        stmt = (
+            select(Employee, Department.name)
+            .outerjoin(Department, Employee.department_id == Department.id)
+            .where(*conditions)
+            .order_by(Employee.last_working_date.asc().nulls_last(), Employee.created_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+        )
+        results = self.db.execute(stmt).all()
+        return [(row[0], row[1]) for row in results], total
 
 
 class EmployeeSectionRepository:
