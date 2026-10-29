@@ -1007,6 +1007,12 @@ def test_r06_apply_exit_and_scheduled_job(client: TestClient, exit_setup: dict[s
     assert audit_exit.entity_id == emp.id
 
     # 2. Test scheduled job apply_due_exits_task
+    # Set up emp with approved resignation whose last_working_date is in the FUTURE (must NOT be applied)
+    emp.is_active = True
+    emp.resignation_status = ResignationStatus.approved
+    emp.last_working_date = today + timedelta(days=5)
+    exit_setup["emp_user"].is_active = True
+
     # Set up other_emp with approved resignation whose last_working_date was yesterday
     other_emp = exit_setup["other_emp"]
     other_user = exit_setup["other_emp_user"]
@@ -1021,9 +1027,11 @@ def test_r06_apply_exit_and_scheduled_job(client: TestClient, exit_setup: dict[s
     mock_db.close = MagicMock()
     with patch.object(hr_tasks, "get_task_db_session", lambda: mock_db):
         res = hr_tasks.apply_due_exits_task()
-        assert res["applied_count"] >= 1
+        assert res["applied_count"] == 1
 
     bind_tenant_to_session(db, company_id=exit_setup["company_a"].id, is_platform_admin=True)
+    db.refresh(emp._obj)
+    assert emp.is_active is True, "Future-dated exit must NOT be applied before last working date"
     db.refresh(other_emp._obj)
     db.refresh(other_user._obj)
     assert other_emp.is_active is False
@@ -1055,6 +1063,17 @@ def test_r07_clearance_signoffs_queue_and_limited_replies(
     it_headers = _auth_headers(exit_setup["it_mgr_user"])
     fin_headers = _auth_headers(exit_setup["fin_mgr_user"])
     today = date.today()
+
+    # 0. Clearance rejected if employee does not have an approved exit
+    emp.resignation_status = ResignationStatus.submitted
+    db.commit()
+    r_no_exit = client.put(
+        f"/api/v1/employees/{emp.id}/fnf/clearance",
+        headers=hr_headers,
+        json={"it_clearance": True},
+    )
+    assert r_no_exit.status_code == 409
+    assert "approved exit" in r_no_exit.json()["error"]["message"]
 
     # Reset emp to approved exit
     emp.is_active = True
@@ -1202,6 +1221,14 @@ def test_r08_settlement_gates_snapshot_and_math(client: TestClient, exit_setup: 
     assert r_emp_read.status_code == 200
     assert r_emp_read.json()["total_settlement_amount"] is not None
 
+    # 8. Math test: 31st of the month caps unpaid_salary_days at 30
+    from app.modules.hr.service import EmployeeService
+    emp.last_working_date = date(2024, 1, 31)
+    db.commit()
+    cid = exit_setup["company_a"].id
+    fnf_calc = EmployeeService(db)._calculate_fnf(cid, emp.id)
+    assert fnf_calc.unpaid_salary_days == 30, f"Expected 30, got {fnf_calc.unpaid_salary_days}"
+
 
 # =============================================================================
 # Rule 9 Tests: AUDIT AND LIMITS & ROW LOCKS
@@ -1256,6 +1283,47 @@ def test_r09_audit_rows_details_and_failures(client: TestClient, exit_setup: dic
         .first()
     )
     assert audit_with is not None
+
+    # 4. FNF settled audit row
+    client.post(
+        f"/api/v1/employees/{emp.id}/resignation",
+        headers=hr_headers,
+        json={"resignation_date": str(today), "last_working_date": str(today)},
+    )
+    client.put(f"/api/v1/employees/{emp.id}/resignation/approve", headers=hr_headers, json={"approved": True})
+    client.put(
+        f"/api/v1/employees/{emp.id}/fnf/clearance",
+        headers=hr_headers,
+        json={"it_clearance": True, "hr_clearance": True, "finance_clearance": True, "mark_settled": True},
+    )
+    audit_settled = (
+        db.query(AuditLog)
+        .filter(AuditLog.company_id == cid, AuditLog.action == "FNF_SETTLED", AuditLog.entity_id == emp.id)
+        .first()
+    )
+    assert audit_settled is not None
+    assert "total_settlement_amount" in audit_settled.details
+
+    # 5. Rate limit: 10 requests per minute on POST /terminate, 11th gives 429
+    emp.is_active = True
+    emp.resignation_status = ResignationStatus.none
+    db.commit()
+    from app.core.rate_limit import limiter
+    limiter.enabled = True
+    try:
+        limiter.reset()
+        term_codes = []
+        for _ in range(12):
+            r = client.post(
+                f"/api/v1/employees/{emp.id}/terminate",
+                headers=hr_headers,
+                json={"termination_date": str(today), "reason": "Term reason"},
+            )
+            term_codes.append(r.status_code)
+        assert all(c != 429 for c in term_codes[:10]), f"First 10 calls: {term_codes[:10]}"
+        assert all(c == 429 for c in term_codes[10:]), f"Calls 11+: {term_codes[10:]}"
+    finally:
+        limiter.reset()
 
 
 def test_r09_row_locks_sql_capture(client: TestClient, exit_setup: dict[str, Any], db: Session) -> None:
