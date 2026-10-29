@@ -192,9 +192,7 @@ class Employee(TenantBase):
     clearance_signoffs: Mapped[dict | None] = mapped_column(
         JSONB(astext_type=Text()), nullable=True
     )
-    fnf_snapshot: Mapped[dict | None] = mapped_column(
-        JSONB(astext_type=Text()), nullable=True
-    )
+    fnf_snapshot: Mapped[dict | None] = mapped_column(JSONB(astext_type=Text()), nullable=True)
     fnf_settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

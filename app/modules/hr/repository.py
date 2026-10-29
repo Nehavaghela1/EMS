@@ -398,9 +398,7 @@ class EmployeeRepository:
                 | (Employee.hr_clearance.is_(False))
             )
 
-        total = self.db.scalar(
-            select(func.count(Employee.id)).where(*conditions)
-        ) or 0
+        total = self.db.scalar(select(func.count(Employee.id)).where(*conditions)) or 0
 
         stmt = (
             select(Employee, Department.name)

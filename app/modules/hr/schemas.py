@@ -363,8 +363,12 @@ class TerminationRequest(BaseModel):
 
     termination_date: date
     reason: str = Field(..., max_length=255)
-    severance_pay: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0.00"), le=Decimal("99999999999.99"))
-    notice_pay_in_lieu: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0.00"), le=Decimal("99999999999.99"))
+    severance_pay: Decimal = Field(
+        default=Decimal("0.00"), ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
+    notice_pay_in_lieu: Decimal = Field(
+        default=Decimal("0.00"), ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
     notes: str | None = Field(default=None, max_length=1000)
 
     @field_validator("reason")
@@ -392,10 +396,18 @@ class FnFClearanceUpdateRequest(BaseModel):
     it_clearance: bool | None = None
     hr_clearance: bool | None = None
     finance_clearance: bool | None = None
-    severance_pay: Decimal | None = Field(default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99"))
-    pending_reimbursements: Decimal | None = Field(default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99"))
-    gratuity_bonus: Decimal | None = Field(default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99"))
-    asset_deductions: Decimal | None = Field(default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99"))
+    severance_pay: Decimal | None = Field(
+        default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
+    pending_reimbursements: Decimal | None = Field(
+        default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
+    gratuity_bonus: Decimal | None = Field(
+        default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
+    asset_deductions: Decimal | None = Field(
+        default=None, ge=Decimal("0.00"), le=Decimal("99999999999.99")
+    )
     mark_settled: bool | None = None
     remark: str | None = Field(default=None, max_length=255)
 

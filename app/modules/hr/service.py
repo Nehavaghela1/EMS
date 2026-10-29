@@ -600,8 +600,13 @@ class EmployeeService:
                 )
 
         if "notice_period_days" in updates:
-            if employee.resignation_status in (ResignationStatus.submitted, ResignationStatus.approved):
-                raise ConflictError("Notice period cannot be edited while an exit is submitted or approved.")
+            if employee.resignation_status in (
+                ResignationStatus.submitted,
+                ResignationStatus.approved,
+            ):
+                raise ConflictError(
+                    "Notice period cannot be edited while an exit is submitted or approved."
+                )
 
         new_email = updates.get("email")
         email_changed = False
@@ -1201,7 +1206,9 @@ class EmployeeService:
         if not employee.is_active:
             raise ConflictError("An inactive employee cannot submit a resignation.")
         if employee.resignation_status in (ResignationStatus.submitted, ResignationStatus.approved):
-            raise ConflictError(f"Employee is already separating (status: {employee.resignation_status.value}).")
+            raise ConflictError(
+                f"Employee is already separating (status: {employee.resignation_status.value})."
+            )
 
         # Validate dates per Rule 2
         today = utcnow().date()
@@ -1214,7 +1221,9 @@ class EmployeeService:
         if data.last_working_date < data.resignation_date:
             raise ValidationError("Last working date cannot be before resignation date.")
         if data.last_working_date > data.resignation_date + timedelta(days=365):
-            raise ValidationError("Last working date cannot be more than 365 days after resignation date.")
+            raise ValidationError(
+                "Last working date cannot be more than 365 days after resignation date."
+            )
 
         # Calculate served days and notice recovery shortfall
         served_days = max(0, (data.last_working_date - data.resignation_date).days)
@@ -1255,7 +1264,8 @@ class EmployeeService:
     ) -> Employee:
         """Route to withdraw a resignation.
         Submitted: employee can withdraw own; HR-level can withdraw.
-        Approved: only HR-level can withdraw, only before last working date, only voluntary exit, never after settlement.
+        Approved: only HR-level can withdraw, only before last working date,
+        only voluntary exit, never after settlement.
         """
         is_hr_level = actor.role in HR_LEVEL_ROLES
         if not is_hr_level:
@@ -1276,13 +1286,19 @@ class EmployeeService:
             pass
         elif employee.resignation_status == ResignationStatus.approved:
             if not is_hr_level:
-                raise ForbiddenError("Only HR admin, owner, or super admin can withdraw an approved resignation.")
+                raise ForbiddenError(
+                    "Only HR admin, owner, or super admin can withdraw an approved resignation."
+                )
             if employee.separation_type != "voluntary":
                 raise ConflictError("Only voluntary resignations can be withdrawn.")
             if employee.last_working_date and employee.last_working_date < today:
-                raise ConflictError("Cannot withdraw an approved resignation after the last working date.")
+                raise ConflictError(
+                    "Cannot withdraw an approved resignation after the last working date."
+                )
         else:
-            raise ConflictError(f"No active resignation to withdraw (status: {employee.resignation_status.value}).")
+            raise ConflictError(
+                f"No active resignation to withdraw (status: {employee.resignation_status.value})."
+            )
 
         self.repo.update(
             employee,
@@ -1337,7 +1353,10 @@ class EmployeeService:
 
             # Rule 3: a manager or department head approving cannot waive or set recovery days (403)
             if data.notice_waived or data.notice_recovery_days > 0:
-                raise ForbiddenError("Only HR admin, owner, or super admin can waive notice or adjust notice recovery days.")
+                raise ForbiddenError(
+                    "Only HR admin, owner, or super admin can waive notice or adjust notice "
+                    "recovery days."
+                )
 
         # If already settled -> 409
         if employee.fnf_settled_at is not None:
@@ -1347,7 +1366,9 @@ class EmployeeService:
         # State check:
         if employee.resignation_status == ResignationStatus.approved:
             if not is_admin_role:
-                raise ConflictError("Resignation is not pending decision (current status: approved).")
+                raise ConflictError(
+                    "Resignation is not pending decision (current status: approved)."
+                )
             # HR-level amendment until settled
             new_lwd = data.last_working_date or employee.last_working_date
             if new_lwd and employee.resignation_date and new_lwd < employee.resignation_date:
@@ -1356,7 +1377,9 @@ class EmployeeService:
                 raise ValidationError("Last working date cannot be amended to the past.")
 
             # Calculate shortfall if notice not waived
-            served_days = max(0, (new_lwd - (employee.resignation_date or new_lwd)).days) if new_lwd else 0
+            served_days = (
+                max(0, (new_lwd - (employee.resignation_date or new_lwd)).days) if new_lwd else 0
+            )
             shortfall = max(0, (employee.notice_period_days or 30) - served_days)
             recovery_days = 0 if data.notice_waived else min(data.notice_recovery_days, shortfall)
 
@@ -1402,7 +1425,9 @@ class EmployeeService:
             if new_lwd and new_lwd < today:
                 raise ValidationError("Last working date cannot be in the past.")
 
-            served_days = max(0, (new_lwd - (employee.resignation_date or new_lwd)).days) if new_lwd else 0
+            served_days = (
+                max(0, (new_lwd - (employee.resignation_date or new_lwd)).days) if new_lwd else 0
+            )
             shortfall = max(0, (employee.notice_period_days or 30) - served_days)
             recovery_days = 0 if data.notice_waived else min(data.notice_recovery_days, shortfall)
 
@@ -1454,7 +1479,10 @@ class EmployeeService:
         # Active employee only; not already separating or settled (409)
         if not employee.is_active:
             raise ConflictError("An inactive employee cannot be terminated.")
-        if employee.resignation_status in (ResignationStatus.submitted, ResignationStatus.approved) or employee.fnf_settled_at:
+        if (
+            employee.resignation_status in (ResignationStatus.submitted, ResignationStatus.approved)
+            or employee.fnf_settled_at
+        ):
             raise ConflictError("Employee is already separating or settled.")
 
         # Termination date from today up to today + notice_period_days
@@ -1463,7 +1491,10 @@ class EmployeeService:
             raise ValidationError("Termination date cannot be in the past.")
         max_term_date = today + timedelta(days=employee.notice_period_days)
         if data.termination_date > max_term_date:
-            raise ValidationError(f"Termination date cannot exceed notice period ({employee.notice_period_days} days).")
+            notice_days = employee.notice_period_days
+            raise ValidationError(
+                f"Termination date cannot exceed notice period ({notice_days} days)."
+            )
 
         total_severance = Decimal(str(data.severance_pay)) + Decimal(str(data.notice_pay_in_lieu))
 
@@ -1646,6 +1677,7 @@ class EmployeeService:
         leave_encashment_amount = (encashable_days * per_day_basic).quantize(Decimal("0.01"))
         # Check if payslip already exists for last working month
         from app.modules.payroll.models import PayrollItem, PayrollRun, PayrollRunStatus
+
         existing_paid_slip = (
             self.db.scalar(
                 select(PayrollItem.id)
@@ -1726,9 +1758,7 @@ class EmployeeService:
             total_settlement_amount=total_settlement,
         )
 
-    def calculate_fnf(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
-    ) -> Any:
+    def calculate_fnf(self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User) -> Any:
         employee = self._get_or_404(company_id, employee_id)
 
         # Post-settlement snapshot read
@@ -1737,7 +1767,9 @@ class EmployeeService:
             if actor.role not in HR_LEVEL_ROLES:
                 actor_emp = self.repo.get_by_user_id(company_id, actor.id)
                 if actor_emp is None or actor_emp.id != employee.id:
-                    raise ForbiddenError("You do not have permission to view full-and-final settlement.")
+                    raise ForbiddenError(
+                        "You do not have permission to view full-and-final settlement."
+                    )
             return FnFSettlementResponse(**employee.fnf_snapshot)
 
         # Before settlement: only HR-level can view full settlement
@@ -1758,13 +1790,19 @@ class EmployeeService:
         function: str | None = None
         if not is_executive:
             if not actor_emp or not actor_emp.department_id:
-                raise ForbiddenError("Only department managers with a designated clearance function can view queue.")
+                raise ForbiddenError(
+                    "Only department managers with a designated clearance function can view queue."
+                )
             dept = self.department_repo.get_by_id(actor_emp.department_id, company_id)
             if not dept or not dept.clearance_function:
-                raise ForbiddenError("Only department managers with a designated clearance function can view queue.")
+                raise ForbiddenError(
+                    "Only department managers with a designated clearance function can view queue."
+                )
             function = dept.clearance_function
 
-        emp_rows, total = self.repo.list_clearance_queue(company_id, function=function, page=page, limit=min(limit, 100))
+        emp_rows, total = self.repo.list_clearance_queue(
+            company_id, function=function, page=page, limit=min(limit, 100)
+        )
         items: list[dict[str, Any]] = []
         for emp, dept_name in emp_rows:
             own_flag = False
@@ -1777,17 +1815,19 @@ class EmployeeService:
             else:
                 own_flag = emp.it_clearance and emp.finance_clearance and emp.hr_clearance
 
-            items.append({
-                "id": emp.id,
-                "employee_code": emp.employee_code,
-                "name": f"{emp.first_name} {emp.last_name or ''}".strip(),
-                "department_name": dept_name,
-                "last_working_date": emp.last_working_date,
-                "it_clearance": emp.it_clearance,
-                "hr_clearance": emp.hr_clearance,
-                "finance_clearance": emp.finance_clearance,
-                "own_clearance_flag": own_flag,
-            })
+            items.append(
+                {
+                    "id": emp.id,
+                    "employee_code": emp.employee_code,
+                    "name": f"{emp.first_name} {emp.last_name or ''}".strip(),
+                    "department_name": dept_name,
+                    "last_working_date": emp.last_working_date,
+                    "it_clearance": emp.it_clearance,
+                    "hr_clearance": emp.hr_clearance,
+                    "finance_clearance": emp.finance_clearance,
+                    "own_clearance_flag": own_flag,
+                }
+            )
         return items, total
 
     def update_fnf_clearance(
@@ -1800,7 +1840,8 @@ class EmployeeService:
         is_executive = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
         if data.mark_settled and not is_executive:
             raise ForbiddenError(
-                "Maker-Checker Enforcement: Only HR Admin or Company Owner can authorize final fund release."
+                "Maker-Checker Enforcement: Only HR Admin or Company Owner can authorize "
+                "final fund release."
             )
 
         employee = self.repo.get_by_id_for_update(employee_id, company_id, allow_inactive=True)
@@ -1811,7 +1852,9 @@ class EmployeeService:
         if employee.fnf_settled_at is not None:
             raise ConflictError("Full-and-final settlement is already settled; changes are frozen.")
         if employee.resignation_status != ResignationStatus.approved:
-            raise ConflictError("Clearance can only be updated for employees with an approved exit.")
+            raise ConflictError(
+                "Clearance can only be updated for employees with an approved exit."
+            )
 
         actor_emp = self.repo.get_by_user_id(company_id, actor.id)
         if actor_emp and actor_emp.id == employee.id:
@@ -1835,14 +1878,23 @@ class EmployeeService:
                 )
             if data.hr_clearance is not None:
                 raise ForbiddenError(
-                    "Only HR Department Managers or HR Admin/Owner can sign off HR policy clearance."
+                    "Only HR Department Managers or HR Admin/Owner can sign off HR policy "
+                    "clearance."
                 )
-            if data.finance_clearance is not None or data.severance_pay is not None or data.pending_reimbursements is not None or data.gratuity_bonus is not None or data.asset_deductions is not None:
+            if (
+                data.finance_clearance is not None
+                or data.severance_pay is not None
+                or data.pending_reimbursements is not None
+                or data.gratuity_bonus is not None
+                or data.asset_deductions is not None
+            ):
                 raise ForbiddenError(
-                    "Only Finance & Accounts Managers or HR Admin/Owner can sign off Finance clearance."
+                    "Only Finance & Accounts Managers or HR Admin/Owner can sign off Finance "
+                    "clearance."
                 )
             raise ForbiddenError(
-                "Only department managers with a designated clearance function can access clearance."
+                "Only department managers with a designated clearance function can access "
+                "clearance."
             )
 
         signoffs = dict(employee.clearance_signoffs or {})
@@ -1868,7 +1920,8 @@ class EmployeeService:
         if data.hr_clearance is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_hr_dept)):
                 raise ForbiddenError(
-                    "Only HR Department Managers or HR Admin/Owner can sign off HR policy clearance."
+                    "Only HR Department Managers or HR Admin/Owner can sign off HR policy "
+                    "clearance."
                 )
             updates["hr_clearance"] = data.hr_clearance
             signoffs["hr"] = {
@@ -1882,7 +1935,8 @@ class EmployeeService:
         if data.finance_clearance is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
                 raise ForbiddenError(
-                    "Only Finance & Accounts Managers or HR Admin/Owner can sign off Finance clearance."
+                    "Only Finance & Accounts Managers or HR Admin/Owner can sign off Finance "
+                    "clearance."
                 )
             updates["finance_clearance"] = data.finance_clearance
             signoffs["finance"] = {
@@ -1895,36 +1949,52 @@ class EmployeeService:
         # 4. Financial Ledger Adjustments
         if data.severance_pay is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
-                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust severance pay.")
+                raise ForbiddenError(
+                    "Only Finance Managers or HR Admin/Owner can adjust severance pay."
+                )
             updates["severance_pay"] = data.severance_pay
         if data.pending_reimbursements is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
-                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust reimbursements.")
+                raise ForbiddenError(
+                    "Only Finance Managers or HR Admin/Owner can adjust reimbursements."
+                )
             updates["pending_reimbursements"] = data.pending_reimbursements
         if data.gratuity_bonus is not None:
             if not (is_executive or (actor.role == UserRole.manager and is_fin_dept)):
-                raise ForbiddenError("Only Finance Managers or HR Admin/Owner can adjust gratuity/bonus.")
+                raise ForbiddenError(
+                    "Only Finance Managers or HR Admin/Owner can adjust gratuity/bonus."
+                )
             updates["gratuity_bonus"] = data.gratuity_bonus
         if data.asset_deductions is not None:
-            if not (is_executive or (actor.role == UserRole.manager and (is_fin_dept or is_it_dept))):
-                raise ForbiddenError("Only Finance/IT Managers or HR Admin/Owner can adjust asset deductions.")
+            if not (
+                is_executive or (actor.role == UserRole.manager and (is_fin_dept or is_it_dept))
+            ):
+                raise ForbiddenError(
+                    "Only Finance/IT Managers or HR Admin/Owner can adjust asset deductions."
+                )
             updates["asset_deductions"] = data.asset_deductions
 
-        # 5. Settlement: Only HR-level, only on/after lwd, only if all 3 clearances are true, only once
+        # 5. Settlement: Only HR-level, only on/after lwd, only if all 3 clearances are true
         if data.mark_settled:
             if not is_executive:
                 raise ForbiddenError(
-                    "Maker-Checker Enforcement: Only HR Admin or Company Owner can authorize final fund release."
+                    "Maker-Checker Enforcement: Only HR Admin or Company Owner can authorize "
+                    "final fund release."
                 )
             today = utcnow().date()
             if employee.last_working_date and today < employee.last_working_date:
-                raise ConflictError("Full-and-final settlement can only be settled on or after the last working date.")
+                raise ConflictError(
+                    "Full-and-final settlement can only be settled on or after the last working "
+                    "date."
+                )
 
             effective_it = updates.get("it_clearance", employee.it_clearance)
             effective_hr = updates.get("hr_clearance", employee.hr_clearance)
             effective_fin = updates.get("finance_clearance", employee.finance_clearance)
             if not (effective_it and effective_hr and effective_fin):
-                raise ConflictError("All three clearances (IT, HR, Finance) must be approved before settlement.")
+                raise ConflictError(
+                    "All three clearances (IT, HR, Finance) must be approved before settlement."
+                )
 
             self.clear_department_heads_for_employee(company_id, employee.id, actor=actor)
             updates["fnf_settled_at"] = utcnow()
@@ -1969,12 +2039,15 @@ class EmployeeService:
             return full_fnf
         if is_it_dept:
             from app.modules.hr.schemas import FnFITClearanceResponse
+
             return FnFITClearanceResponse.model_validate(full_fnf)
         if is_hr_dept:
             from app.modules.hr.schemas import FnFHRClearanceResponse
+
             return FnFHRClearanceResponse.model_validate(full_fnf)
         if is_fin_dept:
             from app.modules.hr.schemas import FnFFinanceClearanceResponse
+
             return FnFFinanceClearanceResponse.model_validate(full_fnf)
         return full_fnf
 

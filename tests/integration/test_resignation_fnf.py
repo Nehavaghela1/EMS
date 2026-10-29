@@ -13,6 +13,7 @@ def test_resignation_and_fnf_workflow(client: TestClient, db: Session, company_a
     assert emp["notice_period_days"] == 30
 
     from datetime import date, timedelta
+
     today = date.today()
     res_date = today - timedelta(days=14)
     lwd_date = today
@@ -111,7 +112,9 @@ def test_resignation_and_fnf_workflow(client: TestClient, db: Session, company_a
     assert Decimal(str(fnf_data["notice_recovery_amount"])) == Decimal("6266.72")
     expected_unpaid_days = min(lwd_date.day, 30)
     assert Decimal(str(fnf_data["unpaid_salary_days"])) == expected_unpaid_days
-    expected_unpaid_amount = (Decimal(expected_unpaid_days) * Decimal("391.67")).quantize(Decimal("0.01"))
+    expected_unpaid_amount = (Decimal(expected_unpaid_days) * Decimal("391.67")).quantize(
+        Decimal("0.01")
+    )
     assert Decimal(str(fnf_data["unpaid_salary_amount"])) == expected_unpaid_amount
     assert "total_settlement_amount" in fnf_data
 
@@ -216,6 +219,7 @@ def test_department_clearance_function_authorization(client: TestClient, db: Ses
     emp = _create_employee(client, hr_headers, email="target-resigning@example.com")
     emp_id = emp["id"]
     from datetime import date, timedelta
+
     today = date.today()
     res_sub = client.post(
         f"/api/v1/employees/{emp_id}/resignation",
@@ -356,6 +360,7 @@ def test_put_department_clearance_function_and_authorization(
     target_emp = _create_employee(client, hr_headers, email="target-finance-clear@example.com")
     target_id = target_emp["id"]
     from datetime import date, timedelta
+
     today = date.today()
     client.post(
         f"/api/v1/employees/{target_id}/resignation",
@@ -475,6 +480,7 @@ def test_department_head_can_review_resignation_using_department_repo(
 
     # 4. Subordinate submits resignation
     from datetime import date, timedelta
+
     today = date.today()
     res_sub = client.post(
         f"/api/v1/employees/{sub_id}/resignation",

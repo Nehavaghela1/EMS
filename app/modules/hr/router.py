@@ -17,6 +17,7 @@ from app.modules.hr.models import Department, Employee, EmploymentType
 from app.modules.hr.schemas import (
     BulkActionRequest,
     BulkActionResponse,
+    ClearanceQueueItemResponse,
     DepartmentCreateRequest,
     DepartmentResponse,
     DepartmentUpdateRequest,
@@ -43,8 +44,6 @@ from app.modules.hr.schemas import (
     EmployeeSkillUpdate,
     EmployeeUpdateRequest,
     FnFClearanceUpdateRequest,
-    FnFSettlementResponse,
-    ClearanceQueueItemResponse,
     ManagerSearchResponse,
     ResignationApproveRequest,
     ResignationSubmitRequest,
@@ -496,9 +495,13 @@ def get_clearance_queue(
     page: int = 1,
     limit: int = 50,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(
+        require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)
+    ),
 ):
-    items, total = EmployeeService(db).list_clearance_queue(user.company_id, user, page=page, limit=limit)
+    items, total = EmployeeService(db).list_clearance_queue(
+        user.company_id, user, page=page, limit=limit
+    )
     pages = (total + limit - 1) // limit if total else 0
     return Page(
         items=[ClearanceQueueItemResponse.model_validate(i) for i in items],
@@ -619,7 +622,9 @@ def approve_resignation(
     employee_id: uuid.UUID,
     data: ResignationApproveRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(
+        require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)
+    ),
 ):
     employee = EmployeeService(db).approve_resignation(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
@@ -656,7 +661,9 @@ def update_fnf_clearance(
     employee_id: uuid.UUID,
     data: FnFClearanceUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(
+        require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)
+    ),
 ):
     return EmployeeService(db).update_fnf_clearance(user.company_id, employee_id, data, user)
 

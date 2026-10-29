@@ -1,20 +1,16 @@
-import os
 import uuid
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, select, text
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
-from app.db.session import SessionLocal
 from app.modules.hr.models import (
     Department,
     Employee,
@@ -135,17 +131,19 @@ def exit_setup(db: Session) -> dict[str, Any]:
         role=UserRole.employee,
         is_active=True,
     )
-    db.add_all([
-        owner_user,
-        hr_user,
-        super_admin_user,
-        dept_head_user,
-        manager_user,
-        it_mgr_user,
-        fin_mgr_user,
-        emp_user,
-        other_emp_user,
-    ])
+    db.add_all(
+        [
+            owner_user,
+            hr_user,
+            super_admin_user,
+            dept_head_user,
+            manager_user,
+            it_mgr_user,
+            fin_mgr_user,
+            emp_user,
+            other_emp_user,
+        ]
+    )
     db.flush()
 
     # Departments: General, IT (clearance_function=it), Finance (clearance_function=finance)
@@ -386,44 +384,105 @@ def test_r01_who_can_submit_withdraw_approve_reject_terminate_settle(
 
     today = date.today()
     lwd = today + timedelta(days=30)
-    sub_payload = {"resignation_date": str(today), "last_working_date": str(lwd), "reason": "Own resignation"}
+    sub_payload = {
+        "resignation_date": str(today),
+        "last_working_date": str(lwd),
+        "reason": "Own resignation",
+    }
 
     # 1. No login gives 401
-    assert client.post(f"/api/v1/employees/{emp.id}/resignation", json=sub_payload).status_code == 401
+    assert (
+        client.post(f"/api/v1/employees/{emp.id}/resignation", json=sub_payload).status_code == 401
+    )
     assert client.post(f"/api/v1/employees/{emp.id}/resignation/withdraw").status_code == 401
-    assert client.put(f"/api/v1/employees/{emp.id}/resignation/approve", json={"approved": True}).status_code == 401
-    assert client.post(f"/api/v1/employees/{emp.id}/terminate", json={"termination_date": str(today), "reason": "Term"}).status_code == 401
+    assert (
+        client.put(
+            f"/api/v1/employees/{emp.id}/resignation/approve", json={"approved": True}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            f"/api/v1/employees/{emp.id}/terminate",
+            json={"termination_date": str(today), "reason": "Term"},
+        ).status_code
+        == 401
+    )
 
     # 2. Other company gives 404
-    assert client.post(f"/api/v1/employees/{emp.id}/resignation", headers=hr_b_headers, json=sub_payload).status_code == 404
-    assert client.post(f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=hr_b_headers).status_code == 404
-    assert client.put(f"/api/v1/employees/{emp.id}/resignation/approve", headers=hr_b_headers, json={"approved": True}).status_code == 404
-    assert client.post(f"/api/v1/employees/{emp.id}/terminate", headers=hr_b_headers, json={"termination_date": str(today), "reason": "Term"}).status_code == 404
+    assert (
+        client.post(
+            f"/api/v1/employees/{emp.id}/resignation", headers=hr_b_headers, json=sub_payload
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=hr_b_headers
+        ).status_code
+        == 404
+    )
+    assert (
+        client.put(
+            f"/api/v1/employees/{emp.id}/resignation/approve",
+            headers=hr_b_headers,
+            json={"approved": True},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/v1/employees/{emp.id}/terminate",
+            headers=hr_b_headers,
+            json={"termination_date": str(today), "reason": "Term"},
+        ).status_code
+        == 404
+    )
 
     # 3. Other employee cannot submit -> 403
-    r_other_sub = client.post(f"/api/v1/employees/{emp.id}/resignation", headers=other_emp_headers, json=sub_payload)
+    r_other_sub = client.post(
+        f"/api/v1/employees/{emp.id}/resignation", headers=other_emp_headers, json=sub_payload
+    )
     assert r_other_sub.status_code == 403
 
     # 4. Employee submits own resignation -> 200
-    r_own_sub = client.post(f"/api/v1/employees/{emp.id}/resignation", headers=emp_headers, json=sub_payload)
+    r_own_sub = client.post(
+        f"/api/v1/employees/{emp.id}/resignation", headers=emp_headers, json=sub_payload
+    )
     assert r_own_sub.status_code == 200
     assert r_own_sub.json()["resignation_status"] == "submitted"
     assert r_own_sub.json()["resignation_reason"] == "Own resignation"
 
     # 5. Other employee cannot withdraw -> 403
-    assert client.post(f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=other_emp_headers).status_code == 403
+    assert (
+        client.post(
+            f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=other_emp_headers
+        ).status_code
+        == 403
+    )
 
     # 6. Employee withdraws own resignation -> 200
-    r_own_withdraw = client.post(f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=emp_headers)
+    r_own_withdraw = client.post(
+        f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=emp_headers
+    )
     assert r_own_withdraw.status_code == 200
     assert r_own_withdraw.json()["resignation_status"] == "none"
 
     # 7. HR admin submits for employee -> 200
-    r_hr_sub = client.post(f"/api/v1/employees/{emp.id}/resignation", headers=hr_headers, json=sub_payload)
+    r_hr_sub = client.post(
+        f"/api/v1/employees/{emp.id}/resignation", headers=hr_headers, json=sub_payload
+    )
     assert r_hr_sub.status_code == 200
 
     # 8. Self-approval is forbidden: employee cannot approve own resignation
-    assert client.put(f"/api/v1/employees/{emp.id}/resignation/approve", headers=emp_headers, json={"approved": True}).status_code == 403
+    assert (
+        client.put(
+            f"/api/v1/employees/{emp.id}/resignation/approve",
+            headers=emp_headers,
+            json={"approved": True},
+        ).status_code
+        == 403
+    )
 
     # Owner also cannot approve own resignation if owner submits one
     owner_emp = exit_setup["owner_emp"]
@@ -481,18 +540,37 @@ def test_r01_terminate_and_settle_roles(client: TestClient, exit_setup: dict[str
     }
 
     # Terminate by employee -> 403
-    assert client.post(f"/api/v1/employees/{emp.id}/terminate", headers=emp_headers, json=term_payload).status_code == 403
+    assert (
+        client.post(
+            f"/api/v1/employees/{emp.id}/terminate", headers=emp_headers, json=term_payload
+        ).status_code
+        == 403
+    )
     # Terminate by manager -> 403
-    assert client.post(f"/api/v1/employees/{emp.id}/terminate", headers=mgr_headers, json=term_payload).status_code == 403
+    assert (
+        client.post(
+            f"/api/v1/employees/{emp.id}/terminate", headers=mgr_headers, json=term_payload
+        ).status_code
+        == 403
+    )
 
     # Clearance update mark_settled by manager -> 403
-    assert client.put(f"/api/v1/employees/{emp.id}/fnf/clearance", headers=mgr_headers, json={"mark_settled": True}).status_code == 403
+    assert (
+        client.put(
+            f"/api/v1/employees/{emp.id}/fnf/clearance",
+            headers=mgr_headers,
+            json={"mark_settled": True},
+        ).status_code
+        == 403
+    )
 
 
 # =============================================================================
 # Rule 2 Tests: RESIGNATION INPUT
 # =============================================================================
-def test_r02_resignation_input_validation(client: TestClient, exit_setup: dict[str, Any], db: Session) -> None:
+def test_r02_resignation_input_validation(
+    client: TestClient, exit_setup: dict[str, Any], db: Session
+) -> None:
     """R2:
     - Resignation date: today or up to 30 days back, never in the future.
     - Last working date: today or later, not before resignation date, at most 365 days after it.
@@ -512,7 +590,10 @@ def test_r02_resignation_input_validation(client: TestClient, exit_setup: dict[s
     r = client.post(
         f"/api/v1/employees/{emp.id}/resignation",
         headers=emp_headers,
-        json={"resignation_date": str(future_date), "last_working_date": str(future_date + timedelta(days=30))},
+        json={
+            "resignation_date": str(future_date),
+            "last_working_date": str(future_date + timedelta(days=30)),
+        },
     )
     assert r.status_code == 422
 
@@ -521,7 +602,10 @@ def test_r02_resignation_input_validation(client: TestClient, exit_setup: dict[s
     r = client.post(
         f"/api/v1/employees/{emp.id}/resignation",
         headers=emp_headers,
-        json={"resignation_date": str(past_31), "last_working_date": str(today + timedelta(days=30))},
+        json={
+            "resignation_date": str(past_31),
+            "last_working_date": str(today + timedelta(days=30)),
+        },
     )
     assert r.status_code == 422
 
@@ -530,7 +614,10 @@ def test_r02_resignation_input_validation(client: TestClient, exit_setup: dict[s
     r = client.post(
         f"/api/v1/employees/{emp.id}/resignation",
         headers=emp_headers,
-        json={"resignation_date": str(today - timedelta(days=5)), "last_working_date": str(yesterday)},
+        json={
+            "resignation_date": str(today - timedelta(days=5)),
+            "last_working_date": str(yesterday),
+        },
     )
     assert r.status_code == 422
 
@@ -555,7 +642,11 @@ def test_r02_resignation_input_validation(client: TestClient, exit_setup: dict[s
     r = client.post(
         f"/api/v1/employees/{emp.id}/resignation",
         headers=emp_headers,
-        json={"resignation_date": str(today), "last_working_date": str(today + timedelta(days=30)), "unknown_foo": "bar"},
+        json={
+            "resignation_date": str(today),
+            "last_working_date": str(today + timedelta(days=30)),
+            "unknown_foo": "bar",
+        },
     )
     assert r.status_code == 422
 
@@ -564,7 +655,11 @@ def test_r02_resignation_input_validation(client: TestClient, exit_setup: dict[s
     r = client.post(
         f"/api/v1/employees/{emp.id}/resignation",
         headers=emp_headers,
-        json={"resignation_date": str(today), "last_working_date": str(today + timedelta(days=30)), "reason": long_reason},
+        json={
+            "resignation_date": str(today),
+            "last_working_date": str(today + timedelta(days=30)),
+            "reason": long_reason,
+        },
     )
     assert r.status_code == 200
     assert r.json()["resignation_reason"] == "A" * 500
@@ -577,7 +672,11 @@ def test_r02_resignation_input_validation(client: TestClient, exit_setup: dict[s
     r = client.post(
         f"/api/v1/employees/{emp.id}/resignation",
         headers=emp_headers,
-        json={"resignation_date": str(today), "last_working_date": str(today + timedelta(days=30)), "reason": over_500},
+        json={
+            "resignation_date": str(today),
+            "last_working_date": str(today + timedelta(days=30)),
+            "reason": over_500,
+        },
     )
     assert r.status_code == 422
 
@@ -615,7 +714,9 @@ def test_r02_resignation_input_validation(client: TestClient, exit_setup: dict[s
 # =============================================================================
 # Rule 3 Tests: NOTICE POLICY
 # =============================================================================
-def test_r03_notice_defaults_policy_and_employee_creation(client: TestClient, exit_setup: dict[str, Any], db: Session) -> None:
+def test_r03_notice_defaults_policy_and_employee_creation(
+    client: TestClient, exit_setup: dict[str, Any], db: Session
+) -> None:
     """R3:
     - Company keeps default notice days per level (L1, L2, L3; each 0 to 365; HR admin, owner, super admin set them; fallback 30).
     - When employee created without explicit notice value, default for employee's level is used.
@@ -638,11 +739,14 @@ def test_r03_notice_defaults_policy_and_employee_creation(client: TestClient, ex
     assert r_set_defaults.json() == {"L1": 20, "L2": 45, "L3": 75}
 
     # Manager cannot update notice defaults -> 403
-    assert client.put(
-        "/api/v1/companies/notice-period-defaults",
-        headers=mgr_headers,
-        json={"L1": 20, "L2": 45, "L3": 75},
-    ).status_code == 403
+    assert (
+        client.put(
+            "/api/v1/companies/notice-period-defaults",
+            headers=mgr_headers,
+            json={"L1": 20, "L2": 45, "L3": 75},
+        ).status_code
+        == 403
+    )
 
     # Read notice defaults: HR-level can read
     r_get_defaults = client.get("/api/v1/companies/notice-period-defaults", headers=hr_headers)
@@ -709,7 +813,9 @@ def test_r03_notice_defaults_policy_and_employee_creation(client: TestClient, ex
     assert r_edit_notice.status_code == 409
 
 
-def test_r03_waiver_and_recovery_days_by_role(client: TestClient, exit_setup: dict[str, Any]) -> None:
+def test_r03_waiver_and_recovery_days_by_role(
+    client: TestClient, exit_setup: dict[str, Any]
+) -> None:
     """R3: On approval, only HR-level may waive notice or set notice_recovery_days; manager gets 403."""
     emp = exit_setup["emp"]
     hr_headers = _auth_headers(exit_setup["hr_user"])
@@ -771,13 +877,24 @@ def test_r04_status_transitions_withdraw_amendment_concurrency(
     today = date.today()
 
     # 1. Decision on non-pending resignation gives 409
-    assert client.put(f"/api/v1/employees/{emp.id}/resignation/approve", headers=hr_headers, json={"approved": True}).status_code == 409
+    assert (
+        client.put(
+            f"/api/v1/employees/{emp.id}/resignation/approve",
+            headers=hr_headers,
+            json={"approved": True},
+        ).status_code
+        == 409
+    )
 
     # 2. Submit resignation
     client.post(
         f"/api/v1/employees/{emp.id}/resignation",
         headers=emp_headers,
-        json={"resignation_date": str(today), "last_working_date": str(today + timedelta(days=30)), "reason": "Going elsewhere"},
+        json={
+            "resignation_date": str(today),
+            "last_working_date": str(today + timedelta(days=30)),
+            "reason": "Going elsewhere",
+        },
     )
 
     # 3. Withdraw submitted -> dates and reason cleared
@@ -795,7 +912,11 @@ def test_r04_status_transitions_withdraw_amendment_concurrency(
         headers=emp_headers,
         json={"resignation_date": str(today), "last_working_date": str(today + timedelta(days=30))},
     )
-    r_rej = client.put(f"/api/v1/employees/{emp.id}/resignation/approve", headers=hr_headers, json={"approved": False})
+    r_rej = client.put(
+        f"/api/v1/employees/{emp.id}/resignation/approve",
+        headers=hr_headers,
+        json={"approved": False},
+    )
     assert r_rej.status_code == 200
     assert r_rej.json()["resignation_status"] == "rejected"
 
@@ -809,15 +930,26 @@ def test_r04_status_transitions_withdraw_amendment_concurrency(
     assert r_resub.json()["resignation_status"] == "submitted"
 
     # Approve
-    r_app = client.put(f"/api/v1/employees/{emp.id}/resignation/approve", headers=hr_headers, json={"approved": True})
+    r_app = client.put(
+        f"/api/v1/employees/{emp.id}/resignation/approve",
+        headers=hr_headers,
+        json={"approved": True},
+    )
     assert r_app.status_code == 200
     assert r_app.json()["resignation_status"] == "approved"
 
     # Employee attempts to withdraw approved resignation -> 403
-    assert client.post(f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=emp_headers).status_code == 403
+    assert (
+        client.post(
+            f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=emp_headers
+        ).status_code
+        == 403
+    )
 
     # HR admin withdraws approved resignation before last working date -> 200
-    r_hr_withdraw = client.post(f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=hr_headers)
+    r_hr_withdraw = client.post(
+        f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=hr_headers
+    )
     assert r_hr_withdraw.status_code == 200
     assert r_hr_withdraw.json()["resignation_status"] == "none"
 
@@ -827,12 +959,18 @@ def test_r04_status_transitions_withdraw_amendment_concurrency(
         headers=emp_headers,
         json={"resignation_date": str(today), "last_working_date": str(today + timedelta(days=30))},
     )
-    client.put(f"/api/v1/employees/{emp.id}/resignation/approve", headers=hr_headers, json={"approved": True})
+    client.put(
+        f"/api/v1/employees/{emp.id}/resignation/approve",
+        headers=hr_headers,
+        json={"approved": True},
+    )
 
     # Cannot withdraw approved resignation after last working date
     emp.last_working_date = today - timedelta(days=1)
     db.commit()
-    r_past_lwd_withdraw = client.post(f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=hr_headers)
+    r_past_lwd_withdraw = client.post(
+        f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=hr_headers
+    )
     assert r_past_lwd_withdraw.status_code == 409
 
 
@@ -938,7 +1076,9 @@ def test_r05_termination_rules(client: TestClient, exit_setup: dict[str, Any], d
 # =============================================================================
 # Rule 6 Tests: EXIT TURNS ACCESS OFF & SCHEDULED JOB
 # =============================================================================
-def test_r06_apply_exit_and_scheduled_job(client: TestClient, exit_setup: dict[str, Any], db: Session) -> None:
+def test_r06_apply_exit_and_scheduled_job(
+    client: TestClient, exit_setup: dict[str, Any], db: Session
+) -> None:
     """R6:
     - One shared function applies an exit: employee inactive, linked login inactive,
       all refresh tokens revoked, department head cleared (with its existing audit),
@@ -1000,7 +1140,10 @@ def test_r06_apply_exit_and_scheduled_job(client: TestClient, exit_setup: dict[s
     # Audit row EMPLOYEE_EXIT_APPLIED exists
     audit_exit = (
         db.query(AuditLog)
-        .filter(AuditLog.company_id == exit_setup["company_a"].id, AuditLog.action == "EMPLOYEE_EXIT_APPLIED")
+        .filter(
+            AuditLog.company_id == exit_setup["company_a"].id,
+            AuditLog.action == "EMPLOYEE_EXIT_APPLIED",
+        )
         .first()
     )
     assert audit_exit is not None
@@ -1023,6 +1166,7 @@ def test_r06_apply_exit_and_scheduled_job(client: TestClient, exit_setup: dict[s
     db.commit()
 
     from unittest.mock import MagicMock
+
     mock_db = MagicMock(wraps=db)
     mock_db.close = MagicMock()
     with patch.object(hr_tasks, "get_task_db_session", lambda: mock_db):
@@ -1142,7 +1286,9 @@ def test_r07_clearance_signoffs_queue_and_limited_replies(
 # =============================================================================
 # Rule 8 Tests: SETTLEMENT, SNAPSHOT & FORMULA
 # =============================================================================
-def test_r08_settlement_gates_snapshot_and_math(client: TestClient, exit_setup: dict[str, Any], db: Session) -> None:
+def test_r08_settlement_gates_snapshot_and_math(
+    client: TestClient, exit_setup: dict[str, Any], db: Session
+) -> None:
     """R8:
     - Only HR-level, only on or after last working date, only when all 3 clearances are true, only once (second gives 409).
     - Saves full settlement snapshot and sets fnf_settled_at.
@@ -1223,6 +1369,7 @@ def test_r08_settlement_gates_snapshot_and_math(client: TestClient, exit_setup: 
 
     # 8. Math test: 31st of the month caps unpaid_salary_days at 30
     from app.modules.hr.service import EmployeeService
+
     emp.last_working_date = date(2024, 1, 31)
     db.commit()
     cid = exit_setup["company_a"].id
@@ -1233,7 +1380,9 @@ def test_r08_settlement_gates_snapshot_and_math(client: TestClient, exit_setup: 
 # =============================================================================
 # Rule 9 Tests: AUDIT AND LIMITS & ROW LOCKS
 # =============================================================================
-def test_r09_audit_rows_details_and_failures(client: TestClient, exit_setup: dict[str, Any], db: Session) -> None:
+def test_r09_audit_rows_details_and_failures(
+    client: TestClient, exit_setup: dict[str, Any], db: Session
+) -> None:
     """R9:
     - One audit row in same save for: resignation submitted, withdrawn, approved, rejected,
       terminated, clearance changed (fields/new booleans only, no amounts/text), settled (total only),
@@ -1254,11 +1403,19 @@ def test_r09_audit_rows_details_and_failures(client: TestClient, exit_setup: dic
     client.post(
         f"/api/v1/employees/{emp.id}/resignation",
         headers=hr_headers,
-        json={"resignation_date": str(today), "last_working_date": str(today + timedelta(days=30)), "reason": "Secret private reason"},
+        json={
+            "resignation_date": str(today),
+            "last_working_date": str(today + timedelta(days=30)),
+            "reason": "Secret private reason",
+        },
     )
     audit_sub = (
         db.query(AuditLog)
-        .filter(AuditLog.company_id == cid, AuditLog.action == "RESIGNATION_SUBMITTED", AuditLog.entity_id == emp.id)
+        .filter(
+            AuditLog.company_id == cid,
+            AuditLog.action == "RESIGNATION_SUBMITTED",
+            AuditLog.entity_id == emp.id,
+        )
         .order_by(AuditLog.created_at.desc())
         .first()
     )
@@ -1267,10 +1424,18 @@ def test_r09_audit_rows_details_and_failures(client: TestClient, exit_setup: dic
     assert "Secret private reason" not in str(audit_sub.details)
 
     # 2. Resignation approved audit
-    client.put(f"/api/v1/employees/{emp.id}/resignation/approve", headers=hr_headers, json={"approved": True})
+    client.put(
+        f"/api/v1/employees/{emp.id}/resignation/approve",
+        headers=hr_headers,
+        json={"approved": True},
+    )
     audit_app = (
         db.query(AuditLog)
-        .filter(AuditLog.company_id == cid, AuditLog.action == "RESIGNATION_APPROVED", AuditLog.entity_id == emp.id)
+        .filter(
+            AuditLog.company_id == cid,
+            AuditLog.action == "RESIGNATION_APPROVED",
+            AuditLog.entity_id == emp.id,
+        )
         .first()
     )
     assert audit_app is not None
@@ -1279,7 +1444,11 @@ def test_r09_audit_rows_details_and_failures(client: TestClient, exit_setup: dic
     client.post(f"/api/v1/employees/{emp.id}/resignation/withdraw", headers=hr_headers)
     audit_with = (
         db.query(AuditLog)
-        .filter(AuditLog.company_id == cid, AuditLog.action == "RESIGNATION_WITHDRAWN", AuditLog.entity_id == emp.id)
+        .filter(
+            AuditLog.company_id == cid,
+            AuditLog.action == "RESIGNATION_WITHDRAWN",
+            AuditLog.entity_id == emp.id,
+        )
         .first()
     )
     assert audit_with is not None
@@ -1290,15 +1459,28 @@ def test_r09_audit_rows_details_and_failures(client: TestClient, exit_setup: dic
         headers=hr_headers,
         json={"resignation_date": str(today), "last_working_date": str(today)},
     )
-    client.put(f"/api/v1/employees/{emp.id}/resignation/approve", headers=hr_headers, json={"approved": True})
+    client.put(
+        f"/api/v1/employees/{emp.id}/resignation/approve",
+        headers=hr_headers,
+        json={"approved": True},
+    )
     client.put(
         f"/api/v1/employees/{emp.id}/fnf/clearance",
         headers=hr_headers,
-        json={"it_clearance": True, "hr_clearance": True, "finance_clearance": True, "mark_settled": True},
+        json={
+            "it_clearance": True,
+            "hr_clearance": True,
+            "finance_clearance": True,
+            "mark_settled": True,
+        },
     )
     audit_settled = (
         db.query(AuditLog)
-        .filter(AuditLog.company_id == cid, AuditLog.action == "FNF_SETTLED", AuditLog.entity_id == emp.id)
+        .filter(
+            AuditLog.company_id == cid,
+            AuditLog.action == "FNF_SETTLED",
+            AuditLog.entity_id == emp.id,
+        )
         .first()
     )
     assert audit_settled is not None
@@ -1308,7 +1490,7 @@ def test_r09_audit_rows_details_and_failures(client: TestClient, exit_setup: dic
     emp.is_active = True
     emp.resignation_status = ResignationStatus.none
     db.commit()
-    from app.core.rate_limit import limiter
+
     limiter.enabled = True
     try:
         limiter.reset()
@@ -1326,7 +1508,9 @@ def test_r09_audit_rows_details_and_failures(client: TestClient, exit_setup: dic
         limiter.reset()
 
 
-def test_r09_row_locks_sql_capture(client: TestClient, exit_setup: dict[str, Any], db: Session) -> None:
+def test_r09_row_locks_sql_capture(
+    client: TestClient, exit_setup: dict[str, Any], db: Session
+) -> None:
     """R9: Every write route locks employee row (SELECT ... FOR UPDATE)."""
     emp = exit_setup["emp"]
     hr_headers = _auth_headers(exit_setup["hr_user"])
@@ -1342,10 +1526,17 @@ def test_r09_row_locks_sql_capture(client: TestClient, exit_setup: dict[str, Any
         client.post(
             f"/api/v1/employees/{emp.id}/resignation",
             headers=hr_headers,
-            json={"resignation_date": str(date.today()), "last_working_date": str(date.today() + timedelta(days=30))},
+            json={
+                "resignation_date": str(date.today()),
+                "last_working_date": str(date.today() + timedelta(days=30)),
+            },
         )
-        has_for_update = any("FROM employees" in stmt and "FOR UPDATE" in stmt for stmt in captured_statements)
-        assert has_for_update, f"Expected FOR UPDATE on resignation submit, got: {captured_statements}"
+        has_for_update = any(
+            "FROM employees" in stmt and "FOR UPDATE" in stmt for stmt in captured_statements
+        )
+        assert has_for_update, (
+            f"Expected FOR UPDATE on resignation submit, got: {captured_statements}"
+        )
 
         captured_statements.clear()
         client.put(
@@ -1353,8 +1544,12 @@ def test_r09_row_locks_sql_capture(client: TestClient, exit_setup: dict[str, Any
             headers=hr_headers,
             json={"approved": True},
         )
-        has_app_update = any("FROM employees" in stmt and "FOR UPDATE" in stmt for stmt in captured_statements)
-        assert has_app_update, f"Expected FOR UPDATE on resignation approve, got: {captured_statements}"
+        has_app_update = any(
+            "FROM employees" in stmt and "FOR UPDATE" in stmt for stmt in captured_statements
+        )
+        assert has_app_update, (
+            f"Expected FOR UPDATE on resignation approve, got: {captured_statements}"
+        )
     finally:
         event.remove(target_engine, "before_cursor_execute", before_cursor_execute)
 
@@ -1362,7 +1557,9 @@ def test_r09_row_locks_sql_capture(client: TestClient, exit_setup: dict[str, Any
 # =============================================================================
 # Rule 10 Tests: TENANT ISOLATION & PIP INTEGRATION
 # =============================================================================
-def test_r10_pip_failure_uses_apply_exit(client: TestClient, exit_setup: dict[str, Any], db: Session) -> None:
+def test_r10_pip_failure_uses_apply_exit(
+    client: TestClient, exit_setup: dict[str, Any], db: Session
+) -> None:
     """R10: PIP failure uses same shared exit function (immediate exit, tokens revoked, audit row)."""
     from app.modules.performance.models import PerformancePIP, PIPStatus
 
@@ -1398,7 +1595,11 @@ def test_r10_pip_failure_uses_apply_exit(client: TestClient, exit_setup: dict[st
 
     audit_exit = (
         db.query(AuditLog)
-        .filter(AuditLog.company_id == cid, AuditLog.action == "EMPLOYEE_EXIT_APPLIED", AuditLog.entity_id == emp.id)
+        .filter(
+            AuditLog.company_id == cid,
+            AuditLog.action == "EMPLOYEE_EXIT_APPLIED",
+            AuditLog.entity_id == emp.id,
+        )
         .first()
     )
     assert audit_exit is not None

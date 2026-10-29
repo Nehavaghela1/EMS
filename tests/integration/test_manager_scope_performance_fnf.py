@@ -118,6 +118,7 @@ def test_fnf_clearance_manager_scoping(client: TestClient, db: Session, company_
 
     # Resignation
     from datetime import date, timedelta
+
     today = date.today()
     res_post = client.post(
         f"/api/v1/employees/{emp['id']}/resignation",

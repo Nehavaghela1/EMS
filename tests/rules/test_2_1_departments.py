@@ -14,7 +14,7 @@ Covers Rules 1-10:
 
 import threading
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
@@ -858,6 +858,34 @@ def test_r05_department_head_auto_clear_on_fnf_settlement(
     assert res_dept.status_code == 201
     assert res_dept.json()["head_employee_id"] == str(emp_staff.id)
     dept_id = res_dept.json()["id"]
+
+    # Create resignation and approve it, then sign off clearances
+    res_res = client.post(
+        f"/api/v1/employees/{emp_staff.id}/resignation",
+        headers=hr_headers,
+        json={
+            "resignation_date": str(date.today()),
+            "last_working_date": str(date.today()),
+            "reason": "Moving on",
+        },
+    )
+    assert res_res.status_code == 200
+
+    res_app = client.put(
+        f"/api/v1/employees/{emp_staff.id}/resignation/approve",
+        headers=hr_headers,
+        json={"approved": True},
+    )
+    assert res_app.status_code == 200
+
+    # Sign off all 3 clearances
+    for dept_key in ["it", "finance", "hr"]:
+        res_sign = client.put(
+            f"/api/v1/employees/{emp_staff.id}/fnf/clearance",
+            headers=hr_headers,
+            json={f"{dept_key}_clearance": True},
+        )
+        assert res_sign.status_code == 200
 
     # Update FnF clearance with mark_settled=True
     res_fnf = client.put(

@@ -269,8 +269,7 @@ def apply_due_exits_task() -> dict[str, int]:
 
         # Query candidates: active employees with approved exit and last_working_date < today
         candidates = db.execute(
-            select(Employee.id, Employee.company_id)
-            .where(
+            select(Employee.id, Employee.company_id).where(
                 Employee.is_active.is_(True),
                 Employee.resignation_status == ResignationStatus.approved,
                 Employee.last_working_date < today_utc,

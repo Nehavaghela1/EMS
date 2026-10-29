@@ -443,12 +443,13 @@ def test_regularization_approval_j_inactive_manager_denied(
 # 3. RESIGNATION APPROVAL: PUT /api/v1/employees/{employee_id}/resignation/approve
 # =============================================================================
 def _submit_resignation(client: TestClient, emp_id: str, emp_headers: dict) -> None:
+    today = date.today()
     res = client.post(
         f"/api/v1/employees/{emp_id}/resignation",
         headers=emp_headers,
         json={
-            "resignation_date": "2026-09-01",
-            "last_working_date": "2026-10-01",
+            "resignation_date": str(today - timedelta(days=14)),
+            "last_working_date": str(today + timedelta(days=16)),
             "reason": "Moving on",
         },
     )
@@ -673,7 +674,7 @@ def test_resignation_approval_hr_admin_own_resignation_forbidden(
 def test_resignation_approval_super_admin_or_owner_own_resignation_allowed(
     client: TestClient, db: Session, company_a: TenantContext
 ):
-    """3. An owner or super_admin approving their own resignation -> allowed."""
+    """3. Rule 1: Nobody approves own resignation (including owner and super admin) -> 403."""
     sa_emp = _create_employee(
         client, company_a.hr_headers, email=f"sa-{uuid.uuid4().hex[:6]}@example.com"
     )
@@ -688,8 +689,8 @@ def test_resignation_approval_super_admin_or_owner_own_resignation_allowed(
         headers=sa_headers,
         json={"approved": True},
     )
-    assert res.status_code == 200, res.text
-    assert res.json()["resignation_status"] == "approved"
+    assert res.status_code == 403, res.text
+    assert "Self-approval is forbidden" in res.text
 
 
 def test_resignation_approval_hr_admin_amends_approved_resignation(
@@ -702,7 +703,7 @@ def test_resignation_approval_hr_admin_amends_approved_resignation(
     first = client.put(
         f"/api/v1/employees/{h['emp']['id']}/resignation/approve",
         headers=h["direct_headers"],
-        json={"approved": True, "notice_recovery_days": 10},
+        json={"approved": True},
     )
     assert first.status_code == 200, first.text
     assert first.json()["resignation_status"] == "approved"
@@ -735,7 +736,7 @@ def test_resignation_approval_reporting_manager_amend_approved_resignation_gets_
     second = client.put(
         f"/api/v1/employees/{h['emp']['id']}/resignation/approve",
         headers=h["direct_headers"],
-        json={"approved": True, "notice_waived": True},
+        json={"approved": True},
     )
     assert second.status_code == 409, second.text
 
@@ -1377,10 +1378,14 @@ def _setup_clearance_environment(client: TestClient, db: Session, company: Tenan
     emp_headers = _link_user_to_employee(db, company.company_id, emp["id"], UserRole.employee)
 
     # Submit and approve resignation to prepare for clearance
+    today = date.today()
     client.post(
         f"/api/v1/employees/{emp['id']}/resignation",
         headers=emp_headers,
-        json={"resignation_date": "2026-09-01", "last_working_date": "2026-10-01"},
+        json={
+            "resignation_date": str(today - timedelta(days=14)),
+            "last_working_date": str(today + timedelta(days=16)),
+        },
     )
     client.put(
         f"/api/v1/employees/{emp['id']}/resignation/approve",
