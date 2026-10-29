@@ -1362,10 +1362,15 @@ def test_r08_settlement_gates_snapshot_and_math(
     )
     assert r_edit_after.status_code == 409
 
-    # 7. Employee reads own settlement after settled -> 200 with snapshot
+    # 7. Employee reads own settlement after settled -> under F2, settlement turns
+    # off access immediately (login is deactivated and tokens revoked, returning 401).
+    # Verifying old token returns 401 as required by F2, and HR can read snapshot.
     r_emp_read = client.get(f"/api/v1/employees/{emp.id}/fnf", headers=emp_headers)
-    assert r_emp_read.status_code == 200
-    assert r_emp_read.json()["total_settlement_amount"] is not None
+    assert r_emp_read.status_code == 401
+
+    r_hr_read = client.get(f"/api/v1/employees/{emp.id}/fnf", headers=hr_headers)
+    assert r_hr_read.status_code == 200
+    assert r_hr_read.json()["total_settlement_amount"] is not None
 
     # 8. Math test: 31st of the month caps unpaid_salary_days at 30
     from app.modules.hr.service import EmployeeService

@@ -13,7 +13,9 @@ from app.core.security import hash_password
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus, ResignationStatus
 from app.modules.identity.models import RefreshToken, User, UserRole
 from app.modules.platform.models import AuditLog
-from tests.rules.test_2_6_exit import _auth_headers, exit_setup
+from tests.rules.test_2_6_exit import _auth_headers
+
+pytest_plugins = ["tests.rules.test_2_6_exit"]
 
 
 def _create_user_and_employee(
@@ -107,7 +109,7 @@ def test_f01_zero_notice_period_days(
     fnf_data = r_fnf.json()
     assert fnf_data["notice_days_required"] == 0
     assert fnf_data["notice_recovery_days"] == 0
-    assert fnf_data["notice_recovery_amount"] == 0
+    assert Decimal(str(fnf_data["notice_recovery_amount"])) == Decimal("0.00")
 
 
 def test_f02_settlement_turns_access_off(
@@ -368,7 +370,9 @@ def test_f04_audit_money_changes_and_clearance_flags(
         )
         .first()
     )
-    assert audit_clr is not None, "CLEARANCE_UPDATED must be recorded even when settling in same call"
+    assert audit_clr is not None, (
+        "CLEARANCE_UPDATED must be recorded even when settling in same call"
+    )
 
     audit_settle = (
         db.query(AuditLog)
@@ -382,9 +386,7 @@ def test_f04_audit_money_changes_and_clearance_flags(
     assert audit_settle is not None
 
 
-def test_f05_queue_paging_validation(
-    client: TestClient, exit_setup: dict[str, Any]
-) -> None:
+def test_f05_queue_paging_validation(client: TestClient, exit_setup: dict[str, Any]) -> None:
     """F5: GET /employees/clearance-queue paging validation:
     - page=0, page=-1, limit=0, limit=101 give 422
     - limit=100 works
@@ -392,10 +394,22 @@ def test_f05_queue_paging_validation(
     """
     hr_headers = _auth_headers(exit_setup["hr_user"])
 
-    assert client.get("/api/v1/employees/clearance-queue?page=0", headers=hr_headers).status_code == 422
-    assert client.get("/api/v1/employees/clearance-queue?page=-1", headers=hr_headers).status_code == 422
-    assert client.get("/api/v1/employees/clearance-queue?limit=0", headers=hr_headers).status_code == 422
-    assert client.get("/api/v1/employees/clearance-queue?limit=101", headers=hr_headers).status_code == 422
+    assert (
+        client.get("/api/v1/employees/clearance-queue?page=0", headers=hr_headers).status_code
+        == 422
+    )
+    assert (
+        client.get("/api/v1/employees/clearance-queue?page=-1", headers=hr_headers).status_code
+        == 422
+    )
+    assert (
+        client.get("/api/v1/employees/clearance-queue?limit=0", headers=hr_headers).status_code
+        == 422
+    )
+    assert (
+        client.get("/api/v1/employees/clearance-queue?limit=101", headers=hr_headers).status_code
+        == 422
+    )
 
     r_100 = client.get("/api/v1/employees/clearance-queue?limit=100&page=1", headers=hr_headers)
     assert r_100.status_code == 200
@@ -415,7 +429,6 @@ def test_f06_notice_defaults_fallback_and_put_shape(
     - Partial PUT body gives 422.
     """
     hr_headers = _auth_headers(exit_setup["hr_user"])
-    cid = exit_setup["company_a"].id
     today = date.today()
 
     # Clear company notice defaults
@@ -507,7 +520,9 @@ def test_f06_notice_defaults_fallback_and_put_shape(
 def test_f07_payslip_already_paid_counts_paid_runs(
     client: TestClient, exit_setup: dict[str, Any], db: Session
 ) -> None:
-    """F7: A payroll run with status 'paid' for the last working month gives unpaid salary days 0."""
+    """F7: A payroll run with status 'paid' for the last working month gives
+    unpaid salary days 0.
+    """
     from app.modules.payroll.models import PayrollItem, PayrollRun, PayrollRunStatus
 
     hr_headers = _auth_headers(exit_setup["hr_user"])
@@ -559,7 +574,7 @@ def test_f07_payslip_already_paid_counts_paid_runs(
     r_fnf = client.get(f"/api/v1/employees/{emp.id}/fnf", headers=hr_headers)
     assert r_fnf.status_code == 200
     assert r_fnf.json()["unpaid_salary_days"] == 0
-    assert r_fnf.json()["unpaid_salary_amount"] == 0
+    assert Decimal(str(r_fnf.json()["unpaid_salary_amount"])) == Decimal("0.00")
 
 
 def test_f08_typed_api_docs(client: TestClient) -> None:
@@ -571,7 +586,9 @@ def test_f08_typed_api_docs(client: TestClient) -> None:
     schema = response.json()
 
     fnf_get = schema["paths"]["/api/v1/employees/{employee_id}/fnf"]["get"]["responses"]["200"]
-    fnf_put = schema["paths"]["/api/v1/employees/{employee_id}/fnf/clearance"]["put"]["responses"]["200"]
+    fnf_put = schema["paths"]["/api/v1/employees/{employee_id}/fnf/clearance"]["put"]["responses"][
+        "200"
+    ]
 
     # Assert schema contains references to the 4 models
     content_get = str(fnf_get)
@@ -583,7 +600,9 @@ def test_f08_typed_api_docs(client: TestClient) -> None:
         "FnFHRClearanceResponse",
     ]:
         assert model_name in content_get, f"{model_name} missing from GET /fnf OpenAPI doc"
-        assert model_name in content_put, f"{model_name} missing from PUT /fnf/clearance OpenAPI doc"
+        assert model_name in content_put, (
+            f"{model_name} missing from PUT /fnf/clearance OpenAPI doc"
+        )
 
 
 @pytest.mark.parametrize(
@@ -618,7 +637,10 @@ def test_f09_rate_limiting_all_routes(
 
     try:
         user, emp = _create_user_and_employee(
-            db, cid, UserRole.employee, email=f"rl-{route_action}-{uuid.uuid4().hex[:6]}@example.com"
+            db,
+            cid,
+            UserRole.employee,
+            email=f"rl-{route_action}-{uuid.uuid4().hex[:6]}@example.com",
         )
         emp.hire_date = today - timedelta(days=60)
         emp.resignation_status = ResignationStatus.approved
@@ -652,7 +674,9 @@ def test_f09_rate_limiting_all_routes(
                 res = client.get(url, headers=headers)
             codes.append(res.status_code)
 
-        assert codes[-1] == 429, f"Expected 429 on call {limit_cap + 1} for {route_action}, got codes: {codes}"
+        assert codes[-1] == 429, (
+            f"Expected 429 on call {limit_cap + 1} for {route_action}, got codes: {codes}"
+        )
     finally:
         limiter.reset()
 
@@ -681,15 +705,30 @@ def test_f10_reply_shapes_per_role(
     # Create department managers for IT, HR, Finance
     from app.modules.hr.models import Department
 
-    it_dept = Department(id=uuid.uuid4(), company_id=cid, name=f"IT-{uuid.uuid4().hex[:6]}", clearance_function="it")
-    hr_dept = Department(id=uuid.uuid4(), company_id=cid, name=f"HR-{uuid.uuid4().hex[:6]}", clearance_function="hr")
-    fin_dept = Department(id=uuid.uuid4(), company_id=cid, name=f"Fin-{uuid.uuid4().hex[:6]}", clearance_function="finance")
+    it_dept = Department(
+        id=uuid.uuid4(), company_id=cid, name=f"IT-{uuid.uuid4().hex[:6]}", clearance_function="it"
+    )
+    hr_dept = Department(
+        id=uuid.uuid4(), company_id=cid, name=f"HR-{uuid.uuid4().hex[:6]}", clearance_function="hr"
+    )
+    fin_dept = Department(
+        id=uuid.uuid4(),
+        company_id=cid,
+        name=f"Fin-{uuid.uuid4().hex[:6]}",
+        clearance_function="finance",
+    )
     db.add_all([it_dept, hr_dept, fin_dept])
     db.flush()
 
-    it_u, it_e = _create_user_and_employee(db, cid, UserRole.manager, email=f"it-mgr-{uuid.uuid4().hex[:6]}@example.com")
-    hr_u, hr_e = _create_user_and_employee(db, cid, UserRole.manager, email=f"hr-mgr-{uuid.uuid4().hex[:6]}@example.com")
-    fin_u, fin_e = _create_user_and_employee(db, cid, UserRole.manager, email=f"fin-mgr-{uuid.uuid4().hex[:6]}@example.com")
+    it_u, it_e = _create_user_and_employee(
+        db, cid, UserRole.manager, email=f"it-mgr-{uuid.uuid4().hex[:6]}@example.com"
+    )
+    hr_u, hr_e = _create_user_and_employee(
+        db, cid, UserRole.manager, email=f"hr-mgr-{uuid.uuid4().hex[:6]}@example.com"
+    )
+    fin_u, fin_e = _create_user_and_employee(
+        db, cid, UserRole.manager, email=f"fin-mgr-{uuid.uuid4().hex[:6]}@example.com"
+    )
     it_e.department_id = it_dept.id
     hr_e.department_id = hr_dept.id
     fin_e.department_id = fin_dept.id
@@ -700,7 +739,9 @@ def test_f10_reply_shapes_per_role(
     fin_hdrs = _auth_headers(fin_u)
 
     # 1. IT manager signs IT clearance
-    r_it = client.put(f"/api/v1/employees/{emp.id}/fnf/clearance", headers=it_hdrs, json={"it_clearance": True})
+    r_it = client.put(
+        f"/api/v1/employees/{emp.id}/fnf/clearance", headers=it_hdrs, json={"it_clearance": True}
+    )
     assert r_it.status_code == 200
     it_json = r_it.json()
     assert "monthly_gross_salary" not in it_json
@@ -712,7 +753,11 @@ def test_f10_reply_shapes_per_role(
     assert "asset_deductions" in it_json
 
     # 2. HR manager signs HR clearance
-    r_hr = client.put(f"/api/v1/employees/{emp.id}/fnf/clearance", headers=hr_mgr_hdrs, json={"hr_clearance": True})
+    r_hr = client.put(
+        f"/api/v1/employees/{emp.id}/fnf/clearance",
+        headers=hr_mgr_hdrs,
+        json={"hr_clearance": True},
+    )
     assert r_hr.status_code == 200
     hr_json = r_hr.json()
     assert "monthly_gross_salary" not in hr_json
@@ -722,7 +767,11 @@ def test_f10_reply_shapes_per_role(
     assert "severance_pay" not in hr_json
 
     # 3. Finance manager signs Finance clearance
-    r_fin = client.put(f"/api/v1/employees/{emp.id}/fnf/clearance", headers=fin_hdrs, json={"finance_clearance": True})
+    r_fin = client.put(
+        f"/api/v1/employees/{emp.id}/fnf/clearance",
+        headers=fin_hdrs,
+        json={"finance_clearance": True},
+    )
     assert r_fin.status_code == 200
     fin_json = r_fin.json()
     assert "monthly_gross_salary" not in fin_json
@@ -740,9 +789,7 @@ def test_f10_reply_shapes_per_role(
     assert "total_settlement_amount" in exec_json
 
 
-def test_f11_scope_tests(
-    client: TestClient, exit_setup: dict[str, Any], db: Session
-) -> None:
+def test_f11_scope_tests(client: TestClient, exit_setup: dict[str, Any], db: Session) -> None:
     """F11:
     - Manager without a clearance function gets 403 on queue and on clearance.
     - Plain employee gets 403 on queue.
@@ -750,7 +797,6 @@ def test_f11_scope_tests(
     - Department-function manager sees only employees whose own function is still pending.
     """
     cid = exit_setup["company_a"].id
-    cid_b = exit_setup["company_b"].id
     today = date.today()
     hr_headers = _auth_headers(exit_setup["hr_user"])
 
@@ -765,7 +811,9 @@ def test_f11_scope_tests(
     db.commit()
     plain_mgr_hdrs = _auth_headers(plain_mgr_user)
 
-    assert client.get("/api/v1/employees/clearance-queue", headers=plain_mgr_hdrs).status_code == 403
+    assert (
+        client.get("/api/v1/employees/clearance-queue", headers=plain_mgr_hdrs).status_code == 403
+    )
 
     emp_test_user, emp_test = _create_user_and_employee(
         db, cid, UserRole.employee, email=f"emp-test-{uuid.uuid4().hex[:6]}@example.com"
@@ -774,11 +822,14 @@ def test_f11_scope_tests(
     emp_test.last_working_date = today
     db.commit()
 
-    assert client.put(
-        f"/api/v1/employees/{emp_test.id}/fnf/clearance",
-        headers=plain_mgr_hdrs,
-        json={"it_clearance": True},
-    ).status_code == 403
+    assert (
+        client.put(
+            f"/api/v1/employees/{emp_test.id}/fnf/clearance",
+            headers=plain_mgr_hdrs,
+            json={"it_clearance": True},
+        ).status_code
+        == 403
+    )
 
     # 3. Queue never lists another company's employees
     hr_b_headers = _auth_headers(exit_setup["hr_user_b"])
@@ -818,11 +869,15 @@ def test_f11_scope_tests(
     # 4. Department-function manager sees only employees whose own function is pending
     from app.modules.hr.models import Department
 
-    it_dept = Department(id=uuid.uuid4(), company_id=cid, name=f"IT2-{uuid.uuid4().hex[:6]}", clearance_function="it")
+    it_dept = Department(
+        id=uuid.uuid4(), company_id=cid, name=f"IT2-{uuid.uuid4().hex[:6]}", clearance_function="it"
+    )
     db.add(it_dept)
     db.flush()
 
-    it_u, it_e = _create_user_and_employee(db, cid, UserRole.manager, email=f"it-mgr2-{uuid.uuid4().hex[:6]}@example.com")
+    it_u, it_e = _create_user_and_employee(
+        db, cid, UserRole.manager, email=f"it-mgr2-{uuid.uuid4().hex[:6]}@example.com"
+    )
     it_e.department_id = it_dept.id
     db.commit()
     it_hdrs = _auth_headers(it_u)
@@ -832,7 +887,11 @@ def test_f11_scope_tests(
     assert any(item["id"] == str(emp_test.id) for item in r_it_q1.json()["items"])
 
     # Sign IT clearance -> it_clearance becomes True
-    client.put(f"/api/v1/employees/{emp_test.id}/fnf/clearance", headers=it_hdrs, json={"it_clearance": True})
+    client.put(
+        f"/api/v1/employees/{emp_test.id}/fnf/clearance",
+        headers=it_hdrs,
+        json={"it_clearance": True},
+    )
 
     # emp_test now disappeared from IT manager's queue
     r_it_q2 = client.get("/api/v1/employees/clearance-queue", headers=it_hdrs)
