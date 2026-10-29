@@ -1776,15 +1776,12 @@ class EmployeeService:
     def calculate_fnf(self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User) -> Any:
         employee = self._get_or_404(company_id, employee_id)
 
-        # Post-settlement snapshot read
+        # Post-settlement snapshot read: HR-level reads the saved snapshot after settlement
         if employee.fnf_settled_at and employee.fnf_snapshot:
-            # Employee can read own settlement after settled
             if actor.role not in HR_LEVEL_ROLES:
-                actor_emp = self.repo.get_by_user_id(company_id, actor.id)
-                if actor_emp is None or actor_emp.id != employee.id:
-                    raise ForbiddenError(
-                        "You do not have permission to view full-and-final settlement."
-                    )
+                raise ForbiddenError(
+                    "You do not have permission to view full-and-final settlement."
+                )
             return FnFSettlementResponse(**employee.fnf_snapshot)
 
         # Before settlement: only HR-level can view full settlement

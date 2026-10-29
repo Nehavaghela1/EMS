@@ -365,7 +365,8 @@ def test_r01_who_can_submit_withdraw_approve_reject_terminate_settle(
     client: TestClient, exit_setup: dict[str, Any]
 ) -> None:
     """R1:
-    - Employee submits and withdraws own resignation; HR admin, owner, super admin can do it for anyone.
+    - Employee submits and withdraws own resignation;
+      HR admin, owner, super admin can do it for anyone.
     - Other employee gets 403.
     - Approve/reject: HR admin, owner, super admin, department head, or approval chain manager.
     - Nobody approves or rejects own resignation (including owner and super admin).
@@ -376,10 +377,6 @@ def test_r01_who_can_submit_withdraw_approve_reject_terminate_settle(
     emp_headers = _auth_headers(exit_setup["emp_user"])
     other_emp_headers = _auth_headers(exit_setup["other_emp_user"])
     hr_headers = _auth_headers(exit_setup["hr_user"])
-    owner_headers = _auth_headers(exit_setup["owner_user"])
-    super_headers = _auth_headers(exit_setup["super_admin_user"])
-    mgr_headers = _auth_headers(exit_setup["manager_user"])
-    head_headers = _auth_headers(exit_setup["dept_head_user"])
     hr_b_headers = _auth_headers(exit_setup["hr_user_b"])
 
     today = date.today()
@@ -484,9 +481,8 @@ def test_r01_who_can_submit_withdraw_approve_reject_terminate_settle(
         == 403
     )
 
-    # Owner also cannot approve own resignation if owner submits one
-    owner_emp = exit_setup["owner_emp"]
-    # (Owner resignation is blocked by Rule 2 anyway, but even if simulated, self-approval check must block self)
+    # (Owner resignation is blocked by Rule 2 anyway, but even if simulated,
+    # self-approval check must block self)
 
 
 def test_r01_nobody_approves_own_resignation_including_owner_and_super_admin(
@@ -525,12 +521,12 @@ def test_r01_nobody_approves_own_resignation_including_owner_and_super_admin(
 
 
 def test_r01_terminate_and_settle_roles(client: TestClient, exit_setup: dict[str, Any]) -> None:
-    """R1: Terminate and settle: HR admin, owner, super admin only (manager gets 403, employee gets 403)."""
+    """R1: Terminate and settle: HR admin, owner, super admin only
+    (manager gets 403, employee gets 403).
+    """
     emp = exit_setup["emp"]
     emp_headers = _auth_headers(exit_setup["emp_user"])
     mgr_headers = _auth_headers(exit_setup["manager_user"])
-    hr_headers = _auth_headers(exit_setup["hr_user"])
-    owner_headers = _auth_headers(exit_setup["owner_user"])
 
     today = date.today()
     term_payload = {
@@ -718,13 +714,16 @@ def test_r03_notice_defaults_policy_and_employee_creation(
     client: TestClient, exit_setup: dict[str, Any], db: Session
 ) -> None:
     """R3:
-    - Company keeps default notice days per level (L1, L2, L3; each 0 to 365; HR admin, owner, super admin set them; fallback 30).
+    - Company keeps default notice days per level (L1, L2, L3; each 0 to 365;
+      HR admin, owner, super admin set them; fallback 30).
     - When employee created without explicit notice value, default for employee's level is used.
     - Explicit value always wins and HR-level can set it per employee.
     - Changing defaults, or an employee's level, never changes existing employees.
-    - Required notice = employee's notice_period_days, cannot be edited (409) while exit is submitted or approved.
+    - Required notice = employee's notice_period_days, cannot be edited (409)
+      while exit is submitted or approved.
     - Expected lwd = resignation date + required notice. Shortfall = max(0, required - days served).
-    - On approval, only HR-level may waive or set notice_recovery_days (0 to shortfall). Manager gets 403.
+    - On approval, only HR-level may waive or set notice_recovery_days
+      (0 to shortfall). Manager gets 403.
     """
     hr_headers = _auth_headers(exit_setup["hr_user"])
     mgr_headers = _auth_headers(exit_setup["manager_user"])
@@ -816,7 +815,9 @@ def test_r03_notice_defaults_policy_and_employee_creation(
 def test_r03_waiver_and_recovery_days_by_role(
     client: TestClient, exit_setup: dict[str, Any]
 ) -> None:
-    """R3: On approval, only HR-level may waive notice or set notice_recovery_days; manager gets 403."""
+    """R3: On approval, only HR-level may waive notice or set notice_recovery_days;
+    manager gets 403.
+    """
     emp = exit_setup["emp"]
     hr_headers = _auth_headers(exit_setup["hr_user"])
     mgr_headers = _auth_headers(exit_setup["manager_user"])
@@ -865,10 +866,12 @@ def test_r04_status_transitions_withdraw_amendment_concurrency(
     """R4:
     - none -> submitted -> approved/rejected.
     - Submitted can be withdrawn (back to none, dates and reason cleared).
-    - Approved can be withdrawn only by HR-level, only before last working date, only for voluntary exit, never after settlement.
+    - Approved can be withdrawn only by HR-level, only before last working date,
+      only for voluntary exit, never after settlement.
     - Rejected can be submitted again.
     - Decision on resignation not pending gives 409.
-    - HR-level may amend last working date and waiver on approved resignation until settled (not in past, not before resignation date).
+    - HR-level may amend last working date and waiver on approved resignation
+      until settled (not in past, not before resignation date).
     - Two approvals at same moment: row FOR UPDATE prevents race, second gets 409.
     """
     emp = exit_setup["emp"]
@@ -982,7 +985,8 @@ def test_r05_termination_rules(client: TestClient, exit_setup: dict[str, Any], d
     - HR-level only; active employee only; not yourself, not the company owner.
     - Not already separating or settled (409).
     - Termination date from today up to today + notice_period_days.
-    - Reason 1 to 255 chars trimmed; notes up to 1000 chars saved; severance and notice pay 0 to 99999999999.99.
+    - Reason 1 to 255 chars trimmed; notes up to 1000 chars saved;
+      severance and notice pay 0 to 99999999999.99.
     - Future date keeps employee working (active, login on) until that date.
     """
     emp = exit_setup["emp"]
@@ -1084,7 +1088,8 @@ def test_r06_apply_exit_and_scheduled_job(
       all refresh tokens revoked, department head cleared (with its existing audit),
       audit row EMPLOYEE_EXIT_APPLIED.
     - Runs immediately for termination dated today and for PIP failure.
-    - Hourly scheduled job applies every approved exit whose last working date is before today and employee still active.
+    - Hourly scheduled job applies every approved exit whose last working date is
+      before today and employee still active.
     - Running twice is harmless (idempotent).
     """
     from app.workers.tasks import hr as hr_tasks
@@ -1150,7 +1155,8 @@ def test_r06_apply_exit_and_scheduled_job(
     assert audit_exit.entity_id == emp.id
 
     # 2. Test scheduled job apply_due_exits_task
-    # Set up emp with approved resignation whose last_working_date is in the FUTURE (must NOT be applied)
+    # Set up emp with approved resignation whose last_working_date is in the FUTURE
+    # (must NOT be applied)
     emp.is_active = True
     emp.resignation_status = ResignationStatus.approved
     emp.last_working_date = today + timedelta(days=5)
@@ -1195,12 +1201,14 @@ def test_r07_clearance_signoffs_queue_and_limited_replies(
 ) -> None:
     """R7:
     - Allowed only for approved exit that is not settled; nobody signs own.
-    - Saves who signed, when, optional remark (up to 255 chars trimmed, on employee, never in audit).
+    - Saves who signed, when, optional remark (up to 255 chars trimmed,
+      on employee, never in audit).
     - Latest sign-off replaces previous one.
     - IT, Finance, HR managers sign only their own function; HR admin/owner/super_admin sign all.
     - Clearance queue route lists approved unsettled exits whose own-function clearance is pending.
     - Limited replies: HR function sees flags/dates/notice; IT sees flags/dates/asset deductions;
-      Finance sees all settlement amounts except monthly gross and per-day salary; HR-level sees full.
+      Finance sees all settlement amounts except monthly gross and per-day salary;
+      HR-level sees full.
     """
     emp = exit_setup["emp"]
     hr_headers = _auth_headers(exit_setup["hr_user"])
@@ -1262,7 +1270,8 @@ def test_r07_clearance_signoffs_queue_and_limited_replies(
     items2 = r_it_queue2.json().get("items", r_it_queue2.json())
     assert all(item["id"] != str(emp.id) for item in items2)
 
-    # 3. Finance manager signs finance clearance -> limited reply (no monthly gross or per-day salary)
+    # 3. Finance manager signs finance clearance -> limited reply
+    # (no monthly gross or per-day salary)
     r_fin_sign = client.put(
         f"/api/v1/employees/{emp.id}/fnf/clearance",
         headers=fin_headers,
@@ -1290,12 +1299,15 @@ def test_r08_settlement_gates_snapshot_and_math(
     client: TestClient, exit_setup: dict[str, Any], db: Session
 ) -> None:
     """R8:
-    - Only HR-level, only on or after last working date, only when all 3 clearances are true, only once (second gives 409).
+    - Only HR-level, only on or after last working date, only when all 3 clearances are true,
+      only once (second gives 409).
     - Saves full settlement snapshot and sets fnf_settled_at.
-    - After settlement: every exit edit, clearance change, amount change, withdraw and decision gives 409.
+    - After settlement: every exit edit, clearance change, amount change,
+      withdraw and decision gives 409.
     - Reading returns snapshot.
-    - Math: unpaid salary days = min(last working day of month, 30); 0 if payslip already exists for last working month.
-    - Employee can read own settlement only after settled.
+    - Math: unpaid salary days = min(last working day of month, 30);
+      0 if payslip already exists for last working month.
+    - After settlement the employee login is off (401); HR-level reads the snapshot.
     """
     emp = exit_setup["emp"]
     emp_headers = _auth_headers(exit_setup["emp_user"])
@@ -1390,8 +1402,8 @@ def test_r09_audit_rows_details_and_failures(
 ) -> None:
     """R9:
     - One audit row in same save for: resignation submitted, withdrawn, approved, rejected,
-      terminated, clearance changed (fields/new booleans only, no amounts/text), settled (total only),
-      exit applied, notice defaults changed (3 numbers only).
+      terminated, clearance changed (fields/new booleans only, no amounts/text),
+      settled (total only), exit applied, notice defaults changed (3 numbers only).
     - No reason, notes or names in audit. None for failed requests.
     """
     emp = exit_setup["emp"]
@@ -1565,7 +1577,9 @@ def test_r09_row_locks_sql_capture(
 def test_r10_pip_failure_uses_apply_exit(
     client: TestClient, exit_setup: dict[str, Any], db: Session
 ) -> None:
-    """R10: PIP failure uses same shared exit function (immediate exit, tokens revoked, audit row)."""
+    """R10: PIP failure uses same shared exit function
+    (immediate exit, tokens revoked, audit row).
+    """
     from app.modules.performance.models import PerformancePIP, PIPStatus
 
     emp = exit_setup["emp"]

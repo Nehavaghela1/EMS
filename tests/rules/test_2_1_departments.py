@@ -14,7 +14,7 @@ Covers Rules 1-10:
 
 import threading
 import uuid
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 import pytest
