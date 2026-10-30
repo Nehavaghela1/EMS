@@ -873,17 +873,30 @@ class AttendanceService:
             "summary": summary,
         }
 
-    def queue_export(self, company_id: uuid.UUID, data: AttendanceExportRequest) -> str:
+    def queue_export(
+        self,
+        company_id: uuid.UUID,
+        data: AttendanceExportRequest,
+        user_id: uuid.UUID | None = None,
+    ) -> str:
         """Route 49: queues the real Celery job (13.1), returns its id."""
+        from app.core.jobs import register_job
         from app.workers.tasks.attendance import export_attendance_csv_task
 
         task = export_attendance_csv_task.delay(
             company_id=str(company_id),
+            requester_id=str(user_id) if user_id else None,
             employee_id=str(data.employee_id) if data.employee_id else None,
             date_from=data.date_from.isoformat() if data.date_from else None,
             date_to=data.date_to.isoformat() if data.date_to else None,
             status=data.status.value if data.status else None,
             department_id=str(data.department_id) if data.department_id else None,
+        )
+        register_job(
+            task.id,
+            company_id=company_id,
+            user_id=user_id,
+            kind="attendance_export",
         )
         return task.id
 

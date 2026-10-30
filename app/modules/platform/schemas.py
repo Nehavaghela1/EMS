@@ -1,8 +1,8 @@
 import uuid
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # --- Existing Jobs / Audit / Dashboard / Notifications ---
@@ -33,11 +33,17 @@ class AuditLogResponse(BaseModel):
 
 
 class AuditLogExportRequest(BaseModel):
-    action: str | None = None
-    actor_email: str | None = None
-    entity_type: str | None = None
+    action: str | None = Field(default=None, max_length=100)
+    actor_email: str | None = Field(default=None, max_length=255)
+    entity_type: str | None = Field(default=None, max_length=50)
     date_from: date | None = None
     date_to: date | None = None
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> Self:
+        if self.date_from and self.date_to and self.date_from > self.date_to:
+            raise ValueError("date_from cannot be after date_to.")
+        return self
 
 
 class DashboardResponse(BaseModel):

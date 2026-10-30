@@ -58,4 +58,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.hr.apply_due_exits_task",
         "schedule": crontab(minute=15),
     },
+    "cleanup-expired-exports-daily": {
+        "task": "app.workers.tasks.platform.cleanup_expired_exports_task",
+        "schedule": crontab(hour=3, minute=30),
+    },
 }

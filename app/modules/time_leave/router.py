@@ -1,17 +1,24 @@
 import os
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
 
+from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
+from app.core.exceptions import NotFoundError
+from app.core.jobs import authorize_export_job
 from app.core.pagination import Page, PageParams, page_params
+from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.core.time import utcnow
 from app.modules.hr.models import Department, Employee
 from app.modules.identity.models import User, UserRole
+from app.modules.platform.service import AuditService
 from app.modules.time_leave.models import (
     Attendance,
     AttendanceStatus,
@@ -57,6 +64,7 @@ from app.modules.time_leave.service import (
     LeaveTypeService,
     ShiftService,
 )
+from app.workers.celery_app import celery_app
 
 attendance_router = APIRouter(prefix="/attendance", tags=["Attendance"])
 shifts_router = APIRouter(prefix="/shifts", tags=["Shifts"])
@@ -130,8 +138,66 @@ def export_attendance(
     db=Depends(get_tenant_db),
     _user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    job_id = AttendanceService(db).queue_export(_user.company_id, data)
+    job_id = AttendanceService(db).queue_export(_user.company_id, data, user_id=_user.id)
     return JobQueuedResponse(job_id=job_id)
+
+
+@attendance_router.get("/export/{job_id}/download")
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
+def download_attendance_export(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin)),
+):
+    authorize_export_job(job_id, user, not_found_message="Export not found.")
+
+    async_result = celery_app.AsyncResult(job_id)
+    if async_result.state != "SUCCESS":
+        raise NotFoundError("Export not found or still processing.")
+
+    result = async_result.result
+    if not isinstance(result, dict):
+        raise NotFoundError("Export data not found.")
+
+    file_path = result.get("file_path")
+    expires_at_str = result.get("expires_at")
+    if expires_at_str:
+        expires_at = datetime.fromisoformat(expires_at_str)
+        if datetime.now(UTC) > expires_at:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+            raise NotFoundError("Export file has expired.")
+
+    if not file_path or not os.path.exists(file_path):
+        raise NotFoundError("Export file not found on disk.")
+
+    resolved_path = Path(file_path).resolve()
+    export_dir_resolved = Path(settings.EXPORT_DIR).resolve()
+    if not resolved_path.is_relative_to(export_dir_resolved):
+        raise NotFoundError("Export not found.")
+
+    file_name = f"attendance_{datetime.now(UTC).strftime('%Y-%m-%d')}.csv"
+
+    AuditService(db).record(
+        company_id=user.company_id,
+        actor=user,
+        action="ATTENDANCE_EXPORT_DOWNLOADED",
+        entity_type="attendance",
+        entity_id=None,
+        details={"job_id": job_id},
+    )
+    db.commit()
+
+    return FileResponse(
+        path=str(resolved_path),
+        filename=file_name,
+        media_type="text/csv",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @attendance_router.get("/calendar", response_model=CalendarResponse)

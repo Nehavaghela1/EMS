@@ -252,7 +252,15 @@ def test_job_status_is_scoped_to_the_company_that_queued_it(client, company_a, c
     Fixed by having export tasks return their own company_id and having the
     router check it against the caller's, matching Spec 10.1 (404, not 403).
     """
+    from app.core.jobs import register_job
+
     job_id = str(uuid.uuid4())
+    register_job(
+        job_id,
+        company_a.company_id,
+        None,
+        "export",
+    )
     celery_app.backend.store_result(
         job_id,
         {
@@ -271,16 +279,18 @@ def test_job_status_is_scoped_to_the_company_that_queued_it(client, company_a, c
         assert other_resp.status_code == 404
 
         admin_resp = client.get(f"/api/v1/jobs/{job_id}", headers=company_a.employee_headers)
-        # Same company, lower role: the job route has no role check by
-        # design (any authenticated caller can poll a job they can prove
-        # they know the id of) — company scoping is the actual boundary.
-        assert admin_resp.status_code == 200
+        # WP 3.6 (J1): A non-HR user of the same company who did not start the job
+        # gets 404 (same body as an unknown id).
+        assert admin_resp.status_code == 404
     finally:
         celery_app.backend.forget(job_id)
 
 
 def test_super_admin_bypasses_job_company_scoping(client, company_a, super_admin_headers):
+    from app.core.jobs import register_job
+
     job_id = str(uuid.uuid4())
+    register_job(job_id, company_a.company_id, None, "export")
     celery_app.backend.store_result(
         job_id,
         {"company_id": str(company_a.company_id), "file_path": "/tmp/whatever.csv", "row_count": 7},
@@ -288,7 +298,7 @@ def test_super_admin_bypasses_job_company_scoping(client, company_a, super_admin
     )
     try:
         resp = client.get(f"/api/v1/jobs/{job_id}", headers=super_admin_headers)
-        assert resp.status_code == 200
+        assert resp.status_code == 404
     finally:
         celery_app.backend.forget(job_id)
 
