@@ -483,12 +483,68 @@ class AnnouncementService:
         self.db.commit()
 
 
+SIGNED_URL_TTL_SECONDS = 600
+MAX_FILE_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
+
+
 class FileService:
     def __init__(self, db: Session):
         self.db = db
         from app.modules.platform.repository import FileRepository
 
         self.repo = FileRepository(db)
+
+    def can_access(self, company_id: uuid.UUID, user: User, file_obj: FileObject) -> bool:
+        if file_obj.uploaded_by is not None and file_obj.uploaded_by == user.id:
+            return True
+        if user.role in HR_LEVEL_ROLES:
+            return True
+
+        from app.modules.hr.models import Employee
+        from app.modules.projects.models import Project, ProjectDocument, ProjectMember
+
+        pdocs = (
+            self.db.query(ProjectDocument)
+            .filter(
+                ProjectDocument.company_id == company_id,
+                ProjectDocument.file_id == file_obj.id,
+            )
+            .all()
+        )
+        if not pdocs:
+            return False
+
+        employee = (
+            self.db.query(Employee)
+            .filter(Employee.company_id == company_id, Employee.user_id == user.id)
+            .first()
+        )
+        if not employee:
+            return False
+
+        for pdoc in pdocs:
+            proj = (
+                self.db.query(Project)
+                .filter(Project.id == pdoc.project_id, Project.company_id == company_id)
+                .first()
+            )
+            if proj and proj.manager_id == employee.id:
+                return True
+
+            is_member = (
+                self.db.query(ProjectMember)
+                .filter(
+                    ProjectMember.company_id == company_id,
+                    ProjectMember.project_id == pdoc.project_id,
+                    ProjectMember.employee_id == employee.id,
+                )
+                .first()
+                is not None
+            )
+            if is_member:
+                return True
+
+        return False
 
     def upload_file(
         self,
@@ -497,62 +553,100 @@ class FileService:
         file_name: str,
         file_type: str,
         file_bytes: bytes,
+        actor: User | None = None,
     ) -> FileObject:
-        # 1. Validate Size (< 25MB)
-        if len(file_bytes) > 25 * 1024 * 1024:
-            raise AppError("File size exceeds the 25MB limit.")
+        from pathlib import Path
 
-        # 2. Store in local uploads folder
-        import os
+        from app.core.exceptions import PayloadTooLargeError
+        from app.core.upload_validation import validate_document_upload
 
-        upload_dir = os.path.join(os.getcwd(), "uploads", str(company_id))
-        os.makedirs(upload_dir, exist_ok=True)
+        if len(file_bytes) > MAX_FILE_UPLOAD_BYTES:
+            raise PayloadTooLargeError("File size exceeds maximum upload limit of 25 MB.")
 
-        file_id = uuid.uuid4()
-        storage_path = os.path.join(upload_dir, f"{file_id}_{file_name}")
-        with open(storage_path, "wb") as f:
+        clean_name, ext, canonical_content_type = validate_document_upload(file_name, file_bytes)
+
+        upload_root = Path(getattr(settings, "UPLOAD_DIR", "var/uploads")).resolve()
+        company_dir = (upload_root / str(company_id)).resolve()
+        company_dir.mkdir(parents=True, exist_ok=True)
+
+        random_filename = f"{uuid.uuid4().hex}.{ext}"
+        target_path = (company_dir / random_filename).resolve()
+        if not target_path.is_relative_to(upload_root):
+            raise AppError("Invalid file storage path.")
+
+        with open(target_path, "wb") as f:
             f.write(file_bytes)
 
-        # 3. Create FileObject
         file_obj = self.repo.create(
             company_id=company_id,
             uploaded_by=user_id,
-            file_name=file_name,
-            file_type=file_type,
+            file_name=clean_name,
+            file_type=canonical_content_type,
             file_size=len(file_bytes),
-            storage_path=storage_path,
+            storage_path=str(target_path),
+        )
+
+        AuditService(self.db).record(
+            company_id=company_id,
+            actor=actor,
+            action="FILE_UPLOADED",
+            entity_type="file_object",
+            entity_id=file_obj.id,
+            details={
+                "file_id": str(file_obj.id),
+                "file_size": file_obj.file_size,
+                "file_type": file_obj.file_type,
+            },
         )
         self.db.commit()
         self.db.refresh(file_obj)
         return file_obj
 
-    def generate_signed_url(self, company_id: uuid.UUID, file_id: uuid.UUID) -> SignedUrlResponse:
+    def generate_signed_url(
+        self,
+        company_id: uuid.UUID,
+        file_id: uuid.UUID,
+        user: User | None = None,
+    ) -> SignedUrlResponse:
         file_obj = self.repo.get_by_id(company_id, file_id)
         if not file_obj:
             raise NotFoundError("File object not found.")
 
-        # Design 7: if file object belongs to ANY employee_documents row, answer 404
         from app.modules.platform.repository import EmployeeDocumentRepository
 
         if EmployeeDocumentRepository(self.db).is_file_attached_to_employee_document(file_id):
             raise NotFoundError("File object not found.")
 
-        # HMAC signed token valid for 3600 seconds
+        if user is not None:
+            if not self.can_access(company_id, user, file_obj):
+                raise NotFoundError("File object not found.")
+
         import hashlib
         import hmac
 
-        expires_at = int(datetime.now(UTC).timestamp()) + 3600
+        expires_at = int(datetime.now(UTC).timestamp()) + SIGNED_URL_TTL_SECONDS
         signature_payload = f"{company_id}:{file_id}:{expires_at}".encode()
         signature = hmac.new(
             settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256
         ).hexdigest()
 
         url = f"/api/v1/files/download/{file_id}?expires={expires_at}&signature={signature}"
+
+        AuditService(self.db).record(
+            company_id=company_id,
+            actor=user,
+            action="FILE_LINK_ISSUED",
+            entity_type="file_object",
+            entity_id=file_obj.id,
+            details={"file_id": str(file_obj.id)},
+        )
+        self.db.commit()
+
         return SignedUrlResponse(
             file_object_id=file_obj.id,
             file_name=file_obj.file_name,
             url=url,
-            expires_in_seconds=3600,
+            expires_in_seconds=SIGNED_URL_TTL_SECONDS,
         )
 
 

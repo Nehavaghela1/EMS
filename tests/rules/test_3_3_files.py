@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
+from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.platform.models import AuditLog, EmployeeDocument, FileObject
@@ -105,6 +106,9 @@ def files_setup(db: Session, tmp_path, monkeypatch) -> dict[str, Any]:
         is_active=True,
     )
     db.add(sa1)
+    db.flush()
+
+    bind_tenant_to_session(db, company_id=cid1, is_platform_admin=True)
 
     mgr1_user = User(
         id=uuid.uuid4(),
@@ -217,6 +221,7 @@ def files_setup(db: Session, tmp_path, monkeypatch) -> dict[str, Any]:
     )
     db.add(hr2)
     db.commit()
+    bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
 
     return {
         "upload_root": upload_root,
@@ -280,13 +285,13 @@ def test_f1_link_access_uploader_and_hr_level(
     # 5. Unrelated employee of same company gets 404 (same as missing)
     res_unauth = client.get(f"/api/v1/files/{file_id}/url", headers=_auth_headers(emp2_user))
     assert res_unauth.status_code == 404
-    assert res_unauth.json()["code"] == "not_found"
+    assert res_unauth.json()["error"]["code"] == "not_found"
 
     # 6. Non-existent file id gives same 404
     missing_id = uuid.uuid4()
     res_missing = client.get(f"/api/v1/files/{missing_id}/url", headers=_auth_headers(emp1_user))
     assert res_missing.status_code == 404
-    assert res_missing.json()["code"] == "not_found"
+    assert res_missing.json()["error"]["code"] == "not_found"
 
 
 def test_f1_link_access_project_member_and_manager(
@@ -313,6 +318,7 @@ def test_f1_link_access_project_member_and_manager(
     file_id = uuid.UUID(upload_res.json()["file_object_id"])
 
     # Create project with mgr1 as manager
+    bind_tenant_to_session(db, company_id=c1.id, is_platform_admin=True)
     project = Project(
         id=uuid.uuid4(),
         company_id=c1.id,
@@ -383,6 +389,7 @@ def test_f2_employee_document_generic_link_excluded(
     file_id = uuid.UUID(upload_res.json()["file_object_id"])
 
     # Attach to EmployeeDocument
+    bind_tenant_to_session(db, company_id=c1.id, is_platform_admin=True)
     emp_doc = EmployeeDocument(
         id=uuid.uuid4(),
         company_id=c1.id,
@@ -397,7 +404,7 @@ def test_f2_employee_document_generic_link_excluded(
     # Calling /files/{file_id}/url must return 404 even for the uploader / HR
     res = client.get(f"/api/v1/files/{file_id}/url", headers=_auth_headers(hr1))
     assert res.status_code == 404
-    assert res.json()["code"] == "not_found"
+    assert res.json()["error"]["code"] == "not_found"
 
 
 # ── F3: Upload validation and size limits ──────────────────────────────────
@@ -451,7 +458,7 @@ def test_f3_upload_validation_and_allowed_types(
         headers=emp_headers,
     )
     assert r_txt.status_code == 422
-    assert r_txt.json()["code"] == "validation_error"
+    assert r_txt.json()["error"]["code"] == "validation_error"
 
     # 6. Disallowed extension: executable .sh
     r_sh = client.post(
@@ -491,7 +498,7 @@ def test_f3_upload_size_limit_25mb(client: TestClient, files_setup: dict[str, An
         headers=emp_headers,
     )
     assert r_large.status_code == 413
-    assert r_large.json()["code"] == "payload_too_large"
+    assert r_large.json()["error"]["code"] == "file_too_large"
 
 
 # ── F4: Storage path safety and response shape ────────────────────────────
@@ -571,7 +578,7 @@ def test_f5_signed_link_lifetime_10_minutes(
     bad_sig_url = dl_url.replace("signature=", "signature=bad_tampered_")
     r_bad_sig = client.get(bad_sig_url)
     assert r_bad_sig.status_code == 403
-    assert r_bad_sig.json()["code"] == "forbidden"
+    assert r_bad_sig.json()["error"]["code"] == "forbidden"
 
     # 4. Expired signature -> 403
     past_ts = int((datetime.now(UTC) - timedelta(minutes=15)).timestamp())
@@ -580,7 +587,7 @@ def test_f5_signed_link_lifetime_10_minutes(
     exp_url = f"/api/v1/files/download/{file_id}?expires={past_ts}&signature={exp_sig}"
     r_exp = client.get(exp_url)
     assert r_exp.status_code == 403
-    assert r_exp.json()["code"] == "forbidden"
+    assert r_exp.json()["error"]["code"] == "forbidden"
 
     # 5. Missing record -> 404
     missing_id = uuid.uuid4()
@@ -679,6 +686,7 @@ def test_f7_download_path_traversal_refusal(
     outside_file = outside_dir / "external.pdf"
     outside_file.write_bytes(b"%PDF-1.4 external data")
 
+    bind_tenant_to_session(db, company_id=hr1.company_id, is_platform_admin=True)
     file_obj = FileObject(
         id=uuid.uuid4(),
         company_id=hr1.company_id,
@@ -698,7 +706,7 @@ def test_f7_download_path_traversal_refusal(
 
     r = client.get(dl_url)
     assert r.status_code == 404
-    assert r.json()["code"] == "not_found"
+    assert r.json()["error"]["code"] == "not_found"
 
 
 # ── F8: Audit logging and rate limits ─────────────────────────────────────
