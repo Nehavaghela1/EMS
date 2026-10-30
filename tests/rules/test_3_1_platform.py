@@ -695,6 +695,7 @@ def test_n7_audit_logging_and_rate_limits(
         )
     )
     assert audit_del is not None
+    assert audit_del.details is not None
     assert audit_del.details.get("announcement_id") == ann_id
 
     # 3. Rate limits
@@ -921,6 +922,7 @@ def test_t3_mark_read_repeat_idempotent_and_mark_all(
     db.expire_all()
     bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
     refreshed_other = db.get(Notification, n_other.id)
+    assert refreshed_other is not None
     assert refreshed_other.is_read is False
 
 
