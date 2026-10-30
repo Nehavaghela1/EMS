@@ -847,9 +847,10 @@ def test_f8_download_rate_limit_60_per_min(client: TestClient, files_setup: dict
 
 
 def test_f3_project_upload_over_limit_413(
-    client: TestClient, files_setup: dict[str, Any], db: Session
+    client: TestClient, files_setup: dict[str, Any], db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Project document upload over 25 MB returns 413 and stores nothing."""
+    monkeypatch.setattr("app.modules.platform.service.MAX_FILE_UPLOAD_BYTES", 100 * 1024 * 1024)
     c1 = files_setup["company1"]
     hr1 = files_setup["hr1"]
     bind_tenant_to_session(db, company_id=c1.id, is_platform_admin=True)
