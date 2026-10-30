@@ -885,6 +885,7 @@ class AttendanceService:
 
         task = export_attendance_csv_task.delay(
             company_id=str(company_id),
+            requester_id=str(user_id) if user_id else None,
             employee_id=str(data.employee_id) if data.employee_id else None,
             date_from=data.date_from.isoformat() if data.date_from else None,
             date_to=data.date_to.isoformat() if data.date_to else None,

@@ -23,7 +23,7 @@ from app.core.exceptions import (
     PayloadTooLargeError,
     ValidationError,
 )
-from app.core.jobs import get_registered_job
+from app.core.jobs import authorize_export_job
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.core.roles import HR_LEVEL_ROLES
@@ -107,22 +107,7 @@ def get_job_status(
     request: Request,
     user: User = Depends(get_current_user),
 ) -> JobStatusResponse:
-    try:
-        uuid.UUID(job_id)
-    except (ValueError, TypeError, AttributeError):
-        raise NotFoundError("Job not found.") from None
-
-    job_meta = get_registered_job(job_id)
-    if not job_meta:
-        raise NotFoundError("Job not found.")
-
-    if user.role != UserRole.super_admin:
-        if job_meta.get("company_id") != str(user.company_id):
-            raise NotFoundError("Job not found.")
-        is_starter = job_meta.get("user_id") and str(user.id) == str(job_meta.get("user_id"))
-        is_hr_level = user.role in HR_LEVEL_ROLES
-        if not (is_starter or is_hr_level):
-            raise NotFoundError("Job not found.")
+    authorize_export_job(job_id, user, not_found_message="Job not found.")
 
     async_result = celery_app.AsyncResult(job_id)
     status = _STATE_MAP.get(async_result.state, "queued")
@@ -232,22 +217,7 @@ def download_audit_logs_export(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    try:
-        uuid.UUID(job_id)
-    except (ValueError, TypeError, AttributeError):
-        raise NotFoundError("Export not found.") from None
-
-    job_meta = get_registered_job(job_id)
-    if not job_meta:
-        raise NotFoundError("Export not found.")
-
-    if user.role != UserRole.super_admin:
-        if job_meta.get("company_id") != str(user.company_id):
-            raise NotFoundError("Export not found.")
-        is_starter = job_meta.get("user_id") and str(user.id) == str(job_meta.get("user_id"))
-        is_hr_level = user.role in HR_LEVEL_ROLES
-        if not (is_starter or is_hr_level):
-            raise NotFoundError("Export not found.")
+    authorize_export_job(job_id, user, not_found_message="Export not found.")
 
     async_result = celery_app.AsyncResult(job_id)
     if async_result.state != "SUCCESS":

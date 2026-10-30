@@ -74,6 +74,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/attendance/check-in"): AUTHENTICATED,
     ("POST", "/api/v1/attendance/check-out"): AUTHENTICATED,
     ("POST", "/api/v1/attendance/export"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/attendance/export/{job_id}/download"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/attendance/regularizations/attachments/{filename}"): AUTHENTICATED,
     ("PUT", "/api/v1/attendance/regularizations/{regularization_id}/approve"): AUTHENTICATED,
     ("DELETE", "/api/v1/attendance/{attendance_id}"): ROLES(UserRole.hr_admin),

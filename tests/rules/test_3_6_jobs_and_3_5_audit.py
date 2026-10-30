@@ -117,6 +117,26 @@ def test_setup(db: Session) -> dict[str, Any]:
         is_active=True,
     )
     db.add(hr2)
+
+    sa1 = User(
+        id=uuid.uuid4(),
+        company_id=cid1,
+        email=f"sa1-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("Pass1234!"),
+        role=UserRole.super_admin,
+        is_active=True,
+    )
+    db.add(sa1)
+
+    sa2 = User(
+        id=uuid.uuid4(),
+        company_id=cid2,
+        email=f"sa2-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("Pass1234!"),
+        role=UserRole.super_admin,
+        is_active=True,
+    )
+    db.add(sa2)
     db.commit()
 
     return {
@@ -127,6 +147,8 @@ def test_setup(db: Session) -> dict[str, Any]:
         "emp1": emp1,
         "company2": company2,
         "hr2": hr2,
+        "sa1": sa1,
+        "sa2": sa2,
     }
 
 
@@ -195,6 +217,137 @@ def test_j1_j6_get_job_status_ownership_and_unknown_id(
         # Unauthenticated request gets 401
         res_unauth = client.get(f"/api/v1/jobs/{job_id}")
         assert res_unauth.status_code == 401
+
+
+def test_j1_super_admin_cross_company_isolation(
+    client: TestClient, test_setup: dict[str, Any], tmp_path, monkeypatch
+) -> None:
+    """J1, X4: Super admin of another company gets 404 on job status and all export
+    download routes. Super admin of same company is allowed (200) because they are HR-level.
+    """
+    from app.core.jobs import register_job
+
+    monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
+    emp_file = tmp_path / "employees_sa.csv"
+    emp_file.write_text("emp data")
+    audit_file = tmp_path / "audit_logs_sa.csv"
+    audit_file.write_text("audit data")
+    att_file = tmp_path / "attendance_sa.csv"
+    att_file.write_text("attendance data")
+
+    mgr1 = test_setup["mgr1"]
+    cid1 = test_setup["company1"].id
+    job_id = str(uuid.uuid4())
+    register_job(job_id, cid1, mgr1.id, "test_job")
+
+    sa1 = test_setup["sa1"]
+    sa2 = test_setup["sa2"]
+
+    # 1. Job status: sa1 (same company) -> 200, sa2 (other company) -> 404
+    with patch("app.modules.platform.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "SUCCESS"
+        mock_task.result = {"row_count": 3, "expires_at": "2026-10-31T00:00:00Z"}
+        mock_async.return_value = mock_task
+
+        res_sa1 = client.get(f"/api/v1/jobs/{job_id}", headers=_auth_headers(sa1))
+        assert res_sa1.status_code == 200
+
+        res_sa2 = client.get(f"/api/v1/jobs/{job_id}", headers=_auth_headers(sa2))
+        assert res_sa2.status_code == 404
+
+    # 2. Employee export download: sa1 -> 200, sa2 -> 404
+    job_emp = str(uuid.uuid4())
+    register_job(job_emp, cid1, mgr1.id, "employee_export")
+    with patch("app.modules.hr.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "SUCCESS"
+        mock_task.result = {
+            "company_id": str(cid1),
+            "requester_id": str(mgr1.id),
+            "file_path": str(emp_file),
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        }
+        mock_async.return_value = mock_task
+
+        res_emp1 = client.get(
+            f"/api/v1/employees/export/{job_emp}/download", headers=_auth_headers(sa1)
+        )
+        assert res_emp1.status_code == 200
+
+        res_emp2 = client.get(
+            f"/api/v1/employees/export/{job_emp}/download", headers=_auth_headers(sa2)
+        )
+        assert res_emp2.status_code == 404
+
+    # 3. Audit export download: sa1 -> 200, sa2 -> 404
+    job_audit = str(uuid.uuid4())
+    register_job(job_audit, cid1, mgr1.id, "audit_logs_export")
+    with patch("app.modules.platform.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "SUCCESS"
+        mock_task.result = {
+            "company_id": str(cid1),
+            "requester_id": str(mgr1.id),
+            "file_path": str(audit_file),
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        }
+        mock_async.return_value = mock_task
+
+        res_aud1 = client.get(
+            f"/api/v1/audit-logs/export/{job_audit}/download", headers=_auth_headers(sa1)
+        )
+        assert res_aud1.status_code == 200
+
+        res_aud2 = client.get(
+            f"/api/v1/audit-logs/export/{job_audit}/download", headers=_auth_headers(sa2)
+        )
+        assert res_aud2.status_code == 404
+
+    # 4. Attendance export download: sa1 -> 200, sa2 -> 404
+    job_att = str(uuid.uuid4())
+    register_job(job_att, cid1, mgr1.id, "attendance_export")
+    with patch("app.modules.time_leave.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "SUCCESS"
+        mock_task.result = {
+            "company_id": str(cid1),
+            "requester_id": str(mgr1.id),
+            "file_path": str(att_file),
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        }
+        mock_async.return_value = mock_task
+
+        res_att1 = client.get(
+            f"/api/v1/attendance/export/{job_att}/download", headers=_auth_headers(sa1)
+        )
+        assert res_att1.status_code == 200
+
+        res_att2 = client.get(
+            f"/api/v1/attendance/export/{job_att}/download", headers=_auth_headers(sa2)
+        )
+        assert res_att2.status_code == 404
+
+
+def test_j6_non_uuid_validation_across_routes(
+    client: TestClient, test_setup: dict[str, Any]
+) -> None:
+    """J6, X6: Non-UUID job_id gives 404 on job status and all export download routes."""
+    hr_headers = _auth_headers(test_setup["hr1"])
+    invalid_ids = ["not-a-uuid", "12345", "test-job-id", str(uuid.uuid4())[:10]]
+
+    for bad_id in invalid_ids:
+        r_job = client.get(f"/api/v1/jobs/{bad_id}", headers=hr_headers)
+        assert r_job.status_code == 404
+
+        r_emp = client.get(f"/api/v1/employees/export/{bad_id}/download", headers=hr_headers)
+        assert r_emp.status_code == 404
+
+        r_aud = client.get(f"/api/v1/audit-logs/export/{bad_id}/download", headers=hr_headers)
+        assert r_aud.status_code == 404
+
+        r_att = client.get(f"/api/v1/attendance/export/{bad_id}/download", headers=hr_headers)
+        assert r_att.status_code == 404
 
 
 # ── J2: Job registration and 24h TTL ───────────────────────────────────
@@ -466,6 +619,165 @@ def test_j7_employee_export_download_ownership(
             headers=_auth_headers(test_setup["hr1"]),
         )
         assert r_unreg.status_code == 404
+
+
+def test_j7_attendance_export_download_ownership(
+    client: TestClient, test_setup: dict[str, Any], db: Session, tmp_path, monkeypatch
+) -> None:
+    """J7, X1, X4: Attendance export download route enforces ownership, 24h expiry,
+    path traversal safety, and records ATTENDANCE_EXPORT_DOWNLOADED audit log.
+    """
+    from app.core.jobs import register_job
+
+    monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
+    export_file = tmp_path / "attendance_valid.csv"
+    export_file.write_text("emp_code,date,status\nE001,2026-10-30,present\n")
+
+    hr = test_setup["hr1"]
+    job_id = str(uuid.uuid4())
+    register_job(job_id, test_setup["company1"].id, hr.id, "attendance_export")
+
+    with patch("app.modules.time_leave.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "SUCCESS"
+        mock_task.result = {
+            "company_id": str(test_setup["company1"].id),
+            "requester_id": str(hr.id),
+            "file_path": str(export_file),
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        }
+        mock_async.return_value = mock_task
+
+        # Starter (HR) downloads: 200
+        res = client.get(f"/api/v1/attendance/export/{job_id}/download", headers=_auth_headers(hr))
+        assert res.status_code == 200
+        assert "text/csv" in res.headers["content-type"]
+        assert "attachment" in res.headers["content-disposition"]
+        assert res.headers.get("cache-control") == "no-store"
+        today_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        assert f"attendance_{today_str}.csv" in res.headers["content-disposition"]
+
+        # Owner of same company who did not start it: 200
+        res_owner = client.get(
+            f"/api/v1/attendance/export/{job_id}/download",
+            headers=_auth_headers(test_setup["owner1"]),
+        )
+        assert res_owner.status_code == 200
+
+        # Non-HR user gets 403
+        res_emp = client.get(
+            f"/api/v1/attendance/export/{job_id}/download",
+            headers=_auth_headers(test_setup["emp1"]),
+        )
+        assert res_emp.status_code == 403
+
+        # Other company HR admin gets 404
+        res_other = client.get(
+            f"/api/v1/attendance/export/{job_id}/download",
+            headers=_auth_headers(test_setup["hr2"]),
+        )
+        assert res_other.status_code == 404
+
+    # Expired export test: returns 404 AND deletes file from disk
+    expired_file = tmp_path / "attendance_expired.csv"
+    expired_file.write_text("expired attendance")
+    job_id_exp = str(uuid.uuid4())
+    register_job(job_id_exp, test_setup["company1"].id, hr.id, "attendance_export")
+
+    with patch("app.modules.time_leave.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "SUCCESS"
+        mock_task.result = {
+            "company_id": str(test_setup["company1"].id),
+            "requester_id": str(hr.id),
+            "file_path": str(expired_file),
+            "expires_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+        }
+        mock_async.return_value = mock_task
+
+        res_exp = client.get(
+            f"/api/v1/attendance/export/{job_id_exp}/download", headers=_auth_headers(hr)
+        )
+        assert res_exp.status_code == 404
+        assert not os.path.exists(expired_file)
+
+    # Path outside EXPORT_DIR fails with 404
+    outside_file = tmp_path.parent / "outside_attendance.csv"
+    outside_file.write_text("outside data")
+    job_id_outside = str(uuid.uuid4())
+    register_job(job_id_outside, test_setup["company1"].id, hr.id, "attendance_export")
+
+    with patch("app.modules.time_leave.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "SUCCESS"
+        mock_task.result = {
+            "company_id": str(test_setup["company1"].id),
+            "requester_id": str(hr.id),
+            "file_path": str(outside_file),
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        }
+        mock_async.return_value = mock_task
+
+        res_out = client.get(
+            f"/api/v1/attendance/export/{job_id_outside}/download", headers=_auth_headers(hr)
+        )
+        assert res_out.status_code == 404
+
+    # Verify audit row: ATTENDANCE_EXPORT_DOWNLOADED with details {"job_id": job_id}
+    audit_row = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.company_id == test_setup["company1"].id,
+            AuditLog.action == "ATTENDANCE_EXPORT_DOWNLOADED",
+        )
+        .order_by(AuditLog.created_at.desc())
+        .first()
+    )
+    assert audit_row is not None
+    assert audit_row.details == {"job_id": job_id}
+
+
+def test_j7_attendance_export_download_rate_limit(
+    client: TestClient, test_setup: dict[str, Any], tmp_path, monkeypatch
+) -> None:
+    """J7, X1, X4: Attendance export download route rate limited at 10/min.
+    The 11th request gives 429.
+    """
+    from app.core.jobs import register_job
+
+    hr = test_setup["hr1"]
+    hr_headers = _auth_headers(hr)
+
+    limiter.enabled = True
+    try:
+        limiter.reset()
+        monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
+        dl_file = tmp_path / "dl_att_rl.csv"
+        dl_file.write_text("a,b\n1,2\n")
+
+        job_id = str(uuid.uuid4())
+        register_job(job_id, test_setup["company1"].id, hr.id, "attendance_export")
+
+        codes_dl = []
+        with patch("app.modules.time_leave.router.celery_app.AsyncResult") as mock_async:
+            mock_task = MagicMock()
+            mock_task.state = "SUCCESS"
+            mock_task.result = {
+                "company_id": str(test_setup["company1"].id),
+                "requester_id": str(hr.id),
+                "file_path": str(dl_file),
+                "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            }
+            mock_async.return_value = mock_task
+
+            for _ in range(11):
+                r = client.get(f"/api/v1/attendance/export/{job_id}/download", headers=hr_headers)
+                codes_dl.append(r.status_code)
+        assert all(c == 200 for c in codes_dl[:10])
+        assert codes_dl[10] == 429
+    finally:
+        limiter.reset()
+        limiter.enabled = False
 
 
 # ── J8: Cleanup of old export files ───────────────────────────────────────

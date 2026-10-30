@@ -5,6 +5,7 @@ import csv
 import logging
 import os
 import uuid
+from datetime import UTC, datetime, timedelta
 from datetime import date as date_cls
 
 from app.core.config import settings
@@ -18,10 +19,15 @@ from app.workers.celery_app import celery_app
 logger = logging.getLogger("app")
 
 
+def get_task_db_session():
+    return SessionLocal()
+
+
 @celery_app.task(name="app.workers.tasks.attendance.export_attendance_csv_task")
 def export_attendance_csv_task(
     *,
     company_id: str,
+    requester_id: str | None = None,
     employee_id: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
@@ -36,7 +42,7 @@ def export_attendance_csv_task(
     though this one doesn't itself commit mid-task. 13.2 rule 3: idempotent
     — re-running just regenerates the same export, no state to double-write.
     """
-    db = SessionLocal()
+    db = get_task_db_session()
     try:
         cid = uuid.UUID(company_id)
         bind_tenant_to_session(db, company_id=cid, is_platform_admin=False)
@@ -91,10 +97,18 @@ def export_attendance_csv_task(
                     ]
                 )
 
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(hours=24)
         logger.info(
             "attendance_csv_exported",
             extra={"company_id": company_id, "file_path": file_path, "row_count": len(rows)},
         )
-        return {"company_id": company_id, "file_path": file_path, "row_count": len(rows)}
+        return {
+            "company_id": str(company_id),
+            "requester_id": requester_id,
+            "file_path": file_path,
+            "row_count": len(rows),
+            "expires_at": expires_at.isoformat(),
+        }
     finally:
         db.close()
