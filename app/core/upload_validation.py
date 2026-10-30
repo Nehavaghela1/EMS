@@ -6,7 +6,8 @@ from app.core.exceptions import PayloadTooLargeError, ValidationError
 from app.core.filenames import sanitize_filename
 
 if TYPE_CHECKING:
-    from fastapi import Request, UploadFile
+    from starlette.datastructures import UploadFile
+    from starlette.requests import Request
 
 ALLOWED_EXTENSIONS = {"pdf", "jpg", "jpeg", "png", "docx"}
 MAX_FILE_UPLOAD_BYTES = 25 * 1024 * 1024

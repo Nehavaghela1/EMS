@@ -476,7 +476,7 @@ async def add_project_document(
 
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" in content_type:
-        from fastapi import UploadFile
+        from starlette.datastructures import UploadFile
 
         from app.modules.platform.service import FileService
 
