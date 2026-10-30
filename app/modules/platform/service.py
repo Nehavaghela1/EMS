@@ -1,4 +1,5 @@
 import logging
+import unicodedata
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -393,11 +394,14 @@ def _clean_action_url(action_url: str | None) -> str | None:
     if not action_url.startswith("/") or action_url.startswith("//"):
         logger.warning("Rejected invalid notification action_url: %s", action_url)
         return None
-    if ":" in action_url:
-        logger.warning("Rejected notification action_url with scheme: %s", action_url)
+    if ":" in action_url or "\\" in action_url:
+        logger.warning("Rejected notification action_url with scheme or backslash: %s", action_url)
         return None
-    if any(c.isspace() for c in action_url):
-        logger.warning("Rejected notification action_url with spaces: %s", action_url)
+    if any(c.isspace() or unicodedata.category(c).startswith("C") for c in action_url):
+        logger.warning(
+            "Rejected notification action_url with spaces or control characters: %s",
+            action_url,
+        )
         return None
     return action_url
 
@@ -566,8 +570,20 @@ class AnnouncementService:
                 )
                 .first()
             )
-            if caller_emp:
-                caller_dept_id = caller_emp.department_id
+            if caller_emp and caller_emp.department_id:
+                from app.modules.hr.models import Department
+
+                active_dept = (
+                    self.db.query(Department)
+                    .filter(
+                        Department.id == caller_emp.department_id,
+                        Department.company_id == company_id,
+                        Department.deleted_at.is_(None),
+                    )
+                    .first()
+                )
+                if active_dept:
+                    caller_dept_id = active_dept.id
 
         return self.repo.list_active(
             company_id=company_id,

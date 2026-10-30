@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate
@@ -461,6 +461,10 @@ class AnnouncementRepository:
             (Announcement.expires_at.is_(None) | (Announcement.expires_at > now)),
         )
         if user.role not in HR_LEVEL_ROLES:
+            stmt = stmt.outerjoin(
+                Department,
+                (Department.id == Announcement.department_id) & (Department.deleted_at.is_(None)),
+            ).where(Announcement.department_id.is_(None) | Department.id.is_not(None))
             role_cond = Announcement.department_id.is_(None) & (
                 (Announcement.target_role == "all") | (Announcement.target_role == user.role.value)
             )
@@ -603,11 +607,13 @@ class SearchRepository:
         contains_pat = f"%{escaped}%"
 
         caller_emp = self.db.scalar(
-            select(Employee).where(
+            select(Employee)
+            .where(
                 Employee.company_id == company_id,
                 Employee.user_id == user.id,
                 Employee.deleted_at.is_(None),
             )
+            .limit(1)
         )
         is_hr_level = user.role in HR_LEVEL_ROLES
 
@@ -646,6 +652,14 @@ class SearchRepository:
             else:
                 emp_filter = name_match
 
+        q_lower = query.lower()
+        emp_starts_with = (
+            func.lower(Employee.first_name).startswith(q_lower)
+            | func.lower(func.coalesce(Employee.last_name, "")).startswith(q_lower)
+            | func.lower(
+                func.concat(Employee.first_name, " ", func.coalesce(Employee.last_name, ""))
+            ).startswith(q_lower)
+        )
         emp_stmt = (
             select(Employee, Department.name.label("dept_name"))
             .outerjoin(
@@ -658,10 +672,14 @@ class SearchRepository:
                 Employee.is_active.is_(True),
                 emp_filter,
             )
+            .order_by(
+                case((emp_starts_with, 0), else_=1),
+                Employee.first_name,
+                Employee.last_name,
+            )
+            .limit(10)
         )
         emp_rows = self.db.execute(emp_stmt).all()
-        emp_items: list[tuple[bool, dict[str, Any]]] = []
-        q_lower = query.lower()
         for emp, dept_name in emp_rows:
             full_name = f"{emp.first_name} {emp.last_name or ''}".strip()
             has_full_details = (
@@ -676,26 +694,15 @@ class SearchRepository:
                 subtitle = dept_name
                 url = None
 
-            starts_with = (
-                emp.first_name.lower().startswith(q_lower)
-                or (emp.last_name is not None and emp.last_name.lower().startswith(q_lower))
-                or full_name.lower().startswith(q_lower)
+            results.append(
+                {
+                    "id": emp.id,
+                    "type": "employee",
+                    "title": full_name,
+                    "subtitle": subtitle,
+                    "url": url,
+                }
             )
-            emp_items.append(
-                (
-                    starts_with,
-                    {
-                        "id": emp.id,
-                        "type": "employee",
-                        "title": full_name,
-                        "subtitle": subtitle,
-                        "url": url,
-                    },
-                )
-            )
-
-        emp_items.sort(key=lambda x: 0 if x[0] else 1)
-        results.extend([x[1] for x in emp_items[:10]])
 
         # ── 2. Projects ───────────────────────────────────────────
         proj_filter_conditions = [Project.company_id == company_id]
@@ -731,28 +738,29 @@ class SearchRepository:
         )
         proj_filter_conditions.append(proj_match)
 
-        proj_stmt = select(Project).where(*proj_filter_conditions)
+        proj_starts_with = func.lower(Project.name).startswith(q_lower) | func.lower(
+            Project.code
+        ).startswith(q_lower)
+        proj_stmt = (
+            select(Project)
+            .where(*proj_filter_conditions)
+            .order_by(
+                case((proj_starts_with, 0), else_=1),
+                Project.name,
+            )
+            .limit(10)
+        )
         projs = list(self.db.scalars(proj_stmt))
-        proj_items: list[tuple[bool, dict[str, Any]]] = []
         for proj in projs:
-            starts_with = proj.name.lower().startswith(q_lower) or proj.code.lower().startswith(
-                q_lower
+            results.append(
+                {
+                    "id": proj.id,
+                    "type": "project",
+                    "title": proj.name,
+                    "subtitle": f"Code: {proj.code} • Status: {proj.status}",
+                    "url": f"/projects/{proj.id}",
+                }
             )
-            proj_items.append(
-                (
-                    starts_with,
-                    {
-                        "id": proj.id,
-                        "type": "project",
-                        "title": proj.name,
-                        "subtitle": f"Code: {proj.code} • Status: {proj.status}",
-                        "url": f"/projects/{proj.id}",
-                    },
-                )
-            )
-
-        proj_items.sort(key=lambda x: 0 if x[0] else 1)
-        results.extend([x[1] for x in proj_items[:10]])
 
         # ── 3. Tasks ──────────────────────────────────────────────
         task_filter_conditions = [Task.company_id == company_id]
@@ -773,25 +781,26 @@ class SearchRepository:
         ).ilike(contains_pat, escape="\\")
         task_filter_conditions.append(task_match)
 
-        task_stmt = select(Task).where(*task_filter_conditions)
-        tasks = list(self.db.scalars(task_stmt))
-        task_items: list[tuple[bool, dict[str, Any]]] = []
-        for task in tasks:
-            starts_with = task.title.lower().startswith(q_lower)
-            task_items.append(
-                (
-                    starts_with,
-                    {
-                        "id": task.id,
-                        "type": "task",
-                        "title": task.title,
-                        "subtitle": f"Status: {task.status} • Priority: {task.priority}",
-                        "url": f"/projects/{task.project_id}",
-                    },
-                )
+        task_starts_with = func.lower(Task.title).startswith(q_lower)
+        task_stmt = (
+            select(Task)
+            .where(*task_filter_conditions)
+            .order_by(
+                case((task_starts_with, 0), else_=1),
+                Task.title,
             )
-
-        task_items.sort(key=lambda x: 0 if x[0] else 1)
-        results.extend([x[1] for x in task_items[:10]])
+            .limit(10)
+        )
+        tasks = list(self.db.scalars(task_stmt))
+        for task in tasks:
+            results.append(
+                {
+                    "id": task.id,
+                    "type": "task",
+                    "title": task.title,
+                    "subtitle": f"Status: {task.status} • Priority: {task.priority}",
+                    "url": f"/projects/{task.project_id}",
+                }
+            )
 
         return results

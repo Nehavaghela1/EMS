@@ -1143,15 +1143,9 @@ def test_t7_cleanup_old_notifications_task(
     db.expire_all()
     bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
 
-    assert (
-        db.get(Notification, old_read_id) is None
-    ), "read 91-day row deleted"
-    assert (
-        db.get(Notification, old_unread_id) is not None
-    ), "unread old row kept"
-    assert (
-        db.get(Notification, recent_read_id) is not None
-    ), "read 89-day row kept"
+    assert db.get(Notification, old_read_id) is None, "read 91-day row deleted"
+    assert db.get(Notification, old_unread_id) is not None, "unread old row kept"
+    assert db.get(Notification, recent_read_id) is not None, "read 89-day row kept"
 
     # Verify beat schedule registration
     beat = celery_app.celery_app.conf.beat_schedule
@@ -1554,9 +1548,7 @@ def test_s5_search_limit_applied_in_sql(
 
         # Verify SQL-level LIMIT applied to all 3 entity queries
         emp_queries = [
-            q
-            for q in executed_queries
-            if "from employees" in q.lower() and "select" in q.lower()
+            q for q in executed_queries if "from employees" in q.lower() and "select" in q.lower()
         ]
         assert len(emp_queries) > 0, "Expected at least one query on employees"
         assert all("limit" in q.lower() for q in emp_queries), (
