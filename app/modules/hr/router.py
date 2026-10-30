@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.exceptions import NotFoundError
+from app.core.jobs import get_registered_job, register_job
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.modules.hr.models import Department, Employee, EmploymentType
@@ -424,6 +425,12 @@ def export_employees(
         role=data.role,
         employee_ids=[str(x) for x in data.employee_ids] if data.employee_ids else None,
     )
+    register_job(
+        task.id,
+        company_id=user.company_id,
+        user_id=user.id,
+        kind="employee_export",
+    )
     return EmployeeExportJobResponse(job_id=task.id)
 
 
@@ -435,6 +442,23 @@ def download_employee_export(
         require_role(UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin)
     ),
 ):
+    try:
+        uuid.UUID(job_id)
+    except (ValueError, TypeError, AttributeError):
+        raise NotFoundError("Export not found.") from None
+
+    job_meta = get_registered_job(job_id)
+    if not job_meta:
+        raise NotFoundError("Export not found.")
+
+    if user.role != UserRole.super_admin:
+        if job_meta.get("company_id") != str(user.company_id):
+            raise NotFoundError("Export not found.")
+        is_starter = job_meta.get("user_id") and str(user.id) == str(job_meta.get("user_id"))
+        is_hr_level = user.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        if not (is_starter or is_hr_level):
+            raise NotFoundError("Export not found.")
+
     async_result = celery_app.AsyncResult(job_id)
     if async_result.state != "SUCCESS":
         raise NotFoundError("Export not found or still processing.")

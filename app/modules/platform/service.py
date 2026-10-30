@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.audit_context import audit_context_var
 from app.core.cache import delete_by_prefix, get_json, set_json
 from app.core.config import settings
 from app.core.exceptions import AppError, ForbiddenError, NotFoundError
@@ -55,6 +56,14 @@ _BANNED_DETAIL_KEYS = {
     "bank_account_number",
     "bank_details",
     "ifsc",
+    "otp",
+    "secret",
+    "client_secret",
+    "api_key",
+    "authorization",
+    "card_number",
+    "cvv",
+    "password_hash",
 }
 
 
@@ -67,17 +76,20 @@ class UnsafeAuditDetailsError(AppError):
     code = "unsafe_audit_details"
 
 
-def _assert_details_safe(details: dict[str, Any] | None) -> None:
+def _assert_details_safe(details: Any) -> None:
     if details is None:
         return
-    for key, value in details.items():
-        if key.lower() in _BANNED_DETAIL_KEYS:
-            raise UnsafeAuditDetailsError(
-                "Refusing to write a sensitive field to audit_logs.details.",
-                details={"field": key},
-            )
-        if isinstance(value, dict):
+    if isinstance(details, dict):
+        for key, value in details.items():
+            if str(key).lower() in _BANNED_DETAIL_KEYS:
+                raise UnsafeAuditDetailsError(
+                    "Refusing to write a sensitive field to audit_logs.details.",
+                    details={"field": str(key)},
+                )
             _assert_details_safe(value)
+    elif isinstance(details, (list, tuple, set)):
+        for item in details:
+            _assert_details_safe(item)
 
 
 class IndustryPresetService:
@@ -120,6 +132,11 @@ class AuditService:
         """
         safe_details = jsonable(details) if details is not None else None
         _assert_details_safe(safe_details)
+        ctx = audit_context_var.get()
+        ip_addr = ctx.ip_address if ctx else None
+        ua = ctx.user_agent if ctx else None
+        req_id = ctx.request_id if ctx else None
+
         return self.repo.create(
             company_id=company_id,
             actor_user_id=actor.id if actor else None,
@@ -128,6 +145,9 @@ class AuditService:
             entity_type=entity_type,
             entity_id=entity_id,
             details=safe_details,
+            ip_address=ip_addr,
+            user_agent=ua,
+            request_id=req_id,
         )
 
     def list_audit_logs(
@@ -156,6 +176,7 @@ class AuditService:
         self,
         company_id: uuid.UUID,
         *,
+        actor: User,
         action: str | None,
         actor_email: str | None,
         entity_type: str | None,
@@ -163,16 +184,54 @@ class AuditService:
         date_to: date | None,
     ) -> str:
         """Route 129: queues the real Celery job (13.1)."""
+        from app.core.jobs import register_job
         from app.workers.tasks.platform import export_audit_logs_csv_task
 
         task = export_audit_logs_csv_task.delay(
             company_id=str(company_id),
+            requester_id=str(actor.id),
             action=action,
             actor_email=actor_email,
             entity_type=entity_type,
             date_from=date_from.isoformat() if date_from else None,
             date_to=date_to.isoformat() if date_to else None,
         )
+
+        register_job(
+            task.id,
+            company_id=company_id,
+            user_id=actor.id,
+            kind="audit_logs_export",
+        )
+
+        used_filters = []
+        if action is not None:
+            used_filters.append("action")
+        if actor_email is not None:
+            used_filters.append("actor_email")
+        if entity_type is not None:
+            used_filters.append("entity_type")
+        if date_from is not None:
+            used_filters.append("date_from")
+        if date_to is not None:
+            used_filters.append("date_to")
+
+        audit_details: dict[str, Any] = {"filters": used_filters}
+        if date_from is not None:
+            audit_details["date_from"] = date_from.isoformat()
+        if date_to is not None:
+            audit_details["date_to"] = date_to.isoformat()
+
+        self.record(
+            company_id=company_id,
+            actor=actor,
+            action="AUDIT_EXPORT_REQUESTED",
+            entity_type="audit_log",
+            entity_id=None,
+            details=audit_details,
+        )
+        self.db.commit()
+
         return task.id
 
 

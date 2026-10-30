@@ -130,7 +130,7 @@ def export_attendance(
     db=Depends(get_tenant_db),
     _user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    job_id = AttendanceService(db).queue_export(_user.company_id, data)
+    job_id = AttendanceService(db).queue_export(_user.company_id, data, user_id=_user.id)
     return JobQueuedResponse(job_id=job_id)
 
 

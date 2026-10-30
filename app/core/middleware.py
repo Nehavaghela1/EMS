@@ -4,8 +4,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.core.audit_context import (
+    AuditContext,
+    audit_context_var,
+    parse_audit_ip,
+    parse_audit_request_id,
+    parse_audit_user_agent,
+)
 from app.core.config import settings
 from app.core.logging import request_id_var
+from app.core.rate_limit import get_client_ip
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -37,3 +45,25 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if settings.ENVIRONMENT == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
+
+
+class AuditContextMiddleware(BaseHTTPMiddleware):
+    """Sets ContextVar-based audit context for the request lifecycle."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        raw_ip = get_client_ip(request)
+        raw_ua = request.headers.get("user-agent")
+        raw_req_id = getattr(request.state, "request_id", None) or request.headers.get(
+            "X-Request-ID"
+        )
+
+        ctx = AuditContext(
+            ip_address=parse_audit_ip(raw_ip),
+            user_agent=parse_audit_user_agent(raw_ua),
+            request_id=parse_audit_request_id(raw_req_id),
+        )
+        token = audit_context_var.set(ctx)
+        try:
+            return await call_next(request)
+        finally:
+            audit_context_var.reset(token)

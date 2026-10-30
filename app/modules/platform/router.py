@@ -3,7 +3,7 @@ import os
 import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -23,6 +23,7 @@ from app.core.exceptions import (
     PayloadTooLargeError,
     ValidationError,
 )
+from app.core.jobs import get_registered_job
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.core.roles import HR_LEVEL_ROLES
@@ -93,42 +94,46 @@ _STATE_MAP: dict[str, JobState] = {
 }
 
 
+def _safe_result(result: Any) -> dict[str, Any] | None:
+    if isinstance(result, dict):
+        return {k: v for k, v in result.items() if k in {"row_count", "expires_at"}}
+    return None
+
+
 @router.get("/{job_id}", response_model=JobStatusResponse)
-def get_job_status(job_id: str, user: User = Depends(get_current_user)) -> JobStatusResponse:
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_job_status(
+    job_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> JobStatusResponse:
+    try:
+        uuid.UUID(job_id)
+    except (ValueError, TypeError, AttributeError):
+        raise NotFoundError("Job not found.") from None
+
+    job_meta = get_registered_job(job_id)
+    if not job_meta:
+        raise NotFoundError("Job not found.")
+
+    if user.role != UserRole.super_admin:
+        if job_meta.get("company_id") != str(user.company_id):
+            raise NotFoundError("Job not found.")
+        is_starter = job_meta.get("user_id") and str(user.id) == str(job_meta.get("user_id"))
+        is_hr_level = user.role in HR_LEVEL_ROLES
+        if not (is_starter or is_hr_level):
+            raise NotFoundError("Job not found.")
+
     async_result = celery_app.AsyncResult(job_id)
     status = _STATE_MAP.get(async_result.state, "queued")
     result = async_result.result if status == "success" else None
-    if (
-        result is not None
-        and user.role != UserRole.super_admin
-        and isinstance(result, dict)
-        and result.get("company_id") != str(user.company_id)
-    ):
-        # Every export task's result carries the company_id it ran for — a
-        # job_id supplied by the client is exactly the kind of id a service
-        # must re-scope rather than trust, even though Celery's own task ids
-        # are high-entropy UUIDs and not practically guessable. 404, not 403
-        # (10.1): the caller should not learn that a job with this id exists
-        # at all.
-        raise NotFoundError("Job not found.")
 
-    # Never expose internal filesystem paths, private file names, or requester info
-    # in public job status response
-    safe_result = None
-    if isinstance(result, dict):
-        # B4: for employee exports return only company_id, row_count, expires_at.
-        # Keep requester_id, file name and file_path private (never returned).
-        if "expires_at" in result:
-            allowed_keys = {"company_id", "row_count", "expires_at"}
-            safe_result = {k: v for k, v in result.items() if k in allowed_keys}
-        else:
-            safe_result = {k: v for k, v in result.items() if k != "file_path"}
-    elif result is not None:
-        safe_result = result
+    safe_result = _safe_result(result)
 
     safe_error = None
     if status == "failure":
         task_err = async_result.result
+        logger.error("Job %s failed: %s", job_id, repr(task_err))
         if isinstance(task_err, ExportTooLargeError):
             safe_error = str(task_err)
         elif isinstance(task_err, Exception):
@@ -165,16 +170,21 @@ def _to_audit_log_response(log: AuditLog) -> AuditLogResponse:
 
 
 @audit_logs_router.get("", response_model=Page[AuditLogResponse])
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def list_audit_logs(
-    action: str | None = None,
-    actor_email: str | None = None,
-    entity_type: str | None = None,
+    request: Request,
+    action: str | None = Query(default=None, max_length=100),
+    actor_email: str | None = Query(default=None, max_length=255),
+    entity_type: str | None = Query(default=None, max_length=50),
     date_from: date | None = None,
     date_to: date | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
+    if date_from and date_to and date_from > date_to:
+        raise ValidationError("date_from cannot be after date_to.")
+
     items, total, pages = AuditService(db).list_audit_logs(
         user.company_id,
         action=action,
@@ -195,13 +205,16 @@ def list_audit_logs(
 
 
 @audit_logs_router.post("/export", response_model=JobQueuedResponse, status_code=202)
+@limiter.limit("5/minute", key_func=get_user_or_ip_key)
 def export_audit_logs(
+    request: Request,
     data: AuditLogExportRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
     job_id = AuditService(db).queue_export(
         user.company_id,
+        actor=user,
         action=data.action,
         actor_email=data.actor_email,
         entity_type=data.entity_type,
@@ -209,6 +222,79 @@ def export_audit_logs(
         date_to=data.date_to,
     )
     return JobQueuedResponse(job_id=job_id)
+
+
+@audit_logs_router.get("/export/{job_id}/download")
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
+def download_audit_logs_export(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin)),
+):
+    try:
+        uuid.UUID(job_id)
+    except (ValueError, TypeError, AttributeError):
+        raise NotFoundError("Export not found.") from None
+
+    job_meta = get_registered_job(job_id)
+    if not job_meta:
+        raise NotFoundError("Export not found.")
+
+    if user.role != UserRole.super_admin:
+        if job_meta.get("company_id") != str(user.company_id):
+            raise NotFoundError("Export not found.")
+        is_starter = job_meta.get("user_id") and str(user.id) == str(job_meta.get("user_id"))
+        is_hr_level = user.role in HR_LEVEL_ROLES
+        if not (is_starter or is_hr_level):
+            raise NotFoundError("Export not found.")
+
+    async_result = celery_app.AsyncResult(job_id)
+    if async_result.state != "SUCCESS":
+        raise NotFoundError("Export not found or still processing.")
+
+    result = async_result.result
+    if not isinstance(result, dict):
+        raise NotFoundError("Export data not found.")
+
+    file_path = result.get("file_path")
+    expires_at_str = result.get("expires_at")
+    if expires_at_str:
+        expires_at = datetime.fromisoformat(expires_at_str)
+        if datetime.now(UTC) > expires_at:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+            raise NotFoundError("Export file has expired.")
+
+    if not file_path or not os.path.exists(file_path):
+        raise NotFoundError("Export file not found on disk.")
+
+    resolved_path = Path(file_path).resolve()
+    export_dir_resolved = Path(settings.EXPORT_DIR).resolve()
+    if not resolved_path.is_relative_to(export_dir_resolved):
+        raise NotFoundError("Export not found.")
+
+    file_name = f"audit_logs_{datetime.now(UTC).strftime('%Y-%m-%d')}.csv"
+
+    AuditService(db).record(
+        company_id=user.company_id,
+        actor=user,
+        action="AUDIT_EXPORT_DOWNLOADED",
+        entity_type="audit_log",
+        entity_id=None,
+        details={"job_id": job_id, "file_name": file_name},
+    )
+    db.commit()
+
+    return FileResponse(
+        path=str(resolved_path),
+        filename=file_name,
+        media_type="text/csv",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _to_notification_response(notification: Notification) -> NotificationResponse:

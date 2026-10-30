@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.jobs import register_job
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
@@ -753,7 +754,7 @@ def test_r07_export_large_result_and_filtering(
     res_data = res_job.json()
     if res_data.get("result"):
         res_res = res_data["result"]
-        assert set(res_res.keys()) == {"company_id", "row_count", "expires_at"}
+        assert set(res_res.keys()) == {"row_count", "expires_at"}
         assert "file_path" not in res_res
         assert "file_name" not in res_res
         assert "requester_id" not in res_res
@@ -802,6 +803,16 @@ def test_r08_export_download_authorization_and_expiry(
 
     assert os.path.exists(tmp_expired_path)
 
+    from app.core.jobs import register_job
+
+    expired_job_id = str(uuid.uuid4())
+    register_job(
+        expired_job_id,
+        bulk_company["company_id"],
+        bulk_company["hr_admin"].id,
+        "employee_export",
+    )
+
     with patch("app.modules.hr.router.celery_app.AsyncResult") as mock_async:
         mock_task = MagicMock()
         mock_task.state = "SUCCESS"
@@ -815,7 +826,9 @@ def test_r08_export_download_authorization_and_expiry(
         }
         mock_async.return_value = mock_task
 
-        res_expired = client.get("/api/v1/employees/export/some-job/download", headers=hr_headers)
+        res_expired = client.get(
+            f"/api/v1/employees/export/{expired_job_id}/download", headers=hr_headers
+        )
         assert res_expired.status_code == 404
         assert "expired" in res_expired.json()["error"]["message"].lower()
         # B5: Must be deleted from disk
@@ -1184,13 +1197,20 @@ def test_c1_job_status_safe_error_messages(
     hr_headers = _auth_headers(bulk_company["hr_admin"])
 
     # 1. Secret internal error / generic RuntimeError
+    failed_job_id = str(uuid.uuid4())
+    register_job(
+        failed_job_id,
+        bulk_company["company_id"],
+        bulk_company["hr_admin"].id,
+        "employee_export",
+    )
     with patch("app.modules.platform.router.celery_app.AsyncResult") as mock_async:
         mock_task = MagicMock()
         mock_task.state = "FAILURE"
         mock_task.result = RuntimeError("secret internal database connection string / password")
         mock_async.return_value = mock_task
 
-        res = client.get("/api/v1/jobs/test-failed-job-1", headers=hr_headers)
+        res = client.get(f"/api/v1/jobs/{failed_job_id}", headers=hr_headers)
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "failure"

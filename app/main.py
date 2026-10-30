@@ -7,7 +7,11 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
-from app.core.middleware import RequestIDMiddleware, SecurityHeadersMiddleware
+from app.core.middleware import (
+    AuditContextMiddleware,
+    RequestIDMiddleware,
+    SecurityHeadersMiddleware,
+)
 from app.core.rate_limit import limiter
 from app.db.session import SessionLocal
 from app.modules.hr.router import departments_router, employees_router
@@ -61,12 +65,15 @@ app.state.limiter = limiter
 # mirrors the request lifecycle in Spec 5.1: CORS outermost (so a preflight
 # OPTIONS is handled before anything else runs) -> rate limit -> request-id.
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(AuditContextMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,  # explicit list from config — never "*" (9.7)
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$",
+    allow_origin_regex=(
+        r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$"
+    ),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[

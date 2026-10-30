@@ -83,6 +83,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/attendance/{attendance_id}/regularize"): AUTHENTICATED,
     ("GET", "/api/v1/audit-logs"): ROLES(UserRole.hr_admin),
     ("POST", "/api/v1/audit-logs/export"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/audit-logs/export/{job_id}/download"): ROLES(UserRole.hr_admin),
     ("POST", "/api/v1/auth/activate"): PUBLIC,
     ("GET", "/api/v1/auth/activate/{token}"): PUBLIC,
     ("POST", "/api/v1/auth/change-password"): AUTHENTICATED,

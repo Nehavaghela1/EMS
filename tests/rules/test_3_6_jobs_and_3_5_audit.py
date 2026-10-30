@@ -207,6 +207,7 @@ def test_j2_job_registered_on_queue_with_24h_ttl(
     and a 24-hour expiration.
     """
     import redis
+
     from app.core.jobs import get_registered_job
 
     hr_headers = _auth_headers(test_setup["hr1"])
@@ -649,10 +650,11 @@ def test_a4_audit_record_stores_context_when_request_present(
     headers["X-Request-ID"] = req_id
     headers["User-Agent"] = "AuditTestSuite/1.0"
 
-    # Trigger an audited action (e.g. queue export)
+    # Trigger an audited action (e.g. queue export) with real IP in client
+    custom_client = TestClient(client.app, client=("198.51.100.25", 50000))
     with patch("app.workers.tasks.platform.export_audit_logs_csv_task.delay") as mock_delay:
         mock_delay.return_value = MagicMock(id=str(uuid.uuid4()))
-        resp = client.post("/api/v1/audit-logs/export", headers=headers, json={})
+        resp = custom_client.post("/api/v1/audit-logs/export", headers=headers, json={})
         assert resp.status_code == 202
 
     # Query database for the written audit row
@@ -668,7 +670,7 @@ def test_a4_audit_record_stores_context_when_request_present(
     assert log is not None
     assert str(log.request_id) == req_id
     assert log.user_agent == "AuditTestSuite/1.0"
-    assert log.ip_address is not None
+    assert log.ip_address == "198.51.100.25"
 
     # Direct record without request context gets None
     service = AuditService(db)

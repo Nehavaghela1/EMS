@@ -126,6 +126,26 @@ class AuditRepository:
         )
         return list(self.db.scalars(stmt))
 
+    def count_for_export(
+        self,
+        *,
+        company_id: uuid.UUID,
+        action: str | None,
+        actor_email: str | None,
+        entity_type: str | None,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> int:
+        stmt = self._filtered(
+            company_id=company_id,
+            action=action,
+            actor_email=actor_email,
+            entity_type=entity_type,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        return self.db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+
 
 class NotificationRepository:
     def __init__(self, db: Session):
