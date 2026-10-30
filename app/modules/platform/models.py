@@ -88,7 +88,10 @@ class Announcement(TenantBase):
     """RLS: Yes (Spec 7.8)."""
 
     __tablename__ = "announcements"
-    __table_args__ = (Index("ix_announcements_company_id_expires_at", "company_id", "expires_at"),)
+    __table_args__ = (
+        Index("ix_announcements_company_id_expires_at", "company_id", "expires_at"),
+        Index("ix_announcements_department_id", "department_id"),
+    )
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -99,6 +102,9 @@ class Announcement(TenantBase):
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class FileObject(TenantBase):

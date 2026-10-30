@@ -272,7 +272,9 @@ def _to_notification_response(notification: Notification) -> NotificationRespons
 
 
 @notifications_router.get("", response_model=NotificationListResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_notifications(
+    request: Request,
     unread_only: bool = False,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
@@ -293,7 +295,9 @@ def list_notifications(
 
 
 @notifications_router.put("/read-all", response_model=MarkAllReadResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def mark_all_notifications_read(
+    request: Request,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
@@ -302,8 +306,10 @@ def mark_all_notifications_read(
 
 
 @notifications_router.put("/{notification_id}/read", response_model=NotificationResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def mark_notification_read(
     notification_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
@@ -316,29 +322,35 @@ announcements_router = APIRouter(prefix="/announcements", tags=["Announcements"]
 
 
 @announcements_router.get("", response_model=list[AnnouncementResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_announcements(
+    request: Request,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    return AnnouncementService(db).list_active(user.company_id, user.role.value)
+    return AnnouncementService(db).list_active(user.company_id, user)
 
 
 @announcements_router.post("", response_model=AnnouncementResponse, status_code=201)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def create_announcement(
+    request: Request,
     data: AnnouncementCreate,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)),
 ):
-    return AnnouncementService(db).create(user.company_id, user.id, data)
+    return AnnouncementService(db).create(user.company_id, user, data)
 
 
 @announcements_router.delete("/{announcement_id}", status_code=204)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def delete_announcement(
     announcement_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)),
 ):
-    AnnouncementService(db).delete(user.company_id, announcement_id)
+    AnnouncementService(db).delete(user.company_id, announcement_id, user)
 
 
 # ── File Uploads & Signed URLs (routes 130-131) ─────────────────
@@ -717,9 +729,11 @@ search_router = APIRouter(prefix="/search", tags=["Global Search"])
 
 
 @search_router.get("", response_model=GlobalSearchResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def global_search(
-    q: str = Query(..., min_length=2),
+    request: Request,
+    q: str = Query(..., min_length=2, max_length=100),
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    return GlobalSearchService(db).search(user.company_id, q)
+    return GlobalSearchService(db).search(user.company_id, user, q)

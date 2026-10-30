@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.audit_context import audit_context_var
 from app.core.cache import delete_by_prefix, get_json, set_json
 from app.core.config import settings
-from app.core.exceptions import AppError, ForbiddenError, NotFoundError
+from app.core.exceptions import AppError, ForbiddenError, NotFoundError, ValidationError
 from app.core.pagination import PageParams
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
@@ -383,6 +384,24 @@ class DashboardService:
         }
 
 
+logger = logging.getLogger(__name__)
+
+
+def _clean_action_url(action_url: str | None) -> str | None:
+    if action_url is None:
+        return None
+    if not action_url.startswith("/") or action_url.startswith("//"):
+        logger.warning("Rejected invalid notification action_url: %s", action_url)
+        return None
+    if ":" in action_url:
+        logger.warning("Rejected notification action_url with scheme: %s", action_url)
+        return None
+    if any(c.isspace() for c in action_url):
+        logger.warning("Rejected notification action_url with spaces: %s", action_url)
+        return None
+    return action_url
+
+
 class NotificationService:
     """Routes 125-127 (Spec 7.8, 10.8). In-app only — no email, no SMS."""
 
@@ -404,13 +423,14 @@ class NotificationService:
     ) -> Notification:
         """Create+flush only (Spec 6.7) — called from inside the mutating
         service's own transaction, which commits once at the end."""
+        clean_url = _clean_action_url(action_url)
         return self.repo.create(
             company_id=company_id,
             user_id=user_id,
             type=type,
             title=title,
             message=message,
-            action_url=action_url,
+            action_url=clean_url,
             entity_type=entity_type,
             entity_id=entity_id,
         )
@@ -457,29 +477,123 @@ class AnnouncementService:
 
         self.repo = AnnouncementRepository(db)
 
-    def create(
-        self, company_id: uuid.UUID, user_id: uuid.UUID, data: AnnouncementCreate
-    ) -> Announcement:
+    def create(self, company_id: uuid.UUID, user: User, data: AnnouncementCreate) -> Announcement:
+        from app.modules.hr.models import Department, Employee
+
+        is_hr_level = user.role in HR_LEVEL_ROLES
+        caller_emp = (
+            self.db.query(Employee)
+            .filter(
+                Employee.company_id == company_id,
+                Employee.user_id == user.id,
+                Employee.deleted_at.is_(None),
+            )
+            .first()
+        )
+
+        if not is_hr_level:
+            if user.role != UserRole.manager:
+                raise ForbiddenError("Only HR-level roles and managers can create announcements.")
+            if data.department_id is None:
+                raise ForbiddenError("Managers must specify a department for announcements.")
+            if caller_emp is None:
+                raise ForbiddenError("Manager must have an active employee record.")
+
+        if data.department_id is not None:
+            dept = (
+                self.db.query(Department)
+                .filter(
+                    Department.id == data.department_id,
+                    Department.company_id == company_id,
+                    Department.deleted_at.is_(None),
+                )
+                .first()
+            )
+            if not dept:
+                raise NotFoundError("Department not found.")
+
+            if not is_hr_level:
+                assert caller_emp is not None
+                is_own = caller_emp.department_id == dept.id
+                is_head = dept.head_employee_id == caller_emp.id
+                if not (is_own or is_head):
+                    raise ForbiddenError(
+                        "Managers can only post to their own department or a department they head."
+                    )
+
         announcement = self.repo.create(
             company_id=company_id,
-            created_by=user_id,
+            created_by=user.id,
             title=data.title,
             content=data.content,
             target_role=data.target_role,
             expires_at=data.expires_at,
+            department_id=data.department_id,
+        )
+
+        audience_kind = (
+            "department"
+            if data.department_id is not None
+            else ("role" if data.target_role != "all" else "company")
+        )
+        AuditService(self.db).record(
+            company_id=company_id,
+            actor=user,
+            action="ANNOUNCEMENT_CREATED",
+            entity_type="announcement",
+            entity_id=announcement.id,
+            details={
+                "announcement_id": str(announcement.id),
+                "audience_kind": audience_kind,
+                "department_id": str(data.department_id) if data.department_id else None,
+            },
         )
         self.db.commit()
         self.db.refresh(announcement)
         return announcement
 
-    def list_active(self, company_id: uuid.UUID, user_role: str) -> list[Announcement]:
-        return self.repo.list_active(company_id, user_role)
+    def list_active(self, company_id: uuid.UUID, user: User) -> list[Announcement]:
+        from app.modules.hr.models import Employee
 
-    def delete(self, company_id: uuid.UUID, announcement_id: uuid.UUID) -> None:
+        caller_dept_id = None
+        if user.role not in HR_LEVEL_ROLES:
+            caller_emp = (
+                self.db.query(Employee)
+                .filter(
+                    Employee.company_id == company_id,
+                    Employee.user_id == user.id,
+                    Employee.deleted_at.is_(None),
+                )
+                .first()
+            )
+            if caller_emp:
+                caller_dept_id = caller_emp.department_id
+
+        return self.repo.list_active(
+            company_id=company_id,
+            user=user,
+            caller_department_id=caller_dept_id,
+        )
+
+    def delete(self, company_id: uuid.UUID, announcement_id: uuid.UUID, user: User) -> None:
         announcement = self.repo.get_by_id(company_id, announcement_id)
         if not announcement:
             raise NotFoundError("Announcement not found.")
+
+        is_hr_level = user.role in HR_LEVEL_ROLES
+        is_poster = announcement.created_by == user.id
+        if not (is_hr_level or is_poster):
+            raise NotFoundError("Announcement not found.")
+
         self.repo.soft_delete(announcement)
+        AuditService(self.db).record(
+            company_id=company_id,
+            actor=user,
+            action="ANNOUNCEMENT_DELETED",
+            entity_type="announcement",
+            entity_id=announcement.id,
+            details={"announcement_id": str(announcement.id)},
+        )
         self.db.commit()
 
 
@@ -694,10 +808,11 @@ class GlobalSearchService:
 
         self.repo = SearchRepository(db)
 
-    def search(self, company_id: uuid.UUID, query: str) -> GlobalSearchResponse:
-        if not query or len(query.strip()) < 2:
-            return GlobalSearchResponse(query=query, total_results=0, results=[])
+    def search(self, company_id: uuid.UUID, user: User, query: str) -> GlobalSearchResponse:
+        trimmed = query.strip()
+        if len(trimmed) < 2 or len(trimmed) > 100:
+            raise ValidationError("Search query must be between 2 and 100 characters.")
 
-        raw_results = self.repo.search_all(company_id, query.strip())
+        raw_results = self.repo.search_all(company_id, user, trimmed)
         items = [SearchResultItem(**r) for r in raw_results]
-        return GlobalSearchResponse(query=query, total_results=len(items), results=items)
+        return GlobalSearchResponse(query=trimmed, total_results=len(items), results=items)

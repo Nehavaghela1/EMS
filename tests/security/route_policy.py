@@ -67,7 +67,7 @@ POLICY: dict[tuple[str, str], Any] = {
         UserRole.super_admin, UserRole.hr_admin, UserRole.manager
     ),
     ("DELETE", "/api/v1/announcements/{announcement_id}"): ROLES(
-        UserRole.super_admin, UserRole.hr_admin
+        UserRole.super_admin, UserRole.hr_admin, UserRole.manager
     ),
     ("GET", "/api/v1/attendance"): AUTHENTICATED,
     ("GET", "/api/v1/attendance/calendar"): AUTHENTICATED,

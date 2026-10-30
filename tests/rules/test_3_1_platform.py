@@ -731,9 +731,8 @@ def test_t1_user_notifications_scoping(
     bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
     u1, _ = _create_user_with_employee(db, company_a.company_id, UserRole.employee)
     u2, _ = _create_user_with_employee(db, company_a.company_id, UserRole.employee)
-    u_b, _ = _create_user_with_employee(db, company_b.company_id, UserRole.employee)
 
-    # Create notification for u1
+    # Create notification for u1 while in company_a
     notif1 = Notification(
         company_id=company_a.company_id,
         user_id=u1.id,
@@ -744,18 +743,23 @@ def test_t1_user_notifications_scoping(
     )
     db.add(notif1)
     db.commit()
+    notif1_id = notif1.id
+
+    bind_tenant_to_session(db, company_id=company_b.company_id, is_platform_admin=False)
+    u_b, _ = _create_user_with_employee(db, company_b.company_id, UserRole.employee)
+    db.commit()
 
     # U1 marks own notification -> 200
-    r_own = client.put(f"/api/v1/notifications/{notif1.id}/read", headers=_auth_headers(u1))
+    r_own = client.put(f"/api/v1/notifications/{notif1_id}/read", headers=_auth_headers(u1))
     assert r_own.status_code == 200
     assert r_own.json()["is_read"] is True
 
     # U2 tries to mark U1's notification -> 404
-    r_u2 = client.put(f"/api/v1/notifications/{notif1.id}/read", headers=_auth_headers(u2))
+    r_u2 = client.put(f"/api/v1/notifications/{notif1_id}/read", headers=_auth_headers(u2))
     assert r_u2.status_code == 404
 
     # Co B tries to mark U1's notification -> 404
-    r_b = client.put(f"/api/v1/notifications/{notif1.id}/read", headers=_auth_headers(u_b))
+    r_b = client.put(f"/api/v1/notifications/{notif1_id}/read", headers=_auth_headers(u_b))
     assert r_b.status_code == 404
 
     # Deactivated user reading notifications -> 401/403
@@ -1007,7 +1011,7 @@ def test_t7_cleanup_old_notifications_task(
     from app.workers import celery_app
     from app.workers.tasks import platform as platform_tasks
 
-    monkeypatch.setattr(platform_tasks, "get_task_db_session", lambda: db)
+    monkeypatch.setattr(platform_tasks, "get_task_db_session", lambda: Session(bind=db.get_bind()))
 
     bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
     user, _ = _create_user_with_employee(db, company_a.company_id, UserRole.employee)
@@ -1049,6 +1053,10 @@ def test_t7_cleanup_old_notifications_task(
     db.add_all([n_old_read, n_old_unread, n_recent_read])
     db.commit()
 
+    old_read_id = n_old_read.id
+    old_unread_id = n_old_unread.id
+    recent_read_id = n_recent_read.id
+
     # Run the task function directly
     deleted_count = platform_tasks.cleanup_old_notifications_task()
     assert deleted_count >= 1
@@ -1056,9 +1064,9 @@ def test_t7_cleanup_old_notifications_task(
     db.expire_all()
     bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
 
-    assert db.get(Notification, n_old_read.id) is None
-    assert db.get(Notification, n_old_unread.id) is not None
-    assert db.get(Notification, n_recent_read.id) is not None
+    assert db.get(Notification, old_read_id) is None
+    assert db.get(Notification, old_unread_id) is not None
+    assert db.get(Notification, recent_read_id) is not None
 
     # Verify beat schedule registration
     beat = celery_app.celery_app.conf.beat_schedule
@@ -1130,6 +1138,7 @@ def test_s2_cross_company_and_deleted_records_hidden(
         db, company_a.company_id, UserRole.employee, first_name="DeletedA"
     )
     emp_del.deleted_at = datetime.now(UTC)
+    db.commit()
 
     # Active employee in Co B
     bind_tenant_to_session(db, company_id=company_b.company_id, is_platform_admin=False)
@@ -1137,6 +1146,8 @@ def test_s2_cross_company_and_deleted_records_hidden(
         db, company_b.company_id, UserRole.employee, first_name="CompanyBEmployee"
     )
     db.commit()
+
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
 
     headers_a = _auth_headers(hr_a)
 
@@ -1462,7 +1473,7 @@ def test_migration_announcement_department_id_round_trip() -> None:
     """
     import subprocess
 
-    from app.db.session import engine
+    from sqlalchemy import create_engine
 
     assert settings.TEST_MIGRATION_URL is not None, "TEST_MIGRATION_URL must be configured"
 
@@ -1482,6 +1493,7 @@ def test_migration_announcement_department_id_round_trip() -> None:
     assert down_rev is not None, "Could not determine down_revision"
 
     env = {**os.environ, "ALEMBIC_DATABASE_URL": settings.TEST_MIGRATION_URL}
+    owner_engine = create_engine(settings.TEST_MIGRATION_URL)
 
     try:
         # Downgrade to down_revision
@@ -1495,7 +1507,7 @@ def test_migration_announcement_department_id_round_trip() -> None:
         )
         assert res_down.returncode == 0, f"Alembic downgrade failed: {res_down.stderr}"
 
-        insp = inspect(engine)
+        insp = inspect(owner_engine)
         cols_after_down = [col["name"] for col in insp.get_columns("announcements")]
         assert "department_id" not in cols_after_down
     finally:
@@ -1510,6 +1522,6 @@ def test_migration_announcement_department_id_round_trip() -> None:
         )
         assert res_up.returncode == 0, f"Alembic upgrade failed: {res_up.stderr}"
 
-    insp = inspect(engine)
+    insp = inspect(owner_engine)
     cols_after_up = [col["name"] for col in insp.get_columns("announcements")]
     assert "department_id" in cols_after_up

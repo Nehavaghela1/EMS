@@ -11,6 +11,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from datetime import date as date_cls
 
+from sqlalchemy import delete, select
+
 from app.core.config import settings
 from app.core.csv_safety import csv_safe_cell
 from app.core.exceptions import ExportTooLargeError
@@ -161,3 +163,39 @@ def cleanup_expired_exports_task() -> int:
 
     logger.info("expired_exports_cleaned", extra={"deleted_count": deleted_count})
     return deleted_count
+
+
+@celery_app.task(name="app.workers.tasks.platform.cleanup_old_notifications_task")
+def cleanup_old_notifications_task() -> int:
+    """T7 / D7: Daily scheduled job to delete read notifications older than 90 days
+    in batches of 1000 with platform admin binding; logs counts only.
+    """
+    from app.modules.platform.models import Notification
+
+    db = get_task_db_session()
+    deleted_total = 0
+    try:
+        bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
+        cutoff = datetime.now(UTC) - timedelta(days=90)
+        while True:
+            ids = list(
+                db.scalars(
+                    select(Notification.id)
+                    .where(
+                        Notification.is_read.is_(True),
+                        Notification.read_at.is_not(None),
+                        Notification.read_at < cutoff,
+                    )
+                    .limit(1000)
+                ).all()
+            )
+            if not ids:
+                break
+            db.execute(delete(Notification).where(Notification.id.in_(ids)))
+            db.commit()
+            deleted_total += len(ids)
+
+        logger.info("old_notifications_cleaned", extra={"deleted_count": deleted_total})
+        return deleted_total
+    finally:
+        db.close()
