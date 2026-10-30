@@ -242,6 +242,15 @@ def _make_tenant(db: Session, *, name: str, code: str) -> TenantContext:
     )
 
 
+@pytest.fixture(autouse=True)
+def isolate_upload_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Isolate settings.UPLOAD_DIR into a per-test temporary directory."""
+    upload_root = tmp_path / "uploads"
+    upload_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(settings, "UPLOAD_DIR", str(upload_root))
+    return upload_root
+
+
 @pytest.fixture
 def company_a(db) -> TenantContext:
     return _make_tenant(db, name="Company A", code=f"COA{uuid.uuid4().hex[:5].upper()}")

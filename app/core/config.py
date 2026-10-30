@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     # concern; this is the interim, explicit, settings-driven location.
     EXPORT_DIR: str = "var/exports"
     EMPLOYEE_DOCS_DIR: str = "var/employee_documents"
+    UPLOAD_DIR: str = "var/uploads"
     MAX_EXPORT_ROWS: int = 50000
 
     # ── Dashboard cache (Spec 11.10) ─────────────────────────────

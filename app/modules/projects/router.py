@@ -476,17 +476,21 @@ async def add_project_document(
 
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" in content_type:
+        from starlette.datastructures import UploadFile
+
         from app.modules.platform.service import FileService
 
         form = await request.form()
         uploaded_file = form.get("file")
-        if not uploaded_file or not hasattr(uploaded_file, "read"):
+        if not isinstance(uploaded_file, UploadFile):
             from app.core.exceptions import ValidationError
 
             raise ValidationError("File is required for upload.")
+        from app.core.upload_validation import read_upload_file_capped
+
         desc = form.get("description")
         desc_str = str(desc) if desc else None
-        file_bytes = await uploaded_file.read()
+        file_bytes = await read_upload_file_capped(uploaded_file, request=request)
         file_name = getattr(uploaded_file, "filename", "document") or "document"
         file_type = (
             getattr(uploaded_file, "content_type", "application/octet-stream")
@@ -499,6 +503,7 @@ async def add_project_document(
             file_name=file_name,
             file_type=file_type,
             file_bytes=file_bytes,
+            actor=current_user,
         )
         doc_create = ProjectDocumentCreate(
             file_id=file_obj.id,

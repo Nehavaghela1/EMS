@@ -1,10 +1,42 @@
 import io
 import zipfile
+from typing import TYPE_CHECKING
 
-from app.core.exceptions import ValidationError
+from app.core.exceptions import PayloadTooLargeError, ValidationError
 from app.core.filenames import sanitize_filename
 
+if TYPE_CHECKING:
+    from starlette.datastructures import UploadFile
+    from starlette.requests import Request
+
 ALLOWED_EXTENSIONS = {"pdf", "jpg", "jpeg", "png", "docx"}
+MAX_FILE_UPLOAD_BYTES = 25 * 1024 * 1024
+
+
+async def read_upload_file_capped(
+    file: "UploadFile",
+    max_bytes: int = MAX_FILE_UPLOAD_BYTES,
+    request: "Request | None" = None,
+) -> bytes:
+    """Reads UploadFile up to max_bytes + 1, raising PayloadTooLargeError if exceeded."""
+    if request is not None:
+        content_length_header = request.headers.get("content-length")
+        if content_length_header:
+            try:
+                if int(content_length_header) > max_bytes:
+                    max_mb = max_bytes // (1024 * 1024)
+                    raise PayloadTooLargeError(
+                        f"File size exceeds maximum upload limit of {max_mb} MB."
+                    )
+            except ValueError:
+                pass
+
+    chunk = await file.read(max_bytes + 1)
+    if len(chunk) > max_bytes:
+        max_mb = max_bytes // (1024 * 1024)
+        raise PayloadTooLargeError(f"File size exceeds maximum upload limit of {max_mb} MB.")
+    return chunk
+
 
 CANONICAL_CONTENT_TYPES = {
     "pdf": "application/pdf",

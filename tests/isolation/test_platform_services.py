@@ -49,7 +49,7 @@ def test_platform_services_tenant_isolation(
     assert ann_id_a not in b_ids
 
     # 2. Tenant A uploads File
-    files = {"file": ("secret_a.txt", b"Secret data tenant A", "text/plain")}
+    files = {"file": ("secret_a.pdf", b"%PDF-1.4 Secret data tenant A", "application/pdf")}
     res_up_a = client.post("/api/v1/files/upload", files=files, headers=headers_a)
     assert res_up_a.status_code == 201
     file_id_a = res_up_a.json()["file_object_id"]

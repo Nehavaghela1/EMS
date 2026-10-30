@@ -346,18 +346,24 @@ files_router = APIRouter(prefix="/files", tags=["Files"])
 
 
 @files_router.post("/upload", response_model=FileUploadResponse, status_code=201)
+@limiter.limit("20/minute", key_func=get_user_or_ip_key)
 async def upload_file(
+    request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    file_bytes = await file.read()
+    from app.core.upload_validation import read_upload_file_capped
+
+    file_bytes = await read_upload_file_capped(file, request=request)
+
     file_obj = FileService(db).upload_file(
         user.company_id,
         user.id,
         file.filename or "file",
         file.content_type or "application/octet-stream",
         file_bytes,
+        actor=user,
     )
     return FileUploadResponse(
         file_object_id=file_obj.id,
@@ -368,37 +374,36 @@ async def upload_file(
 
 
 @files_router.get("/{file_id}/url", response_model=SignedUrlResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_file_signed_url(
     file_id: uuid.UUID,
+    request: Request,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    return FileService(db).generate_signed_url(user.company_id, file_id)
+    return FileService(db).generate_signed_url(user.company_id, file_id, user=user)
 
 
 @files_router.get("/download/{file_id}")
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def download_file(
     file_id: uuid.UUID,
     expires: int,
     signature: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    # Verify HMAC Signature
     import hashlib
     import hmac
-    import os
 
-    from fastapi.responses import FileResponse
-
-    from app.core.config import settings
+    from app.db.rls import bind_tenant_to_session
 
     # 1. Check expiration
     if int(datetime.now(UTC).timestamp()) > expires:
-        from app.core.exceptions import ForbiddenError
-
         raise ForbiddenError("Signed URL has expired.")
 
     # 2. Get file object from db directly (public signed route)
+    bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
     file_obj = db.query(FileObject).filter(FileObject.id == file_id).first()
     if not file_obj:
         raise NotFoundError("File object not found.")
@@ -409,15 +414,26 @@ def download_file(
         settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256
     ).hexdigest()
     if not hmac.compare_digest(expected_sig, signature):
-        from app.core.exceptions import ForbiddenError
-
         raise ForbiddenError("Invalid file signature.")
 
-    if not os.path.exists(file_obj.storage_path):
+    # 4. Containment and disk check
+    upload_root = Path(settings.UPLOAD_DIR).resolve()
+    resolved_path = Path(file_obj.storage_path).resolve()
+    if not resolved_path.is_relative_to(upload_root):
+        raise NotFoundError("File not found on disk.")
+
+    if not resolved_path.exists():
         raise NotFoundError("File not found on disk.")
 
     return FileResponse(
-        path=file_obj.storage_path, filename=file_obj.file_name, media_type=file_obj.file_type
+        path=str(resolved_path),
+        filename=file_obj.file_name,
+        media_type=file_obj.file_type,
+        content_disposition_type="attachment",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
     )
 
 
