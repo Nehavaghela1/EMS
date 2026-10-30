@@ -476,11 +476,13 @@ async def add_project_document(
 
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" in content_type:
+        from fastapi import UploadFile
+
         from app.modules.platform.service import FileService
 
         form = await request.form()
         uploaded_file = form.get("file")
-        if not uploaded_file or not hasattr(uploaded_file, "read"):
+        if not isinstance(uploaded_file, UploadFile):
             from app.core.exceptions import ValidationError
 
             raise ValidationError("File is required for upload.")
