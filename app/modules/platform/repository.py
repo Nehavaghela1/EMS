@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -594,7 +595,7 @@ class SearchRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def search_all(self, company_id: uuid.UUID, user: User, query: str) -> list[dict]:
+    def search_all(self, company_id: uuid.UUID, user: User, query: str) -> list[dict[str, Any]]:
         from app.modules.hr.models import Department, Employee
         from app.modules.projects.models import Project, ProjectMember, Task
 
@@ -610,7 +611,7 @@ class SearchRepository:
         )
         is_hr_level = user.role in HR_LEVEL_ROLES
 
-        results: list[dict] = []
+        results: list[dict[str, Any]] = []
 
         # ── 1. Employees ──────────────────────────────────────────
         name_match = func.lower(Employee.first_name).ilike(contains_pat, escape="\\") | func.lower(
@@ -659,7 +660,7 @@ class SearchRepository:
             )
         )
         emp_rows = self.db.execute(emp_stmt).all()
-        emp_items = []
+        emp_items: list[tuple[bool, dict[str, Any]]] = []
         q_lower = query.lower()
         for emp, dept_name in emp_rows:
             full_name = f"{emp.first_name} {emp.last_name or ''}".strip()
@@ -681,20 +682,20 @@ class SearchRepository:
                 or full_name.lower().startswith(q_lower)
             )
             emp_items.append(
-                {
-                    "item": {
+                (
+                    starts_with,
+                    {
                         "id": emp.id,
                         "type": "employee",
                         "title": full_name,
                         "subtitle": subtitle,
                         "url": url,
                     },
-                    "starts_with": starts_with,
-                }
+                )
             )
 
-        emp_items.sort(key=lambda x: 0 if x["starts_with"] else 1)
-        results.extend([x["item"] for x in emp_items[:10]])
+        emp_items.sort(key=lambda x: 0 if x[0] else 1)
+        results.extend([x[1] for x in emp_items[:10]])
 
         # ── 2. Projects ───────────────────────────────────────────
         proj_filter_conditions = [Project.company_id == company_id]
@@ -732,26 +733,26 @@ class SearchRepository:
 
         proj_stmt = select(Project).where(*proj_filter_conditions)
         projs = list(self.db.scalars(proj_stmt))
-        proj_items = []
+        proj_items: list[tuple[bool, dict[str, Any]]] = []
         for proj in projs:
             starts_with = proj.name.lower().startswith(q_lower) or proj.code.lower().startswith(
                 q_lower
             )
             proj_items.append(
-                {
-                    "item": {
+                (
+                    starts_with,
+                    {
                         "id": proj.id,
                         "type": "project",
                         "title": proj.name,
                         "subtitle": f"Code: {proj.code} • Status: {proj.status}",
                         "url": f"/projects/{proj.id}",
                     },
-                    "starts_with": starts_with,
-                }
+                )
             )
 
-        proj_items.sort(key=lambda x: 0 if x["starts_with"] else 1)
-        results.extend([x["item"] for x in proj_items[:10]])
+        proj_items.sort(key=lambda x: 0 if x[0] else 1)
+        results.extend([x[1] for x in proj_items[:10]])
 
         # ── 3. Tasks ──────────────────────────────────────────────
         task_filter_conditions = [Task.company_id == company_id]
@@ -774,23 +775,23 @@ class SearchRepository:
 
         task_stmt = select(Task).where(*task_filter_conditions)
         tasks = list(self.db.scalars(task_stmt))
-        task_items = []
+        task_items: list[tuple[bool, dict[str, Any]]] = []
         for task in tasks:
             starts_with = task.title.lower().startswith(q_lower)
             task_items.append(
-                {
-                    "item": {
+                (
+                    starts_with,
+                    {
                         "id": task.id,
                         "type": "task",
                         "title": task.title,
                         "subtitle": f"Status: {task.status} • Priority: {task.priority}",
                         "url": f"/projects/{task.project_id}",
                     },
-                    "starts_with": starts_with,
-                }
+                )
             )
 
-        task_items.sort(key=lambda x: 0 if x["starts_with"] else 1)
-        results.extend([x["item"] for x in task_items[:10]])
+        task_items.sort(key=lambda x: 0 if x[0] else 1)
+        results.extend([x[1] for x in task_items[:10]])
 
         return results
