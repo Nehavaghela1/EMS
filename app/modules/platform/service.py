@@ -565,7 +565,7 @@ class FileService:
 
         clean_name, ext, canonical_content_type = validate_document_upload(file_name, file_bytes)
 
-        upload_root = Path(getattr(settings, "UPLOAD_DIR", "var/uploads")).resolve()
+        upload_root = Path(settings.UPLOAD_DIR).resolve()
         company_dir = (upload_root / str(company_id)).resolve()
         company_dir.mkdir(parents=True, exist_ok=True)
 
@@ -602,11 +602,23 @@ class FileService:
         self.db.refresh(file_obj)
         return file_obj
 
+    def build_signed_url(self, company_id: uuid.UUID, file_id: uuid.UUID) -> str:
+        """Constructs a signed download URL without access checks or audit logging."""
+        import hashlib
+        import hmac
+
+        expires_at = int(datetime.now(UTC).timestamp()) + SIGNED_URL_TTL_SECONDS
+        signature_payload = f"{company_id}:{file_id}:{expires_at}".encode()
+        signature = hmac.new(
+            settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256
+        ).hexdigest()
+        return f"/api/v1/files/download/{file_id}?expires={expires_at}&signature={signature}"
+
     def generate_signed_url(
         self,
         company_id: uuid.UUID,
         file_id: uuid.UUID,
-        user: User | None = None,
+        user: User,
     ) -> SignedUrlResponse:
         file_obj = self.repo.get_by_id(company_id, file_id)
         if not file_obj:
@@ -617,20 +629,10 @@ class FileService:
         if EmployeeDocumentRepository(self.db).is_file_attached_to_employee_document(file_id):
             raise NotFoundError("File object not found.")
 
-        if user is not None:
-            if not self.can_access(company_id, user, file_obj):
-                raise NotFoundError("File object not found.")
+        if not self.can_access(company_id, user, file_obj):
+            raise NotFoundError("File object not found.")
 
-        import hashlib
-        import hmac
-
-        expires_at = int(datetime.now(UTC).timestamp()) + SIGNED_URL_TTL_SECONDS
-        signature_payload = f"{company_id}:{file_id}:{expires_at}".encode()
-        signature = hmac.new(
-            settings.SECRET_KEY.encode(), signature_payload, hashlib.sha256
-        ).hexdigest()
-
-        url = f"/api/v1/files/download/{file_id}?expires={expires_at}&signature={signature}"
+        url = self.build_signed_url(company_id, file_id)
 
         AuditService(self.db).record(
             company_id=company_id,

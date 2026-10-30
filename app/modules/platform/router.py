@@ -353,22 +353,9 @@ async def upload_file(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    max_mb = 25
-    max_bytes = max_mb * 1024 * 1024
-    content_length_header = request.headers.get("content-length")
-    if content_length_header:
-        try:
-            cl = int(content_length_header)
-            if cl > (max_mb + 1) * 1024 * 1024:
-                raise PayloadTooLargeError(
-                    f"File size exceeds maximum upload limit of {max_mb} MB."
-                )
-        except ValueError:
-            pass
+    from app.core.upload_validation import read_upload_file_capped
 
-    file_bytes = await file.read(max_bytes + 1)
-    if len(file_bytes) > max_bytes:
-        raise PayloadTooLargeError(f"File size exceeds maximum upload limit of {max_mb} MB.")
+    file_bytes = await read_upload_file_capped(file, request=request)
 
     file_obj = FileService(db).upload_file(
         user.company_id,
@@ -430,7 +417,7 @@ def download_file(
         raise ForbiddenError("Invalid file signature.")
 
     # 4. Containment and disk check
-    upload_root = Path(getattr(settings, "UPLOAD_DIR", "var/uploads")).resolve()
+    upload_root = Path(settings.UPLOAD_DIR).resolve()
     resolved_path = Path(file_obj.storage_path).resolve()
     if not resolved_path.is_relative_to(upload_root):
         raise NotFoundError("File not found on disk.")
