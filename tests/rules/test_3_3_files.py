@@ -6,6 +6,7 @@ and rate limits.
 
 import hashlib
 import hmac
+import inspect
 import io
 import os
 import uuid
@@ -840,3 +841,164 @@ def test_f8_download_rate_limit_60_per_min(client: TestClient, files_setup: dict
     finally:
         limiter.reset()
         limiter.enabled = False
+
+
+# ── Fix 1 tests ──────────────────────────────────────────────────────────
+
+
+def test_f3_project_upload_over_limit_413(
+    client: TestClient, files_setup: dict[str, Any], db: Session
+) -> None:
+    """Project document upload over 25 MB returns 413 and stores nothing."""
+    c1 = files_setup["company1"]
+    hr1 = files_setup["hr1"]
+    bind_tenant_to_session(db, company_id=c1.id, is_platform_admin=True)
+    project = Project(
+        id=uuid.uuid4(),
+        company_id=c1.id,
+        name="Project Over Limit",
+        code=f"POL-{uuid.uuid4().hex[:4].upper()}",
+        status="active",
+    )
+    db.add(project)
+    db.commit()
+
+    oversized = b"%PDF-1.4 " + (b"A" * (25 * 1024 * 1024))
+    res = client.post(
+        f"/api/v1/projects/{project.id}/documents",
+        files={"file": ("huge.pdf", oversized, "application/pdf")},
+        data={"description": "Oversized doc"},
+        headers=_auth_headers(hr1),
+    )
+    assert res.status_code == 413
+    assert res.json()["error"]["code"] == "file_too_large"
+    docs = db.query(ProjectDocument).filter(ProjectDocument.project_id == project.id).all()
+    assert len(docs) == 0
+
+
+def test_f3_project_upload_not_allowed_type_422(
+    client: TestClient, files_setup: dict[str, Any], db: Session
+) -> None:
+    """Project document upload with disallowed type returns 422."""
+    c1 = files_setup["company1"]
+    hr1 = files_setup["hr1"]
+    bind_tenant_to_session(db, company_id=c1.id, is_platform_admin=True)
+    project = Project(
+        id=uuid.uuid4(),
+        company_id=c1.id,
+        name="Project Invalid Type",
+        code=f"PIT-{uuid.uuid4().hex[:4].upper()}",
+        status="active",
+    )
+    db.add(project)
+    db.commit()
+
+    res = client.post(
+        f"/api/v1/projects/{project.id}/documents",
+        files={"file": ("bad.exe", b"MZ fake executable binary", "application/x-msdownload")},
+        data={"description": "Invalid doc"},
+        headers=_auth_headers(hr1),
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+
+
+def test_f8_project_upload_audit_has_actor(
+    client: TestClient, files_setup: dict[str, Any], db: Session
+) -> None:
+    """Project document upload records FILE_UPLOADED audit log with actor_id = uploader."""
+    c1 = files_setup["company1"]
+    hr1 = files_setup["hr1"]
+    bind_tenant_to_session(db, company_id=c1.id, is_platform_admin=True)
+    project = Project(
+        id=uuid.uuid4(),
+        company_id=c1.id,
+        name="Project Audit Actor",
+        code=f"PAA-{uuid.uuid4().hex[:4].upper()}",
+        status="active",
+    )
+    db.add(project)
+    db.commit()
+
+    res = client.post(
+        f"/api/v1/projects/{project.id}/documents",
+        files={"file": ("project_spec.pdf", b"%PDF-1.4 spec bytes", "application/pdf")},
+        data={"description": "Valid spec"},
+        headers=_auth_headers(hr1),
+    )
+    assert res.status_code == 201
+    file_id = res.json()["file_id"]
+
+    audit = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.company_id == c1.id,
+            AuditLog.action == "FILE_UPLOADED",
+            AuditLog.entity_id == uuid.UUID(file_id),
+        )
+        .first()
+    )
+    assert audit is not None
+    assert audit.actor_user_id == hr1.id
+
+
+def test_f8_project_document_list_writes_no_audit_rows(
+    client: TestClient, files_setup: dict[str, Any], db: Session
+) -> None:
+    """Listing project documents must write NO FILE_LINK_ISSUED audit rows."""
+    c1 = files_setup["company1"]
+    hr1 = files_setup["hr1"]
+    bind_tenant_to_session(db, company_id=c1.id, is_platform_admin=True)
+    project = Project(
+        id=uuid.uuid4(),
+        company_id=c1.id,
+        name="Project List Audits",
+        code=f"PLA-{uuid.uuid4().hex[:4].upper()}",
+        status="active",
+    )
+    db.add(project)
+    db.commit()
+
+    res_up = client.post(
+        f"/api/v1/projects/{project.id}/documents",
+        files={"file": ("test_doc.pdf", b"%PDF-1.4 doc bytes", "application/pdf")},
+        data={"description": "A doc"},
+        headers=_auth_headers(hr1),
+    )
+    assert res_up.status_code == 201
+
+    initial_count = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.company_id == c1.id,
+            AuditLog.action == "FILE_LINK_ISSUED",
+        )
+        .count()
+    )
+
+    r1 = client.get(f"/api/v1/projects/{project.id}/documents", headers=_auth_headers(hr1))
+    assert r1.status_code == 200
+    r2 = client.get(f"/api/v1/projects/{project.id}/documents", headers=_auth_headers(hr1))
+    assert r2.status_code == 200
+
+    after_count = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.company_id == c1.id,
+            AuditLog.action == "FILE_LINK_ISSUED",
+        )
+        .count()
+    )
+    assert after_count == initial_count
+
+
+def test_f1_signed_link_requires_user(files_setup: dict[str, Any]) -> None:
+    """FileService.generate_signed_url requires user: User (no default)."""
+    from app.modules.platform.service import FileService
+
+    sig = inspect.signature(FileService.generate_signed_url)
+    assert "user" in sig.parameters
+    user_param = sig.parameters["user"]
+    assert user_param.default is inspect.Parameter.empty, (
+        "generate_signed_url user param must have no default"
+    )
