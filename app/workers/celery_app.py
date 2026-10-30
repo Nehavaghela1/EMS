@@ -62,4 +62,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.platform.cleanup_expired_exports_task",
         "schedule": crontab(hour=3, minute=30),
     },
+    "cleanup-old-notifications-daily": {
+        "task": "app.workers.tasks.platform.cleanup_old_notifications_task",
+        "schedule": crontab(hour=2, minute=30),
+    },
 }

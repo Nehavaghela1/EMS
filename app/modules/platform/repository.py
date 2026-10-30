@@ -1,13 +1,15 @@
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate
+from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.models import Department, Employee
-from app.modules.identity.models import Company, User
+from app.modules.identity.models import Company, User, UserRole
 from app.modules.platform.models import (
     Announcement,
     AuditLog,
@@ -207,7 +209,8 @@ class NotificationRepository:
 
     def mark_read(self, notification: Notification) -> Notification:
         notification.is_read = True
-        notification.read_at = utcnow()
+        if notification.read_at is None:
+            notification.read_at = utcnow()
         self.db.flush()
         return notification
 
@@ -430,6 +433,7 @@ class AnnouncementRepository:
         content: str,
         target_role: str,
         expires_at: datetime | None,
+        department_id: uuid.UUID | None = None,
     ) -> Announcement:
         announcement = Announcement(
             company_id=company_id,
@@ -438,23 +442,39 @@ class AnnouncementRepository:
             content=content,
             target_role=target_role,
             expires_at=expires_at,
+            department_id=department_id,
         )
         self.db.add(announcement)
         self.db.flush()
         return announcement
 
-    def list_active(self, company_id: uuid.UUID, user_role: str) -> list[Announcement]:
+    def list_active(
+        self,
+        company_id: uuid.UUID,
+        user: User,
+        caller_department_id: uuid.UUID | None = None,
+    ) -> list[Announcement]:
         now = datetime.now(UTC)
-        stmt = (
-            select(Announcement)
-            .where(
-                Announcement.company_id == company_id,
-                Announcement.deleted_at.is_(None),
-                (Announcement.expires_at.is_(None) | (Announcement.expires_at > now)),
-                (Announcement.target_role == "all") | (Announcement.target_role == user_role),
-            )
-            .order_by(Announcement.created_at.desc())
+        stmt = select(Announcement).where(
+            Announcement.company_id == company_id,
+            Announcement.deleted_at.is_(None),
+            (Announcement.expires_at.is_(None) | (Announcement.expires_at > now)),
         )
+        if user.role not in HR_LEVEL_ROLES:
+            stmt = stmt.outerjoin(
+                Department,
+                (Department.id == Announcement.department_id) & (Department.deleted_at.is_(None)),
+            ).where(Announcement.department_id.is_(None) | Department.id.is_not(None))
+            role_cond = Announcement.department_id.is_(None) & (
+                (Announcement.target_role == "all") | (Announcement.target_role == user.role.value)
+            )
+            if caller_department_id is not None:
+                dept_cond = Announcement.department_id == caller_department_id
+                stmt = stmt.where(role_cond | dept_cond)
+            else:
+                stmt = stmt.where(role_cond)
+
+        stmt = stmt.order_by(Announcement.created_at.desc()).limit(100)
         return list(self.db.scalars(stmt))
 
     def get_by_id(self, company_id: uuid.UUID, announcement_id: uuid.UUID) -> Announcement | None:
@@ -579,53 +599,159 @@ class SearchRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def search_all(self, company_id: uuid.UUID, query: str) -> list[dict]:
-        from app.modules.projects.models import Project, Task
+    def search_all(self, company_id: uuid.UUID, user: User, query: str) -> list[dict[str, Any]]:
+        from app.modules.hr.models import Department, Employee
+        from app.modules.projects.models import Project, ProjectMember, Task
 
-        q = f"%{query.lower()}%"
-        results = []
+        escaped = query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        contains_pat = f"%{escaped}%"
 
-        # 1. Employees
-        emp_stmt = (
+        caller_emp = self.db.scalar(
             select(Employee)
+            .where(
+                Employee.company_id == company_id,
+                Employee.user_id == user.id,
+                Employee.deleted_at.is_(None),
+            )
+            .limit(1)
+        )
+        is_hr_level = user.role in HR_LEVEL_ROLES
+
+        results: list[dict[str, Any]] = []
+
+        # ── 1. Employees ──────────────────────────────────────────
+        name_match = func.lower(Employee.first_name).ilike(contains_pat, escape="\\") | func.lower(
+            func.coalesce(Employee.last_name, "")
+        ).ilike(contains_pat, escape="\\")
+        code_email_match = func.lower(Employee.email).ilike(contains_pat, escape="\\") | func.lower(
+            Employee.employee_code
+        ).ilike(contains_pat, escape="\\")
+
+        team_ids: set[uuid.UUID] = set()
+        if user.role == UserRole.manager and caller_emp:
+            team_ids.add(caller_emp.id)
+            direct_report_ids = self.db.scalars(
+                select(Employee.id).where(
+                    Employee.company_id == company_id,
+                    Employee.reporting_manager_id == caller_emp.id,
+                    Employee.deleted_at.is_(None),
+                )
+            ).all()
+            team_ids.update(direct_report_ids)
+
+        if is_hr_level:
+            emp_filter = name_match | code_email_match
+        elif user.role == UserRole.manager:
+            if team_ids:
+                emp_filter = name_match | (Employee.id.in_(team_ids) & code_email_match)
+            else:
+                emp_filter = name_match
+        else:
+            if caller_emp:
+                emp_filter = name_match | ((Employee.id == caller_emp.id) & code_email_match)
+            else:
+                emp_filter = name_match
+
+        q_lower = query.lower()
+        emp_starts_with = (
+            func.lower(Employee.first_name).startswith(q_lower)
+            | func.lower(func.coalesce(Employee.last_name, "")).startswith(q_lower)
+            | func.lower(
+                func.concat(Employee.first_name, " ", func.coalesce(Employee.last_name, ""))
+            ).startswith(q_lower)
+        )
+        emp_stmt = (
+            select(Employee, Department.name.label("dept_name"))
+            .outerjoin(
+                Department,
+                (Department.id == Employee.department_id) & (Department.deleted_at.is_(None)),
+            )
             .where(
                 Employee.company_id == company_id,
                 Employee.deleted_at.is_(None),
                 Employee.is_active.is_(True),
-                (
-                    func.lower(Employee.first_name).like(q)
-                    | func.lower(Employee.last_name).like(q)
-                    | func.lower(Employee.email).like(q)
-                    | func.lower(Employee.employee_code).like(q)
-                ),
+                emp_filter,
+            )
+            .order_by(
+                case((emp_starts_with, 0), else_=1),
+                Employee.first_name,
+                Employee.last_name,
             )
             .limit(10)
         )
-        for emp in self.db.scalars(emp_stmt):
+        emp_rows = self.db.execute(emp_stmt).all()
+        for emp, dept_name in emp_rows:
+            full_name = f"{emp.first_name} {emp.last_name or ''}".strip()
+            has_full_details = (
+                is_hr_level
+                or (user.role == UserRole.manager and emp.id in team_ids)
+                or (caller_emp is not None and emp.id == caller_emp.id)
+            )
+            if has_full_details:
+                subtitle = f"{emp.employee_code} • {emp.email}"
+                url = f"/employees/{emp.id}"
+            else:
+                subtitle = dept_name
+                url = None
+
             results.append(
                 {
                     "id": emp.id,
                     "type": "employee",
-                    "title": f"{emp.first_name} {emp.last_name}",
-                    "subtitle": f"{emp.employee_code} • {emp.email}",
-                    "url": f"/employees/{emp.id}",
+                    "title": full_name,
+                    "subtitle": subtitle,
+                    "url": url,
                 }
             )
 
-        # 2. Projects
+        # ── 2. Projects ───────────────────────────────────────────
+        proj_filter_conditions = [Project.company_id == company_id]
+        if hasattr(Project, "deleted_at"):
+            proj_filter_conditions.append(Project.deleted_at.is_(None))
+
+        accessible_proj_ids: set[uuid.UUID] = set()
+        if is_hr_level:
+            pass
+        elif caller_emp:
+            member_pids = self.db.scalars(
+                select(ProjectMember.project_id).where(
+                    ProjectMember.company_id == company_id,
+                    ProjectMember.employee_id == caller_emp.id,
+                )
+            ).all()
+            accessible_proj_ids.update(member_pids)
+            managed_pids = self.db.scalars(
+                select(Project.id).where(
+                    Project.company_id == company_id,
+                    Project.manager_id == caller_emp.id,
+                )
+            ).all()
+            accessible_proj_ids.update(managed_pids)
+            proj_filter_conditions.append(Project.id.in_(accessible_proj_ids))
+        else:
+            proj_filter_conditions.append(Project.id.in_([]))
+
+        proj_match = (
+            func.lower(Project.name).ilike(contains_pat, escape="\\")
+            | func.lower(Project.code).ilike(contains_pat, escape="\\")
+            | func.lower(func.coalesce(Project.client_name, "")).ilike(contains_pat, escape="\\")
+        )
+        proj_filter_conditions.append(proj_match)
+
+        proj_starts_with = func.lower(Project.name).startswith(q_lower) | func.lower(
+            Project.code
+        ).startswith(q_lower)
         proj_stmt = (
             select(Project)
-            .where(
-                Project.company_id == company_id,
-                (
-                    func.lower(Project.name).like(q)
-                    | func.lower(Project.code).like(q)
-                    | func.lower(Project.client_name).like(q)
-                ),
+            .where(*proj_filter_conditions)
+            .order_by(
+                case((proj_starts_with, 0), else_=1),
+                Project.name,
             )
             .limit(10)
         )
-        for proj in self.db.scalars(proj_stmt):
+        projs = list(self.db.scalars(proj_stmt))
+        for proj in projs:
             results.append(
                 {
                     "id": proj.id,
@@ -636,16 +762,37 @@ class SearchRepository:
                 }
             )
 
-        # 3. Tasks
+        # ── 3. Tasks ──────────────────────────────────────────────
+        task_filter_conditions = [Task.company_id == company_id]
+        if hasattr(Task, "deleted_at"):
+            task_filter_conditions.append(Task.deleted_at.is_(None))
+
+        if is_hr_level:
+            pass
+        elif caller_emp:
+            task_filter_conditions.append(
+                Task.project_id.in_(accessible_proj_ids) | (Task.assigned_to == caller_emp.id)
+            )
+        else:
+            task_filter_conditions.append(Task.id.in_([]))
+
+        task_match = func.lower(Task.title).ilike(contains_pat, escape="\\") | func.lower(
+            func.coalesce(Task.description, "")
+        ).ilike(contains_pat, escape="\\")
+        task_filter_conditions.append(task_match)
+
+        task_starts_with = func.lower(Task.title).startswith(q_lower)
         task_stmt = (
             select(Task)
-            .where(
-                Task.company_id == company_id,
-                (func.lower(Task.title).like(q) | func.lower(Task.description).like(q)),
+            .where(*task_filter_conditions)
+            .order_by(
+                case((task_starts_with, 0), else_=1),
+                Task.title,
             )
             .limit(10)
         )
-        for task in self.db.scalars(task_stmt):
+        tasks = list(self.db.scalars(task_stmt))
+        for task in tasks:
             results.append(
                 {
                     "id": task.id,

@@ -1,8 +1,9 @@
+import unicodedata
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # --- Existing Jobs / Audit / Dashboard / Notifications ---
@@ -86,7 +87,50 @@ class AnnouncementCreate(BaseModel):
     title: str = Field(..., max_length=255)
     content: str = Field(..., min_length=1)
     target_role: str = Field("all", pattern="^(all|employee|manager|hr_admin)$")
+    department_id: uuid.UUID | None = None
     expires_at: datetime | None = None
+
+    model_config = {"extra": "forbid"}
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def validate_title(cls, v: Any) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Title must be a string.")
+        s = v.strip()
+        if not s or len(s) > 255:
+            raise ValueError("Title must be between 1 and 255 characters after trimming.")
+        return s
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def validate_content(cls, v: Any) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Content must be a string.")
+        s = v.strip()
+        if not s or len(s) > 5000:
+            raise ValueError("Content must be between 1 and 5000 characters after trimming.")
+        for ch in s:
+            if unicodedata.category(ch).startswith("C") and ch not in ("\n", "\r", "\t"):
+                raise ValueError("Content cannot contain control characters.")
+        return s
+
+    @field_validator("expires_at")
+    @classmethod
+    def validate_expires_at(cls, v: datetime | None) -> datetime | None:
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            raise ValueError("expires_at must be timezone-aware.")
+        if v <= datetime.now(UTC):
+            raise ValueError("expires_at must be in the future.")
+        return v
+
+    @model_validator(mode="after")
+    def validate_department_target_role(self) -> Self:
+        if self.department_id is not None and self.target_role != "all":
+            raise ValueError("A department announcement must have target_role 'all'.")
+        return self
 
 
 class AnnouncementResponse(BaseModel):
@@ -95,6 +139,7 @@ class AnnouncementResponse(BaseModel):
     title: str
     content: str
     target_role: str
+    department_id: uuid.UUID | None = None
     created_by: uuid.UUID | None = None
     expires_at: datetime | None = None
     created_at: datetime
@@ -151,7 +196,7 @@ class SearchResultItem(BaseModel):
     type: Literal["employee", "project", "task"]
     title: str
     subtitle: str | None = None
-    url: str
+    url: str | None = None
 
 
 class GlobalSearchResponse(BaseModel):
