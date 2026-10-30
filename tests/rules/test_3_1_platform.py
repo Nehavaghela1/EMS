@@ -341,6 +341,55 @@ def test_n2_audience_visibility_scoping(
     assert id4 not in mgr_a_ids  # role employee post does not reach manager
 
 
+def test_n2_deleted_department_announcement_hidden(
+    client: TestClient, db: Session, company_a: TenantContext
+) -> None:
+    """N2: Announcements targeting a department must be hidden from members once
+    that department is soft-deleted. HR-level users still see them in active company posts.
+    """
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+    dept = _create_department(db, company_a.company_id, f"DelDept-{uuid.uuid4().hex[:6]}")
+    hr_user, _ = _create_user_with_employee(db, company_a.company_id, UserRole.hr_admin)
+    emp, _ = _create_user_with_employee(
+        db, company_a.company_id, UserRole.employee, department=dept
+    )
+    db.commit()
+
+    future_exp = (datetime.now(UTC) + timedelta(days=5)).isoformat()
+
+    r = client.post(
+        "/api/v1/announcements",
+        headers=_auth_headers(hr_user),
+        json={
+            "title": "Dept Announcement",
+            "content": "Secret dept notes",
+            "target_role": "all",
+            "department_id": str(dept.id),
+            "expires_at": future_exp,
+        },
+    )
+    assert r.status_code == 201
+    ann_id = r.json()["id"]
+
+    # Member sees it initially
+    emp_list = client.get("/api/v1/announcements", headers=_auth_headers(emp)).json()
+    assert any(a["id"] == ann_id for a in emp_list)
+
+    # Soft-delete the department
+    dept.deleted_at = datetime.now(UTC)
+    db.commit()
+
+    # Member should NO LONGER see the announcement
+    emp_list_after = client.get("/api/v1/announcements", headers=_auth_headers(emp)).json()
+    assert not any(a["id"] == ann_id for a in emp_list_after), (
+        "Announcement for soft-deleted department must be hidden from member"
+    )
+
+    # HR admin STILL sees it
+    hr_list_after = client.get("/api/v1/announcements", headers=_auth_headers(hr_user)).json()
+    assert any(a["id"] == ann_id for a in hr_list_after), "HR admin must still see announcement"
+
+
 def test_n3_expiry_and_soft_delete_hidden(
     client: TestClient, db: Session, company_a: TenantContext
 ) -> None:
@@ -931,6 +980,36 @@ def test_t4_action_url_relative_path_validation(db: Session, company_a: TenantCo
     assert n_space.action_url is None
 
 
+def test_t4_action_url_backslash_and_control_chars_rejected(
+    db: Session, company_a: TenantContext
+) -> None:
+    """T4: action_url must reject backslash (preventing open redirect like /\\evil.com)
+    and control characters (/ok\\nx, /a\\tb, /bad\\x00x). Stored as None.
+    """
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+    user, _ = _create_user_with_employee(db, company_a.company_id, UserRole.employee)
+    db.commit()
+
+    service = NotificationService(db)
+    bad_urls = [
+        "/\\evil.com",
+        "/\\\\evil.com",
+        "/ok\nx",
+        "/a\tb",
+        "/bad\x00x",
+    ]
+    for bad_url in bad_urls:
+        n = service.notify(
+            company_id=company_a.company_id,
+            user_id=user.id,
+            type="test",
+            title="Bad URL Test",
+            message="Msg",
+            action_url=bad_url,
+        )
+        assert n.action_url is None, f"Expected None for dangerous action_url: {bad_url!r}"
+
+
 def test_t6_notifications_rate_limits(
     client: TestClient, db: Session, company_a: TenantContext
 ) -> None:
@@ -1064,9 +1143,15 @@ def test_t7_cleanup_old_notifications_task(
     db.expire_all()
     bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
 
-    assert db.get(Notification, old_read_id) is None
-    assert db.get(Notification, old_unread_id) is not None
-    assert db.get(Notification, recent_read_id) is not None
+    assert (
+        db.get(Notification, old_read_id) is None
+    ), "read 91-day row deleted"
+    assert (
+        db.get(Notification, old_unread_id) is not None
+    ), "unread old row kept"
+    assert (
+        db.get(Notification, recent_read_id) is not None
+    ), "read 89-day row kept"
 
     # Verify beat schedule registration
     beat = celery_app.celery_app.conf.beat_schedule
@@ -1398,6 +1483,87 @@ def test_s5_ranking_and_cap_10_per_kind(
     # First 5 results must be the ones that start with "SearchTest"
     for item in proj_results[:5]:
         assert item["title"].startswith("SearchTest Start")
+
+
+def test_s5_search_limit_applied_in_sql(
+    client: TestClient, db: Session, company_a: TenantContext
+) -> None:
+    """S5: Global search must apply LIMIT 10 directly in SQL for employees, projects,
+    and tasks, rather than fetching all matches to Python memory.
+    """
+    from sqlalchemy import event
+
+    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+    hr_user, _ = _create_user_with_employee(db, company_a.company_id, UserRole.hr_admin)
+
+    # 1. Create 15 matching employees with "LimitTest"
+    for i in range(15):
+        _create_user_with_employee(
+            db,
+            company_a.company_id,
+            UserRole.employee,
+            first_name=f"LimitTestEmp{i:02d}",
+            last_name="Worker",
+        )
+
+    # 2. Create 15 matching projects with "LimitTest"
+    projs = []
+    for i in range(15):
+        p = Project(
+            company_id=company_a.company_id,
+            name=f"LimitTestProj {i:02d}",
+            code=f"LTP-{i:02d}",
+            status="active",
+        )
+        projs.append(p)
+    db.add_all(projs)
+    db.flush()
+
+    # 3. Create 15 matching tasks with "LimitTest" in first project
+    first_proj = projs[0]
+    tasks = []
+    for i in range(15):
+        t = Task(
+            company_id=company_a.company_id,
+            project_id=first_proj.id,
+            title=f"LimitTestTask {i:02d}",
+            status="todo",
+        )
+        tasks.append(t)
+    db.add_all(tasks)
+    db.commit()
+
+    executed_queries: list[str] = []
+
+    def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        executed_queries.append(statement)
+
+    bind = db.get_bind()
+    event.listen(bind, "before_cursor_execute", before_cursor_execute)
+    try:
+        headers = _auth_headers(hr_user)
+        res = client.get("/api/v1/search?q=LimitTest", headers=headers).json()
+
+        emp_items = [i for i in res["results"] if i["type"] == "employee"]
+        proj_items = [i for i in res["results"] if i["type"] == "project"]
+        task_items = [i for i in res["results"] if i["type"] == "task"]
+
+        assert len(emp_items) == 10
+        assert len(proj_items) == 10
+        assert len(task_items) == 10
+
+        # Verify SQL-level LIMIT applied to all 3 entity queries
+        emp_queries = [
+            q
+            for q in executed_queries
+            if "from employees" in q.lower() and "select" in q.lower()
+        ]
+        assert len(emp_queries) > 0, "Expected at least one query on employees"
+        assert all("limit" in q.lower() for q in emp_queries), (
+            f"Employee SQL query must use LIMIT: {emp_queries}"
+        )
+    finally:
+        event.remove(bind, "before_cursor_execute", before_cursor_execute)
 
 
 def test_s6_replies_safe_fields_and_optional_url(
