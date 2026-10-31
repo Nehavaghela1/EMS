@@ -83,7 +83,7 @@ export interface SearchResultItem {
   type: "employee" | "project" | "task";
   title: string;
   subtitle?: string;
-  url: string;
+  url: string | null;
 }
 
 export interface GlobalSearchResponse {
