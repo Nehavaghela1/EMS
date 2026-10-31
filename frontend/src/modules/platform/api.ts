@@ -52,6 +52,7 @@ export interface Announcement {
   title: string;
   content: string;
   target_role: string;
+  department_id?: string | null;
   created_by?: string;
   expires_at?: string;
   created_at: string;
@@ -62,7 +63,13 @@ export async function fetchAnnouncements(): Promise<Announcement[]> {
   return data;
 }
 
-export async function createAnnouncement(payload: { title: string; content: string; target_role?: string; expires_at?: string }): Promise<Announcement> {
+export async function createAnnouncement(payload: {
+  title: string;
+  content: string;
+  target_role?: string;
+  department_id?: string | null;
+  expires_at?: string;
+}): Promise<Announcement> {
   const { data } = await apiClient.post<Announcement>("/announcements", payload);
   return data;
 }
