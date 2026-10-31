@@ -165,3 +165,58 @@ export async function markAllNotificationsRead(): Promise<{ marked_read: number 
   const { data } = await apiClient.put<{ marked_read: number }>("/notifications/read-all");
   return data;
 }
+
+export interface AuditLogItem {
+  id: string;
+  company_id: string | null;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  details: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  request_id: string | null;
+  created_at: string;
+}
+
+export interface AuditLogListResponse {
+  items: AuditLogItem[];
+  page: number;
+  limit: number;
+  total: number;
+  pages: number;
+  has_next: boolean;
+}
+
+export async function fetchAuditLogs(params?: {
+  action?: string;
+  actor_email?: string;
+  entity_type?: string;
+  start_date?: string;
+  end_date?: string;
+  page?: number;
+  limit?: number;
+}): Promise<AuditLogListResponse> {
+  const { data } = await apiClient.get<AuditLogListResponse>("/audit-logs", { params });
+  return data;
+}
+
+export async function requestAuditLogExport(payload?: {
+  action?: string;
+  actor_email?: string;
+  entity_type?: string;
+  start_date?: string;
+  end_date?: string;
+}): Promise<{ job_id: string }> {
+  const { data } = await apiClient.post<{ job_id: string }>("/audit-logs/export", payload);
+  return data;
+}
+
+export async function downloadAuditLogExport(exportId: string): Promise<Blob> {
+  const response = await apiClient.get<Blob>(`/audit-logs/export/${exportId}/download`, {
+    responseType: "blob",
+  });
+  return response.data;
+}
