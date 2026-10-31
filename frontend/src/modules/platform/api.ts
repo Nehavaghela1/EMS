@@ -220,3 +220,19 @@ export async function downloadAuditLogExport(exportId: string): Promise<Blob> {
   });
   return response.data;
 }
+
+export interface JobStatusResponse {
+  job_id: string;
+  status: "queued" | "started" | "success" | "failure";
+  result?: {
+    row_count?: number;
+    expires_at?: string;
+    [key: string]: unknown;
+  } | null;
+  error?: string | null;
+}
+
+export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
+  const { data } = await apiClient.get<JobStatusResponse>(`/jobs/${jobId}`);
+  return data;
+}
