@@ -17,6 +17,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
+    text,
 )
 from sqlalchemy import Time as SATime
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -124,11 +126,14 @@ class Holiday(TenantBase):
 
     __tablename__ = "holidays"
     __table_args__ = (
-        UniqueConstraint(
+        # Only active rows: the date of a deleted holiday can be added again (4.7 rule 3).
+        Index(
+            "uq_holidays_company_date_department",
             "company_id",
             "date",
             "applies_to_department_id",
-            name="uq_holidays_company_id_date_department_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
             postgresql_nulls_not_distinct=True,
         ),
     )
@@ -148,7 +153,20 @@ class LeaveType(TenantBase):
 
     __tablename__ = "leave_types"
     __table_args__ = (
-        UniqueConstraint("company_id", "code", name="uq_leave_types_company_id_code"),
+        Index(
+            "uq_leave_types_company_lower_code",
+            "company_id",
+            func.lower(text("code")),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "uq_leave_types_company_lower_name",
+            "company_id",
+            func.lower(text("name")),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     name: Mapped[str] = mapped_column(Text, nullable=False)

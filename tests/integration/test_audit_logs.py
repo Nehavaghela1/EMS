@@ -45,7 +45,7 @@ def _link_user_to_employee(db, company_id, employee_id: str, role: UserRole) -> 
 def _create_leave_type(client, headers, **overrides) -> dict:
     payload = {
         "name": "Annual Leave",
-        "code": f"annual-{uuid.uuid4().hex[:6]}",
+        "code": f"A{uuid.uuid4().hex[:8].upper()}",
         "annual_allowance": "20",
     }
     payload.update(overrides)

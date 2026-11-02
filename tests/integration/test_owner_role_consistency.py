@@ -149,7 +149,8 @@ def test_shift_lookup_owner_consistency(client: TestClient, db: Session, company
 def test_leave_balance_owner_consistency(
     client: TestClient, db: Session, company_a, company_b, super_admin_headers
 ):
-    """Time/Leave balance lookup: owner and super_admin allowed, other company blocked."""
+    """Time/Leave balance lookup: owner allowed; other company blocked, including
+    super_admin (4.5 rule 7: no super admin exception)."""
     emp_a_id = _create_test_emp(db, company_a.company_id, "Leave")
 
     owner_a_headers = _create_user_and_token(db, company_a.company_id, UserRole.owner)
@@ -166,9 +167,9 @@ def test_leave_balance_owner_consistency(
     )
     assert res_owner_b.status_code in (403, 404)
 
-    # 3. Super admin gets 200
+    # 3. Super admin of another company gets the same 404
     res_sa = client.get(f"/api/v1/leaves/balance/{emp_a_id}?year=2026", headers=super_admin_headers)
-    assert res_sa.status_code == 200
+    assert res_sa.status_code == 404
 
     # 4. Owner of company_a gets 200
     res_owner_a = client.get(
@@ -249,7 +250,7 @@ def _create_test_leave_type(client: TestClient, hr_headers: dict[str, str]) -> s
         headers=hr_headers,
         json={
             "name": f"Annual Leave {uuid.uuid4().hex[:6]}",
-            "code": f"AL-{uuid.uuid4().hex[:6]}",
+            "code": f"AL{uuid.uuid4().hex[:6].upper()}",
             "annual_allowance": "20",
         },
     )
