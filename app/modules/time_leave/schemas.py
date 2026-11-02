@@ -1,9 +1,17 @@
+import datetime as dt
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.modules.time_leave.models import AttendanceStatus, LeaveStatus
 
@@ -141,11 +149,24 @@ class AssignedShiftDetailResponse(BaseModel):
 
 
 # Holidays (routes 55-57)
+HOLIDAY_MIN_DATE = date(2000, 1, 1)
+HOLIDAY_MAX_DATE = date(2100, 12, 31)
+
+
 class HolidayCreateRequest(BaseModel):
-    name: str
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)]
     date: date
     is_optional: bool = False
     applies_to_department_id: uuid.UUID | None = None
+
+    @field_validator("date")
+    @classmethod
+    def _date_in_range(cls, value: dt.date) -> dt.date:
+        if not HOLIDAY_MIN_DATE <= value <= HOLIDAY_MAX_DATE:
+            raise ValueError("date must be between 2000-01-01 and 2100-12-31")
+        return value
 
 
 class HolidayResponse(BaseModel):
@@ -159,9 +180,11 @@ class HolidayResponse(BaseModel):
 
 
 class HolidayImportRegionalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     country: str = "IN"
     state: str = "Gujarat"
-    year: int = 2026
+    year: int = Field(default=2026, ge=2000, le=2100)
 
 
 class HolidayImportResponse(BaseModel):
@@ -172,26 +195,76 @@ class HolidayImportResponse(BaseModel):
 
 
 # Leave types (routes 58-60)
+_NameStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+_CodeStr = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, min_length=2, max_length=10, pattern=r"^[A-Za-z0-9]+$"
+    ),
+]
+_DaysDecimal = Annotated[Decimal, Field(ge=0, le=365, allow_inf_nan=False)]
+_MaxDays = Annotated[int, Field(ge=1, le=365)]
+
+
+def _check_half_steps(*values: Decimal | None) -> None:
+    for value in values:
+        if value is not None and (value * 2) % 1 != 0:
+            raise ValueError("must be a multiple of 0.5")
+
+
 class LeaveTypeCreateRequest(BaseModel):
-    name: str
-    code: str
-    annual_allowance: Decimal = Decimal("0")
-    carry_forward_limit: Decimal = Decimal("0")
-    max_consecutive_days: int | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    name: _NameStr
+    code: _CodeStr
+    annual_allowance: _DaysDecimal = Decimal("0")
+    carry_forward_limit: _DaysDecimal = Decimal("0")
+    max_consecutive_days: _MaxDays | None = None
     requires_approval: bool = True
     is_paid: bool = True
     is_encashable: bool = False
 
+    @field_validator("code")
+    @classmethod
+    def _upper_code(cls, value: str) -> str:
+        return value.upper()
+
+    @model_validator(mode="after")
+    def _check_allowances(self) -> "LeaveTypeCreateRequest":
+        _check_half_steps(self.annual_allowance, self.carry_forward_limit)
+        if self.carry_forward_limit > self.annual_allowance:
+            raise ValueError("carry_forward_limit cannot be more than annual_allowance")
+        return self
+
 
 class LeaveTypeUpdateRequest(BaseModel):
-    name: str | None = None
-    annual_allowance: Decimal | None = None
-    carry_forward_limit: Decimal | None = None
-    max_consecutive_days: int | None = None
+    """Only `max_consecutive_days` may be set to null (to clear it); every other
+    field is either left out or given a value."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: _NameStr | None = None
+    code: _CodeStr | None = None
+    annual_allowance: _DaysDecimal | None = None
+    carry_forward_limit: _DaysDecimal | None = None
+    max_consecutive_days: _MaxDays | None = None
     requires_approval: bool | None = None
     is_paid: bool | None = None
     is_encashable: bool | None = None
     is_active: bool | None = None
+
+    @field_validator("code")
+    @classmethod
+    def _upper_code(cls, value: str | None) -> str | None:
+        return value.upper() if value is not None else None
+
+    @model_validator(mode="after")
+    def _no_nulls_on_required_fields(self) -> "LeaveTypeUpdateRequest":
+        for field in self.model_fields_set - {"max_consecutive_days"}:
+            if getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        _check_half_steps(self.annual_allowance, self.carry_forward_limit)
+        return self
 
 
 class LeaveTypeResponse(BaseModel):
@@ -255,6 +328,13 @@ class LeaveBalanceResponse(BaseModel):
     used: Decimal
     encashed: Decimal
     available: Decimal
+
+
+class LeaveSeedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: uuid.UUID
+    year: int | None = Field(default=None, ge=2000, le=2100)
 
 
 class CheckInRequest(BaseModel):

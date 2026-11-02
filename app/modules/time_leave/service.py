@@ -3,10 +3,17 @@ import uuid
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.email_templates import leave_decision_email
-from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
+from app.core.exceptions import (
+    AppError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.pagination import PageParams
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
@@ -693,6 +700,7 @@ class AttendanceService:
                 Holiday.date >= start,
                 Holiday.date <= end,
                 Holiday.deleted_at.is_(None),
+                Holiday.is_optional.is_(False),  # optional holidays are not days off
             )
             .all()
         )
@@ -1017,40 +1025,103 @@ class HolidayService:
         self.db = db
         self.repo = HolidayRepository(db)
         self.department_repo = DepartmentRepository(db)
+        self.audit = AuditService(db)
 
     def list_holidays(self, company_id: uuid.UUID, year: int) -> list[Holiday]:
         return self.repo.list_by_year(company_id, year)
 
-    def create_holiday(self, company_id: uuid.UUID, data: HolidayCreateRequest) -> Holiday:
+    def create_holiday(
+        self, company_id: uuid.UUID, data: HolidayCreateRequest, actor: User
+    ) -> Holiday:
         if data.applies_to_department_id is not None:
             if self.department_repo.get_by_id(data.applies_to_department_id, company_id) is None:
-                raise InvalidReferenceError(
-                    "The specified department does not exist.",
-                    details={"field": "applies_to_department_id"},
-                )
-        holiday = self.repo.create(company_id=company_id, **data.model_dump())
-        self.db.commit()
+                raise NotFoundError("Department not found.")
+        try:
+            holiday = self.repo.create(company_id=company_id, **data.model_dump())
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="HOLIDAY_CREATED",
+                entity_type="holiday",
+                entity_id=holiday.id,
+                details={
+                    "date": holiday.date,
+                    "is_optional": holiday.is_optional,
+                    "department_id": holiday.applies_to_department_id,
+                },
+            )
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ConflictError("A holiday already exists on this date.") from exc
         return holiday
 
-    def delete_holiday(self, company_id: uuid.UUID, holiday_id: uuid.UUID) -> None:
+    def delete_holiday(self, company_id: uuid.UUID, holiday_id: uuid.UUID, actor: User) -> None:
         holiday = self.repo.get_by_id(holiday_id, company_id)
         if holiday is None:
             raise NotFoundError("Holiday not found.")
         self.repo.soft_delete(holiday)
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="HOLIDAY_DELETED",
+            entity_type="holiday",
+            entity_id=holiday.id,
+            details={"date": holiday.date, "department_id": holiday.applies_to_department_id},
+        )
         self.db.commit()
 
+    @staticmethod
+    def supported_regions() -> dict:
+        from app.modules.time_leave.constants import COUNTRY_REGIONS_MAP
+
+        return COUNTRY_REGIONS_MAP
+
+    @staticmethod
+    def preview_regional_holidays(country: str, state: str, year: int) -> list[dict]:
+        """The known statutory list for a region. Country and state must be in the
+        project's own region list; the year range is checked by the request schema.
+        The lists are not independently verified: HR must confirm them against the
+        official notification."""
+        from app.modules.time_leave.constants import (
+            COUNTRY_REGIONS_MAP,
+            get_regional_statutory_holidays,
+        )
+
+        country_key = (country or "").strip().upper()
+        region = COUNTRY_REGIONS_MAP.get(country_key)
+        if region is None:
+            raise ValidationError(
+                "Unknown country.",
+                details={"field": "country", "allowed": sorted(COUNTRY_REGIONS_MAP)},
+            )
+        states = {s.lower(): s for s in region["states"]}
+        canonical_state = states.get((state or "").strip().lower())
+        if canonical_state is None:
+            raise ValidationError(
+                f"Unknown state or region for {country_key}.", details={"field": "state"}
+            )
+        holidays_data = get_regional_statutory_holidays(
+            state=canonical_state, year=year, country=country_key
+        )
+        if not holidays_data:
+            raise ValidationError(
+                f"No statutory holidays are known for {canonical_state} ({country_key}) in {year}.",
+                details={"field": "year"},
+            )
+        return holidays_data
+
     def import_regional_holidays(
-        self, company_id: uuid.UUID, state: str = "Gujarat", year: int = 2026, country: str = "IN"
+        self,
+        company_id: uuid.UUID,
+        actor: User,
+        state: str = "Gujarat",
+        year: int = 2026,
+        country: str = "IN",
     ) -> tuple[int, list[Holiday]]:
         from datetime import date as dt_date
 
-        from app.modules.time_leave.constants import get_regional_statutory_holidays
-
-        holidays_data = get_regional_statutory_holidays(state=state, year=year, country=country)
-        if not holidays_data:
-            raise NotFoundError(
-                f"No statutory holidays found for region '{state}' ({country}) in year {year}."
-            )
+        holidays_data = self.preview_regional_holidays(country, state, year)
 
         # Fetch existing active holidays for this company and year to avoid duplicates
         existing_holidays = self.repo.list_by_year(company_id, year)
@@ -1059,22 +1130,35 @@ class HolidayService:
         }
 
         imported_count = 0
-        for item in holidays_data:
-            d = dt_date.fromisoformat(item["date"])
-            if d in existing_company_wide_dates:
-                continue
+        try:
+            for item in holidays_data:
+                d = dt_date.fromisoformat(item["date"])
+                if d in existing_company_wide_dates:
+                    continue
 
-            self.repo.create(
+                self.repo.create(
+                    company_id=company_id,
+                    name=item["name"],
+                    date=d,
+                    is_optional=item.get("is_optional", False),
+                    applies_to_department_id=None,
+                )
+                existing_company_wide_dates.add(d)
+                imported_count += 1
+
+            self.audit.record(
                 company_id=company_id,
-                name=item["name"],
-                date=d,
-                is_optional=item.get("is_optional", False),
-                applies_to_department_id=None,
+                actor=actor,
+                action="HOLIDAYS_IMPORTED",
+                entity_type="holiday",
+                details={"count": imported_count, "year": year},
             )
-            existing_company_wide_dates.add(d)
-            imported_count += 1
-
-        self.db.commit()
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ConflictError(
+                "Holidays were changed by another request while importing. Please try again."
+            ) from exc
         all_year_holidays = self.repo.list_by_year(company_id, year)
         return imported_count, all_year_holidays
 
@@ -1085,25 +1169,116 @@ class LeaveTypeService:
     def __init__(self, db: Session):
         self.db = db
         self.repo = LeaveTypeRepository(db)
+        self.audit = AuditService(db)
 
-    def list_leave_types(self, company_id: uuid.UUID) -> list[LeaveType]:
-        return self.repo.list_all(company_id)
+    def list_leave_types(
+        self, company_id: uuid.UUID, actor: User, include_inactive: bool = False
+    ) -> list[LeaveType]:
+        """Everyone lists the active types; only HR-level may also ask for the inactive."""
+        if include_inactive and actor.role not in HR_LEVEL_ROLES:
+            raise ForbiddenError("Only HR can list deactivated leave types.")
+        return self.repo.list_all(company_id, only_active=not include_inactive)
 
-    def create_leave_type(self, company_id: uuid.UUID, data: LeaveTypeCreateRequest) -> LeaveType:
-        if self.repo.get_by_code(company_id, data.code):
-            raise ConflictError("A leave type with this code already exists.")
-        leave_type = self.repo.create(company_id=company_id, **data.model_dump())
-        self.db.commit()
+    def _conflict_for(
+        self, company_id: uuid.UUID, name: str | None, code: str | None, own_id: uuid.UUID | None
+    ) -> ConflictError | None:
+        if code is not None:
+            other = self.repo.get_by_code(company_id, code)
+            if other is not None and other.id != own_id:
+                return ConflictError("A leave type with this code already exists.")
+        if name is not None:
+            other = self.repo.get_by_name(company_id, name)
+            if other is not None and other.id != own_id:
+                return ConflictError("A leave type with this name already exists.")
+        return None
+
+    def create_leave_type(
+        self, company_id: uuid.UUID, data: LeaveTypeCreateRequest, actor: User
+    ) -> LeaveType:
+        conflict = self._conflict_for(company_id, data.name, data.code, None)
+        if conflict is not None:
+            raise conflict
+        try:
+            leave_type = self.repo.create(company_id=company_id, **data.model_dump())
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="LEAVE_TYPE_CREATED",
+                entity_type="leave_type",
+                entity_id=leave_type.id,
+                details={"leave_type_id": leave_type.id},
+            )
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ConflictError("A leave type with this name or code already exists.") from exc
         return leave_type
 
     def update_leave_type(
-        self, company_id: uuid.UUID, leave_type_id: uuid.UUID, data: LeaveTypeUpdateRequest
+        self,
+        company_id: uuid.UUID,
+        leave_type_id: uuid.UUID,
+        data: LeaveTypeUpdateRequest,
+        actor: User,
     ) -> LeaveType:
         leave_type = self.repo.get_by_id(leave_type_id, company_id)
         if leave_type is None:
             raise NotFoundError("Leave type not found.")
-        self.repo.update(leave_type, **data.model_dump(exclude_unset=True))
-        self.db.commit()
+
+        # Only values that actually differ count as changes (a same-value request is a no-op).
+        changes = {
+            field: value
+            for field, value in data.model_dump(exclude_unset=True).items()
+            if getattr(leave_type, field) != value
+        }
+        if not changes:
+            return leave_type
+
+        merged_allowance = changes.get("annual_allowance", leave_type.annual_allowance)
+        merged_carry = changes.get("carry_forward_limit", leave_type.carry_forward_limit)
+        if merged_carry > merged_allowance:
+            raise ValidationError(
+                "carry_forward_limit cannot be more than annual_allowance.",
+                details={"field": "carry_forward_limit"},
+            )
+        conflict = self._conflict_for(
+            company_id, changes.get("name"), changes.get("code"), leave_type.id
+        )
+        if conflict is not None:
+            raise conflict
+        locked = [f for f in ("code", "is_paid") if f in changes]
+        if locked and self.repo.has_leaves_or_balances(leave_type.id):
+            raise ConflictError(
+                "Code and paid/unpaid cannot change once leaves or balances exist for this type.",
+                details={"fields": locked},
+            )
+
+        deactivated = changes.get("is_active") is False
+        other_fields = sorted(f for f in changes if not (f == "is_active" and deactivated))
+        try:
+            self.repo.update(leave_type, **changes)
+            if other_fields:
+                self.audit.record(
+                    company_id=company_id,
+                    actor=actor,
+                    action="LEAVE_TYPE_UPDATED",
+                    entity_type="leave_type",
+                    entity_id=leave_type.id,
+                    details={"changed_fields": other_fields},
+                )
+            if deactivated:
+                self.audit.record(
+                    company_id=company_id,
+                    actor=actor,
+                    action="LEAVE_TYPE_DEACTIVATED",
+                    entity_type="leave_type",
+                    entity_id=leave_type.id,
+                    details={"leave_type_id": leave_type.id},
+                )
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ConflictError("A leave type with this name or code already exists.") from exc
         return leave_type
 
 
@@ -1161,28 +1336,73 @@ class LeaveService:
             current += timedelta(days=1)
         return Decimal(count)
 
-    def _get_or_allocate_balance(
+    def _new_balance_fields(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, leave_type: LeaveType, year: int
+    ) -> dict:
+        """A new year opens with the unused balance of the year before, up to the
+        type's carry-forward limit; an overspent year carries nothing. With no
+        row for the year before, nothing is carried."""
+        opening = Decimal("0")
+        previous = self.balance_repo.get(employee_id, leave_type.id, year - 1)
+        if previous is not None:
+            unused = max(self._available(previous), Decimal("0"))
+            opening = min(unused, leave_type.carry_forward_limit)
+        return {
+            "company_id": company_id,
+            "employee_id": employee_id,
+            "leave_type_id": leave_type.id,
+            "year": year,
+            "opening_balance": opening,
+            "allocated": leave_type.annual_allowance,
+        }
+
+    def _get_or_allocate_balance(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        leave_type: LeaveType,
+        year: int,
+        *,
+        lock: bool = False,
     ) -> LeaveBalance:
         """Balance is materialized the first time this employee needs this
-        leave type in this year. WP-10 doesn't build a bulk annual-rollover
-        scheduled task (not in either WP-09's or WP-10's deliverable list
-        this session — see RECONCILIATION §9/§32) — this lazy path is what
-        actually makes a newly created employee's leave usable today; a
-        real `allocate_annual_leave` task would apply carry-forward here
-        too, which this simpler path does not.
+        leave type in this year (lazy path); seeding by HR creates the same row.
+        With `lock=True` the row is held with SELECT ... FOR UPDATE until commit.
         """
-        balance = self.balance_repo.get(employee_id, leave_type.id, year)
+        find = self.balance_repo.get_for_update if lock else self.balance_repo.get
+        balance = find(employee_id, leave_type.id, year)
         if balance is None:
-            balance = self.balance_repo.create(
-                company_id=company_id,
-                employee_id=employee_id,
-                leave_type_id=leave_type.id,
-                year=year,
-                opening_balance=Decimal("0"),
-                allocated=leave_type.annual_allowance,
+            balance, _ = self.balance_repo.create_if_missing(
+                **self._new_balance_fields(company_id, employee_id, leave_type, year)
             )
+            if lock:
+                balance = find(employee_id, leave_type.id, year) or balance
         return balance
+
+    def require_available_balance_locked(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        leave_type: LeaveType,
+        year: int,
+        requested: Decimal,
+    ) -> LeaveBalance | None:
+        """Locks the balance row and refuses when a paid type cannot cover
+        `requested` days, so the balance never goes negative. Unpaid types have
+        no balance and no check. Call it again at approval (4.6) in the same
+        transaction as the deduction."""
+        if not leave_type.is_paid:
+            return None
+        balance = self._get_or_allocate_balance(
+            company_id, employee_id, leave_type, year, lock=True
+        )
+        available = self._available(balance)
+        if available < requested:
+            raise InsufficientLeaveBalanceError(available=available, requested=requested)
+        return balance
+
+    def current_leave_year(self, company_id: uuid.UUID) -> int:
+        return self._leave_year(self.settings_repo.get_by_company(company_id), utcnow().date())
 
     @staticmethod
     def _available(balance: LeaveBalance) -> Decimal:
@@ -1289,12 +1509,13 @@ class LeaveService:
             raise LeaveOverlapError(conflicts)
 
         # 8. Sufficient balance for the year, unless the leave type is unpaid (LOP).
-        if leave_type.is_paid:
-            year = self._leave_year(settings_row, data.start_date)
-            balance = self._get_or_allocate_balance(company_id, employee.id, leave_type, year)
-            available = self._available(balance)
-            if available < total_days:
-                raise InsufficientLeaveBalanceError(available=available, requested=total_days)
+        self.require_available_balance_locked(
+            company_id,
+            employee.id,
+            leave_type,
+            self._leave_year(settings_row, data.start_date),
+            total_days,
+        )
 
         # Determine if owner / super_admin: auto-approve immediately
         is_leadership = current_user.role in [UserRole.owner, UserRole.super_admin]
@@ -1611,57 +1832,65 @@ class LeaveService:
         return leave
 
     def get_balance(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID, year: int, current_user: User
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        year: int | None,
+        current_user: User,
     ) -> list[tuple[LeaveBalance, str]]:
-        """Route 66: Own, HR. Returns (balance, leave_type_name) pairs — the
-        router maps each to a LeaveBalanceResponse with `available` computed."""
-        lookup_company_id = company_id
-        if current_user.role == UserRole.super_admin:
-            employee = self.employee_repo.get_by_id_any_status(employee_id, None)
-            if employee is None:
-                raise NotFoundError("Employee not found.")
-            lookup_company_id = employee.company_id
-        else:
-            employee = self.employee_repo.get_by_id(employee_id, lookup_company_id)
-            if employee is None:
-                raise NotFoundError("Employee not found.")
-            is_hr = current_user.role in HR_LEVEL_ROLES
-            is_own = employee.user_id == current_user.id
-            if not (is_hr or is_own):
-                raise ForbiddenError("You do not have permission to view this balance.")
+        """Route 66: the employee, their direct manager (read only), HR-level.
+        Another company's employee is the same 404 as a missing one, for every
+        role including super_admin. `year` defaults to the company's current
+        leave year. Returns (balance, leave_type_name) pairs."""
+        employee = self.employee_repo.get_by_id(employee_id, company_id)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+        is_hr = current_user.role in HR_LEVEL_ROLES
+        is_own = employee.user_id == current_user.id
+        is_manager = False
+        if current_user.role == UserRole.manager:
+            caller = self.employee_repo.get_by_user_id(company_id, current_user.id)
+            is_manager = caller is not None and employee.reporting_manager_id == caller.id
+        if not (is_hr or is_own or is_manager):
+            raise ForbiddenError("You do not have permission to view this balance.")
 
-        balances = self.balance_repo.list_for_employee_year(employee_id, year)
-        leave_type_names = {
-            lt.id: lt.name for lt in self.leave_type_repo.list_all(lookup_company_id)
-        }
+        target_year = year if year is not None else self.current_leave_year(company_id)
+        balances = self.balance_repo.list_for_employee_year(employee_id, target_year)
+        leave_type_names = {lt.id: lt.name for lt in self.leave_type_repo.list_all(company_id)}
         return [(b, leave_type_names.get(b.leave_type_id, "Unknown")) for b in balances]
 
     def allocate_balances_for_employee(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID, year: int, actor: User
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, year: int | None, actor: User
     ) -> list[tuple["LeaveBalance", str]]:
         """HR-callable batch seeding: creates a LeaveBalance row for every active
-        leave type the company has configured, for the given employee and year.
-        Skips types that already have a row. Returns all (balance, type_name)
-        pairs after seeding, including pre-existing ones.
+        leave type the company has configured, for the given employee and year
+        (default: the current leave year). Skips types that already have a row, so
+        repeating it changes nothing. Returns all (balance, type_name) pairs
+        after seeding, including pre-existing ones.
         """
         employee = self.employee_repo.get_by_id(employee_id, company_id)
         if employee is None:
             raise NotFoundError("Employee not found.")
+        target_year = year if year is not None else self.current_leave_year(company_id)
 
-        active_types = [lt for lt in self.leave_type_repo.list_all(company_id) if lt.is_active]
-        for lt in active_types:
-            existing = self.balance_repo.get(employee_id, lt.id, year)
-            if existing is None:
-                self.balance_repo.create(
-                    company_id=company_id,
-                    employee_id=employee_id,
-                    leave_type_id=lt.id,
-                    year=year,
-                    opening_balance=Decimal("0"),
-                    allocated=lt.annual_allowance,
+        all_types = self.leave_type_repo.list_all(company_id)
+        created = 0
+        for lt in (t for t in all_types if t.is_active):
+            if self.balance_repo.get(employee_id, lt.id, target_year) is None:
+                _, was_created = self.balance_repo.create_if_missing(
+                    **self._new_balance_fields(company_id, employee_id, lt, target_year)
                 )
+                created += int(was_created)
 
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="LEAVE_BALANCES_SEEDED",
+            entity_type="leave_balance",
+            entity_id=employee_id,
+            details={"employee_id": employee_id, "year": target_year, "created_count": created},
+        )
         self.db.commit()
-        balances = self.balance_repo.list_for_employee_year(employee_id, year)
-        type_name_map = {lt.id: lt.name for lt in active_types}
+        balances = self.balance_repo.list_for_employee_year(employee_id, target_year)
+        type_name_map = {lt.id: lt.name for lt in all_types}
         return [(b, type_name_map.get(b.leave_type_id, "Unknown")) for b in balances]

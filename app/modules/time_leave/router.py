@@ -3,9 +3,8 @@ import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
 
@@ -49,6 +48,7 @@ from app.modules.time_leave.schemas import (
     LeaveBalanceResponse,
     LeaveDecisionRequest,
     LeaveResponse,
+    LeaveSeedRequest,
     LeaveTypeCreateRequest,
     LeaveTypeResponse,
     LeaveTypeUpdateRequest,
@@ -521,8 +521,10 @@ def _to_holiday_response(holiday: Holiday) -> HolidayResponse:
 
 
 @holidays_router.get("", response_model=list[HolidayResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_holidays(
-    year: int | None = None,
+    request: Request,
+    year: int | None = Query(default=None, ge=2000, le=2100),
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
@@ -532,53 +534,70 @@ def list_holidays(
 
 
 @holidays_router.post("", response_model=HolidayResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def create_holiday(
+    request: Request,
     data: HolidayCreateRequest,
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    holiday = HolidayService(db).create_holiday(user.company_id, data)
+    holiday = HolidayService(db).create_holiday(user.company_id, data, user)
     return _to_holiday_response(holiday)
 
 
 @holidays_router.delete("/{holiday_id}", status_code=204)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def delete_holiday(
+    request: Request,
     holiday_id: uuid.UUID,
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    HolidayService(db).delete_holiday(user.company_id, holiday_id)
+    HolidayService(db).delete_holiday(user.company_id, holiday_id, user)
 
 
 @holidays_router.get("/regions")
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_supported_holiday_regions(
+    request: Request,
     user: User = Depends(get_current_user),
 ) -> dict:
     """Returns all supported countries and regional states/territories
     for statutory holiday import.
     """
-    from app.modules.time_leave.constants import COUNTRY_REGIONS_MAP
-
-    return COUNTRY_REGIONS_MAP
+    return HolidayService.supported_regions()
 
 
 @holidays_router.get("/regional-preview")
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def preview_regional_holidays(
+    request: Request,
     country: str = "IN",
     state: str = "Gujarat",
-    year: int = 2026,
+    year: int = Query(default=2026, ge=2000, le=2100),
     user: User = Depends(get_current_user),
 ) -> list[dict]:
-    """Returns the statutory public holiday list for a given country,
-    state & year from the regional database.
+    """Preview of the statutory public holiday list for a country, state and
+    year, to look at before importing. The lists come from the project's own
+    constants and are not independently verified: HR must confirm them against
+    the official notification.
     """
-    from app.modules.time_leave.constants import get_regional_statutory_holidays
-
-    return get_regional_statutory_holidays(state=state, year=year, country=country)
+    return HolidayService.preview_regional_holidays(country, state, year)
 
 
-@holidays_router.post("/import-regional", response_model=HolidayImportResponse)
+@holidays_router.post(
+    "/import-regional",
+    response_model=HolidayImportResponse,
+    description=(
+        "Owner and HR admin only. Imports the statutory holidays of a country, state and "
+        "year as company-wide holidays and skips dates that already exist. The lists come "
+        "from the project's own constants and are not independently verified: HR must "
+        "confirm them against the official notification before relying on them."
+    ),
+)
+@limiter.limit("5/minute", key_func=get_user_or_ip_key)
 def import_regional_holidays(
+    request: Request,
     data: HolidayImportRegionalRequest | None = None,
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
@@ -586,6 +605,7 @@ def import_regional_holidays(
     req_data = data or HolidayImportRegionalRequest()
     imported_count, all_holidays = HolidayService(db).import_regional_holidays(
         company_id=user.company_id,
+        actor=user,
         country=req_data.country,
         state=req_data.state,
         year=req_data.year,
@@ -611,10 +631,11 @@ def _to_leave_type_response(leave_type: LeaveType) -> LeaveTypeResponse:
 
 @leave_types_router.get("", response_model=list[LeaveTypeResponse])
 def list_leave_types(
+    include_inactive: bool = False,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    leave_types = LeaveTypeService(db).list_leave_types(user.company_id)
+    leave_types = LeaveTypeService(db).list_leave_types(user.company_id, user, include_inactive)
     return [_to_leave_type_response(lt) for lt in leave_types]
 
 
@@ -624,7 +645,7 @@ def create_leave_type(
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    leave_type = LeaveTypeService(db).create_leave_type(user.company_id, data)
+    leave_type = LeaveTypeService(db).create_leave_type(user.company_id, data, user)
     return _to_leave_type_response(leave_type)
 
 
@@ -635,7 +656,7 @@ def update_leave_type(
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    leave_type = LeaveTypeService(db).update_leave_type(user.company_id, leave_type_id, data)
+    leave_type = LeaveTypeService(db).update_leave_type(user.company_id, leave_type_id, data, user)
     return _to_leave_type_response(leave_type)
 
 
@@ -696,12 +717,11 @@ def apply_leave(
 @leaves_router.get("/balance/{employee_id}", response_model=list[LeaveBalanceResponse])
 def get_leave_balance(
     employee_id: uuid.UUID,
-    year: int | None = None,
+    year: int | None = Query(default=None, ge=2000, le=2100),
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    target_year = year if year is not None else utcnow().date().year
-    balances = LeaveService(db).get_balance(user.company_id, employee_id, target_year, user)
+    balances = LeaveService(db).get_balance(user.company_id, employee_id, year, user)
     return [
         LeaveBalanceResponse(
             leave_type_id=b.leave_type_id,
@@ -747,26 +767,20 @@ def cancel_leave(
     return _to_leave_response(LeaveService(db).cancel_leave(user.company_id, leave_id, user))
 
 
-class LeaveSeedRequest(BaseModel):
-    employee_id: uuid.UUID
-    year: int | None = None
-
-
 @leaves_router.post("/balances/seed", response_model=list[LeaveBalanceResponse])
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def seed_leave_balances(
+    request: Request,
     data: LeaveSeedRequest,
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
     """HR only. Seeds leave balance rows for every active leave type for the given
-    employee and year. Safe to call multiple times — skips types already allocated.
-    Resolves the 'No balances yet' UX problem for newly onboarded employees.
+    employee and year (default: the current leave year). Safe to call multiple
+    times — skips types already allocated.
     """
-    from app.core.time import utcnow as _utcnow
-
-    target_year = data.year if data.year is not None else _utcnow().date().year
     results = LeaveService(db).allocate_balances_for_employee(
-        user.company_id, data.employee_id, target_year, user
+        user.company_id, data.employee_id, data.year, user
     )
     return [
         LeaveBalanceResponse(

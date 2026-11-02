@@ -95,7 +95,7 @@ def _create_pending_leave(client: TestClient, company: TenantContext, emp_header
         headers=company.hr_headers,
         json={
             "name": f"LT-{uuid.uuid4().hex[:4]}",
-            "code": f"lt_{uuid.uuid4().hex[:4]}",
+            "code": f"LT{uuid.uuid4().hex[:6].upper()}",
             "annual_allowance": "15",
         },
     )

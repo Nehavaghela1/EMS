@@ -60,14 +60,14 @@ def test_leave_type_crud(client, company_a):
     created = client.post(
         "/api/v1/leave-types",
         headers=company_a.hr_headers,
-        json={"name": "Comp Off", "code": "comp_off", "annual_allowance": "5"},
+        json={"name": "Comp Off", "code": "COMPOFF", "annual_allowance": "5"},
     )
     assert created.status_code == 201, created.text
 
     duplicate = client.post(
         "/api/v1/leave-types",
         headers=company_a.hr_headers,
-        json={"name": "Comp Off Again", "code": "comp_off", "annual_allowance": "5"},
+        json={"name": "Comp Off Again", "code": "COMPOFF", "annual_allowance": "5"},
     )
     assert duplicate.status_code == 409
 

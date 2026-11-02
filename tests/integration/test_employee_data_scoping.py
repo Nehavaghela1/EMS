@@ -402,7 +402,7 @@ def test_leaves_query_colleague_forbidden_or_safe(
         headers=company_a.hr_headers,
         json={
             "name": f"LT-{uuid.uuid4().hex[:4]}",
-            "code": f"lt_{uuid.uuid4().hex[:4]}",
+            "code": f"LT{uuid.uuid4().hex[:6].upper()}",
             "annual_allowance": "10",
         },
     )
@@ -442,7 +442,7 @@ def test_leaves_query_own_allowed(client: TestClient, db: Session, company_a: Te
         headers=company_a.hr_headers,
         json={
             "name": f"LT-{uuid.uuid4().hex[:4]}",
-            "code": f"lt_{uuid.uuid4().hex[:4]}",
+            "code": f"LT{uuid.uuid4().hex[:6].upper()}",
             "annual_allowance": "10",
         },
     )

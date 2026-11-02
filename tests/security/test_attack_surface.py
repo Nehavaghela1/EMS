@@ -111,10 +111,10 @@ def test_manager_cannot_get_a_single_attendance_record_that_is_not_their_reports
     assert resp.status_code == 403
 
 
-def test_manager_cannot_view_a_reports_leave_balance(client, company_a, db):
-    """Route 66 is documented Own/HR only — no manager exception, unlike
-    every other view route in this module. Confirms the router doesn't
-    accidentally admit manager the way list/get routes do."""
+def test_manager_views_only_a_direct_reports_leave_balance(client, company_a, db):
+    """Route 66 (4.5 rule 7): a manager reads the balance of a direct report
+    (changed from the old Own/HR only rule), but not of someone who does not
+    report to them."""
     manager = _create_employee(client, company_a.hr_headers, first_name="Mgr3")
     manager_headers = _link_user_to_employee(
         db, company_a.company_id, manager["id"], UserRole.manager
@@ -122,8 +122,11 @@ def test_manager_cannot_view_a_reports_leave_balance(client, company_a, db):
     report = _create_employee(
         client, company_a.hr_headers, first_name="Report3", reporting_manager_id=manager["id"]
     )
+    stranger = _create_employee(client, company_a.hr_headers, first_name="Stranger3")
 
     resp = client.get(f"/api/v1/leaves/balance/{report['id']}", headers=manager_headers)
+    assert resp.status_code == 200
+    resp = client.get(f"/api/v1/leaves/balance/{stranger['id']}", headers=manager_headers)
     assert resp.status_code == 403
 
 

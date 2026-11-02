@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate
@@ -382,9 +383,10 @@ class HolidayRepository:
         end_date: date,
         department_id: uuid.UUID | None,
     ) -> list[Holiday]:
-        """Holidays that count against a leave spanning [start_date,
-        end_date] — company-wide (`applies_to_department_id IS NULL`) plus
-        the employee's own department's, if any (Spec 11.3)."""
+        """Mandatory holidays (the days off) that count against a leave spanning
+        [start_date, end_date] — company-wide (`applies_to_department_id IS NULL`)
+        plus the employee's own department's, if any (Spec 11.3). Optional
+        holidays are not days off and are left out."""
         department_clause: ColumnElement[bool] = Holiday.applies_to_department_id.is_(None)
         if department_id is not None:
             department_clause = or_(
@@ -394,6 +396,7 @@ class HolidayRepository:
         stmt = select(Holiday).where(
             Holiday.company_id == company_id,
             Holiday.deleted_at.is_(None),
+            Holiday.is_optional.is_(False),
             Holiday.date >= start_date,
             Holiday.date <= end_date,
             department_clause,
@@ -433,13 +436,37 @@ class LeaveTypeRepository:
             )
         )
 
-    def list_all(self, company_id: uuid.UUID) -> list[LeaveType]:
+    def get_by_name(self, company_id: uuid.UUID, name: str) -> LeaveType | None:
+        return self.db.scalar(
+            select(LeaveType).where(
+                LeaveType.company_id == company_id,
+                func.lower(LeaveType.name) == name.lower(),
+                LeaveType.deleted_at.is_(None),
+            )
+        )
+
+    def list_all(self, company_id: uuid.UUID, *, only_active: bool = False) -> list[LeaveType]:
         stmt = (
             select(LeaveType)
             .where(LeaveType.company_id == company_id, LeaveType.deleted_at.is_(None))
             .order_by(LeaveType.name.asc())
         )
+        if only_active:
+            stmt = stmt.where(LeaveType.is_active.is_(True))
         return list(self.db.scalars(stmt).all())
+
+    def has_leaves_or_balances(self, leave_type_id: uuid.UUID) -> bool:
+        has_leave = self.db.scalar(
+            select(Leave.id).where(Leave.leave_type_id == leave_type_id).limit(1)
+        )
+        if has_leave is not None:
+            return True
+        return (
+            self.db.scalar(
+                select(LeaveBalance.id).where(LeaveBalance.leave_type_id == leave_type_id).limit(1)
+            )
+            is not None
+        )
 
     def create(self, **kwargs) -> LeaveType:
         leave_type = LeaveType(**kwargs)
@@ -624,6 +651,36 @@ class LeaveBalanceRepository:
                 LeaveBalance.year == year,
             )
         )
+
+    def get_for_update(
+        self, employee_id: uuid.UUID, leave_type_id: uuid.UUID, year: int
+    ) -> LeaveBalance | None:
+        """Same lookup as `get`, holding a row lock until the caller commits."""
+        return self.db.scalar(
+            select(LeaveBalance)
+            .where(
+                LeaveBalance.employee_id == employee_id,
+                LeaveBalance.leave_type_id == leave_type_id,
+                LeaveBalance.year == year,
+            )
+            .with_for_update()
+        )
+
+    def create_if_missing(self, **kwargs) -> tuple[LeaveBalance, bool]:
+        """Insert inside a savepoint; if another request created the same
+        (employee, leave type, year) row first, return that row instead of
+        failing. Returns (balance, created)."""
+        try:
+            with self.db.begin_nested():
+                balance = LeaveBalance(**kwargs)
+                self.db.add(balance)
+                self.db.flush()
+            return balance, True
+        except IntegrityError:
+            existing = self.get(kwargs["employee_id"], kwargs["leave_type_id"], kwargs["year"])
+            if existing is None:
+                raise
+            return existing, False
 
     def list_for_employee_year(self, employee_id: uuid.UUID, year: int) -> list[LeaveBalance]:
         stmt = select(LeaveBalance).where(
