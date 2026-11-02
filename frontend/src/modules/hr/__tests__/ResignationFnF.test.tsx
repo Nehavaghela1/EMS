@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { AxiosError, AxiosHeaders } from "axios";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -299,5 +300,77 @@ describe("Sub-feature 2.6: Resignation, Termination & FnF Settlement Frontend", 
     await user.click(releaseBtn);
 
     expect(await screen.findByText(/Confirm FnF Final Settlement Release/i)).toBeInTheDocument();
+  });
+
+  it("Rule 5b: release only happens after typing CONFIRM in the dialog", async () => {
+    const user = userEvent.setup();
+    vi.mocked(HrApi.updateFnFClearance).mockResolvedValueOnce({
+      ...mockFnFData,
+      can_release_settlement: true,
+      fnf_settled_at: "2026-04-01T00:00:00Z",
+    });
+
+    renderProfile(hrUser, approvedEmployee, { ...mockFnFData, can_release_settlement: true });
+
+    await user.click(await screen.findByRole("button", { name: /Resignation & FnF/i }));
+    await user.click(await screen.findByRole("button", { name: /Release Full & Final Settlement/i }));
+
+    expect(await screen.findByText(/Confirm FnF Final Settlement Release/i)).toBeInTheDocument();
+    expect(HrApi.updateFnFClearance).not.toHaveBeenCalled();
+
+    const authorizeBtn = screen.getByRole("button", { name: /Authorize & Release/i });
+    expect(authorizeBtn).toBeDisabled();
+
+    await user.type(screen.getByPlaceholderText("Type CONFIRM here"), "confirm");
+    expect(authorizeBtn).not.toBeDisabled();
+    await user.click(authorizeBtn);
+
+    await waitFor(() => {
+      expect(HrApi.updateFnFClearance).toHaveBeenCalledWith("emp-1", { mark_settled: true });
+    });
+    expect(mockNotify).toHaveBeenCalledWith(
+      "FnF Settlement released successfully! Employee account finalized.",
+      "success"
+    );
+  });
+
+  it("Rule 2b: an employee viewing a submitted resignation does not get the HR approval button", async () => {
+    const user = userEvent.setup();
+    renderProfile(employeeUser, resignedEmployee);
+
+    await user.click(await screen.findByRole("button", { name: /Resignation & FnF/i }));
+
+    expect(await screen.findByText("Resignation Pending Review")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Approve Resignation & Set Serving Notice/i })
+    ).not.toBeInTheDocument();
+    expect(HrApi.approveResignation).not.toHaveBeenCalled();
+  });
+
+  it("Rule 1b: shows the server message and does not claim success when the resignation is rejected", async () => {
+    const user = userEvent.setup();
+    vi.mocked(HrApi.submitResignation).mockRejectedValueOnce(
+      new AxiosError("Request failed with status code 422", "ERR_BAD_REQUEST", undefined, undefined, {
+        status: 422,
+        statusText: "Unprocessable Entity",
+        headers: {},
+        config: { headers: new AxiosHeaders() },
+        data: { error: { code: "validation_error", message: "Last working date must be today or later." } },
+      })
+    );
+
+    renderProfile(employeeUser, activeEmployee);
+
+    await user.click(await screen.findByRole("button", { name: /Resignation & FnF/i }));
+    await user.type(await screen.findByPlaceholderText("dd/MM/yyyy"), "2026-04-15");
+    await user.selectOptions(screen.getByRole("combobox"), "Better Opportunity");
+    await user.click(screen.getByRole("button", { name: /^Proceed$/i }));
+
+    await waitFor(() => {
+      expect(mockNotify).toHaveBeenCalledWith("Last working date must be today or later.", "error");
+    });
+    expect(mockNotify).not.toHaveBeenCalledWith(
+      "Exit details saved successfully. Employee status updated to Serving Notice."
+    );
   });
 });
