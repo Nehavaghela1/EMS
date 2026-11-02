@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.modules.hr.models import Employee
 from app.modules.identity.models import User, UserRole
 from tests.conftest import TenantContext
@@ -132,8 +133,8 @@ def test_user_from_another_company_calls_either_route_denied(
         f"/api/v1/employees/{emp_a['id']}/resignation",
         headers=company_b.hr_headers,
         json={
-            "resignation_date": "2026-09-01",
-            "last_working_date": "2026-10-01",
+            "resignation_date": utcnow().date().isoformat(),
+            "last_working_date": (utcnow().date() + timedelta(days=30)).isoformat(),
             "reason": "Cross-company resignation",
         },
     )
@@ -153,8 +154,8 @@ def test_unauthenticated_request_unauthorized(client: TestClient, company_a: Ten
     res_resignation = client.post(
         f"/api/v1/employees/{emp_a['id']}/resignation",
         json={
-            "resignation_date": "2026-09-01",
-            "last_working_date": "2026-10-01",
+            "resignation_date": utcnow().date().isoformat(),
+            "last_working_date": (utcnow().date() + timedelta(days=30)).isoformat(),
             "reason": "Unauthenticated resignation",
         },
     )
