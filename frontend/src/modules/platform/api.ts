@@ -52,6 +52,7 @@ export interface Announcement {
   title: string;
   content: string;
   target_role: string;
+  department_id?: string | null;
   created_by?: string;
   expires_at?: string;
   created_at: string;
@@ -62,7 +63,13 @@ export async function fetchAnnouncements(): Promise<Announcement[]> {
   return data;
 }
 
-export async function createAnnouncement(payload: { title: string; content: string; target_role?: string; expires_at?: string }): Promise<Announcement> {
+export async function createAnnouncement(payload: {
+  title: string;
+  content: string;
+  target_role?: string;
+  department_id?: string | null;
+  expires_at?: string;
+}): Promise<Announcement> {
   const { data } = await apiClient.post<Announcement>("/announcements", payload);
   return data;
 }
@@ -76,7 +83,7 @@ export interface SearchResultItem {
   type: "employee" | "project" | "task";
   title: string;
   subtitle?: string;
-  url: string;
+  url: string | null;
 }
 
 export interface GlobalSearchResponse {
@@ -156,5 +163,76 @@ export async function markNotificationRead(id: string): Promise<NotificationItem
 
 export async function markAllNotificationsRead(): Promise<{ marked_read: number }> {
   const { data } = await apiClient.put<{ marked_read: number }>("/notifications/read-all");
+  return data;
+}
+
+export interface AuditLogItem {
+  id: string;
+  company_id: string | null;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  details: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  request_id: string | null;
+  created_at: string;
+}
+
+export interface AuditLogListResponse {
+  items: AuditLogItem[];
+  page: number;
+  limit: number;
+  total: number;
+  pages: number;
+  has_next: boolean;
+}
+
+export async function fetchAuditLogs(params?: {
+  action?: string;
+  actor_email?: string;
+  entity_type?: string;
+  start_date?: string;
+  end_date?: string;
+  page?: number;
+  limit?: number;
+}): Promise<AuditLogListResponse> {
+  const { data } = await apiClient.get<AuditLogListResponse>("/audit-logs", { params });
+  return data;
+}
+
+export async function requestAuditLogExport(payload?: {
+  action?: string;
+  actor_email?: string;
+  entity_type?: string;
+  start_date?: string;
+  end_date?: string;
+}): Promise<{ job_id: string }> {
+  const { data } = await apiClient.post<{ job_id: string }>("/audit-logs/export", payload);
+  return data;
+}
+
+export async function downloadAuditLogExport(exportId: string): Promise<Blob> {
+  const response = await apiClient.get<Blob>(`/audit-logs/export/${exportId}/download`, {
+    responseType: "blob",
+  });
+  return response.data;
+}
+
+export interface JobStatusResponse {
+  job_id: string;
+  status: "queued" | "started" | "success" | "failure";
+  result?: {
+    row_count?: number;
+    expires_at?: string;
+    [key: string]: unknown;
+  } | null;
+  error?: string | null;
+}
+
+export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
+  const { data } = await apiClient.get<JobStatusResponse>(`/jobs/${jobId}`);
   return data;
 }
