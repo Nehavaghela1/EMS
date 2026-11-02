@@ -148,7 +148,8 @@ describe("Sub-feature 2.2: Onboarding & Directory Frontend", () => {
       page: 1,
       limit: 50,
       pages: 1,
-    } as any);
+      has_next: false,
+    });
     vi.mocked(IdentityApi.listLocations).mockResolvedValue([
       {
         id: "loc-1",
@@ -156,9 +157,11 @@ describe("Sub-feature 2.2: Onboarding & Directory Frontend", () => {
         code: "MUM",
         city: "Mumbai",
         country: "IN",
-        is_headquarters: true,
-        is_active: true,
-      } as any,
+        is_primary: true,
+        company_id: "cmp-1",
+        created_at: "2025-01-01T00:00:00Z",
+        updated_at: "2025-01-01T00:00:00Z",
+      },
     ]);
     vi.mocked(PayrollApi.listStructures).mockResolvedValue({
       items: [],
@@ -166,14 +169,16 @@ describe("Sub-feature 2.2: Onboarding & Directory Frontend", () => {
       page: 1,
       limit: 50,
       pages: 0,
-    } as any);
+      has_next: false,
+    });
     vi.mocked(HrApi.listEmployees).mockResolvedValue({
       items: sampleEmployees,
       total: sampleEmployees.length,
       page: 1,
       limit: 50,
       pages: 1,
-    } as any);
+      has_next: false,
+    });
   });
 
   function renderDirectory(currentUser: AuthContextModule.CurrentUser = hrUser) {
@@ -246,14 +251,15 @@ describe("Sub-feature 2.2: Onboarding & Directory Frontend", () => {
   it("Rule 3 & 5: successfully submits employee onboarding with valid department and details", async () => {
     const user = userEvent.setup();
     vi.mocked(HrApi.createEmployee).mockResolvedValueOnce({
+      ...sampleEmployees[0],
       id: "emp-3",
       employee_code: "EMP003",
       first_name: "Charlie",
       last_name: "Brown",
       email: "charlie@company.com",
-      is_active: true,
-      activation_token: "mock-token",
-    } as any);
+      invitation_status: "sent",
+      invite: { sent_to: "charlie@company.com", expires_at: "2099-01-01T00:00:00Z" },
+    });
 
     renderOnboardForm(hrUser);
 
@@ -281,11 +287,11 @@ describe("Sub-feature 2.2: Onboarding & Directory Frontend", () => {
   it("Rule 6: allows HR to resend invite for invited employees with action feedback", async () => {
     const user = userEvent.setup();
     vi.mocked(HrApi.bulkResendInviteEmployees).mockResolvedValueOnce({
-      total: 1,
+      requested: 1,
       succeeded: ["emp-2"],
       skipped: [],
       failed: [],
-    } as any);
+    });
 
     renderDirectory(hrUser);
 
@@ -307,6 +313,20 @@ describe("Sub-feature 2.2: Onboarding & Directory Frontend", () => {
   });
 
   it("Rule 8: directory displays employee name, code, department and hides token fields", async () => {
+    // A row that carries secret fields on the wire: the page must not display them.
+    const leakyRow: HrApi.Employee & { activation_token: string; token_hash: string } = {
+      ...sampleEmployees[0],
+      activation_token: "SECRET-ACTIVATION-TOKEN-123",
+      token_hash: "SECRET-TOKEN-HASH-456",
+    };
+    vi.mocked(HrApi.listEmployees).mockResolvedValue({
+      items: [leakyRow, sampleEmployees[1]],
+      total: 2,
+      page: 1,
+      limit: 50,
+      pages: 1,
+      has_next: false,
+    });
     renderDirectory(hrUser);
 
     expect(await screen.findByText(/Alice Smith - EMP001/i)).toBeInTheDocument();
@@ -316,5 +336,7 @@ describe("Sub-feature 2.2: Onboarding & Directory Frontend", () => {
     // Token fields or internal hashes never appear on DOM
     expect(screen.queryByText(/token_hash/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/activation_token/i)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("SECRET-ACTIVATION-TOKEN-123");
+    expect(document.body.textContent).not.toContain("SECRET-TOKEN-HASH-456");
   });
 });

@@ -131,7 +131,7 @@ describe("Sub-feature 2.3: Profile & Editing Frontend", () => {
       notify: mockNotify,
     });
     vi.mocked(HrApi.getEmployee).mockResolvedValue(mockEmployeeData);
-    vi.mocked(TimeLeaveApi.getAssignedShift).mockResolvedValue(null as any);
+    vi.mocked(TimeLeaveApi.getAssignedShift).mockResolvedValue(null);
   });
 
   function renderProfile(user: AuthContextModule.CurrentUser = hrUser) {

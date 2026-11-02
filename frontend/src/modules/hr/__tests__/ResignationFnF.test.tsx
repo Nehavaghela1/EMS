@@ -150,7 +150,7 @@ describe("Sub-feature 2.6: Resignation, Termination & FnF Settlement Frontend", 
     vi.spyOn(ToastContextModule, "useToast").mockReturnValue({
       notify: mockNotify,
     });
-    vi.mocked(TimeLeaveApi.getAssignedShift).mockResolvedValue(null as any);
+    vi.mocked(TimeLeaveApi.getAssignedShift).mockResolvedValue(null);
   });
 
   function renderProfile(user: AuthContextModule.CurrentUser, employee: HrApi.Employee, fnfData: HrApi.FnFSettlement = mockFnFData) {
@@ -179,7 +179,7 @@ describe("Sub-feature 2.6: Resignation, Termination & FnF Settlement Frontend", 
 
   it("Rule 1: allows employee to submit resignation with last working date and reason", async () => {
     const user = userEvent.setup();
-    vi.mocked(HrApi.submitResignation).mockResolvedValueOnce({} as any);
+    vi.mocked(HrApi.submitResignation).mockResolvedValueOnce(resignedEmployee);
 
     renderProfile(employeeUser, activeEmployee);
 
@@ -214,7 +214,7 @@ describe("Sub-feature 2.6: Resignation, Termination & FnF Settlement Frontend", 
 
   it("Rule 2: shows review panel for HR when resignation is submitted, computes notice and allows approval", async () => {
     const user = userEvent.setup();
-    vi.mocked(HrApi.approveResignation).mockResolvedValueOnce({} as any);
+    vi.mocked(HrApi.approveResignation).mockResolvedValueOnce(approvedEmployee);
 
     renderProfile(hrUser, resignedEmployee);
 
@@ -242,7 +242,7 @@ describe("Sub-feature 2.6: Resignation, Termination & FnF Settlement Frontend", 
 
   it("Rule 3: displays multi-department clearance sign-offs (IT, HR, Finance) during exit", async () => {
     const user = userEvent.setup();
-    vi.mocked(HrApi.updateFnFClearance).mockResolvedValueOnce({} as any);
+    vi.mocked(HrApi.updateFnFClearance).mockResolvedValueOnce({ ...mockFnFData, it_clearance: false });
 
     renderProfile(hrUser, approvedEmployee);
 

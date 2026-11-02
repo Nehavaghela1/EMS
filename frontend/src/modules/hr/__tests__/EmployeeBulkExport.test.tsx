@@ -599,7 +599,25 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
       expect(HrApi.downloadEmployeeExport).not.toHaveBeenCalled();
     });
 
-    it("F-2: bulk action selection capped at 100 with visible warning message", async () => {
+    it("F-2: selecting more than 100 employees shows the warning and blocks bulk actions", async () => {
+      const crowd: HrApi.Employee[] = Array.from({ length: 101 }, (_, i) => ({
+        ...mockEmployees[0],
+        id: `emp-bulk-${i}`,
+        user_id: `usr-bulk-${i}`,
+        employee_code: `EMP-B${i}`,
+        first_name: `Person${i}`,
+        last_name: "Bulk",
+        email: `person${i}@test.com`,
+      }));
+      vi.mocked(HrApi.listEmployees).mockResolvedValue({
+        items: crowd,
+        total: crowd.length,
+        page: 1,
+        limit: 200,
+        pages: 1,
+        has_next: false,
+      });
+
       render(
         <QueryClientProvider client={queryClient}>
           <MemoryRouter initialEntries={["/employees"]}>
@@ -611,15 +629,22 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText(/Alice Smith/i)).toBeInTheDocument();
+        expect(screen.getByText(/Person0 Bulk/i)).toBeInTheDocument();
       });
 
-      // Select first row checkbox
-      const checkboxes = screen.getAllByRole("checkbox");
-      await userEvent.click(checkboxes[1]);
+      // Header checkbox selects every row on the page
+      await userEvent.click(screen.getAllByRole("checkbox")[0]);
 
-      const bulkDeactBtn = await screen.findByRole("button", { name: /bulk deactivate/i });
-      expect(bulkDeactBtn).toBeInTheDocument();
+      expect(await screen.findByText(/Maximum 100 selectable for bulk actions/i)).toBeInTheDocument();
+      expect(screen.getByText("101 Selected")).toBeInTheDocument();
+
+      await userEvent.click(await screen.findByRole("button", { name: /bulk deactivate/i }));
+
+      expect(mockNotify).toHaveBeenCalledWith(
+        "Bulk actions are limited to a maximum of 100 employees at a time.",
+        "error"
+      );
+      expect(HrApi.bulkDeactivateEmployees).not.toHaveBeenCalled();
     });
 
     it("F-4: manager viewing employee with null personal_email hides field without crashing", async () => {

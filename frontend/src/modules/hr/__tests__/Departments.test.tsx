@@ -85,7 +85,8 @@ describe("Sub-feature 2.1: Departments Frontend", () => {
       page: 1,
       limit: 50,
       pages: 1,
-    } as any);
+      has_next: false,
+    });
   });
 
   function renderPage(currentUser: AuthContextModule.CurrentUser = hrUser) {
@@ -142,7 +143,23 @@ describe("Sub-feature 2.1: Departments Frontend", () => {
     expect(HrApi.createDepartment).not.toHaveBeenCalled();
   });
 
-  it("Rule 3 & 4: creates department with trimmed name and shows success toast", async () => {
+  it("Rule 2: rejects a whitespace-only name and does not call the api", async () => {
+    const user = userEvent.setup();
+    renderPage(hrUser);
+
+    await user.click(await screen.findByRole("button", { name: /\+ new department/i }));
+    const form = screen.getByRole("button", { name: /create department/i }).closest("form");
+    if (!form) throw new Error("department form not rendered");
+    const nameInput = form.querySelector("input");
+    if (!nameInput) throw new Error("name input not rendered");
+    await user.type(nameInput, "     ");
+    await user.click(screen.getByRole("button", { name: /create department/i }));
+
+    expect(await screen.findByText(/name is required/i)).toBeInTheDocument();
+    expect(HrApi.createDepartment).not.toHaveBeenCalled();
+  });
+
+  it("Rule 3 & 4: creates department with the typed name and description and shows success toast", async () => {
     const user = userEvent.setup();
     vi.mocked(HrApi.createDepartment).mockResolvedValueOnce({
       id: "dept-3",
@@ -176,6 +193,8 @@ describe("Sub-feature 2.1: Departments Frontend", () => {
       expect(mockNotify).toHaveBeenCalledWith("Department created.");
     });
   });
+
+  it.todo("GAP: department name with surrounding spaces is sent trimmed (page sends the raw name)");
 
   it("Rule 6: blocks delete button with locked indicator when department has active employees", async () => {
     renderPage(hrUser);
