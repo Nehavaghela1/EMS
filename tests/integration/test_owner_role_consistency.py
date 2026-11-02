@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -74,9 +74,10 @@ def test_resignation_submission_owner_consistency(
     owner_b_headers = _create_user_and_token(db, company_b.company_id, UserRole.owner)
     employee_a_headers = _create_user_and_token(db, company_a.company_id, UserRole.employee)
 
+    resignation_date = date.today() - timedelta(days=1)
     payload = {
-        "resignation_date": "2026-10-01",
-        "last_working_date": "2026-10-31",
+        "resignation_date": resignation_date.isoformat(),
+        "last_working_date": (resignation_date + timedelta(days=30)).isoformat(),
         "reason": "Relocating",
     }
 
