@@ -1,14 +1,23 @@
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee
 from app.modules.identity.models import User, UserRole
 from tests.conftest import TEST_PASSWORD
+
+
+def _leave_window(weeks_ahead: int) -> dict[str, str]:
+    """Monday-Tuesday pair at least 14 days ahead of today (UTC), so both days are
+    weekdays and the start date is never in the past. `weeks_ahead` keeps windows apart."""
+    start = utcnow().date() + timedelta(days=14)
+    start += timedelta(days=(7 - start.weekday()) % 7 + 7 * weeks_ahead)
+    return {"start_date": start.isoformat(), "end_date": (start + timedelta(days=1)).isoformat()}
 
 
 def _create_user_and_token(db: Session, company_id: uuid.UUID, role: UserRole) -> dict[str, str]:
@@ -74,9 +83,10 @@ def test_resignation_submission_owner_consistency(
     owner_b_headers = _create_user_and_token(db, company_b.company_id, UserRole.owner)
     employee_a_headers = _create_user_and_token(db, company_a.company_id, UserRole.employee)
 
+    today = utcnow().date()
     payload = {
-        "resignation_date": "2026-10-01",
-        "last_working_date": "2026-10-31",
+        "resignation_date": today.isoformat(),
+        "last_working_date": (today + timedelta(days=30)).isoformat(),
         "reason": "Relocating",
     }
 
@@ -261,8 +271,7 @@ def test_apply_leave_owner_consistency(client: TestClient, db: Session, company_
     payload = {
         "employee_id": str(emp_a_id),
         "leave_type_id": leave_type_id,
-        "start_date": "2026-11-02",
-        "end_date": "2026-11-03",
+        **_leave_window(0),
         "reason": "Applying on behalf",
     }
 
@@ -290,8 +299,7 @@ def test_get_leave_owner_consistency(client: TestClient, db: Session, company_a,
         json={
             "employee_id": str(emp_a_id),
             "leave_type_id": leave_type_id,
-            "start_date": "2026-11-09",
-            "end_date": "2026-11-10",
+            **_leave_window(1),
             "reason": "Vacation",
         },
         headers=company_a.hr_headers,
@@ -329,8 +337,7 @@ def test_cancel_leave_owner_consistency(client: TestClient, db: Session, company
         json={
             "employee_id": str(emp_a_id),
             "leave_type_id": leave_type_id,
-            "start_date": "2026-11-16",
-            "end_date": "2026-11-17",
+            **_leave_window(2),
             "reason": "Personal",
         },
         headers=company_a.hr_headers,
