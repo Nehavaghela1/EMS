@@ -791,6 +791,9 @@ def test_R10_migration_refuses_duplicates_and_round_trips() -> None:
         mp.setattr(settings, "ALEMBIC_DATABASE_URL", settings.TEST_MIGRATION_URL)
         engine = create_engine(settings.TEST_MIGRATION_URL)
         cfg = Config(str(REPO_ROOT / "alembic.ini"))
+        # Re-apply the migration file as it is now, so this test always checks the file on disk.
+        command.downgrade(cfg, PREVIOUS_REVISION)
+        command.upgrade(cfg, MIGRATION_REVISION)
         company_id = uuid.uuid4()
         code = f"ML{company_id.hex[:10].upper()}"
         insert = (

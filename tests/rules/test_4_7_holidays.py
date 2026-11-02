@@ -225,8 +225,28 @@ def test_R3_deleted_holiday_date_can_be_added_again(client: TestClient, company_
     assert again.status_code == 201, f"R3: date of a deleted holiday must be reusable: {again.text}"
 
 
+def _purge_race_holidays() -> None:
+    """The race test commits for real (two sessions), so it removes its own holidays,
+    otherwise they would block the migration round trip test below."""
+    assert settings.TEST_MIGRATION_URL is not None
+    owner = create_engine(settings.TEST_MIGRATION_URL)
+    try:
+        with owner.begin() as conn:
+            conn.execute(text("ALTER TABLE holidays NO FORCE ROW LEVEL SECURITY"))
+            conn.execute(
+                text(
+                    "DELETE FROM holidays WHERE company_id IN "
+                    "(SELECT id FROM companies WHERE name = 'Holiday Race Co')"
+                )
+            )
+            conn.execute(text("ALTER TABLE holidays FORCE ROW LEVEL SECURITY"))
+    finally:
+        owner.dispose()
+
+
 def test_R3_two_simultaneous_requests_give_one_201_and_one_409() -> None:
     assert settings.TEST_DATABASE_URL is not None
+    _purge_race_holidays()
     engine = create_engine(settings.TEST_DATABASE_URL, pool_size=5, max_overflow=2)
     try:
         with Session(engine) as setup:
@@ -287,6 +307,7 @@ def test_R3_two_simultaneous_requests_give_one_201_and_one_409() -> None:
     finally:
         fastapi_app.dependency_overrides.pop(get_db, None)
         engine.dispose()
+        _purge_race_holidays()
 
 
 # ------------------------------------------------- R4 / R5 / R6 leave days
@@ -608,6 +629,9 @@ def test_R3_migration_partial_unique_index_round_trip() -> None:
         mp.setattr(settings, "ALEMBIC_DATABASE_URL", settings.TEST_MIGRATION_URL)
         engine = create_engine(settings.TEST_MIGRATION_URL)
         cfg = Config(str(REPO_ROOT / "alembic.ini"))
+        # Re-apply the migration file as it is now, so this test always checks the file on disk.
+        command.downgrade(cfg, PREVIOUS_REVISION)
+        command.upgrade(cfg, MIGRATION_REVISION)
         company_id = uuid.uuid4()
         code = f"MH{company_id.hex[:10].upper()}"
         try:
