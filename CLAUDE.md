@@ -66,11 +66,12 @@ Frontend tests for module 1 are done (LoginPage, RegisterCompanyPage, ActivatePa
 
 The three known problems (file signing, jobs leak, dev-database leftovers) are closed with proof. The tracker "Known problems" block is up to date.
 
-### Frontend vitest status
+### Frontend vitest status: modules 1, 2 and 3 DONE
 
-Module 1 done. Modules 2 and 3: tests exist on branches `test/frontend-module2` and `test/frontend-module3` (not pushed). Both need the fix rounds in
-`ws_fe_3_fix_prompt.md` (first) and `ws_fe_2_fix_prompt.md` (second). Module 3 has half-finished uncommitted work from an earlier agent: review it against the prompt and finish it, do not start over.
-Modules 4 to 7 have no frontend tests yet. CI runs only `npm run build` for the frontend, not `npm test`; adding it is Bhavdeep's decision after both branches merge. Never touch `.github`.
+Module 3: PR #38 (merge 9aef204). Module 2: PR #40 (merge e8d3fd2). Date fix for backend tests: PR #39 (merge c628056).
+On main: 16 test files passed + 2 skipped (`Module2Gaps`, `Module3Gaps`, only `it.todo` lines); 85 passed, 30 todo, identical on repeated runs. Lint 0 errors; build passes.
+Frontend tests are proven by deliberate breaks (module 2: M1 to M12, module 3: M1 to M7). Missing screens are recorded as `it.todo("GAP: ...")`, never as red tests.
+Modules 4 to 7 have no frontend tests yet. CI runs only `npm run build` for the frontend, not `npm test`; adding it is Bhavdeep's decision. Never touch `.github`.
 
 ### Module 4 Time and leave: NEXT, not started (0 of 7). Module folder `app/modules/time_leave/`
 
@@ -182,6 +183,8 @@ Modules: `identity · hr · time_leave · performance · payroll · projects · 
 - Tests first with a real red result (the assertion failing, not a setup error). Then mutations one at a time: edit the real code, copy the raw `FAILED` line, revert, show it passes. `grep -rn MUTATION app tests` must print nothing at the end.
 - Gates run once at the end on the whole repo: `ruff check .`, `ruff format --check .`, `mypy app`, `alembic heads`,
   CI-style `CELERY_TASK_ALWAYS_EAGER=false pytest <every new or changed test file> tests/security tests/unit -q -rs`, then full `pytest -q -rs`. `git status --short` empty.
+- Dates: never type a date into a test when a rule compares it with today (resignation, leave start, "not in the future", exit dates). Compute it from `app.core.time.utcnow()`.
+  A fixed date is fine only when it is just stored or compared with other fixed dates. (A hard-coded 2026-10-31 turned CI red on 1 Nov 2026, PR #39.)
 - Frontend tests (vitest): render the real page, act with userEvent, assert what the user sees or the request sent. Mock only the network layer.
   Never define the rule inside the test, no `any`. Rules proven by backend tests do not belong there. A missing or wrong UI becomes `it.todo("GAP: ...")` and goes in the report; do not fix app code or commit red tests.
 
@@ -212,6 +215,11 @@ Manager chain valid, Status flow correct, Audit logged, Tests, CI green; use N/A
 
 - Module 1/2: forgot/reset password company code, country editing, roles screen, head office active toggle, 2.3 profile section screens, 2.5 employee documents screens (upload broken, list/download routes new), 2.6 screens (withdraw button, clearance queue, limited view, "exit scheduled" status, reason/notes/remark fields, notice defaults screen, employee FnF view after exit), real-Celery export check, `EmployeeListPage` reads `result.file_name` (job result is now only `row_count`/`expires_at`; unverified), hand-typed vs generated API types.
 - Module 3: announcement create form with department choice and poster delete button; search results screen (the Ctrl+K modal does not call `/search`; `url` may be null); notification `action_url` may be null; audit logs page and export/download buttons; job progress/failure messages; project document upload errors for wrong type (422) and size (413) and the allowed-types list; phone apostrophe in CSV.
+
+- Found by the frontend test rounds: `DepartmentListPage.tsx` (about lines 199 and 202) appears to send the untrimmed name to the API (the backend trims it; unconfirmed whether `name` is trimmed earlier);
+  the project upload picker (3.3) allows `.doc .xlsx .xls .zip` and its hint mentions XLSX and ZIP, but only pdf, jpg, jpeg, png, docx are valid; the upload `<label>` is not linked to its input;
+  `NotificationBell`, `ProjectDetailPage` and `TodayAttendanceCard` swallow errors silently; the terminate flow (2.6) has no frontend test; two `catch (err: any)` in `ProjectDetailPage.tsx`;
+  the Ctrl+K search modal does not call `/search`. All `it.todo` lines are in `Module2Gaps.test.tsx` (15) and `Module3Gaps.test.tsx` (13).
 
 ## Parked on purpose
 
