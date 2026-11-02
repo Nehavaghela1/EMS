@@ -13,8 +13,6 @@ vi.mock("../api", async () => {
     ...actual,
     fetchDashboard: vi.fn(),
     fetchAnnouncements: vi.fn(),
-    createAnnouncement: vi.fn(),
-    deleteAnnouncement: vi.fn(),
   };
 });
 
@@ -54,24 +52,6 @@ describe("Sub-feature 3.1: Announcements Frontend", () => {
       last_name: "HR",
       department_id: "dept-hr",
       position: "HR Manager",
-    },
-    permissions: [],
-  };
-
-  const mockManagerUser: AuthContextModule.CurrentUser = {
-    id: "usr-mgr-1",
-    email: "manager@acme.com",
-    role: "manager",
-    company_id: "cmp-acme",
-    is_active: true,
-    must_change_password: false,
-    employee: {
-      id: "emp-mgr-1",
-      employee_code: "EMP-MGR-01",
-      first_name: "Bob",
-      last_name: "Manager",
-      department_id: "dept-eng",
-      position: "Engineering Manager",
     },
     permissions: [],
   };
@@ -194,67 +174,37 @@ describe("Sub-feature 3.1: Announcements Frontend", () => {
     expect(screen.getByText("1 published")).toBeInTheDocument();
   });
 
-  it("validates createAnnouncement API contracts: department targeting and payload fields", async () => {
-    const mockCreatedAnnouncement: PlatformApi.Announcement = {
-      id: "ann-dept-1",
-      company_id: "cmp-acme",
-      title: "Engineering Sprint Demo",
-      content: "Demo is scheduled for Thursday at 4 PM.",
-      target_role: "all",
-      department_id: "dept-eng",
-      created_by: "usr-mgr-1",
-      expires_at: "2026-12-01T00:00:00Z",
-      created_at: "2026-10-31T12:00:00Z",
-    };
-
-    vi.mocked(PlatformApi.createAnnouncement).mockResolvedValue(mockCreatedAnnouncement);
-
-    const result = await PlatformApi.createAnnouncement({
-      title: "Engineering Sprint Demo",
-      content: "Demo is scheduled for Thursday at 4 PM.",
-      target_role: "all",
-      department_id: "dept-eng",
-      expires_at: "2026-12-01T00:00:00Z",
-    });
-
-    expect(PlatformApi.createAnnouncement).toHaveBeenCalledWith({
-      title: "Engineering Sprint Demo",
-      content: "Demo is scheduled for Thursday at 4 PM.",
-      target_role: "all",
-      department_id: "dept-eng",
-      expires_at: "2026-12-01T00:00:00Z",
-    });
-    expect(result.department_id).toBe("dept-eng");
-    expect(result.title).toBe("Engineering Sprint Demo");
-  });
-
-  it("validates deleteAnnouncement API invocation with correct announcement id", async () => {
-    vi.mocked(PlatformApi.deleteAnnouncement).mockResolvedValue(undefined);
-
-    await PlatformApi.deleteAnnouncement("ann-del-123");
-
-    expect(PlatformApi.deleteAnnouncement).toHaveBeenCalledWith("ann-del-123");
-  });
-
-  it("verifies manager and employee scoping rules conform to contract N1-N5", async () => {
-    // Contract N1: Manager posts require department_id matching their team
-    const managerPayload = {
-      title: "Team Sync",
-      content: "Daily standup at 10 AM.",
-      target_role: "all",
-      department_id: mockManagerUser.employee!.department_id,
-      expires_at: "2026-12-31T00:00:00Z",
-    };
-    expect(managerPayload.department_id).toBe("dept-eng");
-
-    // Contract N2: Employee without department only sees company-wide & role posts
-    const employeeWithoutDept: AuthContextModule.CurrentUser = {
-      ...mockEmployeeUser,
-      employee: {
-        ...mockEmployeeUser.employee!,
-        department_id: undefined as unknown as string,
+  it("renders a department-targeted announcement like any other post on employee dashboard", async () => {
+    vi.mocked(PlatformApi.fetchDashboard).mockResolvedValue({
+      role: "employee",
+      generated_at: "2026-10-31T10:00:00Z",
+      data: {
+        attendance_this_month: { present: 18, absent: 2, leave: 1 },
+        leave_balances: [],
+        pending_requests: 0,
       },
-    };
-    expect(employeeWithoutDept.employee?.department_id).toBeFalsy();
+    });
+
+    const deptAnnouncements: PlatformApi.Announcement[] = [
+      {
+        id: "ann-dept-1",
+        company_id: "cmp-acme",
+        title: "Engineering Sprint Demo",
+        content: "Demo is scheduled for Thursday at 4 PM.",
+        target_role: "all",
+        department_id: "dept-eng",
+        created_at: "2026-10-31T12:00:00Z",
+        expires_at: "2026-12-01T00:00:00Z",
+      },
+    ];
+    vi.mocked(PlatformApi.fetchAnnouncements).mockResolvedValue(deptAnnouncements);
+
+    renderWithProviders(mockEmployeeUser);
+
+    await waitFor(() => {
+      expect(screen.getByText("Engineering Sprint Demo")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Demo is scheduled for Thursday at 4 PM/i)).toBeInTheDocument();
+    expect(screen.getByText("1 updates")).toBeInTheDocument();
   });
 });

@@ -1,172 +1,230 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import * as PlatformApi from "../api";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { ProjectDetailPage } from "../../projects/pages/ProjectDetailPage";
 import * as ProjectsApi from "../../projects/api";
-import type { ProjectDocument } from "../../projects/types";
-
-vi.mock("../api", async () => {
-  const actual = await vi.importActual<typeof import("../api")>("../api");
-  return {
-    ...actual,
-    uploadFile: vi.fn(),
-    attachEmployeeDocument: vi.fn(),
-    fetchEmployeeDocuments: vi.fn(),
-  };
-});
+import * as HrApi from "../../hr/api";
+import * as AuthContextModule from "../../../app/auth-context";
+import { ToastProvider } from "../../../app/toast-context";
+import { TimerProvider } from "../../../app/timer-context";
+import type { Project, ProjectDocument, ProjectSummary } from "../../projects/types";
 
 vi.mock("../../projects/api", async () => {
   const actual = await vi.importActual<typeof import("../../projects/api")>("../../projects/api");
   return {
     ...actual,
-    uploadProjectDocument: vi.fn(),
+    fetchProjectSummary: vi.fn(),
+    fetchTasks: vi.fn(),
+    fetchProjectMembers: vi.fn(),
+    fetchMilestones: vi.fn(),
+    fetchTimeEntries: vi.fn(),
     fetchProjectDocuments: vi.fn(),
+    uploadProjectDocument: vi.fn(),
     downloadProjectDocument: vi.fn(),
-    deleteProjectDocument: vi.fn(),
   };
 });
 
-describe("Sub-feature 3.3: Files & Vault Frontend", () => {
+vi.mock("../../hr/api", async () => {
+  const actual = await vi.importActual<typeof import("../../hr/api")>("../../hr/api");
+  return { ...actual, listEmployees: vi.fn() };
+});
+
+function apiError(status: number, body: object): Error {
+  return Object.assign(new Error(`Request failed with status code ${status}`), {
+    response: { status, data: body },
+  });
+}
+
+describe("Sub-feature 3.3: project documents (ProjectDetailPage)", () => {
+  const hrUser: AuthContextModule.CurrentUser = {
+    id: "usr-hr-1",
+    email: "hr@acme.com",
+    role: "hr_admin",
+    company_id: "cmp-acme",
+    is_active: true,
+    must_change_password: false,
+    employee: {
+      id: "emp-hr-1",
+      employee_code: "EMP-HR-01",
+      first_name: "Sarah",
+      last_name: "HR",
+      department_id: "dept-hr",
+      position: "HR Manager",
+    },
+    permissions: [],
+  };
+
+  const project: Project = {
+    id: "proj-123",
+    company_id: "cmp-acme",
+    name: "Apollo Project",
+    code: "APL",
+    description: "Space project",
+    status: "active",
+    manager_id: "emp-hr-1",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+
+  const summary: ProjectSummary = {
+    project,
+    total_tasks: 0,
+    completed_tasks: 0,
+    overdue_tasks: 0,
+    completion_percentage: 0,
+    total_logged_hours: 0,
+    total_billable_hours: 0,
+    members_count: 0,
+    milestones_count: 0,
+    completed_milestones_count: 0,
+  };
+
+  const existingDoc: ProjectDocument = {
+    id: "doc-1",
+    company_id: "cmp-acme",
+    project_id: "proj-123",
+    file_id: "fobj-1",
+    name: "architecture_diagram.pdf",
+    description: "High level architecture",
+    file_size: 1048576,
+    file_type: "application/pdf",
+    created_at: "2026-10-30T10:00:00Z",
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+      status: "authenticated",
+      user: hrUser,
+      login: vi.fn(),
+      establishSession: vi.fn(),
+      logout: vi.fn(),
+      sessionExpired: false,
+    });
+    vi.mocked(ProjectsApi.fetchProjectSummary).mockResolvedValue(summary);
+    vi.mocked(ProjectsApi.fetchTasks).mockResolvedValue([]);
+    vi.mocked(ProjectsApi.fetchProjectMembers).mockResolvedValue([]);
+    vi.mocked(ProjectsApi.fetchMilestones).mockResolvedValue([]);
+    vi.mocked(ProjectsApi.fetchTimeEntries).mockResolvedValue([]);
+    vi.mocked(ProjectsApi.fetchProjectDocuments).mockResolvedValue([existingDoc]);
+    vi.mocked(HrApi.listEmployees).mockResolvedValue({
+      items: [],
+      page: 1,
+      limit: 100,
+      total: 0,
+      pages: 1,
+      has_next: false,
+    });
   });
 
-  it("uploads generic file via uploadFile API with multipart form data", async () => {
-    const file = new File(["dummy pdf content"], "offer_letter.pdf", { type: "application/pdf" });
-    vi.mocked(PlatformApi.uploadFile).mockResolvedValue({
-      file_object_id: "fobj-456",
-      file_name: "offer_letter.pdf",
-      file_type: "application/pdf",
-      file_size: 17,
+  const openDocumentsTab = async (user: ReturnType<typeof userEvent.setup>) => {
+    render(
+      <ToastProvider>
+        <TimerProvider>
+          <MemoryRouter initialEntries={["/projects/proj-123"]}>
+            <Routes>
+              <Route path="/projects/:id" element={<ProjectDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </TimerProvider>
+      </ToastProvider>
+    );
+    await user.click(await screen.findByText(/Documents & Files \(1\)/));
+  };
+
+  const openUploadModal = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(await screen.findByRole("button", { name: /Upload Document/ }));
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!input) throw new Error("file input not rendered");
+    return input;
+  };
+
+  // jsdom treats a programmatically-set file input as empty and blocks click-submit on `required`,
+  // so submit the real form element instead of clicking the button.
+  const submitUpload = (input: HTMLInputElement) => {
+    const form = input.closest("form");
+    if (!form) throw new Error("upload form not rendered");
+    fireEvent.submit(form);
+  };
+
+  it("uploads the chosen file and shows it at the top of the document list", async () => {
+    const user = userEvent.setup();
+    const file = new File(["pdf"], "requirements.pdf", { type: "application/pdf" });
+    vi.mocked(ProjectsApi.uploadProjectDocument).mockResolvedValue({
+      ...existingDoc,
+      id: "doc-2",
+      file_id: "fobj-2",
+      name: "requirements.pdf",
+      description: undefined,
     });
 
-    const res = await PlatformApi.uploadFile(file);
+    await openDocumentsTab(user);
+    const input = await openUploadModal(user);
+    await user.upload(input, file);
+    submitUpload(input);
 
-    expect(PlatformApi.uploadFile).toHaveBeenCalledWith(file);
-    expect(res.file_object_id).toBe("fobj-456");
-    expect(res.file_name).toBe("offer_letter.pdf");
-    expect(res.file_size).toBe(17);
+    await waitFor(() => {
+      expect(ProjectsApi.uploadProjectDocument).toHaveBeenCalledWith("proj-123", file, "");
+    });
+    expect(await screen.findByText("requirements.pdf")).toBeInTheDocument();
+    expect(screen.getByText("architecture_diagram.pdf")).toBeInTheDocument();
+    expect(screen.getByText("Document uploaded successfully!")).toBeInTheDocument();
   });
 
-  it("attaches employee document via attachEmployeeDocument API", async () => {
-    const docPayload = {
-      employee_id: "emp-101",
-      file_object_id: "fobj-456",
-      document_type: "CONTRACT",
-      name: "Employment Contract.pdf",
-    };
-
-    const mockAttachedDoc: PlatformApi.EmployeeDocument = {
-      id: "empdoc-1",
-      company_id: "cmp-1",
-      employee_id: "emp-101",
-      file_object_id: "fobj-456",
-      document_type: "CONTRACT",
-      name: "Employment Contract.pdf",
-      created_at: "2026-10-31T11:00:00Z",
-      download_url: "/files/signed/fobj-456?sig=valid",
-    };
-    vi.mocked(PlatformApi.attachEmployeeDocument).mockResolvedValue(mockAttachedDoc);
-
-    const result = await PlatformApi.attachEmployeeDocument(docPayload);
-
-    expect(PlatformApi.attachEmployeeDocument).toHaveBeenCalledWith(docPayload);
-    expect(result.id).toBe("empdoc-1");
-    expect(result.download_url).toBe("/files/signed/fobj-456?sig=valid");
-  });
-
-  it("fetches employee documents list for viewing", async () => {
-    vi.mocked(PlatformApi.fetchEmployeeDocuments).mockResolvedValue([
-      {
-        id: "empdoc-1",
-        company_id: "cmp-1",
-        employee_id: "emp-101",
-        file_object_id: "fobj-456",
-        document_type: "CONTRACT",
-        name: "Employment Contract.pdf",
-        created_at: "2026-10-31T11:00:00Z",
-        download_url: "/files/signed/fobj-456?sig=valid",
-      },
-    ]);
-
-    const docs = await PlatformApi.fetchEmployeeDocuments("emp-101");
-    expect(docs).toHaveLength(1);
-    expect(docs[0].name).toBe("Employment Contract.pdf");
-  });
-
-  it("uploads project document and fetches document list via projects API", async () => {
-    const sampleDoc: ProjectDocument = {
-      id: "doc-1",
-      company_id: "cmp-1",
-      project_id: "proj-123",
-      file_id: "fobj-uuid-1",
-      name: "architecture_diagram.pdf",
-      description: "High level architecture",
-      file_size: 1048576,
-      file_type: "application/pdf",
-      created_at: "2026-10-30T10:00:00Z",
-      download_url: "https://api.company.com/files/signed/fobj-uuid-1?token=valid_10m",
-    };
-
-    const file = new File(["arch content"], "architecture_diagram.pdf", { type: "application/pdf" });
-    vi.mocked(ProjectsApi.uploadProjectDocument).mockResolvedValue(sampleDoc);
-    vi.mocked(ProjectsApi.fetchProjectDocuments).mockResolvedValue([sampleDoc]);
-
-    const uploadResult = await ProjectsApi.uploadProjectDocument("proj-123", file, "High level architecture");
-    expect(uploadResult.id).toBe("doc-1");
-    expect(uploadResult.name).toBe("architecture_diagram.pdf");
-
-    const docList = await ProjectsApi.fetchProjectDocuments("proj-123");
-    expect(docList).toHaveLength(1);
-    expect(docList[0].file_id).toBe("fobj-uuid-1");
-  });
-
-  it("triggers signed URL download via downloadProjectDocument API", async () => {
+  it("downloads a document by its id when Download is clicked", async () => {
+    const user = userEvent.setup();
     vi.mocked(ProjectsApi.downloadProjectDocument).mockResolvedValue(undefined);
 
-    await ProjectsApi.downloadProjectDocument("proj-123", "doc-1", "architecture_diagram.pdf");
-    expect(ProjectsApi.downloadProjectDocument).toHaveBeenCalledWith(
-      "proj-123",
-      "doc-1",
-      "architecture_diagram.pdf"
+    await openDocumentsTab(user);
+    await user.click(await screen.findByRole("button", { name: /Download/ }));
+
+    await waitFor(() => {
+      expect(ProjectsApi.downloadProjectDocument).toHaveBeenCalledWith(
+        "proj-123",
+        "doc-1",
+        "architecture_diagram.pdf"
+      );
+    });
+    expect(await screen.findByText("Download started")).toBeInTheDocument();
+  });
+
+  it("shows the server message when the upload is rejected with 413", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ProjectsApi.uploadProjectDocument).mockRejectedValue(
+      apiError(413, { error: { message: "File too large for upload." } })
     );
+
+    await openDocumentsTab(user);
+    const input = await openUploadModal(user);
+    await user.upload(input, new File(["x"], "big.pdf", { type: "application/pdf" }));
+    submitUpload(input);
+
+    expect(await screen.findByText("File too large for upload.")).toBeInTheDocument();
   });
 
-  it("validates allowed file extensions (pdf, jpg, jpeg, png, docx) and rejects disallowed formats", () => {
-    const allowedExtensions = ["pdf", "jpg", "jpeg", "png", "docx"];
-    const isAllowed = (filename: string) => {
-      const ext = filename.split(".").pop()?.toLowerCase();
-      return ext ? allowedExtensions.includes(ext) : false;
-    };
+  it("shows the validation message when the upload is rejected with 422", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ProjectsApi.uploadProjectDocument).mockRejectedValue(
+      apiError(422, { error: { details: { errors: [{ msg: "File type not allowed." }] } } })
+    );
 
-    expect(isAllowed("resume.pdf")).toBe(true);
-    expect(isAllowed("id_card.png")).toBe(true);
-    expect(isAllowed("photo.jpeg")).toBe(true);
-    expect(isAllowed("doc.docx")).toBe(true);
+    await openDocumentsTab(user);
+    const input = await openUploadModal(user);
+    await user.upload(input, new File(["x"], "notes.pdf", { type: "application/pdf" }));
+    submitUpload(input);
 
-    expect(isAllowed("malicious.exe")).toBe(false);
-    expect(isAllowed("script.sh")).toBe(false);
-    expect(isAllowed("payload.js")).toBe(false);
-    expect(isAllowed("exploit.php")).toBe(false);
+    expect(await screen.findByText("File type not allowed.")).toBeInTheDocument();
   });
 
-  it("enforces 25 MB max size check according to Contract Rule 3", () => {
-    const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB in bytes
-    const isWithinLimit = (size: number) => size > 0 && size <= MAX_FILE_SIZE;
+  it("file picker restricts choices with an accept list that includes pdf, jpg, jpeg, png and docx", async () => {
+    const user = userEvent.setup();
+    await openDocumentsTab(user);
+    const input = await openUploadModal(user);
 
-    expect(isWithinLimit(0)).toBe(false); // empty file rejected (422)
-    expect(isWithinLimit(1024)).toBe(true); // 1 KB ok
-    expect(isWithinLimit(25 * 1024 * 1024)).toBe(true); // exactly 25 MB ok
-    expect(isWithinLimit(25 * 1024 * 1024 + 1)).toBe(false); // > 25 MB rejected (413)
+    const accepted = input.accept.split(",");
+    expect(accepted).toEqual(expect.arrayContaining([".pdf", ".jpg", ".jpeg", ".png", ".docx"]));
   });
 
-  it("verifies security headers: attachment disposition and nosniff per Contract Rule 7", () => {
-    const mockHeaders = {
-      "Content-Disposition": 'attachment; filename="architecture_diagram.pdf"',
-      "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "no-store",
-    };
-
-    expect(mockHeaders["Content-Disposition"]).toContain("attachment");
-    expect(mockHeaders["X-Content-Type-Options"]).toBe("nosniff");
-    expect(mockHeaders["Cache-Control"]).toBe("no-store");
-  });
+  it.todo("GAP: file picker accept list should allow only pdf, jpg, jpeg, png, docx (page also allows .doc, .xlsx, .xls, .zip)");
 });

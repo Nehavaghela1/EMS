@@ -158,9 +158,28 @@ describe("Sub-feature 3.2: Notifications Frontend", () => {
     const itemWithoutUrl = await screen.findByText("Assigned to Project Alpha");
     await userEvent.click(itemWithoutUrl);
 
-    // Already read, no markNotificationRead call and no navigation
+    // No link is rendered; already read, so no markNotificationRead call and no navigation
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(PlatformApi.markNotificationRead).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("does not crash and item stays unread when markNotificationRead rejects", async () => {
+    vi.mocked(PlatformApi.markNotificationRead).mockRejectedValue(new Error("Network error"));
+
+    renderNotificationBell();
+
+    const bellBtn = screen.getByTitle("Notifications");
+    await userEvent.click(bellBtn);
+
+    const unreadItem = await screen.findByText("Leave Request Approved");
+    await userEvent.click(unreadItem);
+
+    expect(PlatformApi.markNotificationRead).toHaveBeenCalledWith("notif-1");
+
+    // Bell still renders and the unread badge is unchanged: the item stayed unread
+    expect(screen.getByTitle("Notifications")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
   });
 
   it("displays empty state when there are no notifications", async () => {
