@@ -264,6 +264,24 @@ def test_R5_hours_worked_and_status_thresholds(
     assert out_res2.status_code == 200
     assert out_res2.json()["status"] == "half_day", "R5: Under 4 hours worked must be marked half_day"
 
+    # 3. Test exact half-up rounding (e.g. 59 minutes and 42 seconds = 3582 seconds / 3600 = 0.995 hours -> rounds to 1.00)
+    db.delete(att2)
+    db.commit()
+    att3 = Attendance(
+        company_id=company_a.company_id,
+        employee_id=uuid.UUID(emp["id"]),
+        date=today,
+        check_in=utcnow() - timedelta(seconds=3582),
+        status=AttendanceStatus.present,
+    )
+    db.add(att3)
+    db.commit()
+    out_res3 = client.post(CHECK_OUT, headers=emp_headers)
+    assert out_res3.status_code == 200
+    # 0.995 with ROUND_HALF_UP is 1.00 (half_day), with ROUND_DOWN it is 0.99 (absent)
+    assert Decimal(str(out_res3.json()["hours_worked"])) == Decimal("1.00")
+    assert out_res3.json()["status"] == "half_day", "R5: 0.995 must round half up to 1.00"
+
 
 # --- Rule 4.2.6: Geofence validation ---
 
