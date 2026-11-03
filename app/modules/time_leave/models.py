@@ -44,6 +44,7 @@ class AttendanceSource(str, enum.Enum):
     mobile = "mobile"
     system = "system"
     import_ = "import"
+    regularized = "regularized"
 
 
 class Attendance(TenantBase):
@@ -277,6 +278,14 @@ class AttendanceRegularizationRequest(TenantBase):
     __table_args__ = (
         Index("ix_attendance_regularizations_company_attendance", "company_id", "attendance_id"),
         Index("ix_attendance_regularizations_company_manager", "company_id", "manager_id"),
+        # One pending request per attendance record, enforced by the database.
+        Index(
+            "uq_attendance_regularizations_pending",
+            "company_id",
+            "attendance_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
     )
 
     attendance_id: Mapped[uuid.UUID] = mapped_column(

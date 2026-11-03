@@ -336,8 +336,14 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     )
     created = client.post("/api/v1/attendance/check-in", headers=own_headers).json()
 
-    in_time = (utcnow() - timedelta(hours=9)).isoformat()
-    out_time = utcnow().isoformat()
+    # 4.3 rules: the times must fall on the record's date and not be in the future, so the
+    # record is moved to a past day (this test used "now minus 9 hours", which crosses midnight).
+    day = utcnow().date() - timedelta(days=3)
+    record = db.get(Attendance, uuid.UUID(created["id"]))
+    record.date = day
+    db.commit()
+    in_time = datetime(day.year, day.month, day.day, 9, tzinfo=UTC).isoformat()
+    out_time = datetime(day.year, day.month, day.day, 18, tzinfo=UTC).isoformat()
 
     # 1. Employee applies with multipart form and dummy attachment
     files = {"attachment": ("gate_pass.pdf", b"%PDF-1.4 gate pass content", "application/pdf")}
@@ -352,12 +358,14 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
         data=data,
         files=files,
     )
-    assert req_resp.status_code == 200, req_resp.text
+    assert req_resp.status_code == 201, req_resp.text
     req_data = req_resp.json()
     assert req_data["reason"] == "Forgot punch out due to client visit offsite"
     assert req_data["status"] == "pending"
     assert req_data["attachment_url"] is not None
-    assert "gate_pass.pdf" in req_data["attachment_url"]
+    # 4.3 rule 8: stored under a server-made name, the client file name is not kept
+    assert req_data["attachment_url"].endswith(".pdf")
+    assert "gate_pass" not in req_data["attachment_url"]
 
     # Verify attachment is downloadable by employee
     att_resp = client.get(req_data["attachment_url"], headers=own_headers)
@@ -373,7 +381,7 @@ def test_employee_request_regularization_with_attachment_and_admin_adjust_approv
     assert att_record["active_regularization"]["id"] == req_data["id"]
 
     # 2. Admin inspects and adjusts check-out by 1 hour (8 hrs instead of 9) and approves
-    adjusted_out = (utcnow() - timedelta(hours=1)).isoformat()
+    adjusted_out = datetime(day.year, day.month, day.day, 17, tzinfo=UTC).isoformat()
     approve_resp = client.put(
         f"/api/v1/attendance/regularizations/{req_data['id']}/approve",
         headers=company_a.hr_headers,
@@ -440,13 +448,14 @@ def test_self_approval_ban_prevents_user_from_approving_own_regularization(clien
     # HR marks check-in
     created = client.post("/api/v1/attendance/check-in", headers=hr_user_headers).json()
 
-    # HR applies for regularization
+    # HR applies for regularization (4.3: at least one time, on the record's date, not future)
+    start_of_day = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     req_resp = client.post(
         f"/api/v1/attendance/{created['id']}/regularize",
         headers=hr_user_headers,
-        json={"reason": "Forgot out punch"},
+        json={"requested_check_in": start_of_day.isoformat(), "reason": "Forgot out punch"},
     )
-    assert req_resp.status_code == 200
+    assert req_resp.status_code == 201
     req_id = req_resp.json()["id"]
 
     # HR attempts to self-approve

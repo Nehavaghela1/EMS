@@ -20,6 +20,7 @@ from app.modules.time_leave.models import (
     LeaveBalance,
     LeaveStatus,
     LeaveType,
+    RegularizationStatus,
     Shift,
 )
 
@@ -205,6 +206,82 @@ class AttendanceRepository:
                 AttendanceRegularizationRequest.deleted_at.is_(None),
             )
         )
+
+    def get_regularization_for_update(
+        self, regularization_id: uuid.UUID, company_id: uuid.UUID
+    ) -> AttendanceRegularizationRequest | None:
+        """Same lookup as `get_regularization_by_id`, holding a row lock until the
+        caller commits, so two decisions at the same moment are serialized."""
+        return self.db.scalar(
+            select(AttendanceRegularizationRequest)
+            .where(
+                AttendanceRegularizationRequest.id == regularization_id,
+                AttendanceRegularizationRequest.company_id == company_id,
+                AttendanceRegularizationRequest.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+
+    def get_pending_regularization(
+        self, attendance_id: uuid.UUID, company_id: uuid.UUID
+    ) -> AttendanceRegularizationRequest | None:
+        return self.db.scalar(
+            select(AttendanceRegularizationRequest).where(
+                AttendanceRegularizationRequest.attendance_id == attendance_id,
+                AttendanceRegularizationRequest.company_id == company_id,
+                AttendanceRegularizationRequest.status == RegularizationStatus.pending,
+                AttendanceRegularizationRequest.deleted_at.is_(None),
+            )
+        )
+
+    def get_regularization_by_attachment_url(
+        self, company_id: uuid.UUID, attachment_url: str
+    ) -> AttendanceRegularizationRequest | None:
+        return self.db.scalar(
+            select(AttendanceRegularizationRequest).where(
+                AttendanceRegularizationRequest.company_id == company_id,
+                AttendanceRegularizationRequest.attachment_url == attachment_url,
+                AttendanceRegularizationRequest.deleted_at.is_(None),
+            )
+        )
+
+    def has_approved_leave_on(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, on_date: date
+    ) -> bool:
+        return (
+            self.db.scalar(
+                select(Leave.id)
+                .where(
+                    Leave.company_id == company_id,
+                    Leave.employee_id == employee_id,
+                    Leave.status == LeaveStatus.approved,
+                    Leave.deleted_at.is_(None),
+                    Leave.start_date <= on_date,
+                    Leave.end_date >= on_date,
+                )
+                .limit(1)
+            )
+            is not None
+        )
+
+    def list_real_punch_dates(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, start: date, end: date
+    ) -> list[date]:
+        """Days in [start, end] that hold a real punch (a check-in), as opposed to a row the
+        system wrote on its own."""
+        stmt = (
+            select(Attendance.date)
+            .where(
+                Attendance.company_id == company_id,
+                Attendance.employee_id == employee_id,
+                Attendance.deleted_at.is_(None),
+                Attendance.date >= start,
+                Attendance.date <= end,
+                Attendance.check_in.is_not(None),
+            )
+            .order_by(Attendance.date)
+        )
+        return list(self.db.scalars(stmt).all())
 
     def get_latest_regularization_for_attendance(
         self, attendance_id: uuid.UUID, company_id: uuid.UUID
@@ -536,6 +613,42 @@ class LeaveRepository:
                 Leave.id == leave_id, Leave.company_id == company_id, Leave.deleted_at.is_(None)
             )
         )
+
+    def get_for_update(self, leave_id: uuid.UUID, company_id: uuid.UUID) -> Leave | None:
+        """Same lookup as `get_by_id`, holding a row lock until the caller commits."""
+        return self.db.scalar(
+            select(Leave)
+            .where(Leave.id == leave_id, Leave.company_id == company_id, Leave.deleted_at.is_(None))
+            .with_for_update()
+        )
+
+    def lock_employee(self, employee_id: uuid.UUID) -> None:
+        """Serializes everything that checks and then writes one employee's leaves (overlap,
+        pending days) by holding the employee row until the caller commits."""
+        self.db.scalar(select(Employee.id).where(Employee.id == employee_id).with_for_update())
+
+    def sum_pending_days(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        leave_type_id: uuid.UUID,
+        year_start: date,
+        year_end: date,
+    ) -> Decimal:
+        """Days of the employee's PENDING leaves of one type that start inside one leave year
+        (a leave never crosses a leave year)."""
+        total = self.db.scalar(
+            select(func.coalesce(func.sum(Leave.total_days), 0)).where(
+                Leave.company_id == company_id,
+                Leave.employee_id == employee_id,
+                Leave.leave_type_id == leave_type_id,
+                Leave.status == LeaveStatus.pending,
+                Leave.deleted_at.is_(None),
+                Leave.start_date >= year_start,
+                Leave.start_date <= year_end,
+            )
+        )
+        return Decimal(total or 0)
 
     def get_overlapping(
         self,

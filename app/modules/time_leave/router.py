@@ -4,17 +4,20 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
 
 from app.core.config import settings
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.core.jobs import authorize_export_job
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.core.time import utcnow
+from app.core.upload_validation import MAX_FILE_UPLOAD_BYTES, read_upload_file_capped
 from app.modules.hr.models import Department, Employee
 from app.modules.identity.models import User, UserRole
 from app.modules.platform.service import AuditService
@@ -290,145 +293,94 @@ def regularize_attendance(
 @attendance_router.get(
     "/{attendance_id}/regularization", response_model=AttendanceRegularizationResponse | None
 )
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_attendance_regularization(
+    request: Request,
     attendance_id: uuid.UUID,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    from app.modules.time_leave.repository import AttendanceRepository
-
-    reg = AttendanceRepository(db).get_latest_regularization_for_attendance(
-        attendance_id, user.company_id
+    return AttendanceService(db).get_regularization_for_attendance(
+        user.company_id, attendance_id, user
     )
-    return reg
+
+
+_FORM_ALIASES = {"check_in": "requested_check_in", "check_out": "requested_check_out"}
 
 
 @attendance_router.post(
-    "/{attendance_id}/regularize", response_model=AttendanceRegularizationResponse
+    "/{attendance_id}/regularize",
+    response_model=AttendanceRegularizationResponse,
+    status_code=201,
 )
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 async def request_regularization(
     attendance_id: uuid.UUID,
     request: Request,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    content_type = request.headers.get("content-type", "")
-    if "multipart/form-data" in content_type:
+    """JSON body, or multipart form with an optional `attachment` file (pdf, png, jpg, jpeg).
+    The file is checked and stored under a server-made name; the client never sets a link."""
+    attachment: tuple[str, bytes] | None = None
+    if "multipart/form-data" in request.headers.get("content-type", ""):
         form = await request.form()
-        check_in_str = form.get("check_in") or form.get("requested_check_in")
-        check_out_str = form.get("check_out") or form.get("requested_check_out")
-        reason = form.get("reason") or ""
-        attachment = form.get("attachment")
-
-        from datetime import datetime
-
-        def parse_dt(dt_str):
-            if not dt_str:
-                return None
-            try:
-                # Support ISO strings and datetime-local
-                return datetime.fromisoformat(str(dt_str))
-            except Exception:
-                return None
-
-        file_url = None
-        if isinstance(attachment, UploadFile) and attachment.filename:
-            import re
-            import uuid as sys_uuid
-
-            upload_dir = get_regularizations_upload_dir()
-            os.makedirs(upload_dir, exist_ok=True)
-
-            base_name = os.path.basename(attachment.filename)
-            sanitized_name = re.sub(r"[^A-Za-z0-9._-]", "_", base_name)
-            safe_name = f"{sys_uuid.uuid4()}_{sanitized_name}"
-            storage_path = os.path.join(upload_dir, safe_name)
-            content = await attachment.read()
-            with open(storage_path, "wb") as f:
-                f.write(content)
-            # Stored attachment_url matches what is saved on disk
-            file_url = f"/api/v1/attendance/regularizations/attachments/{safe_name}"
-
-        data = AttendanceRegularizationCreate(
-            requested_check_in=parse_dt(check_in_str),
-            requested_check_out=parse_dt(check_out_str),
-            reason=str(reason),
-            attachment_url=file_url,
-        )
+        fields: dict[str, object] = {}
+        for key, value in form.multi_items():
+            if key == "attachment":
+                if isinstance(value, UploadFile) and value.filename:
+                    content = await read_upload_file_capped(
+                        value, max_bytes=MAX_FILE_UPLOAD_BYTES, request=request
+                    )
+                    attachment = (value.filename, content)
+                continue
+            fields[_FORM_ALIASES.get(key, key)] = value
+        payload: object = fields
     else:
-        json_body = await request.json()
-        data = AttendanceRegularizationCreate.model_validate(json_body)
-
-    record = AttendanceService(db).request_regularization(
-        user.company_id, attendance_id, data, user
+        try:
+            payload = await request.json()
+        except ValueError as exc:
+            raise ValidationError("The request body is not valid JSON.") from exc
+    try:
+        data = AttendanceRegularizationCreate.model_validate(payload)
+    except PydanticValidationError as exc:
+        raise ValidationError(
+            "The request body failed validation.",
+            details={
+                "errors": jsonable_encoder(exc.errors(include_url=False, include_context=False))
+            },
+        ) from exc
+    return AttendanceService(db).request_regularization(
+        user.company_id,
+        attendance_id,
+        data,
+        user,
+        attachment=attachment,
+        upload_dir=get_regularizations_upload_dir(),
     )
-    return record
 
 
 @attendance_router.get("/regularizations/attachments/{filename}")
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def download_regularization_attachment(
+    request: Request,
     filename: str,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    import os
-
-    from fastapi.responses import FileResponse
-
-    from app.core.approval_authority import can_approve_for
-    from app.core.exceptions import ForbiddenError, NotFoundError
-    from app.core.roles import HR_LEVEL_ROLES
-    from app.modules.time_leave.models import AttendanceRegularizationRequest
-
-    # 4. Path safety: reject any filename that is not equal to os.path.basename(filename)
-    if filename != os.path.basename(filename):
-        raise NotFoundError("Attachment not found.")
-
-    upload_dir = os.path.abspath(get_regularizations_upload_dir())
-    resolved_path = os.path.abspath(os.path.join(upload_dir, filename))
-
-    # Confirm the resolved path is inside the upload directory and exists
-    if not (
-        resolved_path == upload_dir or resolved_path.startswith(upload_dir + os.sep)
-    ) or not os.path.exists(resolved_path):
-        raise NotFoundError("Attachment not found.")
-
-    # 2. Look up the regularization row by attachment_url within the caller's company
-    expected_url = f"/api/v1/attendance/regularizations/attachments/{filename}"
-    reg = (
-        db.query(AttendanceRegularizationRequest)
-        .filter(
-            AttendanceRegularizationRequest.company_id == user.company_id,
-            AttendanceRegularizationRequest.attachment_url == expected_url,
-        )
-        .first()
+    """The only way to read an attachment: requester, their approvers and HR-level users."""
+    path = AttendanceService(db).resolve_regularization_attachment(
+        user.company_id, filename, user, get_regularizations_upload_dir()
     )
-    if not reg:
-        raise NotFoundError("Attachment not found.")
-
-    # 3. Allow only: requester, someone who passes can_approve_for, HR-level roles, super_admin.
-    # Check requester FIRST because can_approve_for blocks self-approval.
-    req_employee = db.query(Employee).filter(Employee.id == reg.employee_id).first()
-    if req_employee and req_employee.user_id == user.id:
-        return FileResponse(resolved_path)
-
-    if user.role == UserRole.super_admin or user.role in HR_LEVEL_ROLES:
-        return FileResponse(resolved_path)
-
-    if req_employee:
-        try:
-            if can_approve_for(db, user, req_employee):
-                return FileResponse(resolved_path)
-        except ForbiddenError:
-            pass
-
-    raise ForbiddenError("You do not have permission to access this attachment.")
+    return FileResponse(path)
 
 
 @attendance_router.put(
     "/regularizations/{regularization_id}/approve", response_model=AttendanceRegularizationResponse
 )
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def approve_regularization(
+    request: Request,
     regularization_id: uuid.UUID,
     data: AttendanceRegularizationApprove,
     db=Depends(get_tenant_db),
@@ -706,7 +658,9 @@ def _to_leave_response(leave: Leave) -> LeaveResponse:
 
 
 @leaves_router.get("", response_model=Page[LeaveResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_leaves(
+    request: Request,
     employee_id: uuid.UUID | None = None,
     status: LeaveStatus | None = None,
     leave_type_id: uuid.UUID | None = None,
@@ -716,14 +670,8 @@ def list_leaves(
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    target_company_id = user.company_id
-    if user.role == UserRole.super_admin and employee_id is not None:
-        target_emp = db.query(Employee).filter(Employee.id == employee_id).first()
-        if target_emp:
-            target_company_id = target_emp.company_id
-
     items, total, pages = LeaveService(db).list_leaves(
-        target_company_id,
+        user.company_id,
         user,
         employee_id=employee_id,
         status=status,
@@ -743,7 +691,9 @@ def list_leaves(
 
 
 @leaves_router.post("", response_model=LeaveResponse, status_code=201)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def apply_leave(
+    request: Request,
     data: LeaveApplyRequest,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
@@ -753,7 +703,9 @@ def apply_leave(
 
 
 @leaves_router.get("/balance/{employee_id}", response_model=list[LeaveBalanceResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_leave_balance(
+    request: Request,
     employee_id: uuid.UUID,
     year: int | None = Query(default=None, ge=2000, le=2100),
     db=Depends(get_tenant_db),
@@ -776,7 +728,9 @@ def get_leave_balance(
 
 
 @leaves_router.get("/{leave_id}", response_model=LeaveResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_leave(
+    request: Request,
     leave_id: uuid.UUID,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
@@ -786,18 +740,24 @@ def get_leave(
 
 
 @leaves_router.put("/{leave_id}", response_model=LeaveResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def decide_leave(
+    request: Request,
     leave_id: uuid.UUID,
     data: LeaveDecisionRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.manager, UserRole.hr_admin)),
+    user: User = Depends(get_current_user),
 ):
+    """Who may decide is the service's approval authority (reporting chain, HR admin,
+    owner); anyone else gets the same refusal."""
     leave = LeaveService(db).decide_leave(user.company_id, leave_id, data, user)
     return _to_leave_response(leave)
 
 
 @leaves_router.delete("/{leave_id}", response_model=LeaveResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def cancel_leave(
+    request: Request,
     leave_id: uuid.UUID,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),

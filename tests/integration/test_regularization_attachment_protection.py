@@ -42,6 +42,23 @@ def _link_user_to_employee(db, company_id, employee_id: str, role: UserRole) -> 
     return {"Authorization": f"Bearer {token}"}
 
 
+def _move_record_to_past_day(db, attendance_id: str) -> tuple[str, str]:
+    """4.3 rules: times must fall on the record's date and not be in the future, so the record
+    is moved to a past day. Returns (check_in, check_out) for 09:00 to 18:00 that day."""
+    from datetime import UTC, datetime
+
+    from app.modules.time_leave.models import Attendance
+
+    day = utcnow().date() - timedelta(days=3)
+    record = db.get(Attendance, uuid.UUID(attendance_id))
+    record.date = day
+    db.commit()
+    return (
+        datetime(day.year, day.month, day.day, 9, tzinfo=UTC).isoformat(),
+        datetime(day.year, day.month, day.day, 18, tzinfo=UTC).isoformat(),
+    )
+
+
 @pytest.fixture(autouse=True)
 def clean_test_uploads(monkeypatch):
     """Ensure all uploads in this test go to a temporary directory and are cleaned up."""
@@ -77,11 +94,10 @@ def test_regularization_attachment_protection(client, company_a, company_b, db):
     )
 
     # 1. Requester checks in and regularizes with attachment
-    in_time = (utcnow() - timedelta(hours=9)).isoformat()
-    out_time = utcnow().isoformat()
     created = client.post("/api/v1/attendance/check-in", headers=req_headers).json()
+    in_time, out_time = _move_record_to_past_day(db, created["id"])
 
-    files = {"attachment": ("proof document.pdf", b"proof content 123", "application/pdf")}
+    files = {"attachment": ("proof document.pdf", b"%PDF-1.4 proof content 123", "application/pdf")}
     data = {
         "check_in": in_time,
         "check_out": out_time,
@@ -93,7 +109,7 @@ def test_regularization_attachment_protection(client, company_a, company_b, db):
         data=data,
         files=files,
     )
-    assert req_resp.status_code == 200, req_resp.text
+    assert req_resp.status_code == 201, req_resp.text
     attachment_url = req_resp.json()["attachment_url"]
     filename = attachment_url.split("/")[-1]
 
@@ -109,7 +125,7 @@ def test_regularization_attachment_protection(client, company_a, company_b, db):
     # 3. the requester -> 200
     res_req = client.get(attachment_url, headers=req_headers)
     assert res_req.status_code == 200, f"Expected 200, got {res_req.status_code}"
-    assert res_req.content == b"proof content 123"
+    assert res_req.content == b"%PDF-1.4 proof content 123"
 
     # 4. manager in the reporting chain -> 200
     res_mgr_in = client.get(attachment_url, headers=mgr_chain_headers)
@@ -160,29 +176,26 @@ def test_upload_traversal_filename_sanitized(client, company_a, db, clean_test_u
     req_headers = _link_user_to_employee(db, company_a.company_id, req_emp["id"], UserRole.employee)
 
     created = client.post("/api/v1/attendance/check-in", headers=req_headers).json()
-    files = {"attachment": ("../../x.png", b"fake png data", "image/png")}
-    data = {
-        "check_in": (utcnow() - timedelta(hours=8)).isoformat(),
-        "check_out": utcnow().isoformat(),
-        "reason": "Traverse test",
-    }
+    in_time, out_time = _move_record_to_past_day(db, created["id"])
+    png = b"\x89PNG\r\n\x1a\n" + b"fake png data"
+    files = {"attachment": ("../../x.png", png, "image/png")}
+    data = {"check_in": in_time, "check_out": out_time, "reason": "Traverse test"}
     req_resp = client.post(
         f"/api/v1/attendance/{created['id']}/regularize",
         headers=req_headers,
         data=data,
         files=files,
     )
-    assert req_resp.status_code == 200, req_resp.text
+    assert req_resp.status_code == 201, req_resp.text
     attachment_url = req_resp.json()["attachment_url"]
     filename = attachment_url.split("/")[-1]
 
-    # Verify safe name properties
+    # Verify safe name properties: server-made name (uuid + extension), no client name kept
     assert ".." not in filename
     assert "/" not in filename
     assert "\\" not in filename
-    assert "x.png" in filename
-    # Sanitize rule: only A-Z a-z 0-9 . _ -
-    safe_pattern = r"^[a-f0-9\-]+_[a-zA-Z0-9._\-]+$"
+    assert "x.png" not in filename
+    safe_pattern = r"^[a-f0-9\-]{36}\.png$"
     assert re.match(safe_pattern, filename), f"Filename {filename} does not match safe pattern"
 
     # Stored on disk inside upload_dir
@@ -190,4 +203,4 @@ def test_upload_traversal_filename_sanitized(client, company_a, db, clean_test_u
     stored_path = os.path.join(upload_dir, filename)
     assert os.path.isfile(stored_path)
     with open(stored_path, "rb") as f:
-        assert f.read() == b"fake png data"
+        assert f.read() == png

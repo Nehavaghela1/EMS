@@ -277,7 +277,7 @@ def test_validation_8_insufficient_balance_is_rejected_but_unpaid_leave_is_never
             "reason": "More than the balance allows",
         },
     )
-    assert paid_resp.status_code == 400
+    assert paid_resp.status_code == 409  # 4.6 rule 4: 409 with available and requested
     assert paid_resp.json()["error"]["code"] == "insufficient_leave_balance"
 
     unpaid = _create_leave_type(
@@ -586,7 +586,7 @@ def test_hr_rejecting_a_leave_requires_a_reason_and_sends_an_email(
     missing_reason = client.put(
         f"/api/v1/leaves/{leave['id']}", headers=company_a.hr_headers, json={"status": "rejected"}
     )
-    assert missing_reason.status_code == 400
+    assert missing_reason.status_code == 422  # 4.6 rule 7: a missing reason is a 422
     assert missing_reason.json()["error"]["details"]["field"] == "rejection_reason"
 
     rejected = client.put(

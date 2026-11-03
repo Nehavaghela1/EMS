@@ -414,7 +414,7 @@ def test_R5_paid_leave_beyond_the_balance_is_refused_and_exact_balance_works(
     emp, headers = _employee(client, db, company_a)
     start, end = _next_monday_through_friday()  # five working days
     too_much = _apply(client, headers, lt["id"], start, end)
-    assert too_much.status_code == 400, too_much.text
+    assert too_much.status_code == 409, too_much.text  # 4.6 rule 4 made this a 409
     assert too_much.json()["error"]["code"] == "insufficient_leave_balance"
     four = _apply(client, headers, lt["id"], start, start + (end - start) * 3 // 4)  # Mon-Thu
     assert four.status_code == 201, (

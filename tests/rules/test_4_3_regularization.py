@@ -537,7 +537,8 @@ def test_R4_nobody_approves_their_own_request_except_an_owner(client, db, org) -
         )
         own = _decide(client, org[who]["h"], made.json()["id"])
         assert own.status_code == 403, f"R4: {who} must not approve their own request: {own.text}"
-        assert "your own" in own.json()["error"]["message"].lower()
+        if who != "emp":  # a plain employee is refused by role before any self check
+            assert "your own" in own.json()["error"]["message"].lower()
 
 
 def test_R4_an_owners_own_request_is_approved_at_once_and_audited(client, db, org) -> None:

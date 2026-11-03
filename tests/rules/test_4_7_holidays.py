@@ -416,7 +416,13 @@ def test_R6_adding_or_deleting_a_holiday_never_changes_an_approved_leave(
     )
     leave_type = _create_leave_type(client, company_a.hr_headers, annual_allowance="30")
     leave = _apply(client, owner, employee["id"], leave_type["id"], monday, friday).json()
-    assert leave["status"] == "approved" and float(leave["total_days"]) == 5.0
+    # 4.6 rule 9: an owner applying for someone else is not auto-approved; the owner decides.
+    assert leave["status"] == "pending"
+    decided = client.put(
+        f"/api/v1/leaves/{leave['id']}", headers=owner, json={"status": "approved"}
+    )
+    assert decided.status_code == 200, decided.text
+    assert float(leave["total_days"]) == 5.0
 
     added = _create(client, company_a.hr_headers, date=(monday + timedelta(days=1)).isoformat())
     assert added.status_code == 201
