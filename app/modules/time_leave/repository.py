@@ -50,6 +50,20 @@ class AttendanceRepository:
             )
         )
 
+    def status_by_date(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, start_date: date, end_date: date
+    ) -> dict[date, AttendanceStatus]:
+        rows = self.db.execute(
+            select(Attendance.date, Attendance.status).where(
+                Attendance.company_id == company_id,
+                Attendance.employee_id == employee_id,
+                Attendance.date >= start_date,
+                Attendance.date <= end_date,
+                Attendance.deleted_at.is_(None),
+            )
+        ).all()
+        return {row_date: row_status for row_date, row_status in rows}
+
     def get_open_for_employee(
         self, company_id: uuid.UUID, employee_id: uuid.UUID
     ) -> Attendance | None:
@@ -698,6 +712,29 @@ class LeaveRepository:
             stmt = stmt.where(Leave.start_date <= date_to)
         stmt = stmt.order_by(Leave.start_date.desc())
         return paginate(self.db, stmt, page_params)
+
+    def list_approved_overlapping(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        start_date: date,
+        end_date: date,
+    ) -> list[tuple[Leave, bool]]:
+        """Approved leaves touching [start_date, end_date], each with its type's is_paid."""
+        rows = self.db.execute(
+            select(Leave, LeaveType.is_paid)
+            .join(LeaveType, Leave.leave_type_id == LeaveType.id)
+            .where(
+                Leave.company_id == company_id,
+                Leave.employee_id == employee_id,
+                Leave.deleted_at.is_(None),
+                Leave.status == LeaveStatus.approved,
+                Leave.start_date <= end_date,
+                Leave.end_date >= start_date,
+            )
+            .order_by(Leave.start_date)
+        ).all()
+        return [(leave, bool(is_paid)) for leave, is_paid in rows]
 
     def sum_approved_lop_days(
         self,

@@ -11,7 +11,7 @@ from app.db.seed.pt_slabs import seed_pt_slabs
 from app.db.seed.tax_slabs import seed_tax_slabs
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
-from tests.conftest import TenantContext
+from tests.conftest import TenantContext, _make_user_headers
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +42,8 @@ def _create_employee_with_user(
         last_name="Test",
         email=user.email,
         employment_type=EmploymentType.full_time,
-        hire_date=date.today(),
+        hire_date=date(2024, 1, 1),
+        is_attendance_exempt=True,  # no attendance rows here: the test is about reimbursements
         is_active=True,
         invitation_status=InvitationStatus.activated,
     )
@@ -182,7 +183,10 @@ def test_approved_reimbursement_payroll_integration_gate(
     run_id = run_res.json()["id"]
 
     # Approve payroll run
-    client.post(f"/api/v1/payroll/runs/{run_id}/approve", headers=company_a.hr_headers)
+    # The run's creator (HR) cannot approve it; an owner can (5.4 R4).
+    owner_headers = _make_user_headers(db, company_a.company_id, UserRole.owner)
+    approve_res = client.post(f"/api/v1/payroll/runs/{run_id}/approve", headers=owner_headers)
+    assert approve_res.status_code == 200
 
     # 4. GATE ASSERTION: Fetch run details and check payslip item
     detail_res = client.get(f"/api/v1/payroll/runs/{run_id}", headers=company_a.hr_headers)
@@ -210,7 +214,7 @@ def test_payslips_me_and_employee_endpoints(
     # GET /payroll/payslips/me for employee
     res_me = client.get("/api/v1/payroll/payslips/me", headers=emp_headers)
     assert res_me.status_code == 200
-    assert isinstance(res_me.json(), list)
+    assert res_me.json()["items"] == []  # 5.5 R6: payslips come as a page
 
     # GET /payroll/payslips/{employee_id} for HR admin
     res_emp = client.get(
@@ -218,4 +222,4 @@ def test_payslips_me_and_employee_endpoints(
         headers=company_a.hr_headers,
     )
     assert res_emp.status_code == 200
-    assert isinstance(res_emp.json(), list)
+    assert res_emp.json()["items"] == []

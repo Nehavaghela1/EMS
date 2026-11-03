@@ -953,8 +953,11 @@ def test_R3_migration_index_round_trip_and_loud_failure_on_duplicates() -> None:
         engine = create_engine(settings.TEST_MIGRATION_URL)
         cfg = Config(str(_repo_root() / "alembic.ini"))
         cid = uuid.uuid4()
-        heads = ScriptDirectory.from_config(cfg).get_heads()
-        assert heads == [MIGRATION_REVISION], f"R3: the migration is not the single head: {heads}"
+        script = ScriptDirectory.from_config(cfg)
+        heads = script.get_heads()
+        assert len(heads) == 1, f"R3: there must be a single head: {heads}"
+        chain = {rev.revision for rev in script.walk_revisions()}
+        assert MIGRATION_REVISION in chain, "R3: the migration is not part of the history"
         command.downgrade(cfg, PREVIOUS_REVISION)
         command.upgrade(cfg, MIGRATION_REVISION)
         try:

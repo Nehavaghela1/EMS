@@ -1,13 +1,23 @@
 import uuid
+from calendar import monthrange
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
+from app.core.exceptions import (
+    AppError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.pagination import PageParams
 from app.core.roles import HR_LEVEL_ROLES
-from app.modules.hr.models import EmploymentType
+from app.core.time import utcnow
+from app.modules.hr.models import Employee, EmploymentType, ResignationStatus
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import (
@@ -59,7 +69,9 @@ from app.modules.payroll.schemas import (
     mask_payout_account_number,
 )
 from app.modules.platform.service import AuditService
-from app.modules.time_leave.repository import LeaveRepository
+from app.modules.time_leave.models import AttendanceStatus, Leave
+from app.modules.time_leave.repository import AttendanceRepository, LeaveRepository
+from app.modules.time_leave.service import LeaveService
 
 
 class InvalidStructureError(AppError):
@@ -630,6 +642,73 @@ class TaxSlabService:
         return created
 
 
+_ONE = Decimal("1")
+_HALF = Decimal("0.5")
+_ZERO = Decimal("0")
+
+CANNOT_APPROVE_OWN_RUN = "You cannot approve a payroll run that you created."
+
+
+@dataclass(frozen=True)
+class AttendanceSummary:
+    lop_days: Decimal
+    absent_days: Decimal
+    half_days: Decimal
+    paid_leave_days: Decimal
+
+
+def summarise_attendance(
+    *,
+    month_start: date,
+    month_end: date,
+    working_dates: list[date],
+    joined_on: date,
+    last_working_date: date | None,
+    attendance: dict[date, AttendanceStatus],
+    leaves: list[tuple[Leave, bool]],
+    attendance_exempt: bool,
+) -> AttendanceSummary:
+    """Loss of pay for one employee and month, one date at a time so that no date is counted
+    twice. A calendar day before joining or after the approved last working date is loss of
+    pay. On a working date, an approved leave decides (unpaid = loss of pay, paid = none) and
+    attendance is not looked at; otherwise a missing or `absent` row is a full day and a
+    `half_day` row half a day. Weekends and holidays are never loss of pay. Mispunch and
+    pending_regularization rows are not deducted."""
+    working = set(working_dates)
+    leave_on: dict[date, tuple[bool, Decimal]] = {}
+    for leave, is_paid in leaves:
+        fraction = _HALF if leave.is_half_day else _ONE
+        day = max(leave.start_date, month_start)
+        stop = min(leave.end_date, month_end)
+        while day <= stop:
+            leave_on.setdefault(day, (is_paid, fraction))
+            day += timedelta(days=1)
+
+    lop = absent = half = paid_leave = _ZERO
+    day = month_start
+    while day <= month_end:
+        if day < joined_on or (last_working_date is not None and day > last_working_date):
+            lop += _ONE
+        elif day in working:
+            covered = leave_on.get(day)
+            if covered is not None:
+                is_paid, fraction = covered
+                if is_paid:
+                    paid_leave += fraction
+                else:
+                    lop += fraction
+            elif not attendance_exempt:
+                status = attendance.get(day)
+                if status is None or status == AttendanceStatus.absent:
+                    lop += _ONE
+                    absent += _ONE
+                elif status == AttendanceStatus.half_day:
+                    lop += _HALF
+                    half += _ONE
+        day += timedelta(days=1)
+    return AttendanceSummary(lop, absent, half, paid_leave)
+
+
 class PayrollRunService:
     """Routes 91-94 (Spec 10.6, Spec 11.9)."""
 
@@ -645,6 +724,8 @@ class PayrollRunService:
         self.structure_repo = SalaryStructureRepository(db)
         self.employee_repo = EmployeeRepository(db)
         self.leave_repo = LeaveRepository(db)
+        self.attendance_repo = AttendanceRepository(db)
+        self.leave_service = LeaveService(db)
         from app.modules.projects.repository import ProjectRepository
 
         self.project_repo = ProjectRepository(db)
@@ -657,32 +738,32 @@ class PayrollRunService:
         idempotency_key: str,
         actor: User,
     ) -> PayrollRun:
-        from sqlalchemy.exc import IntegrityError
-
         # 1. Idempotency Check (Spec 11.9 Step 2)
         existing = self.repo.get_by_idempotency_key(company_id, idempotency_key)
         if existing is not None:
             return existing
 
-        # 2. Check regular run uniqueness per company/month/year
-        if data.run_type == "regular":
-            from sqlalchemy import select
-
-            existing_regular = self.db.scalar(
-                select(PayrollRun).where(
-                    PayrollRun.company_id == company_id,
-                    PayrollRun.month == data.month,
-                    PayrollRun.year == data.year,
-                    PayrollRun.run_type == PayrollRunType.regular,
-                    PayrollRun.deleted_at.is_(None),
-                )
+        # 2. Only a completed month can be paid
+        today = utcnow().date()
+        if (data.year, data.month) >= (today.year, today.month):
+            raise ValidationError(
+                "Payroll can only be run for a completed month.",
+                details={"field": "month"},
             )
-            if existing_regular is not None:
-                raise ConflictError(
-                    f"A regular payroll run for {data.month}/{data.year} already exists."
-                )
 
-        # 3. Create Draft Run with Idempotency Key (Spec 11.9 Step 3 & 4)
+        # 3. Check regular run uniqueness per company/month/year
+        regular_message = f"A regular payroll run for {data.month}/{data.year} already exists."
+        if data.run_type == "regular":
+            if self.repo.get_regular_run(company_id, data.month, data.year) is not None:
+                raise ConflictError(regular_message)
+
+        # The company's statutory config is created lazily and that commits, so it must exist
+        # before the run row does: a commit after the insert would save a half-built run.
+        statutory_config = self.statutory_service.get_or_create(company_id)
+
+        # 4. Create Draft Run with Idempotency Key (Spec 11.9 Step 3 & 4). The unique indexes
+        # decide a race between two simultaneous creates: the loser gets the same answer as
+        # the sequential case instead of a 500.
         run_type_enum = (
             PayrollRunType.off_cycle if data.run_type == "off_cycle" else PayrollRunType.regular
         )
@@ -696,17 +777,32 @@ class PayrollRunService:
                 idempotency_key=idempotency_key,
                 run_by=actor.id,
             )
-            self.db.flush()
         except IntegrityError:
             self.db.rollback()
             retry_existing = self.repo.get_by_idempotency_key(company_id, idempotency_key)
             if retry_existing is not None:
                 return retry_existing
+            if data.run_type == "regular":
+                raise ConflictError(regular_message) from None
             raise
 
-        # 4. Generate Payroll Items
-        # Fetch statutory configs, PT slabs, Tax slabs
-        statutory_config = self.statutory_service.get_or_create(company_id)
+        try:
+            return self._generate_run(company_id, data, run, actor, statutory_config)
+        except Exception:
+            # Nothing of a half-built run may stay: no run row, no item, no locked claim.
+            self.db.rollback()
+            raise
+
+    def _generate_run(
+        self,
+        company_id: uuid.UUID,
+        data: PayrollRunCreateRequest,
+        run: PayrollRun,
+        actor: User,
+        statutory_config: StatutoryConfig,
+    ) -> PayrollRun:
+        # 5. Generate Payroll Items
+        # Statutory config (made before the run row), PT slabs, Tax slabs
         statutory_spec = StatutoryConfigSpec(
             pf_enabled=statutory_config.pf_enabled,
             pf_employee_rate=statutory_config.pf_employee_rate,
@@ -766,25 +862,12 @@ class PayrollRunService:
             for s in db_tax_slabs
         ]
 
-        # Select employees to process
-        if data.employee_ids:
-            employees = [
-                e
-                for eid in data.employee_ids
-                if (e := self.employee_repo.get_by_id(eid, company_id)) is not None
-            ]
-        else:
-            employees, _, _ = self.employee_repo.list_employees(
-                company_id=company_id,
-                q=None,
-                department_id=None,
-                is_active=True,
-                level=None,
-                employment_type=None,
-                reporting_manager_id=None,
-                sort=None,
-                page_params=PageParams(page=1, limit=1000),
-            )
+        _, last_day = monthrange(data.year, data.month)
+        month_start = date(data.year, data.month, 1)
+        month_end = date(data.year, data.month, last_day)
+
+        skipped: list[dict[str, str]] = []
+        employees = self._select_employees(company_id, data, skipped)
 
         total_gross = Decimal("0.00")
         total_deductions = Decimal("0.00")
@@ -793,11 +876,13 @@ class PayrollRunService:
         processed_count = 0
 
         for emp in employees:
-            from calendar import monthrange
-
-            _, last_day = monthrange(data.year, data.month)
-            month_start = date(data.year, data.month, 1)
-            month_end = date(data.year, data.month, last_day)
+            # Not employed at all in this month: nothing to pay.
+            last_working_date = self._approved_last_working_date(emp)
+            if emp.hire_date > month_end or (
+                last_working_date is not None and last_working_date < month_start
+            ):
+                skipped.append({"employee_id": str(emp.id), "reason": "not_employed_in_month"})
+                continue
 
             # Check if salary was active in this pay period (effective_from <= month_end)
             salary_record = self.salary_repo.get_in_force(emp.id, company_id, month_end)
@@ -807,10 +892,12 @@ class PayrollRunService:
             if salary_record is None:
                 salary_record = self.salary_repo.get_open_ended(emp.id, company_id)
             if salary_record is None:
+                skipped.append({"employee_id": str(emp.id), "reason": "no_salary"})
                 continue
 
             structure = self.structure_repo.get_by_id(salary_record.structure_id, company_id)
             if structure is None:
+                skipped.append({"employee_id": str(emp.id), "reason": "no_structure"})
                 continue
 
             component_specs = [
@@ -828,18 +915,27 @@ class PayrollRunService:
                 for c in structure.components
             ]
 
-            # ── Attendance: calendar days in the payroll month ────────────────
+            # ── Attendance: pay is prorated over the calendar days of the month ───────
             working_days = Decimal(str(last_day))
-
-            # Real LOP from approved unpaid leaves — cross-month intersection
-            lop_days = self.leave_repo.sum_approved_lop_days(
-                company_id, emp.id, month_start, month_end
+            summary = summarise_attendance(
+                month_start=month_start,
+                month_end=month_end,
+                working_dates=self.leave_service.working_dates(
+                    company_id, emp.department_id, month_start, month_end
+                ),
+                joined_on=emp.hire_date,
+                last_working_date=self._approved_last_working_date(emp),
+                attendance=self.attendance_repo.status_by_date(
+                    company_id, emp.id, month_start, month_end
+                ),
+                leaves=self.leave_repo.list_approved_overlapping(
+                    company_id, emp.id, month_start, month_end
+                ),
+                attendance_exempt=emp.is_attendance_exempt,
             )
-            paid_leave_days = self.leave_repo.sum_approved_paid_leave_days(
-                company_id, emp.id, month_start, month_end
-            )
-            # Absent days = non-leave, non-paid days we don't track explicitly here
-            absent_days = Decimal("0.0")
+            lop_days = summary.lop_days
+            paid_leave_days = summary.paid_leave_days
+            absent_days = summary.absent_days
             present_days = max(Decimal("0.0"), working_days - lop_days - paid_leave_days)
 
             # ── Reimbursements: approved, not yet locked to any run ───────────
@@ -979,7 +1075,7 @@ class PayrollRunService:
                 working_days=working_days,
                 present_days=present_days,
                 absent_days=absent_days,
-                half_days=Decimal("0.0"),
+                half_days=summary.half_days,
                 paid_leave_days=paid_leave_days,
                 lop_days=lop_days,
                 reimbursement_amount=reimbursement_amount,
@@ -1010,6 +1106,7 @@ class PayrollRunService:
             total_deductions=total_deductions,
             total_net=total_net,
             total_employer_cost=total_employer_cost,
+            skipped_json=skipped,
         )
 
         self.audit.record(
@@ -1022,12 +1119,54 @@ class PayrollRunService:
                 "month": data.month,
                 "year": data.year,
                 "run_type": data.run_type,
+                "status": run.status.value,
                 "total_employees": processed_count,
-                "total_net": str(total_net),
+                "skipped_count": len(skipped),
             },
         )
         self.db.commit()
         return run
+
+    def _select_employees(
+        self,
+        company_id: uuid.UUID,
+        data: PayrollRunCreateRequest,
+        skipped: list[dict[str, str]],
+    ) -> list[Employee]:
+        if data.employee_ids:
+            employees: list[Employee] = []
+            for eid in dict.fromkeys(data.employee_ids):  # one item per employee, in order
+                found = self.employee_repo.get_by_id(eid, company_id)
+                if found is None:
+                    skipped.append({"employee_id": str(eid), "reason": "employee_not_found"})
+                else:
+                    employees.append(found)
+            return employees
+
+        employees = []
+        page = 1
+        while True:
+            batch, _, pages = self.employee_repo.list_employees(
+                company_id=company_id,
+                q=None,
+                department_id=None,
+                is_active=True,
+                level=None,
+                employment_type=None,
+                reporting_manager_id=None,
+                sort=None,
+                page_params=PageParams(page=page, limit=1000),
+            )
+            employees.extend(batch)
+            if page >= pages:
+                return employees
+            page += 1
+
+    @staticmethod
+    def _approved_last_working_date(emp: Employee) -> date | None:
+        if emp.resignation_status == ResignationStatus.approved:
+            return emp.last_working_date
+        return None
 
     def list_runs(
         self, company_id: uuid.UUID, page_params: PageParams, status: PayrollRunStatus | None = None
@@ -1046,14 +1185,21 @@ class PayrollRunService:
     def approve_run(self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User) -> PayrollRun:
         from sqlalchemy import update
 
-        from app.core.time import utcnow
-
-        run = self.repo.get_by_id(run_id, company_id)
+        run = self.repo.get_by_id_for_update(run_id, company_id)
         if run is None:
             raise NotFoundError("Payroll run not found.")
 
         if run.status == PayrollRunStatus.approved:
             return run
+        if run.status != PayrollRunStatus.pending_approval:
+            raise ConflictError(
+                f"A payroll run with status '{run.status.value}' cannot be approved; "
+                "only a run in 'pending_approval' can."
+            )
+        # Maker-checker: the person who created the run does not approve it (an owner may,
+        # so a company with one HR person and an owner still works).
+        if run.run_by == actor.id and actor.role not in (UserRole.owner, UserRole.super_admin):
+            raise ForbiddenError(CANNOT_APPROVE_OWN_RUN)
 
         self.repo.update(
             run,
@@ -1081,7 +1227,12 @@ class PayrollRunService:
             action="PAYROLL_RUN_APPROVED",
             entity_type="payroll_run",
             entity_id=run.id,
-            details={"month": run.month, "year": run.year, "total_net": str(run.total_net)},
+            details={
+                "month": run.month,
+                "year": run.year,
+                "status": run.status.value,
+                "total_employees": run.total_employees,
+            },
         )
         self.db.commit()
         return run
@@ -1090,7 +1241,7 @@ class PayrollRunService:
         """Delete/cancel a payroll run. Allowed only if status in
         ('draft', 'processing', 'pending_approval') and not 'approved'/'paid'.
         """
-        run = self.repo.get_by_id(run_id, company_id)
+        run = self.repo.get_by_id_for_update(run_id, company_id)
         if run is None:
             raise NotFoundError("Payroll run not found.")
 
@@ -1124,9 +1275,77 @@ class PayrollRunService:
             action="PAYROLL_RUN_DELETED",
             entity_type="payroll_run",
             entity_id=run_id,
-            details={"month": run.month, "year": run.year, "status": run.status.value},
+            details={
+                "month": run.month,
+                "year": run.year,
+                "status": run.status.value,
+                "total_employees": run.total_employees,
+            },
         )
         self.db.commit()
+
+
+class PayslipService:
+    """Routes 95-96 (Spec 10.6). A payslip is the stored item of its run, read as it was
+    issued; an employee sees it only once the run is approved or paid."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.item_repo = PayrollItemRepository(db)
+        self.employee_repo = EmployeeRepository(db)
+        self.audit = AuditService(db)
+
+    def list_own(
+        self, actor: User, page_params: PageParams, year: int | None, month: int | None
+    ) -> tuple[list[PayrollItem], int, int]:
+        employee = self.employee_repo.get_by_user_id(actor.company_id, actor.id)
+        if employee is None:
+            return [], 0, 0
+        return self.item_repo.list_payslips(
+            actor.company_id,
+            employee.id,
+            page_params,
+            released_only=True,
+            year=year,
+            month=month,
+        )
+
+    def list_for_employee(
+        self,
+        actor: User,
+        employee_id: uuid.UUID,
+        page_params: PageParams,
+        year: int | None,
+        month: int | None,
+    ) -> tuple[list[PayrollItem], int, int]:
+        company_id = actor.company_id
+        employee = self.employee_repo.get_by_id(employee_id, company_id)
+        if employee is None and actor.role == UserRole.super_admin:
+            employee = self.item_repo.find_employee_any_company(employee_id)
+            if employee is not None:
+                company_id = employee.company_id
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+
+        items, total, pages = self.item_repo.list_payslips(
+            company_id,
+            employee.id,
+            page_params,
+            released_only=False,
+            year=year,
+            month=month,
+        )
+        if employee.user_id != actor.id:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="PAYSLIP_VIEWED_BY_HR",
+                entity_type="employee",
+                entity_id=employee.id,
+                details={"employee_id": str(employee.id), "run_count": total},
+            )
+            self.db.commit()
+        return items, total, pages
 
 
 class ReimbursementService:

@@ -6,11 +6,13 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.pagination import PageParams, paginate
+from app.modules.hr.models import Employee
 from app.modules.payroll.models import (
     EmployeeSalary,
     PayrollItem,
     PayrollRun,
     PayrollRunStatus,
+    PayrollRunType,
     PtSlab,
     Reimbursement,
     ReimbursementStatus,
@@ -311,6 +313,29 @@ class PayrollRunRepository:
             )
         )
 
+    def get_by_id_for_update(self, run_id: uuid.UUID, company_id: uuid.UUID) -> PayrollRun | None:
+        """Like get_by_id but locks the row, so two approvals or deletes of one run queue up."""
+        return self.db.scalar(
+            select(PayrollRun)
+            .where(
+                PayrollRun.id == run_id,
+                PayrollRun.company_id == company_id,
+                PayrollRun.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+
+    def get_regular_run(self, company_id: uuid.UUID, month: int, year: int) -> PayrollRun | None:
+        return self.db.scalar(
+            select(PayrollRun).where(
+                PayrollRun.company_id == company_id,
+                PayrollRun.month == month,
+                PayrollRun.year == year,
+                PayrollRun.run_type == PayrollRunType.regular,
+                PayrollRun.deleted_at.is_(None),
+            )
+        )
+
     def get_by_idempotency_key(
         self, company_id: uuid.UUID, idempotency_key: str
     ) -> PayrollRun | None:
@@ -387,6 +412,45 @@ class PayrollItemRepository:
                 )
                 .order_by(PayrollRun.year.desc(), PayrollRun.month.desc())
             ).all()
+        )
+
+    def list_payslips(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        page_params: PageParams,
+        *,
+        released_only: bool,
+        year: int | None = None,
+        month: int | None = None,
+    ) -> tuple[list[PayrollItem], int, int]:
+        """One employee's payslips, newest month first. `released_only` keeps the runs the
+        employee may see (approved or paid); HR-level callers pass False."""
+        stmt = (
+            select(PayrollItem)
+            .join(PayrollRun, PayrollItem.payroll_run_id == PayrollRun.id)
+            .where(
+                PayrollItem.company_id == company_id,
+                PayrollItem.employee_id == employee_id,
+                PayrollItem.deleted_at.is_(None),
+                PayrollRun.deleted_at.is_(None),
+            )
+            .order_by(PayrollRun.year.desc(), PayrollRun.month.desc(), PayrollRun.created_at.desc())
+        )
+        if released_only:
+            stmt = stmt.where(
+                PayrollRun.status.in_([PayrollRunStatus.approved, PayrollRunStatus.paid])
+            )
+        if year is not None:
+            stmt = stmt.where(PayrollRun.year == year)
+        if month is not None:
+            stmt = stmt.where(PayrollRun.month == month)
+        return paginate(self.db, stmt, page_params)
+
+    def find_employee_any_company(self, employee_id: uuid.UUID) -> Employee | None:
+        """For the platform super admin only, who is not tied to one company."""
+        return self.db.scalar(
+            select(Employee).where(Employee.id == employee_id, Employee.deleted_at.is_(None))
         )
 
     def get_ytd_gross_for_employee(
@@ -477,13 +541,15 @@ class ReimbursementRepository:
     ) -> list[Reimbursement]:
         return list(
             self.db.scalars(
-                select(Reimbursement).where(
+                select(Reimbursement)
+                .where(
                     Reimbursement.company_id == company_id,
                     Reimbursement.employee_id == employee_id,
                     Reimbursement.status == ReimbursementStatus.approved,
                     Reimbursement.added_to_payroll_run_id.is_(None),
                     Reimbursement.deleted_at.is_(None),
                 )
+                .with_for_update()
             ).all()
         )
 
