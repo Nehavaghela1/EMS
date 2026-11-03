@@ -1675,6 +1675,18 @@ class LeaveService:
             current += timedelta(days=1)
         return days
 
+    def working_dates(
+        self,
+        company_id: uuid.UUID,
+        department_id: uuid.UUID | None,
+        start_date: date,
+        end_date: date,
+    ) -> list[date]:
+        """Public for other modules (payroll): the dates in [start_date, end_date] that are
+        neither a company weekend day nor a mandatory holiday of the department."""
+        settings_row = self.settings_repo.get_by_company(company_id)
+        return self._working_dates(company_id, settings_row, department_id, start_date, end_date)
+
     @staticmethod
     def _leave_year_bounds(settings_row: CompanySettings | None, year: int) -> tuple[date, date]:
         """First and last day of leave year `year`, following the company settings."""

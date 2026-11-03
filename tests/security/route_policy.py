@@ -244,9 +244,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("POST", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("DELETE", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin, UserRole.super_admin),
-    ("GET", "/api/v1/payroll/runs/{id}"): ROLES(
-        UserRole.hr_admin, UserRole.employee, UserRole.manager, UserRole.super_admin
-    ),
+    ("GET", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("POST", "/api/v1/payroll/runs/{id}/approve"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("GET", "/api/v1/payroll/statutory-config"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("PUT", "/api/v1/payroll/statutory-config"): ROLES(UserRole.hr_admin, UserRole.super_admin),

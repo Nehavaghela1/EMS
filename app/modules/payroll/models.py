@@ -342,6 +342,8 @@ class PayrollRun(TenantBase):
     )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Employees left out of this run: [{"employee_id": ..., "reason": ...}]
+    skipped_json: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
 
     items: Mapped[list["PayrollItem"]] = relationship(
         "PayrollItem",

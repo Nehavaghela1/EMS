@@ -634,14 +634,14 @@ def test_R6_two_simultaneous_creates_give_one_202_and_one_409(
 ) -> None:
     from app.modules.payroll.repository import PayrollRunRepository
 
-    original = PayrollRunRepository.get_by_idempotency_key
+    original = PayrollRunRepository.get_regular_run
 
     def _slow(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
         found = original(self, *args, **kwargs)
-        time.sleep(0.5)  # both requests have looked before either one saves
+        time.sleep(0.5)  # both requests passed the "already exists?" look before either saves
         return found
 
-    monkeypatch.setattr(PayrollRunRepository, "get_by_idempotency_key", _slow)
+    monkeypatch.setattr(PayrollRunRepository, "get_regular_run", _slow)
     assert settings.TEST_DATABASE_URL is not None
     engine = create_engine(settings.TEST_DATABASE_URL, pool_size=5, max_overflow=2)
     cid = uuid.uuid4()

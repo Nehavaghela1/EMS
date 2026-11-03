@@ -1,10 +1,11 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
+from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.modules.hr.models import Employee
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
@@ -280,7 +281,9 @@ payroll_runs_router = APIRouter(prefix="/payroll/runs", tags=["Payroll — Payro
 
 
 @payroll_runs_router.post("", response_model=PayrollRunResponse, status_code=202)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def create_payroll_run(
+    request: Request,
     data: PayrollRunCreateRequest,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: Session = Depends(get_tenant_db),
@@ -303,7 +306,9 @@ def create_payroll_run(
 
 
 @payroll_runs_router.get("", response_model=Page[PayrollRunResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_payroll_runs(
+    request: Request,
     status_filter: PayrollRunStatus | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
@@ -323,27 +328,17 @@ def list_payroll_runs(
 
 
 @payroll_runs_router.get("/{id}", response_model=PayrollRunDetailResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_payroll_run_detail(
+    request: Request,
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(
-        require_role(UserRole.hr_admin, UserRole.employee, UserRole.manager, UserRole.super_admin)
-    ),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
+    # Run totals and everyone's pay are HR-level only; employees and managers read their own
+    # pay through the payslip routes.
     service = PayrollRunService(db)
     run, items = service.get_run_detail(user.company_id, id)
-
-    # An employee cannot see a payslip before the run is approved (Spec 11.9, Gate WP-19)
-    if user.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
-        if run.status != PayrollRunStatus.approved:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Payroll run has not been approved yet.",
-            )
-        emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
-        emp_id = emp.id if emp else None
-        items = [item for item in items if item.employee_id == emp_id]
-
     return PayrollRunDetailResponse(
         run=PayrollRunResponse.model_validate(run),
         items=[PayrollItemResponse.model_validate(i) for i in items],
@@ -351,7 +346,9 @@ def get_payroll_run_detail(
 
 
 @payroll_runs_router.post("/{id}/approve", response_model=PayrollRunResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def approve_payroll_run(
+    request: Request,
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
@@ -362,7 +359,9 @@ def approve_payroll_run(
 
 
 @payroll_runs_router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def delete_payroll_run(
+    request: Request,
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),

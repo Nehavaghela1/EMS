@@ -1,8 +1,9 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.masking import mask_tail
 from app.modules.payroll.models import (
@@ -247,9 +248,11 @@ class TaxSlabPostRequest(BaseModel):
 
 
 class PayrollRunCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     month: int = Field(ge=1, le=12)
     year: int = Field(ge=2000, le=2100)
-    run_type: str = "regular"  # "regular" or "off_cycle"
+    run_type: Literal["regular", "off_cycle"] = "regular"
     employee_ids: list[uuid.UUID] | None = None
 
 
@@ -268,6 +271,7 @@ class PayrollRunResponse(BaseModel):
     approved_by: uuid.UUID | None
     approved_at: datetime | None
     error_message: str | None
+    skipped_json: list[dict] | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -10,13 +10,14 @@ from app.db.rls import bind_tenant_to_session
 from app.db.seed.pt_slabs import seed_pt_slabs
 from app.db.seed.tax_slabs import seed_tax_slabs
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
+from app.modules.identity.models import UserRole
 from app.modules.payroll.models import (
     PayrollRun,
     PayrollRunStatus,
     PayrollRunType,
 )
 from app.modules.payroll.repository import PayrollItemRepository
-from tests.conftest import TenantContext
+from tests.conftest import TenantContext, _make_user_headers
 
 
 @pytest.fixture(autouse=True)
@@ -34,7 +35,9 @@ def _create_employee(db: Session, company_id: uuid.UUID, email: str) -> Employee
         last_name="PayrollEmp",
         email=email,
         employment_type=EmploymentType.full_time,
-        hire_date=date.today(),
+        hire_date=date(2024, 1, 1),
+        # No attendance rows here: this file tests the pay arithmetic, not loss of pay (5.4 R7).
+        is_attendance_exempt=True,
         is_active=True,
         invitation_status=InvitationStatus.activated,
     )
@@ -42,6 +45,11 @@ def _create_employee(db: Session, company_id: uuid.UUID, email: str) -> Employee
     db.commit()
     db.refresh(employee)
     return employee
+
+
+def _owner_headers(db: Session, company: TenantContext) -> dict[str, str]:
+    """A run is approved by someone other than its creator (5.4 R4); an owner may approve."""
+    return _make_user_headers(db, company.company_id, UserRole.owner)
 
 
 def _setup_salary_structure(client: TestClient, company: TenantContext) -> str:
@@ -219,7 +227,7 @@ def test_payroll_run_approval_workflow_gate(
 
     # 3. HR approves the run
     approve_res = client.post(
-        f"/api/v1/payroll/runs/{run_id}/approve", headers=company_a.hr_headers
+        f"/api/v1/payroll/runs/{run_id}/approve", headers=_owner_headers(db, company_a)
     )
     assert approve_res.status_code == 200
     assert approve_res.json()["status"] == "approved"
@@ -315,7 +323,7 @@ def test_cannot_delete_approved_payroll_run(
 
     # Approve run
     approve_res = client.post(
-        f"/api/v1/payroll/runs/{run_id}/approve", headers=company_a.hr_headers
+        f"/api/v1/payroll/runs/{run_id}/approve", headers=_owner_headers(db, company_a)
     )
     assert approve_res.status_code == 200
 
