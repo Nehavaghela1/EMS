@@ -273,12 +273,16 @@ def _create_pending_regularization(client: TestClient, emp_headers: dict) -> str
     assert checkin.status_code == 201, checkin.text
     att_id = checkin.json()["id"]
 
+    # 4.3 rules: a request names at least one time, on the record's date and not in the future.
+    from app.core.time import utcnow
+
+    start_of_day = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     reg = client.post(
         f"/api/v1/attendance/{att_id}/regularize",
         headers=emp_headers,
-        json={"reason": "Forgot check-out"},
+        json={"requested_check_in": start_of_day.isoformat(), "reason": "Forgot check-out"},
     )
-    assert reg.status_code == 200, reg.text
+    assert reg.status_code == 201, reg.text
     return reg.json()["id"]
 
 

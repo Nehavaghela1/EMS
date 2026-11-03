@@ -67,19 +67,46 @@ class AttendanceRegularizeRequest(BaseModel):
     reason: str
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    """A time without a zone is taken as UTC (the server stores UTC only)."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=dt.UTC)
+    return value
+
+
+_ReasonStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+_OptionalNote = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None
+
+
 class AttendanceRegularizationCreate(BaseModel):
+    """The attachment is never part of this body: it is a separate file part of the multipart
+    request, validated and stored by the server (the client cannot set a link)."""
+
+    model_config = ConfigDict(extra="forbid")
+
     requested_check_in: datetime | None = None
     requested_check_out: datetime | None = None
-    reason: str
-    attachment_url: str | None = None
+    reason: _ReasonStr
+
+    @field_validator("requested_check_in", "requested_check_out")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        return _as_utc(value)
 
 
 class AttendanceRegularizationApprove(BaseModel):
-    status: str  # "approved" or "rejected"
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["approved", "rejected"]
     adjusted_check_in: datetime | None = None
     adjusted_check_out: datetime | None = None
-    admin_notes: str | None = None
-    rejection_reason: str | None = None
+    admin_notes: _OptionalNote = None
+    rejection_reason: _OptionalNote = None
+
+    @field_validator("adjusted_check_in", "adjusted_check_out")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        return _as_utc(value)
 
 
 class AttendanceExportRequest(BaseModel):
@@ -355,17 +382,21 @@ class LeaveApplyRequest(BaseModel):
     for themselves; a manager applying for a direct report or HR applying
     for anyone must supply it."""
 
+    model_config = ConfigDict(extra="forbid")
+
     employee_id: uuid.UUID | None = None
     leave_type_id: uuid.UUID
     start_date: date
     end_date: date
     is_half_day: bool = False
-    reason: str
+    reason: _ReasonStr
 
 
 class LeaveDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     status: Literal["approved", "rejected"]
-    rejection_reason: str | None = None
+    rejection_reason: _OptionalNote = None
 
 
 class LeaveResponse(BaseModel):

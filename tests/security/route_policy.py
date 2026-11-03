@@ -222,7 +222,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/leaves/balances/seed"): ROLES(UserRole.hr_admin),
     ("DELETE", "/api/v1/leaves/{leave_id}"): AUTHENTICATED,
     ("GET", "/api/v1/leaves/{leave_id}"): AUTHENTICATED,
-    ("PUT", "/api/v1/leaves/{leave_id}"): ROLES(UserRole.manager, UserRole.hr_admin),
+    # 4.6: the service decides (plain employees are refused there, with the same message a
+    # manager outside the reporting chain gets), so the route itself only needs a login.
+    ("PUT", "/api/v1/leaves/{leave_id}"): AUTHENTICATED,
     ("GET", "/api/v1/notifications"): AUTHENTICATED,
     ("PUT", "/api/v1/notifications/read-all"): AUTHENTICATED,
     ("PUT", "/api/v1/notifications/{notification_id}/read"): AUTHENTICATED,

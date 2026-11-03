@@ -1,6 +1,7 @@
 import logging
+import os
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy.exc import IntegrityError
@@ -17,7 +18,8 @@ from app.core.exceptions import (
 from app.core.pagination import PageParams
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
-from app.modules.hr.models import Employee
+from app.core.upload_validation import validate_document_upload
+from app.modules.hr.models import Employee, ResignationStatus
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
 from app.modules.identity.models import CompanySettings, LeaveYearType, User, UserRole
 from app.modules.identity.repository import CompanySettingsRepository
@@ -71,6 +73,21 @@ from app.workers.tasks.email import send_email_task
 
 logger = logging.getLogger("app")
 
+# 4.3 rules: how old a record may be for a correction request, and the attachment kinds.
+REGULARIZATION_MAX_AGE_DAYS = 30
+REGULARIZATION_ATTACHMENT_EXTENSIONS = frozenset({"pdf", "png", "jpg", "jpeg"})
+REGULARIZATION_ATTACHMENT_URL_PREFIX = "/api/v1/attendance/regularizations/attachments/"
+
+
+def require_deciding_role(user: User) -> None:
+    """A plain employee role never decides, even with reports. The refusal carries the same
+    message a manager outside the reporting chain gets, so nothing tells the two apart, and it
+    comes before any lookup so it does not depend on whether the request exists."""
+    from app.core.approval_authority import DEFAULT_FORBIDDEN_MESSAGE
+
+    if user.role not in (UserRole.manager, *HR_LEVEL_ROLES):
+        raise ForbiddenError(DEFAULT_FORBIDDEN_MESSAGE)
+
 
 def verify_approval_authority(
     db: Session,
@@ -82,7 +99,14 @@ def verify_approval_authority(
     """
     from app.core.approval_authority import can_approve_for
 
-    return can_approve_for(db, current_user, target_employee, allow_owner_super_admin_self=True)
+    require_deciding_role(current_user)
+    # Only an owner may approve their own request; super_admin and hr_admin may not.
+    return can_approve_for(
+        db,
+        current_user,
+        target_employee,
+        allow_owner_super_admin_self=current_user.role == UserRole.owner,
+    )
 
 
 _SEES_EVERYONE = HR_LEVEL_ROLES
@@ -139,10 +163,9 @@ class LeaveOverlapError(ConflictError):
         )
 
 
-class InsufficientLeaveBalanceError(AppError):
-    """Spec 11.3 step 8."""
+class InsufficientLeaveBalanceError(ConflictError):
+    """Spec 11.3 step 8: 409 with the available and requested days."""
 
-    status_code = 400
     code = "insufficient_leave_balance"
 
     def __init__(self, *, available: Decimal, requested: Decimal) -> None:
@@ -436,15 +459,44 @@ class AttendanceService:
         attendance_id: uuid.UUID,
         data: AttendanceRegularizationCreate,
         current_user: User,
+        attachment: tuple[str, bytes] | None = None,
+        upload_dir: str | None = None,
     ) -> AttendanceRegularizationRequest:
+        """Route 'regularize' (4.3): an employee asks to correct their OWN record, up to 30 days
+        old. An owner's own request is approved at once; every other request waits for a
+        decision by the reporting chain, HR admin or owner."""
         record = self.repo.get_by_id(attendance_id, company_id)
         if record is None:
             raise NotFoundError("Attendance record not found.")
-        self._assert_can_view(company_id, record, current_user)
+        caller = self.employee_repo.get_by_user_id(company_id, current_user.id)
+        if caller is None or record.employee_id != caller.id:
+            raise ForbiddenError("You can only request a correction for your own attendance.")
+        if record.date < utcnow().date() - timedelta(days=REGULARIZATION_MAX_AGE_DAYS):
+            raise ValidationError(
+                f"Attendance older than {REGULARIZATION_MAX_AGE_DAYS} days cannot be corrected "
+                "with a request.",
+                details={"field": "attendance_id"},
+            )
+        if self._day_is_on_leave(company_id, record):
+            raise ConflictError("This day is on approved leave and cannot be corrected.")
+        self._validate_regularization_times(
+            record, data.requested_check_in, data.requested_check_out
+        )
+        stored_name: str | None = None
+        if attachment is not None:
+            stored_name = self._check_attachment(*attachment)
+        if self.repo.get_pending_regularization(attendance_id, company_id) is not None:
+            raise ConflictError("A correction request for this record is already pending.")
 
-        # Determine manager
         employee = self.employee_repo.get_by_id_any_status(record.employee_id, company_id)
         manager_id = employee.reporting_manager_id if employee else None
+        is_owner = current_user.role == UserRole.owner
+        attachment_url: str | None = None
+        stored_path: str | None = None
+        if stored_name is not None and attachment is not None:
+            stored_path, attachment_url = self._store_attachment(
+                upload_dir, stored_name, attachment[1]
+            )
 
         req = AttendanceRegularizationRequest(
             attendance_id=attendance_id,
@@ -453,53 +505,152 @@ class AttendanceService:
             requested_check_in=data.requested_check_in,
             requested_check_out=data.requested_check_out,
             reason=data.reason,
-            attachment_url=data.attachment_url,
-            status=RegularizationStatus.pending,
+            attachment_url=attachment_url,
+            status=RegularizationStatus.approved if is_owner else RegularizationStatus.pending,
+            approved_by=current_user.id if is_owner else None,
+            approved_at=utcnow() if is_owner else None,
             company_id=company_id,
         )
-        self.repo.create_regularization_request(req)
-
-        # For Owner / Super Admin: Auto-approve immediately since no manager is above them
-        if current_user.role in [UserRole.owner, UserRole.super_admin]:
-            req.status = RegularizationStatus.approved
-            req.approved_by = current_user.id
-            req.approved_at = utcnow()
-            req.admin_notes = "Auto-approved for Owner / Leadership"
-
-            eff_check_in = data.requested_check_in
-            eff_check_out = data.requested_check_out
-            if eff_check_in:
-                record.check_in = eff_check_in
-            if eff_check_out:
-                record.check_out = eff_check_out
-            if record.check_in and record.check_out and record.check_out > record.check_in:
-                from decimal import ROUND_HALF_UP
-
-                calc_hours = (
-                    Decimal((record.check_out - record.check_in).total_seconds()) / Decimal(3600)
-                ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                record.hours_worked = calc_hours
-                settings_row = self.settings_repo.get_by_company(company_id)
-                half_thresh = (
-                    settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+        try:
+            self.repo.create_regularization_request(req)
+            self.audit.record(
+                company_id=company_id,
+                actor=current_user,
+                action="REGULARIZATION_REQUESTED",
+                entity_type="attendance_regularization",
+                entity_id=req.id,
+                details={
+                    "attendance_id": record.id,
+                    "employee_id": record.employee_id,
+                    "has_attachment": attachment_url is not None,
+                },
+            )
+            if is_owner:
+                self._apply_regularized_times(
+                    company_id, record, data.requested_check_in, data.requested_check_out
                 )
-                if calc_hours < Decimal("1.0"):
-                    record.status = AttendanceStatus.absent
-                elif calc_hours < half_thresh:
-                    record.status = AttendanceStatus.half_day
-                else:
-                    record.status = AttendanceStatus.present
+                self.audit.record(
+                    company_id=company_id,
+                    actor=current_user,
+                    action="REGULARIZATION_APPROVED",
+                    entity_type="attendance_regularization",
+                    entity_id=req.id,
+                    details={
+                        "attendance_id": record.id,
+                        "employee_id": record.employee_id,
+                        "auto_approved": True,
+                    },
+                )
             else:
-                record.status = AttendanceStatus.absent
-
-            record.notes = ((record.notes or "") + " [Auto-regularized by Owner]").strip()
+                record.status = AttendanceStatus.pending_regularization
+                self._notify_regularization_requested(company_id, record, employee, manager_id)
             self.db.commit()
-            DashboardService.invalidate_company_dashboards(company_id)
-            return req
+        except IntegrityError as exc:
+            self.db.rollback()
+            self._remove_file(stored_path)
+            raise ConflictError("A correction request for this record is already pending.") from exc
+        except Exception:
+            self.db.rollback()
+            self._remove_file(stored_path)
+            raise
+        DashboardService.invalidate_company_dashboards(company_id)
+        return req
 
-        record.status = AttendanceStatus.pending_regularization
+    # --- regularization helpers (4.3) ------------------------------------
 
-        # Notify manager if present
+    def _day_is_on_leave(self, company_id: uuid.UUID, record: Attendance) -> bool:
+        if record.status == AttendanceStatus.on_leave:
+            return True
+        return self.repo.has_approved_leave_on(company_id, record.employee_id, record.date)
+
+    def _validate_regularization_times(
+        self, record: Attendance, check_in: datetime | None, check_out: datetime | None
+    ) -> None:
+        if check_in is None and check_out is None:
+            raise ValidationError("Give at least one of the check-in and check-out times.")
+        now = utcnow()
+        for value in (check_in, check_out):
+            if value is not None and value > now:
+                raise ValidationError("A requested time cannot be in the future.")
+        effective_in = check_in or record.check_in
+        if check_out is not None and effective_in is not None and check_out <= effective_in:
+            raise ValidationError("The check-out time must be after the check-in time.")
+        if check_in is not None and check_in.date() != record.date:
+            raise ValidationError("The check-in time must fall on the date of the record.")
+        if check_out is not None and check_out.date() not in (
+            record.date,
+            record.date + timedelta(days=1),
+        ):
+            raise ValidationError(
+                "The check-out time must fall on the date of the record or the next morning."
+            )
+
+    @staticmethod
+    def _check_attachment(filename: str, data: bytes) -> str:
+        """Returns the server-made file name (uuid + checked extension). Only pdf, png, jpg
+        and jpeg are accepted, judged by the shared upload helper (extension and content)."""
+        _clean, ext, _content_type = validate_document_upload(filename, data)
+        if ext not in REGULARIZATION_ATTACHMENT_EXTENSIONS:
+            raise ValidationError("Only PDF, PNG, JPG and JPEG attachments are accepted.")
+        return f"{uuid.uuid4()}.{ext}"
+
+    @staticmethod
+    def _store_attachment(upload_dir: str | None, stored_name: str, data: bytes) -> tuple[str, str]:
+        if upload_dir is None:
+            raise AppError("No upload folder is configured.")
+        os.makedirs(upload_dir, exist_ok=True)
+        path = os.path.join(upload_dir, stored_name)
+        with open(path, "wb") as handle:
+            handle.write(data)
+        return path, f"{REGULARIZATION_ATTACHMENT_URL_PREFIX}{stored_name}"
+
+    @staticmethod
+    def _remove_file(path: str | None) -> None:
+        if path and os.path.exists(path):
+            os.remove(path)
+
+    def _hours_and_status(
+        self, company_id: uuid.UUID, check_in: datetime, check_out: datetime
+    ) -> tuple[Decimal, AttendanceStatus]:
+        """Real elapsed hours, Decimal rounded half up to 2 places; under 1 hour is absent,
+        under the company threshold is a half day, otherwise present."""
+        hours = (Decimal((check_out - check_in).total_seconds()) / Decimal(3600)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        settings_row = self.settings_repo.get_by_company(company_id)
+        half_thresh = settings_row.half_day_hours_threshold if settings_row else Decimal("4")
+        if hours < Decimal("1.0"):
+            return hours, AttendanceStatus.absent
+        if hours < half_thresh:
+            return hours, AttendanceStatus.half_day
+        return hours, AttendanceStatus.present
+
+    def _apply_regularized_times(
+        self,
+        company_id: uuid.UUID,
+        record: Attendance,
+        check_in: datetime | None,
+        check_out: datetime | None,
+    ) -> None:
+        if check_in is not None:
+            record.check_in = check_in
+        if check_out is not None:
+            record.check_out = check_out
+        if record.check_in and record.check_out and record.check_out > record.check_in:
+            record.hours_worked, record.status = self._hours_and_status(
+                company_id, record.check_in, record.check_out
+            )
+        else:
+            record.status = AttendanceStatus.mispunch
+        record.source = AttendanceSource.regularized
+
+    def _notify_regularization_requested(
+        self,
+        company_id: uuid.UUID,
+        record: Attendance,
+        employee: Employee | None,
+        manager_id: uuid.UUID | None,
+    ) -> None:
         if manager_id:
             mgr_employee = self.employee_repo.get_by_id_any_status(manager_id, company_id)
             if mgr_employee and mgr_employee.user_id:
@@ -518,9 +669,60 @@ class AttendanceService:
                     entity_type="attendance",
                     entity_id=record.id,
                 )
+        if employee is not None and employee.user_id:
+            self.notify.notify(
+                company_id=company_id,
+                user_id=employee.user_id,
+                type="regularization_submitted",
+                title="Correction request sent",
+                message=f"Your correction request for {record.date} was sent for a decision.",
+                action_url="/attendance",
+                entity_type="attendance",
+                entity_id=record.id,
+            )
 
-        self.db.commit()
-        return req
+    def _can_read_regularization(self, user: User, employee: Employee | None) -> bool:
+        """The requester, the requester's approvers (reporting chain, HR admin, owner) and
+        HR-level users of the same company."""
+        if employee is None:
+            return user.role in HR_LEVEL_ROLES
+        if employee.user_id == user.id or user.role in HR_LEVEL_ROLES:
+            return True
+        try:
+            return verify_approval_authority(self.db, user, employee)
+        except ForbiddenError:
+            return False
+
+    def get_regularization_for_attendance(
+        self, company_id: uuid.UUID, attendance_id: uuid.UUID, user: User
+    ) -> AttendanceRegularizationRequest | None:
+        record = self.repo.get_by_id(attendance_id, company_id)
+        if record is None:
+            raise NotFoundError("Attendance record not found.")
+        employee = self.employee_repo.get_by_id_any_status(record.employee_id, company_id)
+        if not self._can_read_regularization(user, employee):
+            raise ForbiddenError("You do not have permission to view this correction request.")
+        return self.repo.get_latest_regularization_for_attendance(attendance_id, company_id)
+
+    def resolve_regularization_attachment(
+        self, company_id: uuid.UUID, filename: str, user: User, upload_dir: str
+    ) -> str:
+        """The only way to read an attachment: returns its path after the access check."""
+        if filename != os.path.basename(filename):
+            raise NotFoundError("Attachment not found.")
+        root = os.path.abspath(upload_dir)
+        path = os.path.abspath(os.path.join(root, filename))
+        if not path.startswith(root + os.sep) or not os.path.exists(path):
+            raise NotFoundError("Attachment not found.")
+        req = self.repo.get_regularization_by_attachment_url(
+            company_id, f"{REGULARIZATION_ATTACHMENT_URL_PREFIX}{filename}"
+        )
+        if req is None:
+            raise NotFoundError("Attachment not found.")
+        employee = self.employee_repo.get_by_id_any_status(req.employee_id, company_id)
+        if not self._can_read_regularization(user, employee):
+            raise ForbiddenError("You do not have permission to access this attachment.")
+        return path
 
     def approve_regularization(
         self,
@@ -529,7 +731,10 @@ class AttendanceService:
         data: AttendanceRegularizationApprove,
         current_user: User,
     ) -> AttendanceRegularizationRequest:
-        req = self.repo.get_regularization_by_id(regularization_id, company_id)
+        """Decide a pending request (one transaction, one commit). The request row is locked so
+        two decisions at the same moment cannot both win."""
+        require_deciding_role(current_user)
+        req = self.repo.get_regularization_for_update(regularization_id, company_id)
         if req is None:
             raise NotFoundError("Regularization request not found.")
         target_employee = self.employee_repo.get_by_id_any_status(req.employee_id, company_id)
@@ -543,68 +748,48 @@ class AttendanceService:
                 f"Regularization request is not pending (current status: {req.status.value})."
             )
 
-        if data.status not in ("approved", "rejected"):
-            raise AppError("Status must be approved or rejected")
+        rejection_reason = (data.rejection_reason or "").strip()
+        if data.status == "rejected" and not rejection_reason:
+            raise ValidationError(
+                "A rejection reason of 1 to 500 characters is required.",
+                details={"field": "rejection_reason"},
+            )
 
-        if data.status == "rejected" and not (
-            data.rejection_reason and data.rejection_reason.strip()
-        ):
-            raise AppError("Rejection reason is mandatory when rejecting a regularization request.")
+        record = self.repo.get_by_id(req.attendance_id, company_id)
+        if data.status == "approved" and record is not None:
+            eff_check_in = data.adjusted_check_in or req.requested_check_in
+            eff_check_out = data.adjusted_check_out or req.requested_check_out
+            if self.repo.has_approved_leave_on(company_id, record.employee_id, record.date):
+                raise ConflictError("This day is on approved leave and cannot be corrected.")
+            self._validate_regularization_times(record, eff_check_in, eff_check_out)
+            self._apply_regularized_times(company_id, record, eff_check_in, eff_check_out)
+            if data.admin_notes:
+                record.notes = ((record.notes or "") + f" [HR: {data.admin_notes}]").strip()
+        elif data.status == "rejected" and record is not None:
+            record.status = AttendanceStatus.mispunch
 
         req.status = RegularizationStatus(data.status)
         req.approved_by = current_user.id
         req.approved_at = utcnow()
-        req.rejection_reason = data.rejection_reason.strip() if data.rejection_reason else None
+        req.rejection_reason = rejection_reason or None
         if data.admin_notes is not None:
-            req.admin_notes = data.admin_notes.strip() or None
-
-        record = self.repo.get_by_id(req.attendance_id, company_id)
-
-        if req.status == RegularizationStatus.approved and record:
-            eff_check_in = (
-                data.adjusted_check_in
-                if data.adjusted_check_in is not None
-                else req.requested_check_in
-            )
-            eff_check_out = (
-                data.adjusted_check_out
-                if data.adjusted_check_out is not None
-                else req.requested_check_out
-            )
-
-            if eff_check_in:
-                record.check_in = eff_check_in
-            if eff_check_out:
-                record.check_out = eff_check_out
-
-            if record.check_in and record.check_out and record.check_out > record.check_in:
-                from decimal import ROUND_HALF_UP
-
-                calc_hours = (
-                    Decimal((record.check_out - record.check_in).total_seconds()) / Decimal(3600)
-                ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                record.hours_worked = calc_hours
-
-                settings_row = self.settings_repo.get_by_company(company_id)
-                half_thresh = (
-                    settings_row.half_day_hours_threshold if settings_row else Decimal("4")
-                )
-                if calc_hours < Decimal("1.0"):
-                    record.status = AttendanceStatus.absent
-                elif calc_hours < half_thresh:
-                    record.status = AttendanceStatus.half_day
-                else:
-                    record.status = AttendanceStatus.present
-            else:
-                record.status = AttendanceStatus.absent
-
-            # Append admin notes to attendance record notes if provided
-            if req.admin_notes:
-                note_line = f" [HR: {req.admin_notes}]"
-                record.notes = ((record.notes or "") + note_line).strip()
-
-        elif req.status == RegularizationStatus.rejected and record:
-            record.status = AttendanceStatus.mispunch
+            req.admin_notes = data.admin_notes or None
+        self.audit.record(
+            company_id=company_id,
+            actor=current_user,
+            action=(
+                "REGULARIZATION_APPROVED"
+                if data.status == "approved"
+                else "REGULARIZATION_REJECTED"
+            ),
+            entity_type="attendance_regularization",
+            entity_id=req.id,
+            details={
+                "attendance_id": req.attendance_id,
+                "employee_id": req.employee_id,
+                "status": data.status,
+            },
+        )
 
         # Notify employee of decision
         emp = self.employee_repo.get_by_id_any_status(req.employee_id, company_id)
@@ -1455,9 +1640,26 @@ class LeaveService:
         is_half_day: bool,
     ) -> Decimal:
         """Spec 11.3: dates inclusive, minus weekends (company_settings.
-        weekend_days) and holidays applying to the employee's department."""
-        if is_half_day and start_date == end_date:
+        weekend_days) and the mandatory holidays applying to the employee's
+        department. A range with no working day at all is refused (422); a half
+        day on a working day counts 0.5."""
+        working = self._working_dates(company_id, settings_row, department_id, start_date, end_date)
+        if not working:
+            raise ValidationError(
+                "There are no working days in this range.", details={"field": "start_date"}
+            )
+        if is_half_day:
             return Decimal("0.5")
+        return Decimal(len(working))
+
+    def _working_dates(
+        self,
+        company_id: uuid.UUID,
+        settings_row: CompanySettings | None,
+        department_id: uuid.UUID | None,
+        start_date: date,
+        end_date: date,
+    ) -> list[date]:
         weekend_days = self._weekend_days(settings_row)
         holidays = {
             h.date
@@ -1465,13 +1667,21 @@ class LeaveService:
                 company_id, start_date, end_date, department_id
             )
         }
-        count = 0
+        days: list[date] = []
         current = start_date
         while current <= end_date:
             if current.isoweekday() not in weekend_days and current not in holidays:
-                count += 1
+                days.append(current)
             current += timedelta(days=1)
-        return Decimal(count)
+        return days
+
+    @staticmethod
+    def _leave_year_bounds(settings_row: CompanySettings | None, year: int) -> tuple[date, date]:
+        """First and last day of leave year `year`, following the company settings."""
+        if settings_row is None or settings_row.leave_year_type == LeaveYearType.calendar:
+            return date(year, 1, 1), date(year, 12, 31)
+        first = date(year, settings_row.leave_year_start_month, 1)
+        return first, date(year + 1, settings_row.leave_year_start_month, 1) - timedelta(days=1)
 
     def _new_balance_fields(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, leave_type: LeaveType, year: int
@@ -1523,17 +1733,20 @@ class LeaveService:
         leave_type: LeaveType,
         year: int,
         requested: Decimal,
+        *,
+        pending_days: Decimal = Decimal("0"),
     ) -> LeaveBalance | None:
         """Locks the balance row and refuses when a paid type cannot cover
-        `requested` days, so the balance never goes negative. Unpaid types have
-        no balance and no check. Call it again at approval (4.6) in the same
-        transaction as the deduction."""
+        `requested` days, so the balance never goes negative. `pending_days` are
+        days already asked for in other pending leaves (apply time). Unpaid types
+        have no balance and no check. Called at apply and again at approval, in the
+        same transaction as the deduction."""
         if not leave_type.is_paid:
             return None
         balance = self._get_or_allocate_balance(
             company_id, employee_id, leave_type, year, lock=True
         )
-        available = self._available(balance)
+        available = self._available(balance) - pending_days
         if available < requested:
             raise InsufficientLeaveBalanceError(available=available, requested=requested)
         return balance
@@ -1576,6 +1789,10 @@ class LeaveService:
                 "You do not have permission to apply for leave on behalf of this employee."
             )
 
+        # Everything below checks and then writes this employee's leaves: hold the employee
+        # row so two simultaneous applications are handled one after the other.
+        self.repo.lock_employee(employee.id)
+
         # 3. end_date >= start_date.
         if data.end_date < data.start_date:
             raise LeaveValidationError(
@@ -1589,21 +1806,38 @@ class LeaveService:
 
         # 5. start_date >= today, unless the caller is HR (may back-date; audited).
         today = utcnow().date()
-        if data.start_date < today:
-            if not is_hr:
-                raise LeaveValidationError(
-                    "Cannot apply for leave in the past.", details={"field": "start_date"}
-                )
-            logger.info(
-                "leave_backdated_by_hr",
-                extra={
-                    "actor_id": str(current_user.id),
-                    "employee_id": str(employee.id),
-                    "start_date": data.start_date.isoformat(),
-                },
+        back_dated = data.start_date < today
+        if back_dated and not is_hr:
+            raise LeaveValidationError(
+                "Cannot apply for leave in the past.", details={"field": "start_date"}
             )
 
+        # 5b. Nothing may start after an approved last working date.
+        if (
+            employee.resignation_status == ResignationStatus.approved
+            and employee.last_working_date is not None
+            and data.start_date > employee.last_working_date
+        ):
+            raise ValidationError(
+                "The leave starts after the approved last working date.",
+                details={"field": "start_date"},
+            )
+
+        # 5c. A half day is one date; a leave stays inside one leave year.
+        if data.is_half_day and data.start_date != data.end_date:
+            raise ValidationError(
+                "A half day leave can only be for a single date.",
+                details={"field": "is_half_day"},
+            )
         settings_row = self.settings_repo.get_by_company(company_id)
+        if self._leave_year(settings_row, data.start_date) != self._leave_year(
+            settings_row, data.end_date
+        ):
+            raise ValidationError(
+                "A leave cannot cross a leave year; apply for each leave year separately.",
+                details={"field": "end_date"},
+            )
+
         total_days = self._total_days(
             company_id,
             settings_row,
@@ -1645,18 +1879,26 @@ class LeaveService:
             ]
             raise LeaveOverlapError(conflicts)
 
-        # 8. Sufficient balance for the year, unless the leave type is unpaid (LOP).
+        # 8. Sufficient balance for the year, counting the days already pending, unless the
+        # leave type is unpaid (LOP).
+        leave_year = self._leave_year(settings_row, data.start_date)
+        year_start, year_end = self._leave_year_bounds(settings_row, leave_year)
+        pending_days = self.repo.sum_pending_days(
+            company_id, employee.id, leave_type.id, year_start, year_end
+        )
         self.require_available_balance_locked(
             company_id,
             employee.id,
             leave_type,
-            self._leave_year(settings_row, data.start_date),
+            leave_year,
             total_days,
+            pending_days=pending_days,
         )
 
-        # Determine if owner / super_admin: auto-approve immediately
-        is_leadership = current_user.role in [UserRole.owner, UserRole.super_admin]
-        initial_status = LeaveStatus.approved if is_leadership else LeaveStatus.pending
+        # Only an owner's own leave, or a leave type that needs no approval, is approved at once.
+        auto_approve = (not leave_type.requires_approval) or (
+            current_user.role == UserRole.owner and is_own
+        )
 
         leave = self.repo.create(
             company_id=company_id,
@@ -1667,29 +1909,29 @@ class LeaveService:
             total_days=total_days,
             is_half_day=data.is_half_day,
             reason=data.reason,
-            status=initial_status,
-            approved_by=current_user.id if is_leadership else None,
-            approved_at=utcnow() if is_leadership else None,
+            status=LeaveStatus.pending,
+        )
+        applied_details: dict[str, object] = {
+            "employee_id": employee.id,
+            "leave_type_id": leave_type.id,
+            "start_date": leave.start_date,
+            "end_date": leave.end_date,
+            "days": str(total_days),
+        }
+        if back_dated:
+            applied_details["back_dated"] = True
+        self.audit.record(
+            company_id=company_id,
+            actor=current_user,
+            action="LEAVE_APPLIED",
+            entity_type="leave",
+            entity_id=leave.id,
+            details=applied_details,
         )
 
-        if is_leadership:
-            if leave_type is not None and leave_type.is_paid:
-                year = self._leave_year(settings_row, leave.start_date)
-                balance = self._get_or_allocate_balance(company_id, employee.id, leave_type, year)
-                self.balance_repo.update(balance, used=balance.used + leave.total_days)
-            self._write_attendance_for_leave(company_id, settings_row, employee, leave)
-            self.audit.record(
-                company_id=company_id,
-                actor=current_user,
-                action="LEAVE_APPROVED",
-                entity_type="leave",
-                entity_id=leave.id,
-                details={
-                    "auto_approved": True,
-                    "role": current_user.role.value,
-                    "reason": data.reason,
-                    "days": str(total_days),
-                },
+        if auto_approve:
+            self._approve_leave(
+                company_id, leave, employee, leave_type, settings_row, current_user, auto=True
             )
         elif employee.reporting_manager_id:
             # Notify manager if present
@@ -1713,7 +1955,69 @@ class LeaveService:
                 )
 
         self.db.commit()
+        if auto_approve:
+            DashboardService.invalidate_company_dashboards(company_id)
         return leave
+
+    def _approve_leave(
+        self,
+        company_id: uuid.UUID,
+        leave: Leave,
+        employee: Employee,
+        leave_type: LeaveType,
+        settings_row: CompanySettings | None,
+        actor: User,
+        *,
+        auto: bool,
+    ) -> None:
+        """The one approval path (manual and automatic): refuse over a real punch, re-check
+        the balance under a row lock, deduct, write on_leave days, audit. The caller commits."""
+        working = self._working_dates(
+            company_id, settings_row, employee.department_id, leave.start_date, leave.end_date
+        )
+        punched = [
+            d
+            for d in self.attendance_repo.list_real_punch_dates(
+                company_id, employee.id, leave.start_date, leave.end_date
+            )
+            if d in set(working)
+        ]
+        if punched:
+            raise ConflictError(
+                "The leave cannot be approved: there is attendance on "
+                + ", ".join(d.isoformat() for d in punched)
+                + ".",
+                details={"dates": [d.isoformat() for d in punched]},
+            )
+        if leave_type.is_paid:
+            balance = self.require_available_balance_locked(
+                company_id,
+                employee.id,
+                leave_type,
+                self._leave_year(settings_row, leave.start_date),
+                leave.total_days,
+            )
+            assert balance is not None
+            self.balance_repo.update(balance, used=balance.used + leave.total_days)
+        self.repo.update(
+            leave, status=LeaveStatus.approved, approved_by=actor.id, approved_at=utcnow()
+        )
+        self._write_attendance_for_leave(company_id, settings_row, employee, leave)
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="LEAVE_APPROVED",
+            entity_type="leave",
+            entity_id=leave.id,
+            details={
+                "employee_id": employee.id,
+                "leave_type_id": leave.leave_type_id,
+                "start_date": leave.start_date,
+                "end_date": leave.end_date,
+                "days": str(leave.total_days),
+                "auto_approved": auto,
+            },
+        )
 
     def _assert_can_view(self, company_id: uuid.UUID, employee, current_user: User) -> None:
         if current_user.role in HR_LEVEL_ROLES:
@@ -1824,7 +2128,8 @@ class LeaveService:
         """Route 64: Mgr (own reports only), HR. Approval auto-marks
         attendance and recomputes the balance inside the same transaction
         as the status change (11.4) — one commit, at the end."""
-        leave = self.repo.get_by_id(leave_id, company_id)
+        require_deciding_role(actor)
+        leave = self.repo.get_for_update(leave_id, company_id)
         if leave is None:
             raise NotFoundError("Leave not found.")
         employee = self.employee_repo.get_by_id_any_status(leave.employee_id, company_id)
@@ -1835,28 +2140,14 @@ class LeaveService:
         if leave.status != LeaveStatus.pending:
             raise ConflictError(f"Leave is not pending (current status: {leave.status.value}).")
 
+        rejection_reason = (data.rejection_reason or "").strip()
         if data.status == "approved":
             leave_type = self.leave_type_repo.get_by_id(leave.leave_type_id, company_id)
+            if leave_type is None:
+                raise NotFoundError("Leave type not found.")
             settings_row = self.settings_repo.get_by_company(company_id)
-            self.repo.update(
-                leave, status=LeaveStatus.approved, approved_by=actor.id, approved_at=utcnow()
-            )
-            if leave_type is not None and leave_type.is_paid:
-                year = self._leave_year(settings_row, leave.start_date)
-                balance = self._get_or_allocate_balance(company_id, employee.id, leave_type, year)
-                self.balance_repo.update(balance, used=balance.used + leave.total_days)
-            self._write_attendance_for_leave(company_id, settings_row, employee, leave)
-            self.audit.record(
-                company_id=company_id,
-                actor=actor,
-                action="LEAVE_APPROVED",
-                entity_type="leave",
-                entity_id=leave.id,
-                details={
-                    "employee_id": jsonable(employee.id),
-                    "start_date": jsonable(leave.start_date),
-                    "end_date": jsonable(leave.end_date),
-                },
+            self._approve_leave(
+                company_id, leave, employee, leave_type, settings_row, actor, auto=False
             )
             if employee.user_id is not None:
                 self.notify.notify(
@@ -1871,19 +2162,13 @@ class LeaveService:
             self._send_leave_decision_email(
                 employee, leave, status="approved", rejection_reason=None
             )
-            # Spec 11.10's literal wording: "on attendance mark, leave
-            # approval, and employee create/deactivate" — approval only,
-            # not rejection (a rejected leave changes nothing the cached
-            # dashboard fields summarize).
-            DashboardService.invalidate_company_dashboards(company_id)
         else:
-            if not data.rejection_reason:
-                raise LeaveValidationError(
-                    "A rejection reason is required.", details={"field": "rejection_reason"}
+            if not rejection_reason:
+                raise ValidationError(
+                    "A rejection reason of 1 to 500 characters is required.",
+                    details={"field": "rejection_reason"},
                 )
-            self.repo.update(
-                leave, status=LeaveStatus.rejected, rejection_reason=data.rejection_reason
-            )
+            self.repo.update(leave, status=LeaveStatus.rejected, rejection_reason=rejection_reason)
             self.audit.record(
                 company_id=company_id,
                 actor=actor,
@@ -1891,8 +2176,11 @@ class LeaveService:
                 entity_type="leave",
                 entity_id=leave.id,
                 details={
-                    "employee_id": jsonable(employee.id),
-                    "rejection_reason": data.rejection_reason,
+                    "employee_id": employee.id,
+                    "leave_type_id": leave.leave_type_id,
+                    "start_date": leave.start_date,
+                    "end_date": leave.end_date,
+                    "days": str(leave.total_days),
                 },
             )
             if employee.user_id is not None:
@@ -1902,15 +2190,19 @@ class LeaveService:
                     type="leave_rejected",
                     title="Leave rejected",
                     message=f"Your leave from {leave.start_date} to {leave.end_date} was rejected: "
-                    f"{data.rejection_reason}",
+                    f"{rejection_reason}",
                     entity_type="leave",
                     entity_id=leave.id,
                 )
             self._send_leave_decision_email(
-                employee, leave, status="rejected", rejection_reason=data.rejection_reason
+                employee, leave, status="rejected", rejection_reason=rejection_reason
             )
 
         self.db.commit()
+        if data.status == "approved":
+            # Spec 11.10's literal wording: "on attendance mark, leave approval, and employee
+            # create/deactivate" — approval only, not rejection.
+            DashboardService.invalidate_company_dashboards(company_id)
         return leave
 
     def _send_leave_decision_email(
@@ -1936,16 +2228,17 @@ class LeaveService:
         """Route 65: the employee cancels their own **pending** leave; HR
         may additionally cancel an **approved** leave, reversing the
         attendance rows and restoring the balance (11.3)."""
-        leave = self.repo.get_by_id(leave_id, company_id)
+        leave = self.repo.get_for_update(leave_id, company_id)
         if leave is None:
             raise NotFoundError("Leave not found.")
         employee = self.employee_repo.get_by_id_any_status(leave.employee_id, company_id)
         is_hr = actor.role in HR_LEVEL_ROLES
         is_own = employee is not None and employee.user_id == actor.id
+        if not (is_hr or is_own):
+            raise ForbiddenError("You do not have permission to cancel this leave.")
 
+        previous_status = leave.status
         if leave.status == LeaveStatus.pending:
-            if not (is_hr or is_own):
-                raise ForbiddenError("You do not have permission to cancel this leave.")
             self.repo.update(leave, status=LeaveStatus.cancelled)
         elif leave.status == LeaveStatus.approved:
             if not is_hr:
@@ -1956,7 +2249,7 @@ class LeaveService:
             leave_type = self.leave_type_repo.get_by_id(leave.leave_type_id, company_id)
             if leave_type is not None and leave_type.is_paid:
                 year = self._leave_year(settings_row, leave.start_date)
-                balance = self.balance_repo.get(employee.id, leave_type.id, year)
+                balance = self.balance_repo.get_for_update(employee.id, leave_type.id, year)
                 if balance is not None:
                     self.balance_repo.update(
                         balance, used=max(balance.used - leave.total_days, Decimal("0"))
@@ -1965,7 +2258,24 @@ class LeaveService:
         else:
             raise ConflictError(f"Cannot cancel a leave that is {leave.status.value}.")
 
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="LEAVE_CANCELLED",
+            entity_type="leave",
+            entity_id=leave.id,
+            details={
+                "employee_id": leave.employee_id,
+                "leave_type_id": leave.leave_type_id,
+                "start_date": leave.start_date,
+                "end_date": leave.end_date,
+                "days": str(leave.total_days),
+                "previous_status": previous_status.value,
+            },
+        )
         self.db.commit()
+        if previous_status == LeaveStatus.approved:
+            DashboardService.invalidate_company_dashboards(company_id)
         return leave
 
     def get_balance(
