@@ -570,6 +570,20 @@ def test_R6_end_assignment_edit_and_delete_blocks(
     assert del_res.status_code == 409, "R6: Delete blocked with current assignments"
     assert del_res.json()["error"]["details"]["assignment_count"] >= 1
 
+    # Future assignment also blocks delete
+    future_shift = _create_shift(client, company_a.hr_headers)
+    emp2 = _create_employee(client, company_a.hr_headers)
+    client.post(
+        f"{SHIFTS}/{future_shift['id']}/assign",
+        headers=company_a.hr_headers,
+        json={
+            "employee_id": emp2["id"],
+            "effective_from": (today + timedelta(days=5)).isoformat(),
+        },
+    )
+    del_future = client.delete(f"{SHIFTS}/{future_shift['id']}", headers=company_a.hr_headers)
+    assert del_future.status_code == 409, "R6: Delete must be blocked when future assignments exist"
+
     # End assignment by setting effective_to (PUT /shifts/assignments/{id})
     end_res = client.put(
         f"{SHIFTS}/assignments/{assign_id}",
