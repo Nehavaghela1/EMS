@@ -744,6 +744,16 @@ def test_R7_hr_and_owner_reading_someone_elses_salary_or_history_write_one_audit
     assert len(_audit(db, ctx, "SALARY_VIEWED_BY_HR")) == 3, "R7: the owner is audited too"
 
 
+def test_R7_an_hr_admin_reading_their_own_salary_writes_no_audit_row(
+    client: TestClient, db: Session, bits: dict[str, Any]
+) -> None:
+    ctx = bits["ctx"]
+    own = _staff(client, db, ctx, bits["sid"], UserRole.hr_admin)
+    assert _salary(client, own["h"], own["id"]).status_code == 200
+    assert _hist(client, own["h"], own["id"]).status_code == 200
+    assert _audit(db, ctx, "SALARY_VIEWED_BY_HR") == [], "R7: reading your own pay is not audited"
+
+
 def test_R7_reading_your_own_or_a_refused_read_writes_no_audit_row(
     client: TestClient, db: Session, bits: dict[str, Any]
 ) -> None:
