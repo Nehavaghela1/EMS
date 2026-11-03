@@ -22,10 +22,18 @@ from app.db.rls import bind_tenant_to_session
 from app.db.session import get_db
 from app.main import app as fastapi_app
 from app.modules.hr.models import Employee
-from app.modules.identity.models import Company, CompanyLocation, CompanyStatus, User, UserRole
+from app.modules.identity.models import (
+    Company,
+    CompanyLocation,
+    CompanySettings,
+    CompanyStatus,
+    User,
+    UserRole,
+)
 from app.modules.time_leave.models import (
     Attendance,
     AttendanceStatus,
+    Holiday,
     Leave,
     LeaveStatus,
     LeaveType,
@@ -177,6 +185,73 @@ def test_R3_punch_on_approved_leave_gives_specific_message(
     assert "You are on approved leave today" in res.text, (
         f"R3: Expected 'You are on approved leave today', got {res.text}"
     )
+
+
+def test_R3_punch_in_on_a_weekend_is_allowed_and_recorded(
+    client: TestClient, db: Session, company_a: TenantContext
+) -> None:
+    today = utcnow().date()
+    # ISO weekday: Mon=1, Sun=7
+    today_iso_weekday = today.isoweekday()
+
+    # Set company settings so that today is configured as a weekend day
+    settings_row = (
+        db.query(CompanySettings)
+        .filter(CompanySettings.company_id == company_a.company_id)
+        .one()
+    )
+    settings_row.weekend_days = [today_iso_weekday]
+    db.commit()
+
+    emp = _create_employee(client, company_a.hr_headers)
+    emp_headers, _ = _link_user_to_employee(db, company_a.company_id, emp["id"], UserRole.employee)
+
+    res = client.post(CHECK_IN, headers=emp_headers)
+    assert res.status_code == 201, f"R3: Punch on weekend must return 201, got {res.status_code}: {res.text}"
+
+    records = (
+        db.query(Attendance)
+        .filter(
+            Attendance.company_id == company_a.company_id,
+            Attendance.employee_id == uuid.UUID(emp["id"]),
+            Attendance.date == today,
+        )
+        .all()
+    )
+    assert len(records) == 1, f"R3: Expected exactly 1 attendance record for today, found {len(records)}"
+
+
+def test_R3_punch_in_on_a_holiday_is_allowed_and_recorded(
+    client: TestClient, db: Session, company_a: TenantContext
+) -> None:
+    today = utcnow().date()
+
+    # Create a mandatory holiday for today
+    holiday = Holiday(
+        company_id=company_a.company_id,
+        name="Mandatory Test Holiday",
+        date=today,
+        is_optional=False,
+    )
+    db.add(holiday)
+    db.commit()
+
+    emp = _create_employee(client, company_a.hr_headers)
+    emp_headers, _ = _link_user_to_employee(db, company_a.company_id, emp["id"], UserRole.employee)
+
+    res = client.post(CHECK_IN, headers=emp_headers)
+    assert res.status_code == 201, f"R3: Punch on holiday must return 201, got {res.status_code}: {res.text}"
+
+    records = (
+        db.query(Attendance)
+        .filter(
+            Attendance.company_id == company_a.company_id,
+            Attendance.employee_id == uuid.UUID(emp["id"]),
+            Attendance.date == today,
+        )
+        .all()
+    )
+    assert len(records) == 1, f"R3: Expected exactly 1 attendance record for today, found {len(records)}"
 
 
 # --- Rule 4.2.4: Punch-out needs open punch-in, after it, works once, closes after midnight ---
