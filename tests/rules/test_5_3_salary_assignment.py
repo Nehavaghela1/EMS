@@ -894,3 +894,22 @@ def test_R10_every_rule_from_1_to_9_has_a_named_test() -> None:
     names = [n for n in globals() if n.startswith("test_R")]
     for rule in range(1, 10):
         assert any(n.startswith(f"test_R{rule}_") for n in names), f"R10: no test for rule {rule}"
+
+
+def test_R10_the_models_and_the_migrations_agree_on_the_salary_tables() -> None:
+    """What `alembic check` does in CI, for the two tables this package changed."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+    from sqlalchemy import create_engine
+
+    from app.core.config import settings
+    from app.db.base import Base
+
+    engine = create_engine(settings.TEST_MIGRATION_URL)
+    try:
+        with engine.connect() as conn:
+            diffs = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+    finally:
+        engine.dispose()
+    mine = [d for d in diffs if "salary_structures" in str(d) or "employee_salaries" in str(d)]
+    assert mine == [], f"R10: models and migrations differ: {mine}"

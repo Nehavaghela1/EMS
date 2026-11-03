@@ -366,6 +366,7 @@ def test_assign_salary_overlap_error(client: TestClient, company_a: TenantContex
             "structure_id": struct_id,
             "ctc": "700000.00",
             "effective_from": (today - timedelta(days=5)).isoformat(),
+            "revision_reason": "Backdated attempt",
         },
         headers=company_a.hr_headers,
     )

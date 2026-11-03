@@ -111,6 +111,9 @@ def _round(amount: Decimal) -> Decimal:
     return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+NO_SALARY_MESSAGE = "No salary is currently assigned to this employee."
+
+
 def _name_taken(name: str) -> str:
     return f"A salary structure named '{name}' already exists."
 
@@ -487,15 +490,20 @@ class EmployeeSalaryService:
         self, company_id: uuid.UUID, employee_id: uuid.UUID, data: SalaryAssignRequest, actor: User
     ) -> tuple[EmployeeSalary, SalaryStructure, list, list, Decimal]:
         target_company_id = company_id
+        # The employee row is locked first: two assignments for one employee queue up here, so
+        # the second one sees the first one's row when it looks for overlaps.
         if actor.role == UserRole.super_admin:
-            employee = self.employee_repo.get_by_id_any_status(employee_id, None)
-            if employee is None:
+            found = self.employee_repo.get_by_id_any_status(employee_id, None)
+            if found is None:
                 raise NotFoundError("Employee not found.")
-            target_company_id = employee.company_id
+            target_company_id = found.company_id
+            employee = self.employee_repo.get_by_id_for_update(
+                employee_id, target_company_id, allow_inactive=True
+            )
         else:
-            employee = self.employee_repo.get_by_id(employee_id, target_company_id)
-            if employee is None:
-                raise NotFoundError("Employee not found.")
+            employee = self.employee_repo.get_by_id_for_update(employee_id, target_company_id)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
 
         structure = self.structure_repo.get_by_id(data.structure_id, target_company_id)
         if structure is None:
@@ -503,9 +511,16 @@ class EmployeeSalaryService:
         if not structure.is_active:
             raise ConflictError("This salary structure is inactive and cannot be assigned.")
 
-        overlapping = self.repo.get_overlapping(employee_id, target_company_id, data.effective_from)
+        if self.repo.count_for_employee(employee_id, target_company_id) and not (
+            data.revision_reason
+        ):
+            raise ValidationError("A reason is required when revising an existing salary.")
+
+        # A new salary is open-ended, so it overlaps every existing row that is still open or
+        # ends on/after its start. The one open-ended row that started earlier is closed below;
+        # everything else is a conflict.
         open_ended = None
-        for row in overlapping:
+        for row in self.repo.get_overlapping(employee_id, target_company_id, data.effective_from):
             if row.effective_to is None:
                 if row.effective_from >= data.effective_from:
                     raise SalaryOverlapError(
@@ -515,11 +530,21 @@ class EmployeeSalaryService:
                     )
                 open_ended = row
             else:
-                if row.effective_from <= data.effective_from <= row.effective_to:
-                    raise SalaryOverlapError(
-                        f"This overlaps an existing salary period "
-                        f"({row.effective_from.isoformat()} to {row.effective_to.isoformat()})."
-                    )
+                raise SalaryOverlapError(
+                    f"This overlaps an existing salary period "
+                    f"({row.effective_from.isoformat()} to {row.effective_to.isoformat()})."
+                )
+
+        # History that a payslip already relies on is not rewritten: no start in, or before, a
+        # month that an approved or paid run has already paid this employee for.
+        paid = self.payroll_item_repo.first_released_month_from(
+            employee_id, target_company_id, data.effective_from.year, data.effective_from.month
+        )
+        if paid is not None:
+            raise ConflictError(
+                f"This employee has already been paid for {paid[1]:02d}/{paid[0]} by an approved "
+                "or paid payroll run. Choose a start date after that month."
+            )
 
         # Validate the CTC actually covers the structure's fixed + percentage
         # earnings before committing anything (Spec 19 WP-16 gate): with a
@@ -531,32 +556,42 @@ class EmployeeSalaryService:
         ]
         check_ctc_covers_earnings(earning_components, data.ctc)
 
-        if open_ended is not None:
-            self.repo.close(open_ended, data.effective_from - timedelta(days=1))
-
-        salary = self.repo.create(
-            company_id=target_company_id,
-            employee_id=employee_id,
-            structure_id=data.structure_id,
-            ctc=data.ctc,
-            effective_from=data.effective_from,
-            revision_reason=data.revision_reason,
-            created_by=actor.id,
-        )
-        self.audit.record(
-            company_id=target_company_id,
-            actor=actor,
-            action="EMPLOYEE_SALARY_ASSIGNED",
-            entity_type="employee_salary",
-            entity_id=salary.id,
-            details={
-                "employee_id": str(employee_id),
-                "structure_id": str(data.structure_id),
-                "ctc": str(data.ctc),
-                "effective_from": data.effective_from.isoformat(),
-            },
-        )
-        self.db.commit()
+        # Closing the old row and creating the new one are one save: any failure rolls both back.
+        try:
+            if open_ended is not None:
+                self.repo.close(open_ended, data.effective_from - timedelta(days=1))
+            salary = self.repo.create(
+                company_id=target_company_id,
+                employee_id=employee_id,
+                structure_id=data.structure_id,
+                ctc=data.ctc,
+                effective_from=data.effective_from,
+                revision_reason=data.revision_reason,
+                created_by=actor.id,
+            )
+            self.audit.record(
+                company_id=target_company_id,
+                actor=actor,
+                action="EMPLOYEE_SALARY_ASSIGNED",
+                entity_type="employee_salary",
+                entity_id=salary.id,
+                details={
+                    "employee_id": str(employee_id),
+                    "structure_id": str(data.structure_id),
+                    "effective_from": data.effective_from.isoformat(),
+                },
+            )
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            if "ex_employee_salaries_no_overlap" in str(exc.orig):
+                raise SalaryOverlapError(
+                    "This overlaps an existing salary period for this employee."
+                ) from exc
+            raise
+        except Exception:
+            self.db.rollback()
+            raise
         earnings, deductions, gross = resolve_earning_breakdown(structure.components, salary.ctc)
         return salary, structure, earnings, deductions, gross
 
@@ -564,28 +599,79 @@ class EmployeeSalaryService:
         self, company_id: uuid.UUID, employee_id: uuid.UUID, current_user: User
     ) -> tuple[EmployeeSalary, SalaryStructure, list, list, Decimal]:
         """Route 84: Own, HR, Super Admin."""
-        lookup_company_id = company_id
+        employee, lookup_company_id = self._employee_visible_to(
+            company_id, employee_id, current_user
+        )
+        salary = self.repo.get_in_force(employee_id, lookup_company_id, utcnow().date())
+        if salary is None:
+            raise NotFoundError(NO_SALARY_MESSAGE)
+        # A structure deleted after the salary was assigned still describes that salary.
+        structure = self.structure_repo.get_by_id_including_deleted(
+            salary.structure_id, lookup_company_id
+        )
+        if structure is None:
+            raise NotFoundError("Salary structure not found.")
+        self._audit_hr_view(lookup_company_id, employee, current_user, "employee_salary")
+        earnings, deductions, gross = resolve_earning_breakdown(structure.components, salary.ctc)
+        return salary, structure, earnings, deductions, gross
+
+    def list_history(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        current_user: User,
+        page_params: PageParams,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> tuple[list[tuple[EmployeeSalary, str]], int, int]:
+        """Every salary row of an employee, newest first, with its structure's name."""
+        if from_date is not None and to_date is not None and from_date > to_date:
+            raise ValidationError("from_date must not be after to_date.")
+        employee, lookup_company_id = self._employee_visible_to(
+            company_id, employee_id, current_user
+        )
+        rows, total, pages = self.repo.list_history(
+            employee_id, lookup_company_id, page_params, from_date, to_date
+        )
+        names = self.repo.structure_names([r.structure_id for r in rows], lookup_company_id)
+        self._audit_hr_view(lookup_company_id, employee, current_user, "employee_salary_history")
+        return [(r, names.get(r.structure_id, "")) for r in rows], total, pages
+
+    def _employee_visible_to(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, current_user: User
+    ) -> tuple[Employee, uuid.UUID]:
+        """Own salary, or owner / HR admin for anyone in the company, or super admin. A
+        manager gets no access, not even to a direct report. Another company's employee and a
+        missing one are the same 404."""
         if current_user.role == UserRole.super_admin:
             employee = self.employee_repo.get_by_id_any_status(employee_id, None)
             if employee is None:
                 raise NotFoundError("Employee not found.")
-            lookup_company_id = employee.company_id
-        else:
-            employee = self.employee_repo.get_by_id_any_status(employee_id, lookup_company_id)
-            if employee is None:
-                raise NotFoundError("Employee not found.")
-            is_hr = current_user.role in HR_LEVEL_ROLES
-            is_own = employee.user_id == current_user.id
-            if not (is_hr or is_own):
-                raise ForbiddenError("You do not have permission to view this employee's salary.")
+            return employee, employee.company_id
+        employee = self.employee_repo.get_by_id_any_status(employee_id, company_id)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+        is_hr = current_user.role in HR_LEVEL_ROLES
+        is_own = employee.user_id == current_user.id
+        if not (is_hr or is_own):
+            raise ForbiddenError("You do not have permission to view this employee's salary.")
+        return employee, company_id
 
-        salary = self.repo.get_in_force(employee_id, lookup_company_id, date.today())
-        if salary is None:
-            raise NotFoundError("No salary is currently assigned to this employee.")
-        structure = self.structure_repo.get_by_id(salary.structure_id, lookup_company_id)
-        assert structure is not None  # FK guarantees this
-        earnings, deductions, gross = resolve_earning_breakdown(structure.components, salary.ctc)
-        return salary, structure, earnings, deductions, gross
+    def _audit_hr_view(
+        self, company_id: uuid.UUID, employee: Employee, viewer: User, entity_type: str
+    ) -> None:
+        """An owner or HR admin reading someone else's pay leaves one audit row (ids only)."""
+        if viewer.role not in (UserRole.hr_admin, UserRole.owner) or employee.user_id == viewer.id:
+            return
+        self.audit.record(
+            company_id=company_id,
+            actor=viewer,
+            action="SALARY_VIEWED_BY_HR",
+            entity_type=entity_type,
+            entity_id=employee.id,
+            details={"employee_id": str(employee.id)},
+        )
+        self.db.commit()
 
 
 # Verified 2026-09-03 against EPFO's and ESIC's own published rates (Spec

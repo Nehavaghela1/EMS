@@ -34,6 +34,9 @@ _COMPONENT_NAME = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
 ]
 _COMPONENT_CODE = Annotated[str, StringConstraints(pattern=r"^[A-Z0-9_]{2,20}$")]
+_REASON = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+MIN_SALARY_DATE = date(2000, 1, 1)
+MAX_SALARY_DATE = date(2100, 12, 31)
 
 
 def _decimal_places(value: Decimal) -> int:
@@ -137,10 +140,32 @@ class SalaryStructureListItem(BaseModel):
 
 
 class SalaryAssignRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     structure_id: uuid.UUID
+    ctc: Decimal = Field(gt=0, le=_MAX_MONEY, decimal_places=2)
+    effective_from: date
+    revision_reason: _REASON | None = None
+
+    @field_validator("effective_from")
+    @classmethod
+    def _effective_from_in_range(cls, value: date) -> date:
+        if not MIN_SALARY_DATE <= value <= MAX_SALARY_DATE:
+            raise ValueError("effective_from must be between 2000 and 2100.")
+        return value
+
+
+class SalaryHistoryItem(BaseModel):
+    """One row of an employee's salary history (route `salary-history`)."""
+
+    id: uuid.UUID
+    structure_id: uuid.UUID
+    structure_name: str
     ctc: Decimal
     effective_from: date
-    revision_reason: str | None = None
+    effective_to: date | None
+    revision_reason: str | None
+    created_at: datetime
 
 
 class SalaryComponentAmount(BaseModel):
