@@ -89,6 +89,15 @@ class Shift(TenantBase):
     calculation for anyone assigned to it must handle that (Spec 7.4)."""
 
     __tablename__ = "shifts"
+    __table_args__ = (
+        Index(
+            "uq_shifts_company_lower_name",
+            "company_id",
+            func.lower(text("name")),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     name: Mapped[str] = mapped_column(Text, nullable=False)
     start_time: Mapped[time] = mapped_column(SATime, nullable=False)
@@ -106,7 +115,13 @@ class EmployeeShift(TenantBase):
     not the database (Spec 7.4 names no constraint for this one)."""
 
     __tablename__ = "employee_shifts"
-    __table_args__ = (Index("ix_employee_shifts_employee_id", "employee_id"),)
+    __table_args__ = (
+        Index("ix_employee_shifts_employee_id", "employee_id"),
+        CheckConstraint(
+            "effective_to IS NULL OR effective_to >= effective_from",
+            name="ck_employee_shifts_effective_dates",
+        ),
+    )
 
     employee_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("employees.id"), nullable=False

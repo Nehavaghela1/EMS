@@ -266,6 +266,36 @@ class ShiftRepository:
         shift.deleted_at = utcnow()
         self.db.flush()
 
+    def get_by_name(self, company_id: uuid.UUID, name: str) -> Shift | None:
+        trimmed = name.strip() if name else ""
+        return self.db.scalar(
+            select(Shift).where(
+                Shift.company_id == company_id,
+                func.lower(Shift.name) == trimmed.lower(),
+                Shift.deleted_at.is_(None),
+            )
+        )
+
+    def count_current_and_future_assignments(
+        self, shift_id: uuid.UUID, company_id: uuid.UUID, today: date
+    ) -> int:
+        return (
+            self.db.scalar(
+                select(func.count())
+                .select_from(EmployeeShift)
+                .where(
+                    EmployeeShift.company_id == company_id,
+                    EmployeeShift.shift_id == shift_id,
+                    EmployeeShift.deleted_at.is_(None),
+                    or_(
+                        EmployeeShift.effective_to.is_(None),
+                        EmployeeShift.effective_to >= today,
+                    ),
+                )
+            )
+            or 0
+        )
+
     def count_current_assignments(
         self, shift_id: uuid.UUID, company_id: uuid.UUID, today: date
     ) -> int:
@@ -291,6 +321,21 @@ class ShiftRepository:
 class EmployeeShiftRepository:
     def __init__(self, db: Session):
         self.db = db
+
+    def get_by_id(self, assignment_id: uuid.UUID, company_id: uuid.UUID) -> EmployeeShift | None:
+        return self.db.scalar(
+            select(EmployeeShift).where(
+                EmployeeShift.id == assignment_id,
+                EmployeeShift.company_id == company_id,
+                EmployeeShift.deleted_at.is_(None),
+            )
+        )
+
+    def update(self, assignment: EmployeeShift, **kwargs) -> EmployeeShift:
+        for key, value in kwargs.items():
+            setattr(assignment, key, value)
+        self.db.flush()
+        return assignment
 
     def get_overlapping(
         self,

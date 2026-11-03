@@ -158,8 +158,9 @@ def test_shift_assignment_rejects_an_employee_id_from_another_company(client, co
             "effective_from": date.today().isoformat(),
         },
     )
-    assert resp.status_code == 400
-    assert resp.json()["error"]["code"] == "invalid_reference"
+    # Employee lookup is scoped by company_id (get_by_id), so a foreign id
+    # simply doesn't exist in this tenant's view — 404, not a leak, not a 500.
+    assert resp.status_code == 404
 
 
 def test_leave_application_rejects_an_employee_id_from_another_company(

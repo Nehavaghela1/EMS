@@ -52,6 +52,7 @@ from app.modules.time_leave.schemas import (
     LeaveTypeCreateRequest,
     LeaveTypeResponse,
     LeaveTypeUpdateRequest,
+    ShiftAssignmentUpdateRequest,
     ShiftAssignRequest,
     ShiftCreateRequest,
     ShiftResponse,
@@ -114,7 +115,9 @@ def _to_employee_shift_response(assignment: EmployeeShift) -> EmployeeShiftRespo
 
 
 @attendance_router.post("/check-in", response_model=AttendanceResponse, status_code=201)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def check_in(
+    request: Request,
     body: CheckInRequest | None = None,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
@@ -124,7 +127,9 @@ def check_in(
 
 
 @attendance_router.post("/check-out", response_model=AttendanceResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def check_out(
+    request: Request,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
@@ -201,9 +206,11 @@ def download_attendance_export(
 
 
 @attendance_router.get("/calendar", response_model=CalendarResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_attendance_calendar(
-    month: int,
-    year: int,
+    request: Request,
+    month: int = Query(ge=1, le=12),
+    year: int = Query(ge=2000, le=2100),
     employee_id: uuid.UUID | None = None,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
@@ -219,7 +226,9 @@ def get_attendance_calendar(
 
 
 @attendance_router.get("", response_model=Page[AttendanceResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_attendance(
+    request: Request,
     employee_id: uuid.UUID | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
@@ -256,8 +265,10 @@ def list_attendance(
 
 
 @attendance_router.get("/{attendance_id}", response_model=AttendanceResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_attendance(
     attendance_id: uuid.UUID,
+    request: Request,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
@@ -439,7 +450,9 @@ def delete_attendance(
 
 
 @shifts_router.get("", response_model=Page[ShiftResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_shifts(
+    request: Request,
     params: PageParams = Depends(page_params),
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
@@ -456,49 +469,74 @@ def list_shifts(
 
 
 @shifts_router.post("", response_model=ShiftResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def create_shift(
+    request: Request,
     data: ShiftCreateRequest,
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    shift = ShiftService(db).create_shift(user.company_id, data)
+    shift = ShiftService(db).create_shift(user.company_id, data, actor=user)
     return _to_shift_response(shift)
 
 
+@shifts_router.put("/assignments/{assignment_id}", response_model=EmployeeShiftResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def update_shift_assignment(
+    assignment_id: uuid.UUID,
+    request: Request,
+    data: ShiftAssignmentUpdateRequest,
+    db=Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin)),
+):
+    assignment = ShiftService(db).update_assignment(
+        user.company_id, assignment_id, data, actor=user
+    )
+    return _to_employee_shift_response(assignment)
+
+
 @shifts_router.put("/{shift_id}", response_model=ShiftResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_shift(
     shift_id: uuid.UUID,
+    request: Request,
     data: ShiftUpdateRequest,
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    shift = ShiftService(db).update_shift(user.company_id, shift_id, data)
+    shift = ShiftService(db).update_shift(user.company_id, shift_id, data, actor=user)
     return _to_shift_response(shift)
 
 
 @shifts_router.delete("/{shift_id}", status_code=204)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def delete_shift(
     shift_id: uuid.UUID,
+    request: Request,
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    ShiftService(db).delete_shift(user.company_id, shift_id)
+    ShiftService(db).delete_shift(user.company_id, shift_id, actor=user)
 
 
 @shifts_router.post("/{shift_id}/assign", response_model=EmployeeShiftResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def assign_shift(
     shift_id: uuid.UUID,
+    request: Request,
     data: ShiftAssignRequest,
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
 ):
-    assignment = ShiftService(db).assign_shift(user.company_id, shift_id, data)
+    assignment = ShiftService(db).assign_shift(user.company_id, shift_id, data, actor=user)
     return _to_employee_shift_response(assignment)
 
 
 @shifts_router.get("/assigned/{employee_id}", response_model=AssignedShiftDetailResponse | None)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_assigned_shift(
     employee_id: uuid.UUID,
+    request: Request,
     db=Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):

@@ -62,6 +62,7 @@ from app.modules.time_leave.schemas import (
     LeaveDecisionRequest,
     LeaveTypeCreateRequest,
     LeaveTypeUpdateRequest,
+    ShiftAssignmentUpdateRequest,
     ShiftAssignRequest,
     ShiftCreateRequest,
     ShiftUpdateRequest,
@@ -168,14 +169,15 @@ class AttendanceService:
 
     def _resolve_scope(self, company_id: uuid.UUID, current_user: User) -> list[uuid.UUID] | None:
         """None = unrestricted (HR/SA). A list = restricted to exactly these
-        employee ids (self for an employee, direct reports for a manager)."""
+        employee ids (self for an employee, self + direct reports for a manager)."""
         if current_user.role in _SEES_EVERYONE:
             return None
         caller_employee = self.employee_repo.get_by_user_id(company_id, current_user.id)
         if caller_employee is None:
             return []
         if current_user.role == UserRole.manager:
-            return self.employee_repo.list_direct_report_ids(company_id, caller_employee.id)
+            reports = self.employee_repo.list_direct_report_ids(company_id, caller_employee.id)
+            return [caller_employee.id] + [r for r in reports if r != caller_employee.id]
         return [caller_employee.id]
 
     def check_in(
@@ -193,7 +195,10 @@ class AttendanceService:
         if employee is None:
             raise NotFoundError("You do not have an employee record.")
         today = utcnow().date()
-        if self.repo.get_by_employee_and_date(company_id, employee.id, today):
+        existing_att = self.repo.get_by_employee_and_date(company_id, employee.id, today)
+        if existing_att:
+            if existing_att.status == AttendanceStatus.on_leave:
+                raise ConflictError("You are on approved leave today.")
             raise AlreadyCheckedInError()
 
         # ── Geofence validation ──────────────────────────────────────────────
@@ -240,16 +245,20 @@ class AttendanceService:
         )
         for po in past_open:
             po.status = AttendanceStatus.mispunch
-        record = self.repo.create(
-            company_id=company_id,
-            employee_id=employee.id,
-            date=today,
-            check_in=utcnow(),
-            status=AttendanceStatus.present,
-            source=AttendanceSource.web,
-            notes=fence_notes,
-        )
-        self.db.commit()
+        try:
+            record = self.repo.create(
+                company_id=company_id,
+                employee_id=employee.id,
+                date=today,
+                check_in=utcnow(),
+                status=AttendanceStatus.present,
+                source=AttendanceSource.web,
+                notes=fence_notes,
+            )
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise AlreadyCheckedInError() from exc
         DashboardService.invalidate_company_dashboards(company_id)
         return record
 
@@ -664,19 +673,24 @@ class AttendanceService:
                 raise NotFoundError("You do not have an employee record.")
             employee_id = emp.id
         else:
+            # Check target employee exists in company
+            emp = self.employee_repo.get_by_id(employee_id, company_id)
+            if emp is None:
+                raise NotFoundError("Employee not found.")
             # Scope guard
             allowed = self._resolve_scope(company_id, current_user)
             if allowed is not None and employee_id not in allowed:
                 raise ForbiddenError("You do not have permission to view this employee's calendar.")
-            emp = self.employee_repo.get_by_id(employee_id, company_id)
-            if emp is None:
-                raise NotFoundError("Employee not found.")
 
         # Build the set of dates in the requested month
         days_in_month = _cal.monthrange(year, month)[1]
         start = date(year, month, 1)
         end = date(year, month, days_in_month)
         today = utcnow().date()
+
+        # Company settings for weekends
+        # 0=Monday ... 6=Sunday. Default weekend: Saturday(5), Sunday(6)
+        weekend_days = {5, 6}
 
         # Index attendance rows by date
         att_rows = (
@@ -692,7 +706,7 @@ class AttendanceService:
         )
         att_by_date: dict[date, Attendance] = {r.date: r for r in att_rows}
 
-        # Index holidays by date (dept-specific or company-wide)
+        # Index all holidays by date (dept-specific or company-wide, both mandatory and optional)
         holiday_rows = (
             self.repo.db.query(Holiday)
             .filter(
@@ -700,7 +714,6 @@ class AttendanceService:
                 Holiday.date >= start,
                 Holiday.date <= end,
                 Holiday.deleted_at.is_(None),
-                Holiday.is_optional.is_(False),  # optional holidays are not days off
             )
             .all()
         )
@@ -709,7 +722,11 @@ class AttendanceService:
             if h.applies_to_department_id is None or h.applies_to_department_id == (
                 emp.department_id if emp else None
             ):
-                hol_by_date[h.date] = h
+                # If there's already a mandatory holiday for this date, prefer it
+                if h.date not in hol_by_date or (
+                    not h.is_optional and hol_by_date[h.date].is_optional
+                ):
+                    hol_by_date[h.date] = h
 
         # Index approved/pending leaves by their date range
         leave_rows = (
@@ -755,16 +772,20 @@ class AttendanceService:
             # Enterprise Priority Hierarchy (Zoho / Keka):
             # Priority 1: Approved / Pending Leave
             if leave is not None:
-                status = "on_leave"
+                if leave.status == LeaveStatus.approved:
+                    status = "on_leave"
+                    badge = lt_map.get(leave.leave_type_id, "On Leave")
+                else:
+                    status = "pending_leave"
+                    badge = f"Pending ({lt_map.get(leave.leave_type_id, 'Leave')})"
                 work_hours = att.hours_worked if att else None
                 check_in_val = att.check_in if att else None
                 check_out_val = att.check_out if att else None
-                badge = lt_map.get(leave.leave_type_id, "On Leave")
                 holiday_name = None
                 leave_type_name = lt_map.get(leave.leave_type_id)
 
-            # Priority 2: Gazetted Public Holiday
-            elif hol is not None:
+            # Priority 2: Gazetted Public Holiday (Mandatory only counts as day off)
+            elif hol is not None and not hol.is_optional:
                 status = "holiday"
                 work_hours = att.hours_worked if att else None
                 check_in_val = att.check_in if att else None
@@ -778,7 +799,7 @@ class AttendanceService:
                 check_in_val = att.check_in
                 check_out_val = att.check_out
                 work_hours = att.hours_worked
-                holiday_name = None
+                holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
                 # Rule: Today and currently clocked in without check-out
@@ -817,43 +838,49 @@ class AttendanceService:
                         badge = None
 
             # Priority 4: Attendance Exempt (e.g. CEO/Owner on today or past work days)
-            elif emp and getattr(emp, "is_attendance_exempt", False) and dow < 5 and not is_future:
+            elif (
+                emp
+                and getattr(emp, "is_attendance_exempt", False)
+                and dow not in weekend_days
+                and not is_future
+            ):
                 status = "exempt"
                 badge = "Exempt"
                 work_hours = None
                 check_in_val = None
                 check_out_val = None
-                holiday_name = None
+                holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
-            # Priority 5: Weekly Off / Weekend (Sat/Sun)
-            elif dow >= 5:
+            # Priority 5: Weekly Off / Weekend
+            elif dow in weekend_days:
                 status = "weekend"
                 work_hours = None
                 check_in_val = None
                 check_out_val = None
                 badge = "Weekend"
-                holiday_name = None
+                holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
-            # Priority 5: Future Work Days
+            # Priority 6: Future Work Days
             elif is_future:
                 status = "no_record"
                 work_hours = None
                 check_in_val = None
                 check_out_val = None
-                badge = None
-                holiday_name = None
+                badge = "Optional Holiday" if (hol and hol.is_optional) else None
+                holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
-            # Priority 6: Past or Today Unpunched Working Day -> Absent
+            # Priority 7: Past or Today Unpunched Working Day -> Absent
+            # (with optional holiday badge if applicable)
             else:
                 status = "absent"
-                badge = None
+                badge = "Optional Holiday" if (hol and hol.is_optional) else None
                 work_hours = None
                 check_in_val = None
                 check_out_val = None
-                holiday_name = None
+                holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
             summary[status] = summary.get(status, 0) + 1
@@ -917,14 +944,29 @@ class ShiftService:
         self.repo = ShiftRepository(db)
         self.employee_shift_repo = EmployeeShiftRepository(db)
         self.employee_repo = EmployeeRepository(db)
+        self.audit = AuditService(db)
 
     def list_shifts(
         self, company_id: uuid.UUID, page_params: PageParams
     ) -> tuple[list[Shift], int, int]:
         return self.repo.list_shifts(company_id, page_params)
 
-    def create_shift(self, company_id: uuid.UUID, data: ShiftCreateRequest) -> Shift:
+    def create_shift(
+        self, company_id: uuid.UUID, data: ShiftCreateRequest, actor: User | None = None
+    ) -> Shift:
+        existing = self.repo.get_by_name(company_id, data.name)
+        if existing:
+            raise ConflictError(f"A shift named '{data.name}' already exists.")
         shift = self.repo.create(company_id=company_id, **data.model_dump())
+        if actor:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="SHIFT_CREATED",
+                entity_type="shift",
+                entity_id=shift.id,
+                details={"name": data.name},
+            )
         self.db.commit()
         return shift
 
@@ -938,39 +980,72 @@ class ShiftService:
         return self._get_or_404(company_id, shift_id)
 
     def update_shift(
-        self, company_id: uuid.UUID, shift_id: uuid.UUID, data: ShiftUpdateRequest
+        self,
+        company_id: uuid.UUID,
+        shift_id: uuid.UUID,
+        data: ShiftUpdateRequest,
+        actor: User | None = None,
     ) -> Shift:
         shift = self._get_or_404(company_id, shift_id)
-        self.repo.update(shift, **data.model_dump(exclude_unset=True))
+        update_data = data.model_dump(exclude_unset=True)
+        if "name" in update_data and update_data["name"] is not None:
+            existing = self.repo.get_by_name(company_id, update_data["name"])
+            if existing and existing.id != shift.id:
+                raise ConflictError(f"A shift named '{update_data['name']}' already exists.")
+        self.repo.update(shift, **update_data)
+        if actor:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="SHIFT_UPDATED",
+                entity_type="shift",
+                entity_id=shift.id,
+                details={"updated_fields": list(update_data.keys())},
+            )
         self.db.commit()
         return shift
 
-    def delete_shift(self, company_id: uuid.UUID, shift_id: uuid.UUID) -> None:
-        """Route 53: blocked if currently assigned (effective_from <= today
-        <= effective_to-or-ongoing)."""
+    def delete_shift(
+        self, company_id: uuid.UUID, shift_id: uuid.UUID, actor: User | None = None
+    ) -> None:
+        """Route 53: blocked if currently or in future assigned."""
         shift = self._get_or_404(company_id, shift_id)
         today = utcnow().date()
-        count = self.repo.count_current_assignments(shift_id, company_id, today)
+        count = self.repo.count_current_and_future_assignments(shift_id, company_id, today)
         if count > 0:
             raise ConflictError(
-                f"Cannot delete a shift with {count} current assignment(s).",
+                f"Cannot delete a shift with {count} current or future assignment(s).",
                 details={"assignment_count": count},
             )
         self.repo.soft_delete(shift)
+        if actor:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="SHIFT_DELETED",
+                entity_type="shift",
+                entity_id=shift.id,
+                details={"name": shift.name},
+            )
         self.db.commit()
 
     def assign_shift(
-        self, company_id: uuid.UUID, shift_id: uuid.UUID, data: ShiftAssignRequest
+        self,
+        company_id: uuid.UUID,
+        shift_id: uuid.UUID,
+        data: ShiftAssignRequest,
+        actor: User | None = None,
     ) -> EmployeeShift:
         """Route 54: rejects overlapping assignments for the same employee."""
-        self._get_or_404(company_id, shift_id)
-        employee = self.employee_repo.get_by_id(data.employee_id, company_id)
+        shift = self._get_or_404(company_id, shift_id)
+        if not shift.is_active:
+            raise ConflictError("A deactivated shift cannot be newly assigned.")
+        # Row lock on the employee to make overlap checks race-safe
+        employee = self.employee_repo.get_by_id_for_update(data.employee_id, company_id)
         if employee is None:
-            raise InvalidReferenceError(
-                "The specified employee does not exist.", details={"field": "employee_id"}
-            )
+            raise NotFoundError("Employee not found.")
         if data.effective_to is not None and data.effective_to < data.effective_from:
-            raise InvalidReferenceError(
+            raise ValidationError(
                 "effective_to must be on or after effective_from.",
                 details={"field": "effective_to"},
             )
@@ -981,8 +1056,10 @@ class ShiftService:
             effective_to=data.effective_to,
         )
         if overlapping:
+            first_overlap = overlapping[0]
             raise ConflictError(
-                "This employee already has a shift assignment overlapping these dates."
+                f"This employee already has a shift assignment overlapping these dates "
+                f"({first_overlap.effective_from} to {first_overlap.effective_to or 'ongoing'})."
             )
         assignment = self.employee_shift_repo.create(
             company_id=company_id,
@@ -991,6 +1068,52 @@ class ShiftService:
             effective_from=data.effective_from,
             effective_to=data.effective_to,
         )
+        if actor:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="SHIFT_ASSIGNED",
+                entity_type="employee_shift",
+                entity_id=assignment.id,
+                details={
+                    "shift_id": jsonable(shift_id),
+                    "employee_id": jsonable(data.employee_id),
+                    "effective_from": jsonable(data.effective_from),
+                    "effective_to": jsonable(data.effective_to),
+                },
+            )
+        self.db.commit()
+        return assignment
+
+    def update_assignment(
+        self,
+        company_id: uuid.UUID,
+        assignment_id: uuid.UUID,
+        data: ShiftAssignmentUpdateRequest,
+        actor: User | None = None,
+    ) -> EmployeeShift:
+        assignment = self.employee_shift_repo.get_by_id(assignment_id, company_id)
+        if assignment is None:
+            raise NotFoundError("Shift assignment not found.")
+        if data.effective_to is not None and data.effective_to < assignment.effective_from:
+            raise ValidationError(
+                "effective_to must be on or after effective_from.",
+                details={"field": "effective_to"},
+            )
+        self.employee_shift_repo.update(assignment, effective_to=data.effective_to)
+        if actor:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="SHIFT_ASSIGNMENT_ENDED",
+                entity_type="employee_shift",
+                entity_id=assignment.id,
+                details={
+                    "shift_id": jsonable(assignment.shift_id),
+                    "employee_id": jsonable(assignment.employee_id),
+                    "effective_to": jsonable(data.effective_to),
+                },
+            )
         self.db.commit()
         return assignment
 
@@ -1001,14 +1124,28 @@ class ShiftService:
         actor: User,
         as_of_date: date | None = None,
     ) -> tuple[EmployeeShift, Shift] | None:
+        target_emp = self.employee_repo.get_by_id(employee_id, company_id)
+        if target_emp is None:
+            raise NotFoundError("Employee not found.")
+
         if actor.role == UserRole.employee:
             actor_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
             if actor_emp is None or employee_id != actor_emp.id:
                 raise ForbiddenError("You do not have permission to view this shift assignment.")
+        elif actor.role == UserRole.manager:
+            actor_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if actor_emp is None:
+                raise ForbiddenError("You do not have permission to view this shift assignment.")
+            if employee_id != actor_emp.id:
+                report_ids = self.employee_repo.list_direct_report_ids(company_id, actor_emp.id)
+                if employee_id not in report_ids:
+                    raise ForbiddenError(
+                        "You do not have permission to view this shift assignment."
+                    )
         elif actor.role in HR_LEVEL_ROLES:
-            emp = self.employee_repo.get_by_id(employee_id, company_id)
-            if emp is None:
-                raise NotFoundError("Employee not found.")
+            pass
+        else:
+            raise ForbiddenError("You do not have permission to view this shift assignment.")
 
         target_date = as_of_date or utcnow().date()
         return self.employee_shift_repo.get_assigned_shift(
