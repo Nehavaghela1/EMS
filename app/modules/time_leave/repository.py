@@ -322,9 +322,7 @@ class EmployeeShiftRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_by_id(
-        self, assignment_id: uuid.UUID, company_id: uuid.UUID
-    ) -> EmployeeShift | None:
+    def get_by_id(self, assignment_id: uuid.UUID, company_id: uuid.UUID) -> EmployeeShift | None:
         return self.db.scalar(
             select(EmployeeShift).where(
                 EmployeeShift.id == assignment_id,

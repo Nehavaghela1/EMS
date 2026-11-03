@@ -23,15 +23,23 @@ from app.db.session import get_db
 from app.main import app as fastapi_app
 from app.modules.hr.models import Employee
 from app.modules.identity.models import Company, CompanyLocation, CompanyStatus, User, UserRole
-from app.modules.time_leave.models import Attendance, AttendanceStatus, Holiday, Leave, LeaveStatus, LeaveType
-from tests.conftest import TenantContext, _make_user_headers
+from app.modules.time_leave.models import (
+    Attendance,
+    AttendanceStatus,
+    Leave,
+    LeaveStatus,
+    LeaveType,
+)
+from tests.conftest import TenantContext
 
 CHECK_IN = "/api/v1/attendance/check-in"
 CHECK_OUT = "/api/v1/attendance/check-out"
 ATTENDANCE = "/api/v1/attendance"
 
 
-def _create_employee(client: TestClient, headers: dict[str, str], **overrides: Any) -> dict[str, Any]:
+def _create_employee(
+    client: TestClient, headers: dict[str, str], **overrides: Any
+) -> dict[str, Any]:
     payload = {
         "first_name": "Test",
         "last_name": "Employee",
@@ -84,13 +92,15 @@ def test_R1_punch_for_self_only_and_no_employee_is_404(
 
     # 3. Manager punches for self only (cannot punch on behalf of employee via body)
     mgr_emp = _create_employee(client, company_a.hr_headers)
-    mgr_headers, _ = _link_user_to_employee(db, company_a.company_id, mgr_emp["id"], UserRole.manager)
+    mgr_headers, _ = _link_user_to_employee(
+        db, company_a.company_id, mgr_emp["id"], UserRole.manager
+    )
     mgr_res = client.post(CHECK_IN, headers=mgr_headers)
     assert mgr_res.status_code == 201
     assert mgr_res.json()["employee_id"] == mgr_emp["id"]
 
 
-# --- Rule 4.2.2: Time comes from server clock in UTC; request cannot carry a time; extra fields 422 ---
+# --- Rule 4.2.2: Server clock UTC; request cannot carry a time; extra fields 422 ---
 
 
 def test_R2_server_time_only_and_extra_fields_give_422(
@@ -108,7 +118,7 @@ def test_R2_server_time_only_and_extra_fields_give_422(
     assert res_extra.status_code == 422, "R2: unknown field in body must give 422"
 
 
-# --- Rule 4.2.3: One record per day; 2nd punch 409; approved leave message; weekend/holiday allowed ---
+# --- Rule 4.2.3: One record per day; 2nd punch 409; approved leave message ---
 
 
 def test_R3_second_punch_in_is_409(
@@ -262,9 +272,11 @@ def test_R5_hours_worked_and_status_thresholds(
 
     out_res2 = client.post(CHECK_OUT, headers=emp_headers)
     assert out_res2.status_code == 200
-    assert out_res2.json()["status"] == "half_day", "R5: Under 4 hours worked must be marked half_day"
+    assert out_res2.json()["status"] == "half_day", (
+        "R5: Under 4 hours worked must be marked half_day"
+    )
 
-    # 3. Test exact half-up rounding (e.g. 59 minutes and 42 seconds = 3582 seconds / 3600 = 0.995 hours -> rounds to 1.00)
+    # 3. Test exact half-up rounding (59m 42s = 3582s / 3600 = 0.995h -> rounds to 1.00)
     db.delete(att2)
     db.commit()
     att3 = Attendance(
@@ -286,9 +298,7 @@ def test_R5_hours_worked_and_status_thresholds(
 # --- Rule 4.2.6: Geofence validation ---
 
 
-def test_R6_geofence_validations(
-    client: TestClient, db: Session, company_a: TenantContext
-) -> None:
+def test_R6_geofence_validations(client: TestClient, db: Session, company_a: TenantContext) -> None:
     # 1. Location with geofence
     loc = CompanyLocation(
         company_id=company_a.company_id,
@@ -308,7 +318,9 @@ def test_R6_geofence_validations(
 
     # 1. Missing GPS coordinates when geofence active -> 403
     res_no_gps = client.post(CHECK_IN, headers=emp_headers)
-    assert res_no_gps.status_code == 403, "R6: Missing GPS coordinates with active geofence must give 403"
+    assert res_no_gps.status_code == 403, (
+        "R6: Missing GPS coordinates with active geofence must give 403"
+    )
 
     # 2. Invalid GPS range values -> 422
     res_bad_lat = client.post(
@@ -322,7 +334,9 @@ def test_R6_geofence_validations(
     assert res_bad_lon.status_code == 422, "R6: Longitude > 180 must give 422"
 
     res_bad_acc = client.post(
-        CHECK_IN, headers=emp_headers, json={"latitude": 12.0, "longitude": 77.0, "device_accuracy": -5.0}
+        CHECK_IN,
+        headers=emp_headers,
+        json={"latitude": 12.0, "longitude": 77.0, "device_accuracy": -5.0},
     )
     assert res_bad_acc.status_code == 422, "R6: Accuracy < 0 must give 422"
 
@@ -340,7 +354,9 @@ def test_R6_geofence_validations(
         headers=emp_headers,
         json={"latitude": 12.9716, "longitude": 77.5946, "device_accuracy": 5.0},
     )
-    assert res_inside.status_code == 201, f"R6: Inside geofence radius must succeed: {res_inside.text}"
+    assert res_inside.status_code == 201, (
+        f"R6: Inside geofence radius must succeed: {res_inside.text}"
+    )
 
 
 # --- Rule 4.2.7: Past day left open marked mispunch at next punch-in ---
@@ -374,13 +390,12 @@ def test_R7_past_day_left_open_marked_mispunch_at_next_punch_in(
     )
 
 
-# --- Rule 4.2.8: Scoping of attendance records (own, direct reports, HR-level, 403, other co 404) ---
+# --- Rule 4.2.8: Scoping of attendance records (own, direct reports, HR-level, 403) ---
 
 
 def test_R8_attendance_scoping(
     client: TestClient, db: Session, company_a: TenantContext, company_b: TenantContext
 ) -> None:
-    today = utcnow().date()
     # Manager M, Report R, Other O
     emp_m = _create_employee(client, company_a.hr_headers)
     m_headers, _ = _link_user_to_employee(db, company_a.company_id, emp_m["id"], UserRole.manager)
@@ -500,7 +515,6 @@ def test_R10_concurrent_punch_ins_give_one_201_and_one_409() -> None:
             setup.add(user)
             setup.flush()
             emp.user_id = user.id
-            emp_id = emp.id
             user_id = user.id
             setup.commit()
             token = create_access_token(sub=str(user_id), company_id=str(cid), role="employee")
@@ -533,8 +547,12 @@ def test_R10_concurrent_punch_ins_give_one_201_and_one_409() -> None:
         t1.join()
         t2.join()
 
-        assert 500 not in results and 999 not in results, f"R10: race gave unexpected error: {results}"
-        assert sorted(results) == [201, 409], f"R10: Expected exactly one 201 and one 409, got {results}"
+        assert 500 not in results and 999 not in results, (
+            f"R10: race gave unexpected error: {results}"
+        )
+        assert sorted(results) == [201, 409], (
+            f"R10: Expected exactly one 201 and one 409, got {results}"
+        )
     finally:
         fastapi_app.dependency_overrides.pop(get_db, None)
         engine.dispose()

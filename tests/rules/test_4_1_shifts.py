@@ -6,7 +6,6 @@ Dates that a rule compares with today are computed from utcnow().
 import threading
 import uuid
 from datetime import timedelta
-from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -40,7 +39,9 @@ def _owner_headers(db: Session, ctx: TenantContext) -> dict[str, str]:
     return headers
 
 
-def _create_employee(client: TestClient, headers: dict[str, str], **overrides: Any) -> dict[str, Any]:
+def _create_employee(
+    client: TestClient, headers: dict[str, str], **overrides: Any
+) -> dict[str, Any]:
     payload = {
         "first_name": "Test",
         "last_name": "Employee",
@@ -118,15 +119,21 @@ def test_R1_manager_and_employee_writes_get_403(
     for headers in (company_a.manager_headers, company_a.employee_headers):
         # Create
         c_res = client.post(SHIFTS, headers=headers, json=_shift_payload())
-        assert c_res.status_code == 403, f"R1: Non-HR create must return 403, got {c_res.status_code}"
+        assert c_res.status_code == 403, (
+            f"R1: Non-HR create must return 403, got {c_res.status_code}"
+        )
 
         # Edit
         u_res = client.put(f"{SHIFTS}/{shift['id']}", headers=headers, json={"name": "New Name"})
-        assert u_res.status_code == 403, f"R1: Non-HR update must return 403, got {u_res.status_code}"
+        assert u_res.status_code == 403, (
+            f"R1: Non-HR update must return 403, got {u_res.status_code}"
+        )
 
         # Deactivate
         d_res = client.put(f"{SHIFTS}/{shift['id']}", headers=headers, json={"is_active": False})
-        assert d_res.status_code == 403, f"R1: Non-HR deactivate must return 403, got {d_res.status_code}"
+        assert d_res.status_code == 403, (
+            f"R1: Non-HR deactivate must return 403, got {d_res.status_code}"
+        )
 
         # Assign
         a_res = client.post(
@@ -134,11 +141,15 @@ def test_R1_manager_and_employee_writes_get_403(
             headers=headers,
             json={"employee_id": emp["id"], "effective_from": today.isoformat()},
         )
-        assert a_res.status_code == 403, f"R1: Non-HR assign must return 403, got {a_res.status_code}"
+        assert a_res.status_code == 403, (
+            f"R1: Non-HR assign must return 403, got {a_res.status_code}"
+        )
 
         # Delete
         del_res = client.delete(f"{SHIFTS}/{shift['id']}", headers=headers)
-        assert del_res.status_code == 403, f"R1: Non-HR delete must return 403, got {del_res.status_code}"
+        assert del_res.status_code == 403, (
+            f"R1: Non-HR delete must return 403, got {del_res.status_code}"
+        )
 
 
 def test_R1_owner_and_hr_admin_create_edit_deactivate_delete_and_assign(
@@ -152,16 +163,12 @@ def test_R1_owner_and_hr_admin_create_edit_deactivate_delete_and_assign(
         assert s["id"]
 
         # Edit
-        edit_res = client.put(
-            f"{SHIFTS}/{s['id']}", headers=headers, json={"break_minutes": 45}
-        )
+        edit_res = client.put(f"{SHIFTS}/{s['id']}", headers=headers, json={"break_minutes": 45})
         assert edit_res.status_code == 200
         assert edit_res.json()["break_minutes"] == 45
 
         # Deactivate
-        deact_res = client.put(
-            f"{SHIFTS}/{s['id']}", headers=headers, json={"is_active": False}
-        )
+        deact_res = client.put(f"{SHIFTS}/{s['id']}", headers=headers, json={"is_active": False})
         assert deact_res.status_code == 200
         assert deact_res.json()["is_active"] is False
 
@@ -215,7 +222,7 @@ def test_R2_any_logged_in_user_can_list_shift_definitions(
         assert "name" in found[0] and "start_time" in found[0] and "end_time" in found[0]
 
 
-# --- Rule 4.1.3: Employee sees own assigned; Manager sees own and reports; HR sees all; other 403; other co 404 ---
+# --- Rule 4.1.3: Employee sees own; Manager sees own/reports; HR sees all; other 403 ---
 
 
 def test_R3_assigned_shift_scoping_and_not_found(
@@ -286,16 +293,22 @@ def test_R4_shift_input_validation(client: TestClient, company_a: TenantContext)
     res_empty = client.post(SHIFTS, headers=company_a.hr_headers, json=_shift_payload(name="   "))
     assert res_empty.status_code == 422, "R4: Empty/whitespace name must give 422"
 
-    res_long = client.post(SHIFTS, headers=company_a.hr_headers, json=_shift_payload(name="A" * 101))
+    res_long = client.post(
+        SHIFTS, headers=company_a.hr_headers, json=_shift_payload(name="A" * 101)
+    )
     assert res_long.status_code == 422, "R4: Name > 100 chars must give 422"
 
     # 2. Name trimmed and unique per company ignoring case (409)
     name_base = f"Unique Shift {uuid.uuid4().hex[:6]}"
-    res1 = client.post(SHIFTS, headers=company_a.hr_headers, json=_shift_payload(name=f"  {name_base}  "))
+    res1 = client.post(
+        SHIFTS, headers=company_a.hr_headers, json=_shift_payload(name=f"  {name_base}  ")
+    )
     assert res1.status_code == 201
     assert res1.json()["name"] == name_base
 
-    res2 = client.post(SHIFTS, headers=company_a.hr_headers, json=_shift_payload(name=name_base.lower()))
+    res2 = client.post(
+        SHIFTS, headers=company_a.hr_headers, json=_shift_payload(name=name_base.lower())
+    )
     assert res2.status_code == 409, "R4: Duplicate shift name case-insensitive must return 409"
 
     # 3. Start and end times differ
@@ -331,7 +344,9 @@ def test_R4_shift_input_validation(client: TestClient, company_a: TenantContext)
         headers=company_a.hr_headers,
         json=_shift_payload(start_time="09:00:00", end_time="11:00:00", break_minutes=120),
     )
-    assert res_break_eq_shift.status_code == 422, "R4: Break minutes must be shorter than shift duration"
+    assert res_break_eq_shift.status_code == 422, (
+        "R4: Break minutes must be shorter than shift duration"
+    )
 
     # 5. Night allowance 0 to 99,999.99 as Decimal
     res_neg_allowance = client.post(
@@ -350,9 +365,7 @@ def test_R4_shift_input_validation(client: TestClient, company_a: TenantContext)
     )
     assert res_unknown.status_code == 422, "R4: Unknown fields must give 422"
 
-    res_null = client.post(
-        SHIFTS, headers=company_a.hr_headers, json=_shift_payload(name=None)
-    )
+    res_null = client.post(SHIFTS, headers=company_a.hr_headers, json=_shift_payload(name=None))
     assert res_null.status_code == 422, "R4: Null on required field must give 422"
 
 
@@ -376,7 +389,9 @@ def test_R5_assignment_validations(
             "effective_to": (today - timedelta(days=1)).isoformat(),
         },
     )
-    assert res_bad_dates.status_code == 422, "R5: effective_to before effective_from must return 422"
+    assert res_bad_dates.status_code == 422, (
+        "R5: effective_to before effective_from must return 422"
+    )
 
     # 2. Employee in different company is 404
     emp_b = _create_employee(client, company_b.hr_headers)
@@ -385,11 +400,15 @@ def test_R5_assignment_validations(
         headers=company_a.hr_headers,
         json={"employee_id": emp_b["id"], "effective_from": today.isoformat()},
     )
-    assert res_cross_emp.status_code == 404, "R5: Assigning employee of another company must return 404"
+    assert res_cross_emp.status_code == 404, (
+        "R5: Assigning employee of another company must return 404"
+    )
 
     # 3. Deactivated shift cannot be newly assigned
     deact_shift = _create_shift(client, company_a.hr_headers)
-    client.put(f"{SHIFTS}/{deact_shift['id']}", headers=company_a.hr_headers, json={"is_active": False})
+    client.put(
+        f"{SHIFTS}/{deact_shift['id']}", headers=company_a.hr_headers, json={"is_active": False}
+    )
     res_deact = client.post(
         f"{SHIFTS}/{deact_shift['id']}/assign",
         headers=company_a.hr_headers,
@@ -421,7 +440,10 @@ def test_R5_assignment_validations(
         },
     )
     assert res_overlap.status_code == 409, "R5: Overlapping assignment must return 409"
-    assert today.isoformat() in res_overlap.text or (today + timedelta(days=10)).isoformat() in res_overlap.text
+    assert (
+        today.isoformat() in res_overlap.text
+        or (today + timedelta(days=10)).isoformat() in res_overlap.text
+    )
 
 
 def test_R5_concurrent_shift_assignments_race_safe() -> None:
@@ -525,8 +547,12 @@ def test_R5_concurrent_shift_assignments_race_safe() -> None:
         t1.join()
         t2.join()
 
-        assert 500 not in results and 999 not in results, f"R5: race gave unexpected error: {results}"
-        assert sorted(results) == [201, 409], f"R5: Expected exactly one 201 and one 409, got {results}"
+        assert 500 not in results and 999 not in results, (
+            f"R5: race gave unexpected error: {results}"
+        )
+        assert sorted(results) == [201, 409], (
+            f"R5: Expected exactly one 201 and one 409, got {results}"
+        )
     finally:
         fastapi_app.dependency_overrides.pop(get_db, None)
         engine.dispose()
@@ -679,9 +705,7 @@ def test_R8_rate_limits(client: TestClient, company_a: TenantContext, limits_on)
 # --- Rule 4.1.9: Managers get no shift write power ---
 
 
-def test_R9_manager_has_no_shift_write_power(
-    client: TestClient, company_a: TenantContext
-) -> None:
+def test_R9_manager_has_no_shift_write_power(client: TestClient, company_a: TenantContext) -> None:
     # Confirms manager cannot write even if parameters look valid
     res = client.post(SHIFTS, headers=company_a.manager_headers, json=_shift_payload())
     assert res.status_code == 403, "R9: Manager must have no shift write power (403)"
@@ -704,7 +728,8 @@ def test_R10_migration_round_trip() -> None:
                 conn.execute(text("ALTER TABLE shifts NO FORCE ROW LEVEL SECURITY"))
                 conn.execute(
                     text(
-                        "INSERT INTO shifts (id, company_id, name, start_time, end_time, break_minutes, night_allowance, is_active, created_at, updated_at) "
+                        "INSERT INTO shifts (id, company_id, name, start_time, end_time, "
+                        "break_minutes, night_allowance, is_active, created_at, updated_at) "
                         "VALUES (:i, :c, :n, '09:00:00', '18:00:00', 60, 0, true, NOW(), NOW())"
                     ),
                     {"i": uuid.uuid4(), "c": company_id, "n": name},
@@ -722,8 +747,9 @@ def test_R10_migration_round_trip() -> None:
                 conn.execute(
                     text(
                         "INSERT INTO companies (id, name, code, email, status, country, currency,"
-                        " last_employee_seq, created_at, updated_at) VALUES (:i, 'Mig Shift Co', :c,"
-                        " :e, 'active', 'IN', 'INR', 0, NOW(), NOW())"
+                        " last_employee_seq, created_at, updated_at) "
+                        "VALUES (:i, 'Mig Shift Co', :c, :e, 'active', 'IN', 'INR', 0, NOW(), "
+                        "NOW())"
                     ),
                     {"i": company_id, "c": code, "e": f"{code.lower()}@test.test"},
                 )
@@ -737,7 +763,10 @@ def test_R10_migration_round_trip() -> None:
 
             with pytest.raises(RuntimeError) as exc_info:
                 command.upgrade(cfg, MIGRATION_REVISION)
-            assert "duplicate" in str(exc_info.value).lower() and "general" in str(exc_info.value).lower()
+            assert (
+                "duplicate" in str(exc_info.value).lower()
+                and "general" in str(exc_info.value).lower()
+            )
 
             # Clean duplicates and upgrade
             _clean()

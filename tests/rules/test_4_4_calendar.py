@@ -5,7 +5,7 @@ Dates are computed from utcnow().
 
 import calendar as py_calendar
 import uuid
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -13,21 +13,27 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
-from app.db.session import get_db
-from app.main import app as fastapi_app
 from app.modules.hr.models import Department, Employee
-from app.modules.identity.models import CompanySettings, User, UserRole
-from app.modules.time_leave.models import Attendance, AttendanceStatus, Holiday, Leave, LeaveStatus, LeaveType
-from tests.conftest import TenantContext, _make_user_headers
+from app.modules.identity.models import User, UserRole
+from app.modules.time_leave.models import (
+    Attendance,
+    AttendanceStatus,
+    Holiday,
+    Leave,
+    LeaveStatus,
+    LeaveType,
+)
+from tests.conftest import TenantContext
 
 CALENDAR = "/api/v1/attendance/calendar"
 
 
-def _create_employee(client: TestClient, headers: dict[str, str], **overrides: Any) -> dict[str, Any]:
+def _create_employee(
+    client: TestClient, headers: dict[str, str], **overrides: Any
+) -> dict[str, Any]:
     payload = {
         "first_name": "Test",
         "last_name": "Employee",
@@ -89,44 +95,60 @@ def test_R1_calendar_scoping_and_manager_own_id(
     assert res_r_impl.status_code == 200
     assert res_r_impl.json()["employee_id"] == emp_r["id"]
 
-    res_r_expl = client.get(f"{CALENDAR}?month={m}&year={y}&employee_id={emp_r['id']}", headers=r_headers)
+    res_r_expl = client.get(
+        f"{CALENDAR}?month={m}&year={y}&employee_id={emp_r['id']}", headers=r_headers
+    )
     assert res_r_expl.status_code == 200
 
     # 3. Employee asking for someone else -> 403
-    res_r_other = client.get(f"{CALENDAR}?month={m}&year={y}&employee_id={emp_o['id']}", headers=r_headers)
+    res_r_other = client.get(
+        f"{CALENDAR}?month={m}&year={y}&employee_id={emp_o['id']}", headers=r_headers
+    )
     assert res_r_other.status_code == 403, "R1: Employee reading other calendar must return 403"
 
     # 4. Manager asking for direct report -> 200
-    res_m_r = client.get(f"{CALENDAR}?month={m}&year={y}&employee_id={emp_r['id']}", headers=m_headers)
+    res_m_r = client.get(
+        f"{CALENDAR}?month={m}&year={y}&employee_id={emp_r['id']}", headers=m_headers
+    )
     assert res_m_r.status_code == 200
 
     # 5. Manager asking for non-report -> 403
-    res_m_o = client.get(f"{CALENDAR}?month={m}&year={y}&employee_id={emp_o['id']}", headers=m_headers)
+    res_m_o = client.get(
+        f"{CALENDAR}?month={m}&year={y}&employee_id={emp_o['id']}", headers=m_headers
+    )
     assert res_m_o.status_code == 403, "R1: Manager reading non-report must return 403"
 
     # 6. Manager asking for THEIR OWN employee id -> 200 (BUGFIX check)
-    res_m_own = client.get(f"{CALENDAR}?month={m}&year={y}&employee_id={emp_m['id']}", headers=m_headers)
-    assert res_m_own.status_code == 200, f"R1: Manager asking for own employee_id must work: {res_m_own.text}"
+    res_m_own = client.get(
+        f"{CALENDAR}?month={m}&year={y}&employee_id={emp_m['id']}", headers=m_headers
+    )
+    assert res_m_own.status_code == 200, (
+        f"R1: Manager asking for own employee_id must work: {res_m_own.text}"
+    )
 
     # 7. HR-level asking for anyone in company -> 200
-    res_hr = client.get(f"{CALENDAR}?month={m}&year={y}&employee_id={emp_o['id']}", headers=company_a.hr_headers)
+    res_hr = client.get(
+        f"{CALENDAR}?month={m}&year={y}&employee_id={emp_o['id']}", headers=company_a.hr_headers
+    )
     assert res_hr.status_code == 200
 
     # 8. Another company employee or missing employee -> 404
     emp_b = _create_employee(client, company_b.hr_headers)
-    res_cross = client.get(f"{CALENDAR}?month={m}&year={y}&employee_id={emp_b['id']}", headers=company_a.hr_headers)
+    res_cross = client.get(
+        f"{CALENDAR}?month={m}&year={y}&employee_id={emp_b['id']}", headers=company_a.hr_headers
+    )
     assert res_cross.status_code == 404, "R1: Other company employee must return 404"
 
-    res_missing = client.get(f"{CALENDAR}?month={m}&year={y}&employee_id={uuid.uuid4()}", headers=company_a.hr_headers)
+    res_missing = client.get(
+        f"{CALENDAR}?month={m}&year={y}&employee_id={uuid.uuid4()}", headers=company_a.hr_headers
+    )
     assert res_missing.status_code == 404
 
 
 # --- Rule 4.4.2: Month 1 to 12 and year 2000 to 2100, otherwise 422 ---
 
 
-def test_R2_month_and_year_validation(
-    client: TestClient, company_a: TenantContext
-) -> None:
+def test_R2_month_and_year_validation(client: TestClient, company_a: TenantContext) -> None:
     # Month out of bounds
     res_m0 = client.get(f"{CALENDAR}?month=0&year=2026", headers=company_a.hr_headers)
     assert res_m0.status_code == 422, "R2: month < 1 must return 422"
@@ -269,11 +291,11 @@ def test_R4_department_holidays_and_optional_holidays(
     # Dept 2 holiday does NOT apply to dept1 employee
     assert days["2026-11-11"]["holiday_name"] != "Dept 2 Day"
 
-    # Optional holiday on Nov 12: must NOT be day off (status holiday), but badge or info shows optional
+    # Optional holiday on Nov 12: must NOT be day off (status holiday)
     assert days["2026-11-12"]["status"] != "holiday", "R4: Optional holiday is NOT a day off"
-    assert days["2026-11-12"]["badge_label"] == "Optional Holiday" or "Optional" in (days["2026-11-12"]["badge_label"] or ""), (
-        f"R4: Optional holiday should be labeled as optional, got {days['2026-11-12']}"
-    )
+    assert days["2026-11-12"]["badge_label"] == "Optional Holiday" or "Optional" in (
+        days["2026-11-12"]["badge_label"] or ""
+    ), f"R4: Optional holiday should be labeled as optional, got {days['2026-11-12']}"
 
 
 # --- Rule 4.4.5: Weekends come from company's weekend setting ---
@@ -292,7 +314,12 @@ def test_R5_weekends_from_company_settings(
     assert res.status_code == 200
     # Every Saturday and Sunday should be weekend status unless other events exist
     for d in res.json()["days"]:
-        if d["day_of_week"] in (5, 6) and not d["check_in"] and not d["leave_type_name"] and not d["holiday_name"]:
+        if (
+            d["day_of_week"] in (5, 6)
+            and not d["check_in"]
+            and not d["leave_type_name"]
+            and not d["holiday_name"]
+        ):
             assert d["status"] == "weekend"
 
 
@@ -400,7 +427,9 @@ def test_R8_attendance_exempt_employees_never_absent(
     res = client.get(f"{CALENDAR}?month={m}&year={y}", headers=emp_headers)
     assert res.status_code == 200
     for d in res.json()["days"]:
-        assert d["status"] != "absent", f"R8: Exempt employee cannot have absent status on day {d['date']}"
+        assert d["status"] != "absent", (
+            f"R8: Exempt employee cannot have absent status on day {d['date']}"
+        )
 
 
 # --- Rule 4.4.9: Reads limited to 60/min and not audited ---
@@ -415,9 +444,7 @@ def limits_on():
     limiter.enabled = False
 
 
-def test_R9_calendar_rate_limit(
-    client: TestClient, company_a: TenantContext, limits_on
-) -> None:
+def test_R9_calendar_rate_limit(client: TestClient, company_a: TenantContext, limits_on) -> None:
     now = utcnow()
     m = now.month
     y = now.year
@@ -444,5 +471,7 @@ def test_R10_summary_counts_add_up_to_days_of_month(
     data = res.json()
     summary = data["summary"]
     total_in_summary = sum(summary.values())
-    assert total_in_summary == 29, f"R10: Feb 2024 summary must equal 29 days, got {total_in_summary}"
+    assert total_in_summary == 29, (
+        f"R10: Feb 2024 summary must equal 29 days, got {total_in_summary}"
+    )
     assert len(data["days"]) == 29

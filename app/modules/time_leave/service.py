@@ -62,6 +62,7 @@ from app.modules.time_leave.schemas import (
     LeaveDecisionRequest,
     LeaveTypeCreateRequest,
     LeaveTypeUpdateRequest,
+    ShiftAssignmentUpdateRequest,
     ShiftAssignRequest,
     ShiftCreateRequest,
     ShiftUpdateRequest,
@@ -255,9 +256,9 @@ class AttendanceService:
                 notes=fence_notes,
             )
             self.db.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             self.db.rollback()
-            raise AlreadyCheckedInError()
+            raise AlreadyCheckedInError() from exc
         DashboardService.invalidate_company_dashboards(company_id)
         return record
 
@@ -688,7 +689,6 @@ class AttendanceService:
         today = utcnow().date()
 
         # Company settings for weekends
-        settings_row = self.settings_repo.get_by_company(company_id)
         # 0=Monday ... 6=Sunday. Default weekend: Saturday(5), Sunday(6)
         weekend_days = {5, 6}
 
@@ -723,7 +723,9 @@ class AttendanceService:
                 emp.department_id if emp else None
             ):
                 # If there's already a mandatory holiday for this date, prefer it
-                if h.date not in hol_by_date or (not h.is_optional and hol_by_date[h.date].is_optional):
+                if h.date not in hol_by_date or (
+                    not h.is_optional and hol_by_date[h.date].is_optional
+                ):
                     hol_by_date[h.date] = h
 
         # Index approved/pending leaves by their date range
@@ -836,7 +838,12 @@ class AttendanceService:
                         badge = None
 
             # Priority 4: Attendance Exempt (e.g. CEO/Owner on today or past work days)
-            elif emp and getattr(emp, "is_attendance_exempt", False) and dow not in weekend_days and not is_future:
+            elif (
+                emp
+                and getattr(emp, "is_attendance_exempt", False)
+                and dow not in weekend_days
+                and not is_future
+            ):
                 status = "exempt"
                 badge = "Exempt"
                 work_hours = None
@@ -865,7 +872,8 @@ class AttendanceService:
                 holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
-            # Priority 7: Past or Today Unpunched Working Day -> Absent (with optional holiday badge if applicable)
+            # Priority 7: Past or Today Unpunched Working Day -> Absent
+            # (with optional holiday badge if applicable)
             else:
                 status = "absent"
                 badge = "Optional Holiday" if (hol and hol.is_optional) else None
@@ -1000,7 +1008,7 @@ class ShiftService:
     def delete_shift(
         self, company_id: uuid.UUID, shift_id: uuid.UUID, actor: User | None = None
     ) -> None:
-        """Route 53: blocked if currently or in future assigned (effective_to IS NULL or >= today)."""
+        """Route 53: blocked if currently or in future assigned."""
         shift = self._get_or_404(company_id, shift_id)
         today = utcnow().date()
         count = self.repo.count_current_and_future_assignments(shift_id, company_id, today)
@@ -1131,7 +1139,9 @@ class ShiftService:
             if employee_id != actor_emp.id:
                 report_ids = self.employee_repo.list_direct_report_ids(company_id, actor_emp.id)
                 if employee_id not in report_ids:
-                    raise ForbiddenError("You do not have permission to view this shift assignment.")
+                    raise ForbiddenError(
+                        "You do not have permission to view this shift assignment."
+                    )
         elif actor.role in HR_LEVEL_ROLES:
             pass
         else:
