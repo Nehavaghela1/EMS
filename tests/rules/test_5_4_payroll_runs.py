@@ -723,6 +723,7 @@ def _purge(cid: uuid.UUID) -> None:
             conn.execute(text("SELECT set_config('app.is_platform_admin', 'on', true)"))
             for table in (
                 "audit_logs",
+                "reimbursements",
                 "payroll_items",
                 "payroll_runs",
                 "statutory_configs",
@@ -734,6 +735,157 @@ def _purge(cid: uuid.UUID) -> None:
             conn.execute(text("DELETE FROM companies WHERE id = :c"), {"c": cid})
     finally:
         owner.dispose()
+
+
+def test_R3_two_simultaneous_approvals_write_one_audit_row_and_pay_reimbursements_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.modules.payroll.models import ReimbursementType
+    from app.modules.payroll.repository import PayrollRunRepository
+
+    original_update = PayrollRunRepository.update
+
+    def _slow_update(self, run, **kwargs):  # noqa: ANN001, ANN003
+        if kwargs.get("status") == PayrollRunStatus.approved:
+            time.sleep(0.5)  # both approvers have read the status before either one saves
+        return original_update(self, run, **kwargs)
+
+    monkeypatch.setattr(PayrollRunRepository, "update", _slow_update)
+    assert settings.TEST_DATABASE_URL is not None
+    engine = create_engine(settings.TEST_DATABASE_URL, pool_size=5, max_overflow=2)
+    cid = uuid.uuid4()
+    try:
+        with Session(engine) as setup:
+            setup.add(
+                Company(
+                    id=cid,
+                    name="Approve Race Co",
+                    code=f"ARC{uuid.uuid4().hex[:4].upper()}",
+                    email=f"arc-{uuid.uuid4().hex[:6]}@example.com",
+                    status=CompanyStatus.active,
+                    is_active=True,
+                )
+            )
+            setup.flush()
+            bind_tenant_to_session(setup, company_id=cid, is_platform_admin=False)
+            setup.add(CompanySettings(company_id=cid))
+            users: dict[str, User] = {}
+            for key, role in (
+                ("creator", UserRole.hr_admin),
+                ("hr2", UserRole.hr_admin),
+                ("owner", UserRole.owner),
+            ):
+                users[key] = User(
+                    id=uuid.uuid4(),
+                    company_id=cid,
+                    email=f"{key}-{uuid.uuid4().hex[:6]}@example.com",
+                    hashed_password=hash_password("Test1234pass!"),
+                    role=role,
+                    is_active=True,
+                )
+                setup.add(users[key])
+            setup.flush()
+            emp = Employee(
+                company_id=cid,
+                employee_code=f"E{uuid.uuid4().hex[:6].upper()}",
+                first_name="Race",
+                last_name="Payee",
+                email=f"payee-{uuid.uuid4().hex[:6]}@example.com",
+                hire_date=date(2024, 1, 1),
+                is_active=True,
+            )
+            setup.add(emp)
+            setup.flush()
+            year, month = _month_back()
+            run = PayrollRun(
+                company_id=cid,
+                month=month,
+                year=year,
+                status=PayrollRunStatus.pending_approval,
+                idempotency_key=f"race-{uuid.uuid4()}",
+                run_by=users["creator"].id,
+                total_employees=1,
+            )
+            setup.add(run)
+            setup.flush()
+            claim_ids = []
+            for amount in ("100.00", "250.50"):
+                claim = Reimbursement(
+                    company_id=cid,
+                    employee_id=emp.id,
+                    type=ReimbursementType.food,
+                    amount=Decimal(amount),
+                    expense_date=date(2024, 2, 1),
+                    description="Lunch",
+                    status=ReimbursementStatus.approved,
+                    added_to_payroll_run_id=run.id,
+                )
+                setup.add(claim)
+                setup.flush()
+                claim_ids.append(claim.id)
+            setup.commit()
+            run_id = run.id
+            tokens = {
+                key: create_access_token(sub=str(u.id), company_id=str(cid), role=u.role.value)
+                for key, u in users.items()
+            }
+            hr2_id, owner_id = users["hr2"].id, users["owner"].id
+
+        def _get_test_db():
+            session = Session(engine)
+            try:
+                yield session
+            finally:
+                session.close()
+
+        fastapi_app.dependency_overrides[get_db] = _get_test_db
+        barrier = threading.Barrier(2)
+        responses: list[tuple[int, dict]] = []
+
+        def _worker(key: str) -> None:
+            c = TestClient(fastapi_app)
+            try:
+                barrier.wait()
+                resp = c.post(
+                    f"{RUNS}/{run_id}/approve",
+                    headers={"Authorization": f"Bearer {tokens[key]}"},
+                )
+                responses.append((resp.status_code, resp.json()))
+            except Exception as exc:
+                responses.append((999, {"error": str(exc)}))
+
+        threads = [threading.Thread(target=_worker, args=(k,)) for k in ("hr2", "owner")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        codes = sorted(code for code, _ in responses)
+        assert codes == [200, 200], f"R3: both approvals must answer 200, got {responses}"
+        assert all(body["status"] == "approved" for _, body in responses), responses
+        with Session(engine) as check:
+            bind_tenant_to_session(check, company_id=cid, is_platform_admin=False)
+            audit = (
+                check.query(AuditLog)
+                .filter(AuditLog.company_id == cid, AuditLog.action == "PAYROLL_RUN_APPROVED")
+                .all()
+            )
+            assert len(audit) == 1, f"R3: exactly one approval audit row, got {len(audit)}"
+            stored = check.get(PayrollRun, run_id)
+            assert stored is not None and stored.status == PayrollRunStatus.approved
+            assert stored.approved_by in (hr2_id, owner_id), "R3: approved_by is set"
+            assert audit[0].actor_user_id == stored.approved_by, "R3: audit row names the approver"
+            assert {b["approved_by"] for _, b in responses} == {str(stored.approved_by)}, (
+                f"R3: both answers show the one recorded approver: {responses}"
+            )
+            claims = check.query(Reimbursement).filter(Reimbursement.id.in_(claim_ids)).all()
+            assert len(claims) == 2
+            assert all(c.status == ReimbursementStatus.paid for c in claims), "R3: all paid"
+            assert all(c.added_to_payroll_run_id == run_id for c in claims)
+    finally:
+        fastapi_app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+        _purge(cid)
 
 
 def test_R6_a_failure_in_the_middle_leaves_no_run_row_and_no_locked_reimbursement(
