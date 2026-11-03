@@ -196,9 +196,7 @@ def test_R3_punch_in_on_a_weekend_is_allowed_and_recorded(
 
     # Set company settings so that today is configured as a weekend day
     settings_row = (
-        db.query(CompanySettings)
-        .filter(CompanySettings.company_id == company_a.company_id)
-        .one()
+        db.query(CompanySettings).filter(CompanySettings.company_id == company_a.company_id).one()
     )
     settings_row.weekend_days = [today_iso_weekday]
     db.commit()
@@ -207,7 +205,9 @@ def test_R3_punch_in_on_a_weekend_is_allowed_and_recorded(
     emp_headers, _ = _link_user_to_employee(db, company_a.company_id, emp["id"], UserRole.employee)
 
     res = client.post(CHECK_IN, headers=emp_headers)
-    assert res.status_code == 201, f"R3: Punch on weekend must return 201, got {res.status_code}: {res.text}"
+    assert res.status_code == 201, (
+        f"R3: Punch on weekend must return 201, got {res.status_code}: {res.text}"
+    )
 
     records = (
         db.query(Attendance)
@@ -218,7 +218,9 @@ def test_R3_punch_in_on_a_weekend_is_allowed_and_recorded(
         )
         .all()
     )
-    assert len(records) == 1, f"R3: Expected exactly 1 attendance record for today, found {len(records)}"
+    assert len(records) == 1, (
+        f"R3: Expected exactly 1 attendance record for today, found {len(records)}"
+    )
 
 
 def test_R3_punch_in_on_a_holiday_is_allowed_and_recorded(
@@ -240,7 +242,9 @@ def test_R3_punch_in_on_a_holiday_is_allowed_and_recorded(
     emp_headers, _ = _link_user_to_employee(db, company_a.company_id, emp["id"], UserRole.employee)
 
     res = client.post(CHECK_IN, headers=emp_headers)
-    assert res.status_code == 201, f"R3: Punch on holiday must return 201, got {res.status_code}: {res.text}"
+    assert res.status_code == 201, (
+        f"R3: Punch on holiday must return 201, got {res.status_code}: {res.text}"
+    )
 
     records = (
         db.query(Attendance)
@@ -251,7 +255,9 @@ def test_R3_punch_in_on_a_holiday_is_allowed_and_recorded(
         )
         .all()
     )
-    assert len(records) == 1, f"R3: Expected exactly 1 attendance record for today, found {len(records)}"
+    assert len(records) == 1, (
+        f"R3: Expected exactly 1 attendance record for today, found {len(records)}"
+    )
 
 
 # --- Rule 4.2.4: Punch-out needs open punch-in, after it, works once, closes after midnight ---
