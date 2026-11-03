@@ -64,7 +64,9 @@ def _to_structure_response(structure: SalaryStructure) -> SalaryStructureRespons
 
 
 @structures_router.post("", response_model=SalaryStructureResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def create_structure(
+    request: Request,
     data: SalaryStructureCreateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
@@ -74,7 +76,9 @@ def create_structure(
 
 
 @structures_router.get("", response_model=Page[SalaryStructureListItem])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_structures(
+    request: Request,
     company_id: uuid.UUID | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
@@ -106,7 +110,9 @@ def list_structures(
 
 
 @structures_router.get("/{structure_id}", response_model=SalaryStructureResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_structure(
+    request: Request,
     structure_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
@@ -116,7 +122,9 @@ def get_structure(
 
 
 @structures_router.put("/{structure_id}", response_model=SalaryStructureResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_structure(
+    request: Request,
     structure_id: uuid.UUID,
     data: SalaryStructureUpdateRequest,
     db: Session = Depends(get_tenant_db),
@@ -129,7 +137,9 @@ def update_structure(
 
 
 @structures_router.delete("/{structure_id}", status_code=204)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def delete_structure(
+    request: Request,
     structure_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),

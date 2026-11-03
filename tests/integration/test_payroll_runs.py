@@ -57,7 +57,6 @@ def _setup_salary_structure(client: TestClient, company: TenantContext) -> str:
         "/api/v1/payroll/structures",
         json={
             "name": "Standard Regular Structure",
-            "description": "Base salary structure",
             "components": [
                 {
                     "code": "BASIC",

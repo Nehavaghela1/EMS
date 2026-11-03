@@ -1,9 +1,16 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.core.masking import mask_tail
 from app.modules.payroll.models import (
@@ -15,17 +22,49 @@ from app.modules.payroll.models import (
     TaxRegime,
 )
 
+# Input limits for salary structures and assignments (Spec 7.6 column sizes). They are limits
+# on what a request may carry, not statutory rates.
+_MAX_MONEY = Decimal("99999999.99")
+_STRUCTURE_NAME = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)
+]
+_LEVEL = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10)]
+_COUNTRY = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
+_COMPONENT_NAME = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
+]
+_COMPONENT_CODE = Annotated[str, StringConstraints(pattern=r"^[A-Z0-9_]{2,20}$")]
+
+
+def _decimal_places(value: Decimal) -> int:
+    exponent = value.as_tuple().exponent
+    return -exponent if isinstance(exponent, int) and exponent < 0 else 0
+
 
 class SalaryComponentCreateRequest(BaseModel):
-    name: str
-    code: str
+    model_config = ConfigDict(extra="forbid")
+
+    name: _COMPONENT_NAME
+    code: _COMPONENT_CODE
     type: SalaryComponentType
     calculation_type: CalculationType
-    value: Decimal | None = None
+    value: Decimal | None = Field(default=None, ge=0)
     percentage_of: PercentageOf | None = None
     is_taxable: bool = True
     is_statutory: bool = False
-    display_order: int = 0
+    display_order: int = Field(default=0, ge=0, le=1000)
+
+    @model_validator(mode="after")
+    def _value_limits(self) -> "SalaryComponentCreateRequest":
+        if self.value is None:
+            return self
+        if self.calculation_type == CalculationType.percentage:
+            if self.value > 100 or _decimal_places(self.value) > 3:
+                raise ValueError("A percentage must be between 0 and 100 with at most 3 decimals.")
+        elif self.calculation_type == CalculationType.fixed:
+            if self.value > _MAX_MONEY or _decimal_places(self.value) > 2:
+                raise ValueError("A fixed amount may have at most 2 decimals.")
+        return self
 
 
 class SalaryComponentResponse(BaseModel):
@@ -44,10 +83,12 @@ class SalaryComponentResponse(BaseModel):
 
 
 class SalaryStructureCreateRequest(BaseModel):
-    name: str
-    country: str = "IN"
-    level: str | None = None
-    components: list[SalaryComponentCreateRequest] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+
+    name: _STRUCTURE_NAME
+    country: _COUNTRY = "IN"
+    level: _LEVEL | None = None
+    components: list[SalaryComponentCreateRequest] = Field(default_factory=list, max_length=30)
 
 
 class SalaryStructureUpdateRequest(BaseModel):
@@ -58,10 +99,19 @@ class SalaryStructureUpdateRequest(BaseModel):
     that would leave the "at most one balance component" invariant
     unverifiable from the request alone)."""
 
-    name: str | None = None
-    level: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    name: _STRUCTURE_NAME | None = None
+    level: _LEVEL | None = None
     is_active: bool | None = None
-    components: list[SalaryComponentCreateRequest] | None = None
+    components: list[SalaryComponentCreateRequest] | None = Field(default=None, max_length=30)
+
+    @model_validator(mode="after")
+    def _required_fields_are_not_null(self) -> "SalaryStructureUpdateRequest":
+        for field in ("name", "is_active", "components"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} may not be null.")
+        return self
 
 
 class SalaryStructureResponse(BaseModel):

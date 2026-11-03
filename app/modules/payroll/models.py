@@ -64,6 +64,14 @@ class SalaryStructure(TenantBase):
     __tablename__ = "salary_structures"
     __table_args__ = (
         Index("ix_salary_structures_company_id_is_active", "company_id", "is_active"),
+        # One live structure per name per company, ignoring case (a deleted one frees its name).
+        Index(
+            "uq_salary_structures_company_lower_name",
+            "company_id",
+            text("lower(name)"),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
@@ -73,7 +81,7 @@ class SalaryStructure(TenantBase):
 
     components: Mapped[list["SalaryComponent"]] = relationship(
         "SalaryComponent",
-        order_by="SalaryComponent.display_order",
+        order_by="[SalaryComponent.display_order, SalaryComponent.code]",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
