@@ -1,13 +1,11 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
-from app.modules.hr.models import Employee
-from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import (
     PayrollRunStatus,
@@ -17,7 +15,6 @@ from app.modules.payroll.models import (
     TaxRegime,
     TaxSlab,
 )
-from app.modules.payroll.repository import PayrollItemRepository
 from app.modules.payroll.schemas import (
     EmployeeSalaryResponse,
     PayrollItemResponse,
@@ -42,6 +39,7 @@ from app.modules.payroll.schemas import (
 from app.modules.payroll.service import (
     EmployeeSalaryService,
     PayrollRunService,
+    PayslipService,
     PtSlabService,
     ReimbursementService,
     SalaryStructureService,
@@ -375,31 +373,48 @@ def delete_payroll_run(
 payslips_router = APIRouter(prefix="/payroll/payslips", tags=["Payroll — Payslips"])
 
 
-@payslips_router.get("/me", response_model=list[PayrollItemResponse])
+def _payslip_page(
+    items: list, total: int, pages: int, params: PageParams
+) -> Page[PayrollItemResponse]:
+    return Page(
+        items=[PayrollItemResponse.model_validate(i) for i in items],
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
+    )
+
+
+@payslips_router.get("/me", response_model=Page[PayrollItemResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_my_payslips(
+    request: Request,
+    year: int | None = Query(None, ge=2000, le=2100),
+    month: int | None = Query(None, ge=1, le=12),
+    params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
-    if not emp:
-        return []
-    items = PayrollItemRepository(db).list_by_employee_id(user.company_id, emp.id)
-    return [PayrollItemResponse.model_validate(i) for i in items]
+    items, total, pages = PayslipService(db).list_own(user, params, year, month)
+    return _payslip_page(items, total, pages, params)
 
 
-@payslips_router.get("/{employee_id}", response_model=list[PayrollItemResponse])
+@payslips_router.get("/{employee_id}", response_model=Page[PayrollItemResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_employee_payslips(
+    request: Request,
     employee_id: uuid.UUID,
+    year: int | None = Query(None, ge=2000, le=2100),
+    month: int | None = Query(None, ge=1, le=12),
+    params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
-    target_company_id = user.company_id
-    if user.role == UserRole.super_admin:
-        emp = db.query(Employee).filter(Employee.id == employee_id).first()
-        if emp:
-            target_company_id = emp.company_id
-    items = PayrollItemRepository(db).list_by_employee_id(target_company_id, employee_id)
-    return [PayrollItemResponse.model_validate(i) for i in items]
+    items, total, pages = PayslipService(db).list_for_employee(
+        user, employee_id, params, year, month
+    )
+    return _payslip_page(items, total, pages, params)
 
 
 # --- Routes 97-99: reimbursements ------------------------------------------

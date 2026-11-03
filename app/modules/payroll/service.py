@@ -877,9 +877,9 @@ class PayrollRunService:
 
         for emp in employees:
             # Not employed at all in this month: nothing to pay.
+            last_working_date = self._approved_last_working_date(emp)
             if emp.hire_date > month_end or (
-                self._approved_last_working_date(emp) is not None
-                and self._approved_last_working_date(emp) < month_start
+                last_working_date is not None and last_working_date < month_start
             ):
                 skipped.append({"employee_id": str(emp.id), "reason": "not_employed_in_month"})
                 continue
@@ -1283,6 +1283,69 @@ class PayrollRunService:
             },
         )
         self.db.commit()
+
+
+class PayslipService:
+    """Routes 95-96 (Spec 10.6). A payslip is the stored item of its run, read as it was
+    issued; an employee sees it only once the run is approved or paid."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.item_repo = PayrollItemRepository(db)
+        self.employee_repo = EmployeeRepository(db)
+        self.audit = AuditService(db)
+
+    def list_own(
+        self, actor: User, page_params: PageParams, year: int | None, month: int | None
+    ) -> tuple[list[PayrollItem], int, int]:
+        employee = self.employee_repo.get_by_user_id(actor.company_id, actor.id)
+        if employee is None:
+            return [], 0, 0
+        return self.item_repo.list_payslips(
+            actor.company_id,
+            employee.id,
+            page_params,
+            released_only=True,
+            year=year,
+            month=month,
+        )
+
+    def list_for_employee(
+        self,
+        actor: User,
+        employee_id: uuid.UUID,
+        page_params: PageParams,
+        year: int | None,
+        month: int | None,
+    ) -> tuple[list[PayrollItem], int, int]:
+        company_id = actor.company_id
+        employee = self.employee_repo.get_by_id(employee_id, company_id)
+        if employee is None and actor.role == UserRole.super_admin:
+            employee = self.item_repo.find_employee_any_company(employee_id)
+            if employee is not None:
+                company_id = employee.company_id
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+
+        items, total, pages = self.item_repo.list_payslips(
+            company_id,
+            employee.id,
+            page_params,
+            released_only=False,
+            year=year,
+            month=month,
+        )
+        if employee.user_id != actor.id:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="PAYSLIP_VIEWED_BY_HR",
+                entity_type="employee",
+                entity_id=employee.id,
+                details={"employee_id": str(employee.id), "run_count": total},
+            )
+            self.db.commit()
+        return items, total, pages
 
 
 class ReimbursementService:
