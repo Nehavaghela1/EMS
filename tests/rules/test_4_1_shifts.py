@@ -26,6 +26,7 @@ from app.main import app as fastapi_app
 from app.modules.hr.models import Employee
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.platform.models import AuditLog
+from app.modules.time_leave.models import Shift
 from tests.conftest import REPO_ROOT, TenantContext, _make_user_headers
 
 SHIFTS = "/api/v1/shifts"
@@ -169,14 +170,16 @@ def test_R1_owner_and_hr_admin_create_edit_deactivate_delete_and_assign(
 
         # Assign
         emp = _create_employee(client, company_a.hr_headers)
+        # Assign with effective_from yesterday so ending today or yesterday works
+        yesterday = today - timedelta(days=2)
         assign_res = client.post(
             f"{SHIFTS}/{s['id']}/assign",
             headers=headers,
-            json={"employee_id": emp["id"], "effective_from": today.isoformat()},
+            json={"employee_id": emp["id"], "effective_from": yesterday.isoformat()},
         )
         assert assign_res.status_code == 201
 
-        # End assignment so it can be deleted
+        # End assignment so it can be deleted (effective_to in past, but not before effective_from)
         assign_id = assign_res.json()["id"]
         end_res = client.put(
             f"{SHIFTS}/assignments/{assign_id}",
@@ -225,7 +228,7 @@ def test_R3_assigned_shift_scoping_and_not_found(
     emp_m = _create_employee(client, company_a.hr_headers)
     m_headers, _ = _link_user_to_employee(db, company_a.company_id, emp_m["id"], UserRole.manager)
 
-    emp_r = _create_employee(client, company_a.hr_headers, reports_to_id=emp_m["id"])
+    emp_r = _create_employee(client, company_a.hr_headers, reporting_manager_id=emp_m["id"])
     r_headers, _ = _link_user_to_employee(db, company_a.company_id, emp_r["id"], UserRole.employee)
 
     emp_u = _create_employee(client, company_a.hr_headers)
@@ -421,37 +424,122 @@ def test_R5_assignment_validations(
     assert today.isoformat() in res_overlap.text or (today + timedelta(days=10)).isoformat() in res_overlap.text
 
 
-def test_R5_concurrent_shift_assignments_race_safe(
-    client: TestClient, db: Session, company_a: TenantContext
-) -> None:
+def test_R5_concurrent_shift_assignments_race_safe() -> None:
+    assert settings.TEST_DATABASE_URL is not None
+    engine = create_engine(settings.TEST_DATABASE_URL, pool_size=5, max_overflow=2)
+    cid = uuid.uuid4()
     today = utcnow().date()
-    shift1 = _create_shift(client, company_a.hr_headers)
-    shift2 = _create_shift(client, company_a.hr_headers)
-    emp = _create_employee(client, company_a.hr_headers)
+    try:
+        with Session(engine) as setup:
+            setup.add(
+                Company(
+                    id=cid,
+                    name="Shift Race Co",
+                    code=f"SRC{uuid.uuid4().hex[:4].upper()}",
+                    email=f"src-{uuid.uuid4().hex[:6]}@example.com",
+                    status=CompanyStatus.active,
+                    is_active=True,
+                )
+            )
+            setup.flush()
+            bind_tenant_to_session(setup, company_id=cid, is_platform_admin=False)
+            hr_user = User(
+                id=uuid.uuid4(),
+                company_id=cid,
+                email=f"hr-{uuid.uuid4().hex[:6]}@example.com",
+                hashed_password=hash_password("Test1234pass!"),
+                role=UserRole.hr_admin,
+                is_active=True,
+            )
+            setup.add(hr_user)
+            emp = Employee(
+                id=uuid.uuid4(),
+                company_id=cid,
+                employee_code=f"EMP{uuid.uuid4().hex[:4].upper()}",
+                first_name="Race",
+                last_name="Employee",
+                email=f"emp-{uuid.uuid4().hex[:6]}@example.com",
+                hire_date=today,
+                is_active=True,
+            )
+            setup.add(emp)
+            shift1 = Shift(
+                id=uuid.uuid4(),
+                company_id=cid,
+                name="Shift Race 1",
+                start_time=utcnow().time().replace(hour=9, minute=0, second=0),
+                end_time=utcnow().time().replace(hour=18, minute=0, second=0),
+                break_minutes=60,
+                is_active=True,
+            )
+            shift2 = Shift(
+                id=uuid.uuid4(),
+                company_id=cid,
+                name="Shift Race 2",
+                start_time=utcnow().time().replace(hour=10, minute=0, second=0),
+                end_time=utcnow().time().replace(hour=19, minute=0, second=0),
+                break_minutes=60,
+                is_active=True,
+            )
+            setup.add_all([shift1, shift2])
+            shift1_id = shift1.id
+            shift2_id = shift2.id
+            emp_id = emp.id
+            hr_user_id = hr_user.id
+            setup.commit()
+            token = create_access_token(sub=str(hr_user_id), company_id=str(cid), role="hr_admin")
+        headers = {"Authorization": f"Bearer {token}"}
 
-    results: list[int] = []
+        def _get_test_db():
+            session = Session(engine)
+            try:
+                yield session
+            finally:
+                session.close()
 
-    def _worker(s_id: str) -> None:
-        c = TestClient(fastapi_app)
-        res = c.post(
-            f"{SHIFTS}/{s_id}/assign",
-            headers=company_a.hr_headers,
-            json={
-                "employee_id": emp["id"],
-                "effective_from": today.isoformat(),
-                "effective_to": (today + timedelta(days=5)).isoformat(),
-            },
-        )
-        results.append(res.status_code)
+        fastapi_app.dependency_overrides[get_db] = _get_test_db
+        barrier = threading.Barrier(2)
+        results: list[int] = []
 
-    t1 = threading.Thread(target=_worker, args=(shift1["id"],))
-    t2 = threading.Thread(target=_worker, args=(shift2["id"],))
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+        def _worker(s_id: str) -> None:
+            c = TestClient(fastapi_app)
+            try:
+                barrier.wait()
+                res = c.post(
+                    f"{SHIFTS}/{s_id}/assign",
+                    headers=headers,
+                    json={
+                        "employee_id": str(emp_id),
+                        "effective_from": today.isoformat(),
+                        "effective_to": (today + timedelta(days=5)).isoformat(),
+                    },
+                )
+                results.append(res.status_code)
+            except Exception:
+                results.append(999)
 
-    assert sorted(results) == [201, 409], f"R5: Expected exactly one 201 and one 409, got {results}"
+        t1 = threading.Thread(target=_worker, args=(str(shift1_id),))
+        t2 = threading.Thread(target=_worker, args=(str(shift2_id),))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert 500 not in results and 999 not in results, f"R5: race gave unexpected error: {results}"
+        assert sorted(results) == [201, 409], f"R5: Expected exactly one 201 and one 409, got {results}"
+    finally:
+        fastapi_app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+        owner_engine = create_engine(settings.TEST_MIGRATION_URL)
+        with owner_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.is_platform_admin', 'on', true)"))
+            conn.execute(text("DELETE FROM audit_logs WHERE company_id = :c"), {"c": cid})
+            conn.execute(text("DELETE FROM employee_shifts WHERE company_id = :c"), {"c": cid})
+            conn.execute(text("DELETE FROM shifts WHERE company_id = :c"), {"c": cid})
+            conn.execute(text("DELETE FROM employees WHERE company_id = :c"), {"c": cid})
+            conn.execute(text("DELETE FROM users WHERE company_id = :c"), {"c": cid})
+            conn.execute(text("DELETE FROM companies WHERE id = :c"), {"c": cid})
+        owner_engine.dispose()
 
 
 # --- Rule 4.1.6: End assignment route, edit future only, delete blocked on current/future ---
@@ -464,21 +552,22 @@ def test_R6_end_assignment_edit_and_delete_blocks(
     shift = _create_shift(client, company_a.hr_headers)
     emp = _create_employee(client, company_a.hr_headers)
 
-    # Assign future shift
+    # Assign current shift
+    yesterday = today - timedelta(days=2)
     assign_res = client.post(
         f"{SHIFTS}/{shift['id']}/assign",
         headers=company_a.hr_headers,
         json={
             "employee_id": emp["id"],
-            "effective_from": (today + timedelta(days=5)).isoformat(),
+            "effective_from": yesterday.isoformat(),
         },
     )
     assert assign_res.status_code == 201
     assign_id = assign_res.json()["id"]
 
-    # Delete blocked while future assignment exists (409 with count)
+    # Delete blocked while current assignment exists (409 with count)
     del_res = client.delete(f"{SHIFTS}/{shift['id']}", headers=company_a.hr_headers)
-    assert del_res.status_code == 409, "R6: Delete blocked with future assignments"
+    assert del_res.status_code == 409, "R6: Delete blocked with current assignments"
     assert del_res.json()["error"]["details"]["assignment_count"] >= 1
 
     # End assignment by setting effective_to (PUT /shifts/assignments/{id})
@@ -490,7 +579,7 @@ def test_R6_end_assignment_edit_and_delete_blocks(
     assert end_res.status_code == 200
     assert end_res.json()["effective_to"] == (today + timedelta(days=2)).isoformat()
 
-    # Now ending it in past
+    # Now ending it in past (yesterday, which is >= effective_from)
     end_past = client.put(
         f"{SHIFTS}/assignments/{assign_id}",
         headers=company_a.hr_headers,
@@ -526,10 +615,11 @@ def test_R7_audit_rows_for_shift_operations(
 
     # 3. SHIFT_ASSIGNED
     emp = _create_employee(client, company_a.hr_headers)
+    yesterday = today - timedelta(days=2)
     assign_res = client.post(
         f"{SHIFTS}/{shift['id']}/assign",
         headers=company_a.hr_headers,
-        json={"employee_id": emp["id"], "effective_from": today.isoformat()},
+        json={"employee_id": emp["id"], "effective_from": yesterday.isoformat()},
     )
     assign_id = assign_res.json()["id"]
     assigned_audits = _audit_rows(db, company_a, "SHIFT_ASSIGNED")
@@ -587,59 +677,68 @@ def test_R9_manager_has_no_shift_write_power(
 
 
 def test_R10_migration_round_trip() -> None:
-    cfg = Config(str(REPO_ROOT / "alembic.ini"))
-    cfg.set_main_option("script_location", str(REPO_ROOT / "alembic"))
-    cfg.set_main_option("sqlalchemy.url", settings.TEST_MIGRATION_URL)
+    assert settings.TEST_MIGRATION_URL is not None
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(settings, "ALEMBIC_DATABASE_URL", settings.TEST_MIGRATION_URL)
+        engine = create_engine(settings.TEST_MIGRATION_URL)
+        cfg = Config(str(REPO_ROOT / "alembic.ini"))
+        company_id = uuid.uuid4()
+        code = f"MC{uuid.uuid4().hex[:6].upper()}"
 
-    engine = create_engine(settings.TEST_MIGRATION_URL)
-    company_id = uuid.uuid4()
-    code = f"MC{uuid.uuid4().hex[:6].upper()}"
+        def _add(name: str) -> None:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE shifts NO FORCE ROW LEVEL SECURITY"))
+                conn.execute(
+                    text(
+                        "INSERT INTO shifts (id, company_id, name, start_time, end_time, break_minutes, night_allowance, is_active, created_at, updated_at) "
+                        "VALUES (:i, :c, :n, '09:00:00', '18:00:00', 60, 0, true, NOW(), NOW())"
+                    ),
+                    {"i": uuid.uuid4(), "c": company_id, "n": name},
+                )
+                conn.execute(text("ALTER TABLE shifts FORCE ROW LEVEL SECURITY"))
 
-    try:
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "INSERT INTO companies (id, name, code, email, status, country, currency,"
-                    " last_employee_seq, created_at, updated_at) VALUES (:i, 'Mig Shift Co', :c,"
-                    " :e, 'active', 'IN', 'INR', 0, NOW(), NOW())"
-                ),
-                {"i": company_id, "c": code, "e": f"{code.lower()}@test.test"},
-            )
+        def _clean() -> None:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE shifts NO FORCE ROW LEVEL SECURITY"))
+                conn.execute(text("DELETE FROM shifts WHERE company_id = :c"), {"c": company_id})
+                conn.execute(text("ALTER TABLE shifts FORCE ROW LEVEL SECURITY"))
 
-        # Check downgrade and duplicate catch
-        command.downgrade(cfg, PREVIOUS_REVISION)
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO companies (id, name, code, email, status, country, currency,"
+                        " last_employee_seq, created_at, updated_at) VALUES (:i, 'Mig Shift Co', :c,"
+                        " :e, 'active', 'IN', 'INR', 0, NOW(), NOW())"
+                    ),
+                    {"i": company_id, "c": code, "e": f"{code.lower()}@test.test"},
+                )
 
-        # Insert duplicate shift names under ems_owner
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "INSERT INTO shifts (id, company_id, name, start_time, end_time, break_minutes, night_allowance, is_active, created_at, updated_at) "
-                    "VALUES (:i1, :c, 'General', '09:00:00', '18:00:00', 60, 0, true, NOW(), NOW()), "
-                    "(:i2, :c, 'general', '10:00:00', '19:00:00', 60, 0, true, NOW(), NOW())"
-                ),
-                {"i1": uuid.uuid4(), "i2": uuid.uuid4(), "c": company_id},
-            )
+            # Check downgrade and duplicate catch
+            command.downgrade(cfg, PREVIOUS_REVISION)
 
-        with pytest.raises(RuntimeError) as exc_info:
+            # Insert duplicate shift names under NO FORCE RLS
+            _add("General")
+            _add("general")
+
+            with pytest.raises(RuntimeError) as exc_info:
+                command.upgrade(cfg, MIGRATION_REVISION)
+            assert "duplicate" in str(exc_info.value).lower() and "general" in str(exc_info.value).lower()
+
+            # Clean duplicates and upgrade
+            _clean()
             command.upgrade(cfg, MIGRATION_REVISION)
-        assert "duplicate" in str(exc_info.value).lower() and "general" in str(exc_info.value).lower()
+            indexes = {i["name"] for i in inspect(engine).get_indexes("shifts")}
+            assert "uq_shifts_company_lower_name" in indexes
 
-        # Clean duplicates and upgrade
-        with engine.begin() as conn:
-            conn.execute(text("DELETE FROM shifts WHERE company_id = :c"), {"c": company_id})
+            # Downgrade again cleanly
+            command.downgrade(cfg, PREVIOUS_REVISION)
+            indexes_after_down = {i["name"] for i in inspect(engine).get_indexes("shifts")}
+            assert "uq_shifts_company_lower_name" not in indexes_after_down
 
-        command.upgrade(cfg, MIGRATION_REVISION)
-        indexes = {i["name"] for i in inspect(engine).get_indexes("shifts")}
-        assert "uq_shifts_company_lower_name" in indexes
-
-        # Downgrade again cleanly
-        command.downgrade(cfg, PREVIOUS_REVISION)
-        indexes_after_down = {i["name"] for i in inspect(engine).get_indexes("shifts")}
-        assert "uq_shifts_company_lower_name" not in indexes_after_down
-
-        command.upgrade(cfg, "head")
-    finally:
-        with engine.begin() as conn:
-            conn.execute(text("DELETE FROM shifts WHERE company_id = :c"), {"c": company_id})
-            conn.execute(text("DELETE FROM companies WHERE id = :c"), {"c": company_id})
-        engine.dispose()
+            command.upgrade(cfg, "head")
+        finally:
+            _clean()
+            with engine.begin() as conn:
+                conn.execute(text("DELETE FROM companies WHERE id = :c"), {"c": company_id})
+            engine.dispose()

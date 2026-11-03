@@ -337,6 +337,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/shifts"): AUTHENTICATED,
     ("POST", "/api/v1/shifts"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/shifts/assigned/{employee_id}"): AUTHENTICATED,
+    ("PUT", "/api/v1/shifts/assignments/{assignment_id}"): ROLES(UserRole.hr_admin),
     ("DELETE", "/api/v1/shifts/{shift_id}"): ROLES(UserRole.hr_admin),
     ("PUT", "/api/v1/shifts/{shift_id}"): ROLES(UserRole.hr_admin),
     ("POST", "/api/v1/shifts/{shift_id}/assign"): ROLES(UserRole.hr_admin),

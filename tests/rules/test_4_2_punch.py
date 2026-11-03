@@ -11,16 +11,18 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
+from app.db.rls import bind_tenant_to_session
 from app.db.session import get_db
 from app.main import app as fastapi_app
 from app.modules.hr.models import Employee
-from app.modules.identity.models import CompanyLocation, User, UserRole
+from app.modules.identity.models import Company, CompanyLocation, CompanyStatus, User, UserRole
 from app.modules.time_leave.models import Attendance, AttendanceStatus, Holiday, Leave, LeaveStatus, LeaveType
 from tests.conftest import TenantContext, _make_user_headers
 
@@ -273,6 +275,8 @@ def test_R6_geofence_validations(
     loc = CompanyLocation(
         company_id=company_a.company_id,
         name="HQ Office",
+        code=f"HQ{uuid.uuid4().hex[:4].upper()}",
+        country="IN",
         latitude=Decimal("12.9716"),
         longitude=Decimal("77.5946"),
         geofence_radius_meters=100,
@@ -363,7 +367,7 @@ def test_R8_attendance_scoping(
     emp_m = _create_employee(client, company_a.hr_headers)
     m_headers, _ = _link_user_to_employee(db, company_a.company_id, emp_m["id"], UserRole.manager)
 
-    emp_r = _create_employee(client, company_a.hr_headers, reports_to_id=emp_m["id"])
+    emp_r = _create_employee(client, company_a.hr_headers, reporting_manager_id=emp_m["id"])
     r_headers, _ = _link_user_to_employee(db, company_a.company_id, emp_r["id"], UserRole.employee)
 
     emp_o = _create_employee(client, company_a.hr_headers)
@@ -437,24 +441,91 @@ def test_R9_punch_rate_limits(
 # --- Rule 4.2.10: Two simultaneous punch-ins give one 201 and one 409 ---
 
 
-def test_R10_concurrent_punch_ins_give_one_201_and_one_409(
-    client: TestClient, db: Session, company_a: TenantContext
-) -> None:
-    emp = _create_employee(client, company_a.hr_headers)
-    emp_headers, _ = _link_user_to_employee(db, company_a.company_id, emp["id"], UserRole.employee)
+def test_R10_concurrent_punch_ins_give_one_201_and_one_409() -> None:
+    assert settings.TEST_DATABASE_URL is not None
+    engine = create_engine(settings.TEST_DATABASE_URL, pool_size=5, max_overflow=2)
+    cid = uuid.uuid4()
+    today = utcnow().date()
+    try:
+        with Session(engine) as setup:
+            setup.add(
+                Company(
+                    id=cid,
+                    name="Punch Race Co",
+                    code=f"PRC{uuid.uuid4().hex[:4].upper()}",
+                    email=f"prc-{uuid.uuid4().hex[:6]}@example.com",
+                    status=CompanyStatus.active,
+                    is_active=True,
+                )
+            )
+            setup.flush()
+            bind_tenant_to_session(setup, company_id=cid, is_platform_admin=False)
+            emp = Employee(
+                id=uuid.uuid4(),
+                company_id=cid,
+                employee_code=f"EMP{uuid.uuid4().hex[:4].upper()}",
+                first_name="Punch",
+                last_name="Racer",
+                email=f"punch-{uuid.uuid4().hex[:6]}@example.com",
+                hire_date=today,
+                is_active=True,
+            )
+            setup.add(emp)
+            user = User(
+                id=uuid.uuid4(),
+                company_id=cid,
+                email=f"user-{uuid.uuid4().hex[:6]}@example.com",
+                hashed_password=hash_password("Test1234pass!"),
+                role=UserRole.employee,
+                is_active=True,
+            )
+            setup.add(user)
+            setup.flush()
+            emp.user_id = user.id
+            emp_id = emp.id
+            user_id = user.id
+            setup.commit()
+            token = create_access_token(sub=str(user_id), company_id=str(cid), role="employee")
+        headers = {"Authorization": f"Bearer {token}"}
 
-    codes = []
+        def _get_test_db():
+            session = Session(engine)
+            try:
+                yield session
+            finally:
+                session.close()
 
-    def _punch():
-        c = TestClient(fastapi_app)
-        res = c.post(CHECK_IN, headers=emp_headers)
-        codes.append(res.status_code)
+        fastapi_app.dependency_overrides[get_db] = _get_test_db
+        barrier = threading.Barrier(2)
+        results: list[int] = []
 
-    t1 = threading.Thread(target=_punch)
-    t2 = threading.Thread(target=_punch)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+        def _worker() -> None:
+            c = TestClient(fastapi_app)
+            try:
+                barrier.wait()
+                res = c.post(CHECK_IN, headers=headers)
+                results.append(res.status_code)
+            except Exception:
+                results.append(999)
 
-    assert sorted(codes) == [201, 409], f"R10: Expected exactly one 201 and one 409, got {codes}"
+        t1 = threading.Thread(target=_worker)
+        t2 = threading.Thread(target=_worker)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert 500 not in results and 999 not in results, f"R10: race gave unexpected error: {results}"
+        assert sorted(results) == [201, 409], f"R10: Expected exactly one 201 and one 409, got {results}"
+    finally:
+        fastapi_app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+        owner_engine = create_engine(settings.TEST_MIGRATION_URL)
+        with owner_engine.begin() as conn:
+            conn.execute(text("SELECT set_config('app.is_platform_admin', 'on', true)"))
+            conn.execute(text("DELETE FROM audit_logs WHERE company_id = :c"), {"c": cid})
+            conn.execute(text("DELETE FROM attendance WHERE company_id = :c"), {"c": cid})
+            conn.execute(text("DELETE FROM employees WHERE company_id = :c"), {"c": cid})
+            conn.execute(text("DELETE FROM users WHERE company_id = :c"), {"c": cid})
+            conn.execute(text("DELETE FROM companies WHERE id = :c"), {"c": cid})
+        owner_engine.dispose()

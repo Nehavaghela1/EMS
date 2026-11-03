@@ -78,7 +78,7 @@ def test_R1_calendar_scoping_and_manager_own_id(
     emp_m = _create_employee(client, company_a.hr_headers)
     m_headers, _ = _link_user_to_employee(db, company_a.company_id, emp_m["id"], UserRole.manager)
 
-    emp_r = _create_employee(client, company_a.hr_headers, reports_to_id=emp_m["id"])
+    emp_r = _create_employee(client, company_a.hr_headers, reporting_manager_id=emp_m["id"])
     r_headers, _ = _link_user_to_employee(db, company_a.company_id, emp_r["id"], UserRole.employee)
 
     emp_o = _create_employee(client, company_a.hr_headers)

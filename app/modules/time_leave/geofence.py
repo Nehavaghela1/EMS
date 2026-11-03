@@ -43,7 +43,7 @@ class GeofenceViolationError(AppError):
 class GeolocationPermissionError(AppError):
     """Raised when the frontend reports that the user denied location access."""
 
-    status_code = 400
+    status_code = 403
     code = "geolocation_denied"
 
     def __init__(self) -> None:

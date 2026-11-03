@@ -96,21 +96,74 @@ class JobQueuedResponse(BaseModel):
 
 
 # Shifts (routes 50-54)
+def _shift_duration_minutes(start: time, end: time) -> int:
+    start_min = start.hour * 60 + start.minute
+    end_min = end.hour * 60 + end.minute
+    if end_min <= start_min:
+        end_min += 24 * 60
+    return end_min - start_min
+
+
 class ShiftCreateRequest(BaseModel):
-    name: str
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
     start_time: time
     end_time: time
-    break_minutes: int = 60
-    night_allowance: Decimal = Decimal("0")
+    break_minutes: int = Field(default=60, ge=0, le=240)
+    night_allowance: Decimal = Field(default=Decimal("0"), ge=Decimal("0"), le=Decimal("99999.99"))
+
+    @field_validator("name")
+    @classmethod
+    def _trim_name(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Shift name cannot be blank")
+        if len(trimmed) > 100:
+            raise ValueError("Shift name cannot exceed 100 characters")
+        return trimmed
+
+    @model_validator(mode="after")
+    def _validate_shift_times(self) -> "ShiftCreateRequest":
+        if self.start_time == self.end_time:
+            raise ValueError("Start and end times must differ")
+        duration = _shift_duration_minutes(self.start_time, self.end_time)
+        if self.break_minutes >= duration:
+            raise ValueError("Break minutes must be shorter than shift duration")
+        return self
 
 
 class ShiftUpdateRequest(BaseModel):
-    name: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     start_time: time | None = None
     end_time: time | None = None
-    break_minutes: int | None = None
-    night_allowance: Decimal | None = None
+    break_minutes: int | None = Field(default=None, ge=0, le=240)
+    night_allowance: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("99999.99"))
     is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _trim_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Shift name cannot be blank")
+        if len(trimmed) > 100:
+            raise ValueError("Shift name cannot exceed 100 characters")
+        return trimmed
+
+    @model_validator(mode="after")
+    def _no_nulls_on_required_fields(self) -> "ShiftUpdateRequest":
+        for field in self.model_fields_set:
+            if getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        if self.start_time is not None and self.end_time is not None:
+            if self.start_time == self.end_time:
+                raise ValueError("Start and end times must differ")
+        return self
 
 
 class ShiftResponse(BaseModel):
@@ -127,8 +180,22 @@ class ShiftResponse(BaseModel):
 
 
 class ShiftAssignRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     employee_id: uuid.UUID
     effective_from: date
+    effective_to: date | None = None
+
+    @model_validator(mode="after")
+    def _validate_dates(self) -> "ShiftAssignRequest":
+        if self.effective_to is not None and self.effective_to < self.effective_from:
+            raise ValueError("effective_to cannot be before effective_from")
+        return self
+
+
+class ShiftAssignmentUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     effective_to: date | None = None
 
 
@@ -344,11 +411,13 @@ class CheckInRequest(BaseModel):
     the employee's assigned location has a geofence configured and raise
     GeolocationPermissionError if it does)."""
 
-    latitude: float | None = None
-    longitude: float | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
     # `accuracy` is meters of GPS uncertainty reported by the browser;
     # logged to notes for audit, not used in the fence calculation.
-    device_accuracy: float | None = None
+    device_accuracy: float | None = Field(default=None, ge=0.0)
 
 
 class CalendarDayResponse(BaseModel):
