@@ -610,6 +610,7 @@ def test_R6_a_different_key_for_the_same_month_gives_409(client, db, world) -> N
     _make_run(client, world["hr1"], world["year"], world["month"])
     resp = _post_run(client, world["hr1"], world["year"], world["month"])
     assert resp.status_code == 409, f"R6: one regular run per month, got {resp.text}"
+    assert "regular payroll run" in resp.json()["error"]["message"], resp.text
     off = _post_run(client, world["hr1"], world["year"], world["month"], run_type="off_cycle")
     assert off.status_code == 202, f"R6: an off-cycle run is a separate run: {off.text}"
 
@@ -682,14 +683,21 @@ def test_R6_two_simultaneous_creates_give_one_202_and_one_409(
                 session.close()
 
         fastapi_app.dependency_overrides[get_db] = _get_test_db
+        # The company's statutory config is made on first use; make it now, so that the race
+        # below is decided by the run itself and not by two threads creating that config.
+        config = TestClient(fastapi_app).get("/api/v1/payroll/statutory-config", headers=headers)
+        assert config.status_code == 200, config.text
         barrier = threading.Barrier(2)
         results: list[int] = []
+        bodies: list[str] = []
 
         def _worker() -> None:
             c = TestClient(fastapi_app)
             try:
                 barrier.wait()
-                results.append(_post_run(c, headers, year, month).status_code)
+                resp = _post_run(c, headers, year, month)
+                results.append(resp.status_code)
+                bodies.append(resp.text)
             except Exception:
                 results.append(999)
 
@@ -700,6 +708,8 @@ def test_R6_two_simultaneous_creates_give_one_202_and_one_409(
             t.join()
         assert 500 not in results and 999 not in results, f"R6: race gave an error: {results}"
         assert sorted(results) == [202, 409], f"R6: expected one 202 and one 409, got {results}"
+        loser = bodies[results.index(409)]
+        assert "regular payroll run" in loser, f"R6: the loser gets the specific message: {loser}"
     finally:
         fastapi_app.dependency_overrides.pop(get_db, None)
         engine.dispose()
