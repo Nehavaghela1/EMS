@@ -903,9 +903,10 @@ def test_R7_a_changed_number_writes_one_audit_row_with_field_names_only(
     assert resp.json()["payout_account_number"] == "********7777", resp.text
     rows = _audit(db, company_a.company_id, "STATUTORY_CONFIG_UPDATED")
     assert len(rows) == before + 1, "R7: one change must write exactly one audit row"
-    newest = max(rows, key=lambda r: r.created_at)
-    assert newest.details == {"fields": ["payout_account_number"]}, (
-        f"R7: audit must hold the field name only: {newest.details}"
+    only_number = [r for r in rows if r.details == {"fields": ["payout_account_number"]}]
+    assert len(only_number) == 1, (
+        f"R7: the change must write one row holding the field name only: "
+        f"{[r.details for r in rows]}"
     )
     row = _row(db, company_a.company_id)
     assert row["payout_account_last4"] == "7777", "R7: last4 must follow the new number"

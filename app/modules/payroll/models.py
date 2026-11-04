@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     SmallInteger,
     String,
     Text,
@@ -230,7 +231,10 @@ class StatutoryConfig(TenantBase):
     )
     # Direct corporate banking & Zoho Payouts gateway integration
     payout_bank_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    payout_account_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # AES-256-GCM blob (app/core/encryption.py) and the last four digits beside it, so the
+    # masked value is shown without decrypting anything (Spec 9.6).
+    payout_account_number_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    payout_account_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
     payout_ifsc_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     payout_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -426,12 +430,37 @@ class ReimbursementStatus(str, enum.Enum):
     approved = "approved"
     rejected = "rejected"
     paid = "paid"
+    # The claimant took the claim back while it was still pending (5.6).
+    withdrawn = "withdrawn"
 
 
 class Reimbursement(TenantBase):
     """RLS: Yes (Spec 7.6)."""
 
     __tablename__ = "reimbursements"
+    __table_args__ = (
+        # One receipt backs one open claim; a rejected or withdrawn claim frees its receipt.
+        Index(
+            "uq_reimbursements_open_receipt",
+            "company_id",
+            "file_object_id",
+            unique=True,
+            postgresql_where=text(
+                "file_object_id IS NOT NULL AND status IN ('pending', 'approved', 'paid')"
+            ),
+        ),
+        # The same employee cannot have two open claims for the same date, type and amount.
+        Index(
+            "uq_reimbursements_open_claim",
+            "company_id",
+            "employee_id",
+            "expense_date",
+            "type",
+            "amount",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'approved', 'paid')"),
+        ),
+    )
 
     employee_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("employees.id"), nullable=False
@@ -442,7 +471,11 @@ class Reimbursement(TenantBase):
     amount: Mapped[Decimal] = mapped_column(SANumeric(14, 2), nullable=False)
     expense_date: Mapped[date] = mapped_column(Date, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    file_object_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    # The receipt. Nullable only for claims that pre-date the receipt rule; the service
+    # requires one for every new claim.
+    file_object_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("file_objects.id", ondelete="RESTRICT"), nullable=True
+    )
     status: Mapped[ReimbursementStatus] = mapped_column(
         SAEnum(ReimbursementStatus, name="reimbursement_status"),
         nullable=False,

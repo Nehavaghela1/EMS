@@ -7,6 +7,8 @@ from decimal import ROUND_HALF_UP, Decimal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.approval_authority import DEFAULT_FORBIDDEN_MESSAGE
+from app.core.encryption import DecryptionFailedError, decrypt_field, encrypt_field
 from app.core.exceptions import (
     AppError,
     ConflictError,
@@ -64,14 +66,20 @@ from app.modules.payroll.schemas import (
     SalaryComponentCreateRequest,
     SalaryStructureCreateRequest,
     SalaryStructureUpdateRequest,
+    StatutoryConfigResponse,
     StatutoryConfigUpdateRequest,
     TaxSlabPostRequest,
+    is_masked_account_number,
     mask_payout_account_number,
 )
-from app.modules.platform.service import AuditService
+from app.modules.platform.service import AuditService, NotificationService
 from app.modules.time_leave.models import AttendanceStatus, Leave
 from app.modules.time_leave.repository import AttendanceRepository, LeaveRepository
-from app.modules.time_leave.service import LeaveService
+from app.modules.time_leave.service import (
+    LeaveService,
+    require_deciding_role,
+    verify_approval_authority,
+)
 
 
 class InvalidStructureError(AppError):
@@ -688,6 +696,26 @@ _DEFAULT_ESI_EMPLOYEE_RATE = Decimal("0.750")
 _DEFAULT_ESI_EMPLOYER_RATE = Decimal("3.250")
 _DEFAULT_ESI_WAGE_CEILING = Decimal("21000.00")
 
+# 5.7: only a company's own owner and hr_admin read or change its payout (bank) settings;
+# a platform account (super_admin) must not move a company's bank details.
+PAYOUT_ROLES = (UserRole.owner, UserRole.hr_admin)
+PAYOUT_FIELDS = frozenset(
+    {"payout_bank_name", "payout_account_number", "payout_ifsc_code", "payout_enabled"}
+)
+PAYOUT_ACCOUNT_COLUMN = "payout_account_number"
+PAYOUT_FORBIDDEN_MESSAGE = "You do not have permission to view or change the payout settings."
+
+# 5.6 reimbursement claims. The age window and the receipt types are the claim rules the
+# business set for this module (input rules, not statutory figures).
+MAX_EXPENSE_AGE_DAYS = 90
+RECEIPT_FILE_TYPES = frozenset({"application/pdf", "image/png", "image/jpeg"})
+MAX_CHAIN_DEPTH = 20
+CLAIMS_PAGE_URL = "/payroll/reimbursements"
+CLAIM_NOT_FOUND_MESSAGE = "Reimbursement claim not found."
+RECEIPT_NOT_FOUND_MESSAGE = "Receipt file not found."
+RECEIPT_IN_USE_MESSAGE = "This receipt is already attached to another claim."
+DUPLICATE_CLAIM_MESSAGE = "A claim for the same date, type and amount already exists."
+
 
 class StatutoryConfigService:
     """Routes 85-86 (Spec 10.6)."""
@@ -717,32 +745,129 @@ class StatutoryConfigService:
         self.db.commit()
         return config
 
+    # --- payout settings (5.7) ---------------------------------------------
+
+    def view(
+        self, company_id: uuid.UUID, actor: User, *, reveal: bool = False
+    ) -> StatutoryConfigResponse:
+        """The company's statutory settings. The payout account number is always masked,
+        unless `reveal` is set: then the plain number is returned and the reveal is audited
+        (every time). Platform accounts never see any payout field."""
+        config = self.get_or_create(company_id)
+        if not reveal:
+            return self._response(config, actor)
+        if actor.role not in PAYOUT_ROLES:
+            raise ForbiddenError(PAYOUT_FORBIDDEN_MESSAGE)
+        number = self._stored_number(config)
+        if number is not None:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="PAYOUT_ACCOUNT_REVEALED",
+                entity_type="statutory_config",
+                entity_id=config.id,
+                details={"fields": [PAYOUT_ACCOUNT_COLUMN]},
+            )
+            self.db.commit()
+        return self._response(config, actor, revealed=number)
+
     def update(
         self, company_id: uuid.UUID, data: StatutoryConfigUpdateRequest, actor: User
-    ) -> StatutoryConfig:
+    ) -> StatutoryConfigResponse:
+        changes = data.model_dump(exclude_unset=True)
+        payout_touched = PAYOUT_FIELDS & changes.keys()
+        if payout_touched and actor.role not in PAYOUT_ROLES:
+            raise ForbiddenError(PAYOUT_FORBIDDEN_MESSAGE)
         config = self.get_or_create(company_id)
-        updates = data.model_dump(exclude_unset=True)
-        # If payout_account_number is provided in its masked form, do not overwrite the stored value
-        if "payout_account_number" in updates:
-            submitted_val = updates["payout_account_number"]
-            if (
-                submitted_val is not None
-                and config.payout_account_number is not None
-                and submitted_val == mask_payout_account_number(config.payout_account_number)
-            ):
-                del updates["payout_account_number"]
-        if updates:
-            self.repo.update(config, **updates, updated_by=actor.id)
+
+        number_columns: dict[str, object] = {}
+        if "payout_account_number" in changes:
+            number_columns = self._number_columns(config, changes.pop("payout_account_number"))
+
+        if payout_touched:
+            self._assert_payout_can_be_enabled(config, changes, number_columns)
+
+        # Field names only: the audit row never holds a value (not even a masked one).
+        fields = sorted([*changes, *([PAYOUT_ACCOUNT_COLUMN] if number_columns else [])])
+        if fields:
+            self.repo.update(config, **changes, **number_columns, updated_by=actor.id)
             self.audit.record(
                 company_id=company_id,
                 actor=actor,
                 action="STATUTORY_CONFIG_UPDATED",
                 entity_type="statutory_config",
                 entity_id=config.id,
-                details={"fields": sorted(updates.keys())},
+                details={"fields": fields},
             )
             self.db.commit()
-        return config
+        return self._response(config, actor)
+
+    def _response(
+        self, config: StatutoryConfig, actor: User, *, revealed: str | None = None
+    ) -> StatutoryConfigResponse:
+        response = StatutoryConfigResponse.model_validate(config)
+        if actor.role not in PAYOUT_ROLES:
+            return response.model_copy(
+                update={
+                    "payout_bank_name": None,
+                    "payout_account_number": None,
+                    "payout_ifsc_code": None,
+                    "payout_enabled": False,
+                }
+            )
+        shown = revealed or mask_payout_account_number(config.payout_account_last4)
+        return response.model_copy(update={"payout_account_number": shown})
+
+    @staticmethod
+    def _stored_number(config: StatutoryConfig) -> str | None:
+        if config.payout_account_number_enc is None:
+            return None
+        return decrypt_field(
+            bytes(config.payout_account_number_enc),
+            company_id=config.company_id,
+            column=PAYOUT_ACCOUNT_COLUMN,
+        )
+
+    def _number_columns(self, config: StatutoryConfig, submitted: str | None) -> dict[str, object]:
+        """The column values to write for a submitted account number: nothing when the value
+        is the mask or the number already stored, a fresh encryption otherwise."""
+        if submitted is None:
+            if config.payout_account_number_enc is None:
+                return {}
+            return {"payout_account_number_enc": None, "payout_account_last4": None}
+        if is_masked_account_number(submitted):
+            stored_last4 = config.payout_account_last4
+            if stored_last4 is None or submitted.lstrip("*") not in ("", stored_last4):
+                raise ValidationError("The masked account number does not match the stored one.")
+            return {}
+        if config.payout_account_last4 == submitted[-4:]:
+            try:
+                if self._stored_number(config) == submitted:
+                    return {}
+            except DecryptionFailedError:
+                pass  # a damaged stored value is replaced by the number just entered
+        return {
+            "payout_account_number_enc": encrypt_field(
+                submitted, company_id=config.company_id, column=PAYOUT_ACCOUNT_COLUMN
+            ),
+            "payout_account_last4": submitted[-4:],
+        }
+
+    @staticmethod
+    def _assert_payout_can_be_enabled(
+        config: StatutoryConfig, changes: dict[str, object], number_columns: dict[str, object]
+    ) -> None:
+        enabled = changes.get("payout_enabled", config.payout_enabled)
+        if not enabled:
+            return
+        bank = changes.get("payout_bank_name", config.payout_bank_name)
+        ifsc = changes.get("payout_ifsc_code", config.payout_ifsc_code)
+        number = number_columns.get("payout_account_number_enc", config.payout_account_number_enc)
+        if not (bank and ifsc and number):
+            raise ValidationError(
+                "Payout can be enabled only when the bank name, account number and IFSC code "
+                "are all set."
+            )
 
 
 class PtSlabService:
@@ -1522,6 +1647,9 @@ class ReimbursementService:
         self.repo = ReimbursementRepository(db)
         self.employee_repo = EmployeeRepository(db)
         self.audit = AuditService(db)
+        self.notify = NotificationService(db)
+
+    # --- submit -------------------------------------------------------------
 
     def submit_claim(
         self, company_id: uuid.UUID, data: ReimbursementCreateRequest, actor: User
@@ -1530,26 +1658,64 @@ class ReimbursementService:
         if emp is None:
             raise NotFoundError("Employee profile not found for current user.")
 
-        claim = self.repo.create(
-            company_id=company_id,
-            employee_id=emp.id,
-            type=data.type,
-            amount=data.amount,
-            expense_date=data.expense_date,
-            description=data.description,
-            file_object_id=data.file_object_id,
-            status=ReimbursementStatus.pending,
-        )
-        self.audit.record(
-            company_id=company_id,
-            actor=actor,
-            action="REIMBURSEMENT_CLAIM_SUBMITTED",
-            entity_type="reimbursement",
-            entity_id=claim.id,
-            details={"amount": str(claim.amount), "type": claim.type.value},
-        )
+        today = utcnow().date()
+        if data.expense_date > today:
+            raise ValidationError("The expense date cannot be in the future.")
+        if data.expense_date < today - timedelta(days=MAX_EXPENSE_AGE_DAYS):
+            raise ValidationError(
+                f"The expense date cannot be older than {MAX_EXPENSE_AGE_DAYS} days."
+            )
+
+        self._check_receipt(company_id, data.file_object_id, actor)
+        if self.repo.receipt_in_use(company_id, data.file_object_id):
+            raise ConflictError(RECEIPT_IN_USE_MESSAGE)
+        if self.repo.open_duplicate_exists(
+            company_id, emp.id, data.expense_date, data.type, data.amount
+        ):
+            raise ConflictError(DUPLICATE_CLAIM_MESSAGE)
+
+        try:
+            claim = self.repo.create(
+                company_id=company_id,
+                employee_id=emp.id,
+                type=data.type,
+                amount=data.amount,
+                expense_date=data.expense_date,
+                description=data.description,
+                file_object_id=data.file_object_id,
+                status=ReimbursementStatus.pending,
+            )
+        except IntegrityError as exc:
+            # Two requests passed the checks above together; the unique indexes decide.
+            self.db.rollback()
+            if "uq_reimbursements_open_receipt" in str(exc.orig):
+                raise ConflictError(RECEIPT_IN_USE_MESSAGE) from None
+            raise ConflictError(DUPLICATE_CLAIM_MESSAGE) from None
+
+        self._audit(company_id, actor, "REIMBURSEMENT_SUBMITTED", claim)
+        name = f"{emp.first_name} {emp.last_name or ''}".strip()
+        for user_id in self._chain_user_ids(company_id, emp):
+            self._tell(
+                company_id,
+                user_id,
+                "reimbursement_submitted",
+                "New reimbursement claim",
+                f"{name} submitted a reimbursement claim for review.",
+                claim,
+            )
         self.db.commit()
         return claim
+
+    def _check_receipt(self, company_id: uuid.UUID, file_id: uuid.UUID, actor: User) -> None:
+        """The receipt must be a file of this company that the claimant uploaded. Someone
+        else's file, another company's file and a missing file all give the same answer."""
+        receipt = self.repo.get_receipt_file(company_id, file_id)
+        if receipt is None or receipt.uploaded_by != actor.id:
+            raise NotFoundError(RECEIPT_NOT_FOUND_MESSAGE)
+        if receipt.file_type not in RECEIPT_FILE_TYPES:
+            raise ValidationError("The receipt must be a PDF, PNG or JPG file.")
+
+    # --- list ---------------------------------------------------------------
 
     def list_claims(
         self,
@@ -1557,25 +1723,33 @@ class ReimbursementService:
         actor: User,
         page_params: PageParams,
         status: ReimbursementStatus | None = None,
+        employee_id: uuid.UUID | None = None,
+        month: int | None = None,
+        year: int | None = None,
     ) -> tuple[list[Reimbursement], int, int]:
         if actor.role in HR_LEVEL_ROLES:
-            return self.repo.list_claims(company_id, page_params, status=status)
-        elif actor.role == UserRole.manager:
-            mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
-            if not mgr_emp:
-                return [], 0, 0
-            team_ids = self.employee_repo.list_direct_report_ids(company_id, mgr_emp.id)
-            team_ids.append(mgr_emp.id)
             return self.repo.list_claims(
-                company_id, page_params, employee_ids=team_ids, status=status
+                company_id,
+                page_params,
+                employee_id=employee_id,
+                status=status,
+                month=month,
+                year=year,
             )
-        else:
-            own_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
-            if not own_emp:
-                return [], 0, 0
-            return self.repo.list_claims(
-                company_id, page_params, employee_id=own_emp.id, status=status
-            )
+        own = self.employee_repo.get_by_user_id(company_id, actor.id)
+        if own is None:
+            return [], 0, 0
+        visible = [own.id]
+        if actor.role == UserRole.manager:
+            visible += self.employee_repo.list_direct_report_ids(company_id, own.id)
+        if employee_id is not None:
+            # A filter can only narrow what the caller may already see.
+            visible = [employee_id] if employee_id in visible else []
+        return self.repo.list_claims(
+            company_id, page_params, employee_ids=visible, status=status, month=month, year=year
+        )
+
+    # --- decide -------------------------------------------------------------
 
     def review_claim(
         self,
@@ -1584,15 +1758,16 @@ class ReimbursementService:
         data: ReimbursementReviewRequest,
         actor: User,
     ) -> Reimbursement:
-        from app.core.time import utcnow
-
-        claim = self.repo.get_by_id(reimbursement_id, company_id)
+        # A plain employee role never decides; refused before any lookup, with the message a
+        # manager outside the reporting chain gets.
+        require_deciding_role(actor)
+        claim = self.repo.get_by_id_for_update(reimbursement_id, company_id)
         if claim is None:
-            raise NotFoundError("Reimbursement claim not found.")
+            raise NotFoundError(CLAIM_NOT_FOUND_MESSAGE)
         target_emp = self.employee_repo.get_by_id_any_status(claim.employee_id, company_id)
-        from app.core.approval_authority import can_approve_for
-
-        can_approve_for(self.db, actor, target_emp)
+        if target_emp is None:
+            raise ForbiddenError(DEFAULT_FORBIDDEN_MESSAGE)
+        verify_approval_authority(self.db, actor, target_emp)
 
         if claim.status != ReimbursementStatus.pending:
             raise ConflictError(
@@ -1605,29 +1780,102 @@ class ReimbursementService:
                 "This claim is already locked into a payroll run and cannot be modified."
             )
 
-        new_status = (
-            ReimbursementStatus.approved
-            if data.action == "approve"
-            else ReimbursementStatus.rejected
-        )
-
+        approving = data.action == "approve"
+        new_status = ReimbursementStatus.approved if approving else ReimbursementStatus.rejected
         self.repo.update(
             claim,
             status=new_status,
             approved_by=actor.id,
-            approved_at=utcnow() if new_status == ReimbursementStatus.approved else None,
-            rejection_reason=data.rejection_reason
-            if new_status == ReimbursementStatus.rejected
-            else None,
+            approved_at=utcnow() if approving else None,
+            rejection_reason=None if approving else data.rejection_reason,
         )
+        self._audit(
+            company_id,
+            actor,
+            "REIMBURSEMENT_APPROVED" if approving else "REIMBURSEMENT_REJECTED",
+            claim,
+        )
+        if target_emp.user_id is not None:
+            self._tell(
+                company_id,
+                target_emp.user_id,
+                f"reimbursement_{new_status.value}",
+                f"Reimbursement claim {new_status.value}",
+                f"Your reimbursement claim was {new_status.value}.",
+                claim,
+            )
+        self.db.commit()
+        return claim
 
+    # --- withdraw -----------------------------------------------------------
+
+    def withdraw_claim(
+        self, company_id: uuid.UUID, reimbursement_id: uuid.UUID, actor: User
+    ) -> Reimbursement:
+        claim = self.repo.get_by_id_for_update(reimbursement_id, company_id)
+        if claim is None:
+            raise NotFoundError(CLAIM_NOT_FOUND_MESSAGE)
+        own = self.employee_repo.get_by_user_id(company_id, actor.id)
+        if own is None or own.id != claim.employee_id:
+            raise ForbiddenError("Only the person who made the claim can withdraw it.")
+        if claim.status != ReimbursementStatus.pending or claim.added_to_payroll_run_id:
+            raise ConflictError("Only a pending claim can be withdrawn.")
+
+        self.repo.update(claim, status=ReimbursementStatus.withdrawn)
+        self._audit(company_id, actor, "REIMBURSEMENT_WITHDRAWN", claim)
+        self.db.commit()
+        return claim
+
+    # --- shared -------------------------------------------------------------
+
+    def _audit(self, company_id: uuid.UUID, actor: User, action: str, claim: Reimbursement) -> None:
+        """Ids, type and status only: never the description, the reason or the file name."""
         self.audit.record(
             company_id=company_id,
             actor=actor,
-            action=f"REIMBURSEMENT_CLAIM_{new_status.value.upper()}",
+            action=action,
             entity_type="reimbursement",
             entity_id=claim.id,
-            details={"status": new_status.value, "amount": str(claim.amount)},
+            details={
+                "employee_id": str(claim.employee_id),
+                "type": claim.type.value,
+                "status": claim.status.value,
+            },
         )
-        self.db.commit()
-        return claim
+
+    def _tell(
+        self,
+        company_id: uuid.UUID,
+        user_id: uuid.UUID,
+        kind: str,
+        title: str,
+        message: str,
+        claim: Reimbursement,
+    ) -> None:
+        self.notify.notify(
+            company_id=company_id,
+            user_id=user_id,
+            type=kind,
+            title=title,
+            message=message,
+            action_url=CLAIMS_PAGE_URL,
+            entity_type="reimbursement",
+            entity_id=claim.id,
+        )
+
+    def _chain_user_ids(self, company_id: uuid.UUID, employee: Employee) -> list[uuid.UUID]:
+        """Users of the active managers above the employee: the people who can approve."""
+        users: list[uuid.UUID] = []
+        seen = {employee.id}
+        current = employee.reporting_manager_id
+        for _ in range(MAX_CHAIN_DEPTH):
+            if current is None or current in seen:
+                break
+            seen.add(current)
+            manager = self.employee_repo.get_by_id_any_status(current, company_id)
+            if manager is None:
+                break
+            if manager.is_active and manager.user_id is not None:
+                users.append(manager.user_id)
+            current = manager.reporting_manager_id
+        return users

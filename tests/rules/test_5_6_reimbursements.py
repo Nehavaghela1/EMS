@@ -162,7 +162,7 @@ def _fields(resp) -> set[str]:
     error = body.get("error") if isinstance(body, dict) else None
     details = error.get("details") if isinstance(error, dict) else None
     errors = details.get("errors", []) if isinstance(details, dict) else []
-    return {str(e["loc"][-1]) for e in errors}
+    return {str(e["loc"][-1]) for e in errors if e["loc"]}
 
 
 def _state(db: Session, ctx: TenantContext, claim_id: str) -> Reimbursement:

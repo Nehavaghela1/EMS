@@ -242,7 +242,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/api/v1/payroll/pt-slabs"): ROLES(UserRole.super_admin),
     ("GET", "/api/v1/payroll/reimbursements"): AUTHENTICATED,
     ("POST", "/api/v1/payroll/reimbursements"): AUTHENTICATED,
-    ("PUT", "/api/v1/payroll/reimbursements/{id}"): ROLES(UserRole.hr_admin, UserRole.manager),
+    # Decided in the service (reporting chain, HR-level): an employee and a manager outside
+    # the chain get the same refusal, as in 4.3 and 4.6.
+    ("PUT", "/api/v1/payroll/reimbursements/{id}"): AUTHENTICATED,
+    ("POST", "/api/v1/payroll/reimbursements/{id}/withdraw"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("POST", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("DELETE", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin, UserRole.super_admin),
