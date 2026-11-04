@@ -106,6 +106,8 @@ _SENSITIVE_FIELD_NAMES = {
     "bank_account",
     "bank_account_number",
     "ifsc",
+    "payout_account_number",
+    "payout_ifsc_code",
 }
 
 
