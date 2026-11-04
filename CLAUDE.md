@@ -188,6 +188,10 @@ Modules: `identity · hr · time_leave · performance · payroll · projects · 
 - Frontend tests (vitest): render the real page, act with userEvent, assert what the user sees or the request sent. Mock only the network layer.
   Never define the rule inside the test, no `any`. Rules proven by backend tests do not belong there. A missing or wrong UI becomes `it.todo("GAP: ...")` and goes in the report; do not fix app code or commit red tests.
 
+## Deploy steps
+
+Production runs the `scripts/setup.sh` steps (migrate, then the reference-data seeds: industry presets, statutory rates, professional-tax and income-tax slabs) after every release, and a new tax year needs a new tax set (income-tax slabs, and PF/ESI/professional-tax rows if they changed) added before 1 April, or payroll runs for that year return 409.
+
 ## Commands
 
 ```bash

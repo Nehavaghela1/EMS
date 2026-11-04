@@ -108,4 +108,22 @@ DATABASE_URL="postgresql+psycopg2://ems_app:${PG_APP_PASSWORD}@${PG_HOST}:${PG_P
   python3 -m app.db.seed.industry_presets \
   || fail "Seeding industry_presets failed — see the error above."
 
-echo "==> Done. Database '${PG_DB}' is bootstrapped, migrated, and seeded."
+# Payroll needs a PF, ESI, professional-tax and income-tax row in force for the month it runs
+# (5.2): without these a fresh database answers every payroll run with 409. Same way as the
+# step above; every seed is an idempotent upsert, so re-running setup.sh is safe.
+echo "==> Seeding statutory rates (PF, ESI)..."
+DATABASE_URL="postgresql+psycopg2://ems_app:${PG_APP_PASSWORD}@${PG_HOST}:${PG_PORT}/${PG_DB}" \
+  python3 -m app.db.seed.statutory_rates \
+  || fail "Seeding statutory_rates failed — see the error above."
+
+echo "==> Seeding professional-tax slabs (pt_slabs)..."
+DATABASE_URL="postgresql+psycopg2://ems_app:${PG_APP_PASSWORD}@${PG_HOST}:${PG_PORT}/${PG_DB}" \
+  python3 -m app.db.seed.pt_slabs \
+  || fail "Seeding pt_slabs failed — see the error above."
+
+echo "==> Seeding income-tax slabs (tax_slabs)..."
+DATABASE_URL="postgresql+psycopg2://ems_app:${PG_APP_PASSWORD}@${PG_HOST}:${PG_PORT}/${PG_DB}" \
+  python3 -m app.db.seed.tax_slabs \
+  || fail "Seeding tax_slabs failed — see the error above."
+
+echo "==> Done. Database '${PG_DB}' is bootstrapped, migrated, and seeded (payroll can run from April 2025 to March 2027)."

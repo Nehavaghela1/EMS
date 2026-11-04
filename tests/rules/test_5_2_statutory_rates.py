@@ -628,17 +628,19 @@ def _raw_rate(db: Session, scheme: str, start: str, end: str | None) -> None:
 
 
 def test_R3_the_database_itself_refuses_overlapping_rows(db: Session) -> None:
+    # The dates are in 2005, before every seeded row (EPF from 2017, ESI from 2019), so the
+    # test does not depend on whether the seeds already ran (setup.sh runs them in CI).
     _need_exclusion(db)
-    _raw_rate(db, "esi", "2040-01-01", "2040-12-31")
+    _raw_rate(db, "esi", "2005-01-01", "2005-12-31")
     with pytest.raises(IntegrityError):
-        _raw_rate(db, "esi", "2040-06-01", None)
+        _raw_rate(db, "esi", "2005-06-01", "2005-08-31")
     db.rollback()
 
 
 def test_R3_rows_of_different_schemes_may_share_dates(db: Session) -> None:
     _need_exclusion(db)
-    _raw_rate(db, "esi", "2041-01-01", None)
-    _raw_rate(db, "epf", "2041-01-01", None)
+    _raw_rate(db, "esi", "2005-01-01", "2005-12-31")
+    _raw_rate(db, "epf", "2005-01-01", "2005-12-31")
 
 
 def _committed_rate_world(engine) -> dict[str, Any]:
@@ -681,6 +683,9 @@ def _purge_rate_world(cid: uuid.UUID) -> None:
             conn.execute(text("SELECT set_config('app.is_platform_admin', 'on', true)"))
             conn.execute(text("DELETE FROM users WHERE company_id = :c"), {"c": cid})
             conn.execute(text("DELETE FROM companies WHERE id = :c"), {"c": cid})
+        # The test removed the seeded ESI row to make room for its own: put the seeds back.
+        with Session(owner) as session:
+            _attr("app.db.seed.statutory_rates", "seed_statutory_rates")(session)
     finally:
         owner.dispose()
 
@@ -700,6 +705,8 @@ def test_R3_two_simultaneous_adds_give_one_201_and_one_409(monkeypatch: pytest.M
     owner = create_engine(settings.TEST_MIGRATION_URL)
     try:
         with owner.begin() as conn:
+            # setup.sh seeds the ESI row in CI, and it overlaps this test's own open row.
+            conn.execute(text("DELETE FROM statutory_rates WHERE scheme = 'esi'"))
             conn.execute(
                 text(
                     "INSERT INTO statutory_rates (id, scheme, employee_rate, employer_rate, "

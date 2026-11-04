@@ -682,7 +682,8 @@ def test_R6_two_simultaneous_creates_give_one_202_and_one_409(
             setup.commit()
             token = create_access_token(sub=str(user.id), company_id=str(cid), role="hr_admin")
             # The two requests run in their own sessions: the platform rates, professional-tax
-            # and income-tax rows they need must be committed (and purged again below).
+            # and income-tax rows they need must be committed (the upserts are harmless when
+            # setup.sh has already seeded them).
             seed_pt_slabs(setup)
             seed_tax_slabs(setup)
             seed_statutory_rates(setup)
@@ -747,9 +748,8 @@ def _purge(cid: uuid.UUID) -> None:
             ):
                 conn.execute(text(f"DELETE FROM {table} WHERE company_id = :c"), {"c": cid})
             conn.execute(text("DELETE FROM companies WHERE id = :c"), {"c": cid})
-            # Platform rows committed by a race test; the tables are empty between tests.
-            for table in ("statutory_rates", "pt_slabs", "tax_slabs"):
-                conn.execute(text(f"DELETE FROM {table}"))
+            # The seeded platform rows (rates, professional-tax and income-tax slabs) stay: setup.sh
+            # leaves them in the CI database, and the seeds are idempotent upserts.
     finally:
         owner.dispose()
 
