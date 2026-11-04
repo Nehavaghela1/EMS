@@ -1,13 +1,21 @@
 import uuid
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
+from app.db.seed.pt_slabs import seed_pt_slabs
+from app.db.seed.statutory_rates import seed_statutory_rates
+from app.db.seed.tax_slabs import seed_tax_slabs
 from tests.conftest import TenantContext
 
 
 def test_payroll_runs_are_tenant_isolated(
-    client: TestClient, company_a: TenantContext, company_b: TenantContext
+    client: TestClient, db: Session, company_a: TenantContext, company_b: TenantContext
 ):
+    # A run needs the platform rates in force for its month (5.2)
+    seed_pt_slabs(db)
+    seed_tax_slabs(db)
+    seed_statutory_rates(db)
     # Company A creates a payroll run
     idempotency_key = f"iso-run-{uuid.uuid4()}"
     res_a = client.post(

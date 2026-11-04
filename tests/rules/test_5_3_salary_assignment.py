@@ -887,14 +887,24 @@ def test_R9_the_salary_route_and_payroll_use_the_same_lookup(
         calls.append("lookup")
         return real(self, *args, **kwargs)
 
+    real_month = EmployeeSalaryRepository.list_overlapping_month
+
+    def _spy_month(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        calls.append("month")
+        return real_month(self, *args, **kwargs)
+
     monkeypatch.setattr(EmployeeSalaryRepository, "get_in_force", _spy)
+    monkeypatch.setattr(EmployeeSalaryRepository, "list_overlapping_month", _spy_month)
     assert _salary(client, world["hr1"], world["emp"]["id"]).status_code == 200
     assert calls == ["lookup"], "R9: the salary route must use get_in_force"
     calls.clear()
     for who in ("emp", "manager"):
         _fill(db, world["ctx"], world[who]["id"], world["year"], world["month"])
     _make_run(client, world["hr1"], world["year"], world["month"])
-    assert len(calls) >= 2, "R9: payroll must use get_in_force for each employee"
+    # A salary that starts mid-month is paid by days at the old and new CTC (5.3 / 5.4, B1):
+    # payroll reads every row that overlaps the month, the last of which is the row that
+    # get_in_force returns for the month end.
+    assert calls.count("month") >= 2, "R9: payroll must look up the salary rows of each employee"
 
 
 # ------------------------------------------------------------------ R10

@@ -223,10 +223,13 @@ def test_B2_each_component_line_rounds_half_up_per_segment(client, db, mworld) -
     w = mworld
     # New CTC 360,001.00 -> monthly 30,000.08 -> BASIC 18,000.05 and ALLOW 12,000.03. For the
     # 15 new days: 18,000.05 x 15/30 = 9,000.025 -> 9,000.03 and 12,000.03 x 15/30 =
-    # 6,000.015 -> 6,000.02 (half up). The 15 old days are 9,000.00 and 6,000.00.
+    # 6,000.015 -> 6,000.02 (half up) = 15,000.05, but the segment's gross is 30,000.08 x 15/30 =
+    # 15,000.04, so the existing residual rule takes 0.01 off the largest line (BASIC 9,000.02),
+    # exactly as it does for a whole month. The 15 old days are 9,000.00 and 6,000.00.
     _raise(client, w, "360001.00", 16)
     item = _item(client, w)
-    assert _earnings(item) == {"BASIC": "18000.03", "ALLOW": "12000.02"}, item["earnings_json"]
+    assert _earnings(item) == {"BASIC": "18000.02", "ALLOW": "12000.02"}, item["earnings_json"]
+    assert item["gross_salary"] == "30000.04", f"B2: gross is the sum of both segments: {item}"
 
 
 # ------------------------------------------------------------------- B3

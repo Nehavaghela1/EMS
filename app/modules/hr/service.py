@@ -1563,6 +1563,7 @@ class EmployeeService:
         from app.modules.payroll.payslip_engine import (
             ComponentSpec,
             PayslipInput,
+            PfRateSpec,
             StatutoryConfigSpec,
             calculate_payslip,
         )
@@ -1571,6 +1572,7 @@ class EmployeeService:
             PayrollItemRepository,
             SalaryStructureRepository,
             StatutoryConfigRepository,
+            StatutoryRateRepository,
         )
 
         salary_repo = EmployeeSalaryRepository(self.db)
@@ -1594,20 +1596,25 @@ class EmployeeService:
             )
             if struct:
                 stat_row = StatutoryConfigRepository(self.db).get_by_company(company_id)
+                # Only gross and basic are read below. ESI, professional tax and income tax
+                # do not change them, so they are switched off here; PF does (the balance
+                # component is what is left of the CTC after the employer PF), so it keeps
+                # the company's switch and uses the EPF row in force on the first day of the
+                # last working month.
+                pf_on = stat_row.pf_enabled if stat_row else True
+                first_day = last_working.replace(day=1)
+                pf_row = StatutoryRateRepository(self.db).get_in_force("epf", first_day)
                 stat_spec = StatutoryConfigSpec(
-                    pf_enabled=stat_row.pf_enabled if stat_row else True,
-                    pf_employee_rate=stat_row.pf_employee_rate if stat_row else Decimal("12.000"),
-                    pf_employer_rate=stat_row.pf_employer_rate if stat_row else Decimal("12.000"),
-                    pf_wage_ceiling=stat_row.pf_wage_ceiling if stat_row else Decimal("15000.00"),
+                    pf_enabled=pf_on,
                     pf_restrict_to_ceiling=stat_row.pf_restrict_to_ceiling if stat_row else True,
-                    esi_enabled=stat_row.esi_enabled if stat_row else True,
-                    esi_employee_rate=stat_row.esi_employee_rate if stat_row else Decimal("0.750"),
-                    esi_employer_rate=stat_row.esi_employer_rate if stat_row else Decimal("3.250"),
-                    esi_wage_ceiling=stat_row.esi_wage_ceiling if stat_row else Decimal("21000.00"),
-                    pt_enabled=stat_row.pt_enabled if stat_row else True,
-                    pt_state=stat_row.pt_state if stat_row else "Gujarat",
-                    tds_enabled=stat_row.tds_enabled if stat_row else True,
-                    default_tax_regime=stat_row.default_tax_regime if stat_row else "new",
+                    esi_enabled=False,
+                    pt_enabled=False,
+                    tds_enabled=False,
+                )
+                pf_spec = (
+                    PfRateSpec(pf_row.employee_rate, pf_row.employer_rate, pf_row.wage_ceiling)
+                    if pf_row is not None
+                    else None
                 )
                 comp_specs = [
                     ComponentSpec(
@@ -1633,6 +1640,7 @@ class EmployeeService:
                     statutory=stat_spec,
                     pt_slabs=[],
                     tax_slabs=[],
+                    pf_rate=pf_spec,
                     month=last_working.month,
                     year=last_working.year,
                     financial_year=f"{last_working.year}-{last_working.year + 1}",

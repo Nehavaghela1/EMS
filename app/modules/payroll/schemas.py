@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -14,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.core.official_sources import validate_source_url
+from app.core.time import utcnow
 from app.modules.payroll.models import (
     CalculationType,
     PercentageOf,
@@ -211,17 +214,32 @@ def is_masked_account_number(value: str) -> bool:
     return _MASKED_ACCOUNT_NUMBER.fullmatch(value) is not None
 
 
+class StatutoryRateResponse(BaseModel):
+    id: uuid.UUID
+    scheme: str
+    employee_rate: Decimal
+    employer_rate: Decimal
+    wage_ceiling: Decimal
+    employer_epf_rate: Decimal | None
+    employer_eps_rate: Decimal | None
+    edli_rate: Decimal | None
+    admin_charge_rate: Decimal | None
+    employee_exempt_daily_wage: Decimal | None
+    effective_from: date
+    effective_to: date | None
+    source_url: str
+    source_title: str
+    source_note: str | None
+    verified_on: date
+
+    model_config = {"from_attributes": True}
+
+
 class StatutoryConfigResponse(BaseModel):
     country: str
     pf_enabled: bool
-    pf_employee_rate: Decimal
-    pf_employer_rate: Decimal
-    pf_wage_ceiling: Decimal
     pf_restrict_to_ceiling: bool
     esi_enabled: bool
-    esi_employee_rate: Decimal
-    esi_employer_rate: Decimal
-    esi_wage_ceiling: Decimal
     pt_enabled: bool
     pt_state: str | None
     lwf_enabled: bool
@@ -233,6 +251,9 @@ class StatutoryConfigResponse(BaseModel):
     payout_account_number: str | None = None
     payout_ifsc_code: str | None = None
     payout_enabled: bool = False
+    # Read-only: the platform rates in force today, each with its official source. Filled by
+    # the service; a company cannot change them (5.2).
+    effective_rates: list[StatutoryRateResponse] = []
 
     # `payout_account_number` is not a column: the service fills it (masked, or the plain
     # number on an audited reveal). The blob and last4 columns are never fields here.
@@ -243,14 +264,8 @@ class StatutoryConfigUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pf_enabled: bool | None = None
-    pf_employee_rate: Decimal | None = None
-    pf_employer_rate: Decimal | None = None
-    pf_wage_ceiling: Decimal | None = None
     pf_restrict_to_ceiling: bool | None = None
     esi_enabled: bool | None = None
-    esi_employee_rate: Decimal | None = None
-    esi_employer_rate: Decimal | None = None
-    esi_wage_ceiling: Decimal | None = None
     pt_enabled: bool | None = None
     pt_state: str | None = None
     lwf_enabled: bool | None = None
@@ -311,29 +326,95 @@ class PtSlabResponse(BaseModel):
     special_month_amount: Decimal | None
     effective_from: date
     effective_to: date | None
-    source_note: str
+    source_url: str
+    source_title: str
+    source_note: str | None
+    verified_on: date
 
     model_config = {"from_attributes": True}
 
 
+# --- 5.2: every rate write carries its official source ------------------------------------
+
+_RATE = Annotated[Decimal, Field(ge=0, le=100, decimal_places=3)]
+_CEILING = Annotated[Decimal, Field(gt=0, le=_MAX_MONEY, decimal_places=2)]
+_SLAB_MONEY = Annotated[Decimal, Field(ge=0, le=_MAX_MONEY, decimal_places=2)]
+_SOURCE_URL = Annotated[str, AfterValidator(validate_source_url)]
+_SOURCE_TITLE = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+]
+
+
+def _check_effective_from(value: date) -> date:
+    if not MIN_SALARY_DATE <= value <= MAX_SALARY_DATE:
+        raise ValueError("effective_from must be between 2000 and 2100.")
+    return value
+
+
+class _SourcedWrite(BaseModel):
+    """The source of a rate write: a link on the government list, a title, the day it was
+    checked (never in the future) and an optional note. Unknown fields are refused."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_url: _SOURCE_URL
+    source_title: _SOURCE_TITLE
+    verified_on: date
+    source_note: str | None = None
+
+    @field_validator("verified_on")
+    @classmethod
+    def _not_in_the_future(cls, value: date) -> date:
+        if value > utcnow().date():
+            raise ValueError("verified_on cannot be in the future.")
+        return value
+
+
+class StatutoryRateCreateRequest(_SourcedWrite):
+    """`POST /payroll/statutory-rates`, super_admin only."""
+
+    scheme: Literal["epf", "esi"]
+    employee_rate: _RATE
+    employer_rate: _RATE
+    wage_ceiling: _CEILING
+    employer_epf_rate: _RATE | None = None
+    employer_eps_rate: _RATE | None = None
+    edli_rate: _RATE | None = None
+    admin_charge_rate: _RATE | None = None
+    # ESI only: average daily wage at or below which the employee pays no ESI share.
+    employee_exempt_daily_wage: _CEILING | None = None
+    effective_from: date
+
+    _effective_from_in_range = field_validator("effective_from")(_check_effective_from)
+
+    @model_validator(mode="after")
+    def _exemption_is_an_esi_figure(self) -> "StatutoryRateCreateRequest":
+        if self.employee_exempt_daily_wage is not None and self.scheme != "esi":
+            raise ValueError("employee_exempt_daily_wage applies to the esi scheme only.")
+        return self
+
+
 class PtSlabRowInput(BaseModel):
-    income_min: Decimal
-    income_max: Decimal | None = None
-    monthly_amount: Decimal
-    special_month: int | None = None
-    special_month_amount: Decimal | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    income_min: _SLAB_MONEY
+    income_max: _SLAB_MONEY | None = None
+    monthly_amount: _SLAB_MONEY
+    special_month: Annotated[int, Field(ge=1, le=12)] | None = None
+    special_month_amount: _SLAB_MONEY | None = None
 
 
-class PtSlabPutRequest(BaseModel):
+class PtSlabPutRequest(_SourcedWrite):
     """Route 88, SA only. Adds a new effective-dated slab set for one state
     — never mutates a historical row in place (Spec 12: a payslip for a
     past month must keep resolving to the rate that was actually in force
     then)."""
 
-    state: str
+    state: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
     effective_from: date
-    source_note: str
-    slabs: list[PtSlabRowInput]
+    slabs: Annotated[list[PtSlabRowInput], Field(min_length=1)]
+
+    _effective_from_in_range = field_validator("effective_from")(_check_effective_from)
 
 
 class TaxSlabResponse(BaseModel):
@@ -347,29 +428,35 @@ class TaxSlabResponse(BaseModel):
     cess_percent: Decimal
     surcharge_rules: dict | None
     effective_from: date
-    source_note: str
+    source_url: str
+    source_title: str
+    source_note: str | None
+    verified_on: date
 
     model_config = {"from_attributes": True}
 
 
 class TaxSlabBracketInput(BaseModel):
-    min_income: Decimal
-    max_income: Decimal | None = None
-    rate_percent: Decimal
+    model_config = ConfigDict(extra="forbid")
+
+    min_income: _SLAB_MONEY
+    max_income: _SLAB_MONEY | None = None
+    rate_percent: _RATE
 
 
-class TaxSlabPostRequest(BaseModel):
+class TaxSlabPostRequest(_SourcedWrite):
     """Route 90, SA only. Adds a new financial year's (or regime's)
     brackets — never mutates a past year's row in place."""
 
-    country: str = "IN"
-    financial_year: str
+    country: Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")] = "IN"
+    financial_year: Annotated[str, StringConstraints(pattern=r"^\d{4}-\d{4}$")]
     regime: TaxRegime
-    cess_percent: Decimal
+    cess_percent: _RATE
     surcharge_rules: dict | None = None
     effective_from: date
-    source_note: str
-    brackets: list[TaxSlabBracketInput]
+    brackets: Annotated[list[TaxSlabBracketInput], Field(min_length=1)]
+
+    _effective_from_in_range = field_validator("effective_from")(_check_effective_from)
 
 
 class PayrollRunCreateRequest(BaseModel):
@@ -421,6 +508,8 @@ class PayrollItemResponse(BaseModel):
     paid_leave_days: Decimal
     lop_days: Decimal
     reimbursement_amount: Decimal
+    # The salary rows the month was paid at (more than one after a mid-month raise).
+    salary_segments_json: list[dict] | None = None
 
     model_config = {"from_attributes": True}
 

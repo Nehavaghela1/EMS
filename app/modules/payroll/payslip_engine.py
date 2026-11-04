@@ -4,19 +4,35 @@ Pure function. No database. No ORM objects. No routes.
 All money is Decimal with explicit ROUND_HALF_UP quantization to 2 places.
 """
 
+from calendar import monthrange
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
+from app.core.exceptions import ConflictError
+
 TWO_PLACES = Decimal("0.01")
-SECTION_87A_NEW_REGIME_THRESHOLD = Decimal("1200000.00")
-SECTION_87A_NEW_REGIME_MAX_REBATE = Decimal("60000.00")
-SECTION_87A_OLD_REGIME_THRESHOLD = Decimal("500000.00")
-SECTION_87A_OLD_REGIME_MAX_REBATE = Decimal("12500.00")
+
+
+class MissingRateError(ConflictError):
+    """A figure the payslip needs (a PF or ESI rate row, an income-tax slab, its rebate,
+    standard deduction or cess) is not on file. The engine never falls back to a literal: the
+    run stops with this message instead (5.2)."""
 
 
 def _round(value: Decimal) -> Decimal:
     return value.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+
+
+def _rule_amount(rules: dict, key: str, regime: str, financial_year: str) -> Decimal:
+    value = rules.get(key)
+    if value is None:
+        raise MissingRateError(
+            f"The income-tax slabs for the {regime} regime, financial year {financial_year}, "
+            f"have no '{key}' figure on file."
+        )
+    return Decimal(str(value))
 
 
 @dataclass(frozen=True)
@@ -34,15 +50,12 @@ class ComponentSpec:
 
 @dataclass(frozen=True)
 class StatutoryConfigSpec:
+    """A company's switches and choices. Rates and ceilings are not here: they come from the
+    effective-dated platform rows (`PfRateSpec`, `EsiRateSpec`, the slabs) of the payroll month."""
+
     pf_enabled: bool = True
-    pf_employee_rate: Decimal = Decimal("12.000")
-    pf_employer_rate: Decimal = Decimal("12.000")
-    pf_wage_ceiling: Decimal = Decimal("15000.00")
     pf_restrict_to_ceiling: bool = True
     esi_enabled: bool = True
-    esi_employee_rate: Decimal = Decimal("0.750")
-    esi_employer_rate: Decimal = Decimal("3.250")
-    esi_wage_ceiling: Decimal = Decimal("21000.00")
     pt_enabled: bool = True
     pt_state: str | None = "Gujarat"
     lwf_enabled: bool = False
@@ -50,6 +63,54 @@ class StatutoryConfigSpec:
     lwf_months: tuple[int, ...] = ()
     tds_enabled: bool = True
     default_tax_regime: str = "new"
+
+
+@dataclass(frozen=True)
+class PfRateSpec:
+    """The EPF row in force on the first day of the payroll month."""
+
+    employee_rate: Decimal
+    employer_rate: Decimal
+    wage_ceiling: Decimal
+
+
+@dataclass(frozen=True)
+class EsiRateSpec:
+    """The ESI row in force on the first day of the payroll month. An employee whose average
+    daily wage is at or below `employee_exempt_daily_wage` pays no employee share (the
+    employer still pays its own)."""
+
+    employee_rate: Decimal
+    employer_rate: Decimal
+    wage_ceiling: Decimal
+    employee_exempt_daily_wage: Decimal | None = None
+
+
+def esi_average_daily_wage(earned_gross: Decimal, days_in_month: Decimal) -> Decimal:
+    """The average daily wage used for the ESI employee-share exemption.
+
+    ASSUMPTION: esic.gov.in/contribution does not define how the average daily wage is
+    computed. It is taken here as the ESI-liable earned gross of the payroll month divided by
+    the calendar days of that month. This one function is the only place the formula lives;
+    confirm it against the ESI (Central) Rules, 1950 and change it here if it differs.
+    Not rounded: the comparison with the limit must not be moved by rounding.
+    """
+    return earned_gross / days_in_month
+
+
+@dataclass(frozen=True)
+class SalarySegment:
+    """The days of a payroll month paid at one salary row (a raise that starts mid-month
+    splits the month). `days` is the calendar days of the row inside the month; `lop_days` the
+    loss-of-pay days that fall inside it."""
+
+    salary_id: str
+    from_date: date
+    to_date: date
+    days: int
+    ctc_annual: Decimal
+    components: Sequence[ComponentSpec]
+    lop_days: Decimal
 
 
 @dataclass(frozen=True)
@@ -70,7 +131,7 @@ class TaxSlabSpec:
     min_income: Decimal
     max_income: Decimal | None
     rate_percent: Decimal
-    cess_percent: Decimal = Decimal("4.000")
+    cess_percent: Decimal
     surcharge_rules: dict | None = None
 
 
@@ -91,6 +152,14 @@ class PayslipInput:
     tds_paid_ytd: Decimal = Decimal("0")
     gross_earned_ytd: Decimal = Decimal("0.00")
     reimbursement_amount: Decimal = Decimal("0")
+    pf_rate: PfRateSpec | None = None
+    esi_rate: EsiRateSpec | None = None
+    # Last working day of a leaver; only a date inside the payroll month changes anything
+    # (professional tax is paid for the days worked).
+    last_working_date: date | None = None
+    # Salary rows of the month, oldest first. When given, `ctc_annual` and `components` are the
+    # salary at the month end (the last segment) and `lop_days` is the month's total.
+    segments: Sequence[SalarySegment] | None = None
 
 
 @dataclass(frozen=True)
@@ -115,14 +184,30 @@ class PayslipOutput:
 BASIC_CODE = "BASIC"
 
 
-def calculate_payslip(data: PayslipInput) -> PayslipOutput:
-    """Computes a complete payslip using exact Decimal arithmetic and explicit
-    ROUND_HALF_UP quantization per Spec 11.6.
-    """
-    monthly_ctc = _round(data.ctc_annual / Decimal("12"))
+@dataclass(frozen=True)
+class _SegmentAmounts:
+    full_gross: Decimal  # a full month at this salary
+    earned: dict[str, Decimal]  # per component: this segment's share of the month, after LOP
+    specs: list[ComponentSpec]  # the earning components, in display order
+
+
+def _segment_amounts(
+    ctc_annual: Decimal,
+    components: Sequence[ComponentSpec],
+    pf: PfRateSpec | None,
+    statutory: StatutoryConfigSpec,
+    working_days: Decimal,
+    segment_days: Decimal,
+    lop_days: Decimal,
+) -> _SegmentAmounts:
+    """One salary's earnings for its days of the month: the full-month amounts of every
+    component, scaled by (segment days - loss-of-pay days) / days of the month, each line rounded
+    half up, the rounding residual put on the balance line (or the largest line). With one
+    segment covering the whole month this is exactly the whole-month calculation."""
+    monthly_ctc = _round(ctc_annual / Decimal("12"))
 
     # 1. Full-month earnings calculation
-    earning_specs = [c for c in data.components if c.type == "earning"]
+    earning_specs = [c for c in components if c.type == "earning"]
     earning_specs_sorted = sorted(earning_specs, key=lambda c: c.display_order)
 
     full_earnings: dict[str, Decimal] = {}
@@ -157,13 +242,11 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
 
     # Estimate full employer PF for balance component calculation
     employer_pf_full = Decimal("0")
-    if data.statutory.pf_enabled and basic_full is not None and basic_full > 0:
+    if pf is not None and statutory.pf_enabled and basic_full is not None and basic_full > 0:
         pf_wage = (
-            min(basic_full, data.statutory.pf_wage_ceiling)
-            if data.statutory.pf_restrict_to_ceiling
-            else basic_full
+            min(basic_full, pf.wage_ceiling) if statutory.pf_restrict_to_ceiling else basic_full
         )
-        employer_pf_full = _round(pf_wage * data.statutory.pf_employer_rate / Decimal("100"))
+        employer_pf_full = _round(pf_wage * pf.employer_rate / Decimal("100"))
 
     # Third pass: Balance component
     balance_spec = next((c for c in earning_specs_sorted if c.calculation_type == "balance"), None)
@@ -175,13 +258,12 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
 
     full_gross = sum(full_earnings.values(), Decimal("0"))
 
-    # 2. Apply Loss of Pay (LOP) and allocate rounding residual
-    if data.working_days <= 0 or data.lop_days >= data.working_days:
-        earned_gross = Decimal("0.00")
+    # 2. Apply the segment's days and Loss of Pay (LOP) and allocate rounding residual
+    paid_days = segment_days - lop_days
+    if working_days <= 0 or paid_days <= 0:
         earned_earnings = {code: Decimal("0.00") for code in full_earnings}
     else:
-        paid_days = data.working_days - data.lop_days
-        ratio = paid_days / data.working_days
+        ratio = paid_days / working_days
         target_gross = _round(full_gross * ratio)
 
         earned_earnings = {}
@@ -202,7 +284,65 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
                 )
                 earned_earnings[largest.code] = earned_earnings[largest.code] + residual
 
-        earned_gross = sum(earned_earnings.values(), Decimal("0"))
+    return _SegmentAmounts(full_gross, earned_earnings, earning_specs_sorted)
+
+
+def calculate_payslip(data: PayslipInput) -> PayslipOutput:
+    """Computes a complete payslip using exact Decimal arithmetic and explicit
+    ROUND_HALF_UP quantization per Spec 11.6.
+    """
+    # The PF and ESI figures of the payroll month must be on file when the item is switched on.
+    pf = data.pf_rate
+    esi = data.esi_rate
+    if data.statutory.pf_enabled and pf is None:
+        raise MissingRateError(
+            f"No EPF rate is on file for {data.year}-{data.month:02d}, but PF is switched on."
+        )
+    if data.statutory.esi_enabled and esi is None:
+        raise MissingRateError(
+            f"No ESI rate is on file for {data.year}-{data.month:02d}, but ESI is switched on."
+        )
+
+    # 1-2. Earnings: one calculation per salary segment of the month (B1-B3). The month's
+    # earned amounts are the sums per component. Anything that tests a "full month" figure (the
+    # ESI ceiling, professional tax, TDS) uses the salary in force at the month end, the last
+    # segment, as before.
+    segments = (
+        list(data.segments)
+        if data.segments
+        else [
+            SalarySegment(
+                salary_id="",
+                from_date=date(data.year, data.month, 1),
+                to_date=date(data.year, data.month, monthrange(data.year, data.month)[1]),
+                days=int(data.working_days),
+                ctc_annual=data.ctc_annual,
+                components=data.components,
+                lop_days=data.lop_days,
+            )
+        ]
+    )
+    earned_earnings: dict[str, Decimal] = {}
+    merged_specs: dict[str, ComponentSpec] = {}
+    full_gross = Decimal("0")
+    for segment in segments:
+        amounts = _segment_amounts(
+            segment.ctc_annual,
+            segment.components,
+            pf,
+            data.statutory,
+            data.working_days,
+            # A single segment of a plain run covers the whole month by definition.
+            data.working_days if not data.segments else Decimal(segment.days),
+            segment.lop_days,
+        )
+        for code, value in amounts.earned.items():
+            earned_earnings[code] = earned_earnings.get(code, Decimal("0")) + value
+        for spec in amounts.specs:
+            merged_specs.setdefault(spec.code, spec)
+        full_gross = amounts.full_gross
+    earning_specs_sorted = sorted(merged_specs.values(), key=lambda c: c.display_order)
+    earned_gross = sum(earned_earnings.values(), Decimal("0.00"))
 
     # Build earning line items
     earning_lines = [
@@ -227,26 +367,35 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
         earned_basic = Decimal("0.00")
 
     # EPF Calculation (12% of Basic Pay, capped at statutory ceiling if checked)
-    if data.statutory.pf_enabled and earned_basic > 0:
+    if pf is not None and data.statutory.pf_enabled and earned_basic > 0:
         pf_wage = (
-            min(earned_basic, data.statutory.pf_wage_ceiling)
+            min(earned_basic, pf.wage_ceiling)
             if data.statutory.pf_restrict_to_ceiling
             else earned_basic
         )
-        epf_ee = _round(pf_wage * data.statutory.pf_employee_rate / Decimal("100"))
-        epf_er = _round(pf_wage * data.statutory.pf_employer_rate / Decimal("100"))
+        epf_ee = _round(pf_wage * pf.employee_rate / Decimal("100"))
+        epf_er = _round(pf_wage * pf.employer_rate / Decimal("100"))
 
         deduction_lines.append(LineItem(code="EPF_EE", name="Employee PF", amount=epf_ee))
         employer_lines.append(LineItem(code="EPF_ER", name="Employer PF", amount=epf_er))
 
     # ESI Calculation (Tested on FULL-MONTH gross; rate applied to earned gross)
     if (
-        data.statutory.esi_enabled
-        and full_gross <= data.statutory.esi_wage_ceiling
+        esi is not None
+        and data.statutory.esi_enabled
+        and full_gross <= esi.wage_ceiling
         and earned_gross > 0
     ):
-        esi_ee = _round(earned_gross * data.statutory.esi_employee_rate / Decimal("100"))
-        esi_er = _round(earned_gross * data.statutory.esi_employer_rate / Decimal("100"))
+        exempt_limit = esi.employee_exempt_daily_wage
+        employee_exempt = exempt_limit is not None and (
+            esi_average_daily_wage(earned_gross, data.working_days) <= exempt_limit
+        )
+        esi_ee = (
+            Decimal("0.00")
+            if employee_exempt
+            else _round(earned_gross * esi.employee_rate / Decimal("100"))
+        )
+        esi_er = _round(earned_gross * esi.employer_rate / Decimal("100"))
 
         deduction_lines.append(LineItem(code="ESI_EE", name="Employee ESI", amount=esi_ee))
         employer_lines.append(LineItem(code="ESI_ER", name="Employer ESI", amount=esi_er))
@@ -268,6 +417,13 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
                 and matching_slab.special_month_amount is not None
             ):
                 pt_amount = matching_slab.special_month_amount
+
+            # A leaver pays for the days worked (Gujarat schedule, Entry 1, Explanation II):
+            # days from the 1st up to and including the last working day, over the month's days.
+            last_day = data.last_working_date
+            if last_day is not None and (last_day.year, last_day.month) == (data.year, data.month):
+                month_days = monthrange(data.year, data.month)[1]
+                pt_amount = _round(pt_amount * Decimal(last_day.day) / Decimal(month_days))
 
             if pt_amount > 0:
                 deduction_lines.append(
@@ -303,44 +459,41 @@ def calculate_payslip(data: PayslipInput) -> PayslipOutput:
         projected_annual_gross = data.gross_earned_ytd + full_gross * Decimal(str(months_remaining))
         tax_regime = data.statutory.default_tax_regime
 
-        # Filter tax slabs for matching regime
+        # Filter tax slabs for matching regime. Every figure below comes from the slab rows
+        # (brackets, cess, standard deduction, 87A rebate); a missing one stops the run.
         matching_tax_slabs = [s for s in data.tax_slabs if s.regime == tax_regime]
-
-        # Standard deduction from surcharge_rules JSON or default
-        std_deduction = Decimal("75000.00") if tax_regime == "new" else Decimal("50000.00")
-        if matching_tax_slabs and matching_tax_slabs[0].surcharge_rules:
-            rules = matching_tax_slabs[0].surcharge_rules
-            if "standard_deduction" in rules:
-                std_deduction = Decimal(str(rules["standard_deduction"]))
+        if not matching_tax_slabs:
+            raise MissingRateError(
+                f"No income-tax slabs for the {tax_regime} regime, financial year "
+                f"{data.financial_year}, are on file."
+            )
+        rules = matching_tax_slabs[0].surcharge_rules or {}
+        std_deduction = _rule_amount(rules, "standard_deduction", tax_regime, data.financial_year)
+        rebate = rules.get("rebate_87a") or {}
+        rebate_limit = _rule_amount(rebate, "income_limit", tax_regime, data.financial_year)
+        rebate_max = _rule_amount(rebate, "max_rebate", tax_regime, data.financial_year)
+        cess_percent = matching_tax_slabs[0].cess_percent
 
         taxable_annual_income = max(Decimal("0.00"), projected_annual_gross - std_deduction)
 
         annual_tax = Decimal("0.00")
-        cess_percent = Decimal("4.000")
-        if matching_tax_slabs:
-            cess_percent = matching_tax_slabs[0].cess_percent
-            for tax_slab in sorted(matching_tax_slabs, key=lambda s: s.min_income):
-                if taxable_annual_income > tax_slab.min_income:
-                    top = (
-                        taxable_annual_income
-                        if tax_slab.max_income is None
-                        else min(taxable_annual_income, tax_slab.max_income)
-                    )
-                    taxable_in_bracket = top - tax_slab.min_income
-                    annual_tax += _round(
-                        taxable_in_bracket * tax_slab.rate_percent / Decimal("100")
-                    )
+        for tax_slab in sorted(matching_tax_slabs, key=lambda s: s.min_income):
+            if taxable_annual_income > tax_slab.min_income:
+                top = (
+                    taxable_annual_income
+                    if tax_slab.max_income is None
+                    else min(taxable_annual_income, tax_slab.max_income)
+                )
+                taxable_in_bracket = top - tax_slab.min_income
+                annual_tax += _round(taxable_in_bracket * tax_slab.rate_percent / Decimal("100"))
 
-        # Section 87A Rebate & Marginal Relief check
-        # Fix 1: Marginal relief for new regime above 12,00,000 threshold
-        if tax_regime == "new":
-            if taxable_annual_income <= SECTION_87A_NEW_REGIME_THRESHOLD:
-                annual_tax = Decimal("0.00")
-            else:
-                marginal_tax_limit = taxable_annual_income - SECTION_87A_NEW_REGIME_THRESHOLD
-                annual_tax = min(annual_tax, marginal_tax_limit)
-        elif tax_regime == "old" and taxable_annual_income <= SECTION_87A_OLD_REGIME_THRESHOLD:
-            annual_tax = Decimal("0.00")
+        # Section 87A: a rebate up to the row's maximum on incomes up to the row's limit; in
+        # the new regime marginal relief just above the limit (tax never exceeds the income
+        # over the limit).
+        if taxable_annual_income <= rebate_limit:
+            annual_tax -= min(annual_tax, rebate_max)
+        elif tax_regime == "new":
+            annual_tax = min(annual_tax, taxable_annual_income - rebate_limit)
 
         annual_cess = _round(annual_tax * cess_percent / Decimal("100"))
         projected_annual_tax = annual_tax + annual_cess

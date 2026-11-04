@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.db.seed.pt_slabs import seed_pt_slabs
+from app.db.seed.statutory_rates import seed_statutory_rates
 from app.db.seed.tax_slabs import seed_tax_slabs
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
@@ -18,6 +19,7 @@ from tests.conftest import TenantContext, _make_user_headers, days_ago, upload_r
 def _seed_statutory(db: Session):
     seed_pt_slabs(db)
     seed_tax_slabs(db)
+    seed_statutory_rates(db)
 
 
 def _create_employee_with_user(

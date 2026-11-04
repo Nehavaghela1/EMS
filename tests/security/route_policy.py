@@ -238,6 +238,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/payroll/payslips/{employee_id}"): ROLES(
         UserRole.hr_admin, UserRole.super_admin
     ),
+    ("GET", "/api/v1/payroll/statutory-rates"): ROLES(UserRole.hr_admin, UserRole.super_admin),
+    ("POST", "/api/v1/payroll/statutory-rates"): ROLES(UserRole.super_admin),
     ("GET", "/api/v1/payroll/pt-slabs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("PUT", "/api/v1/payroll/pt-slabs"): ROLES(UserRole.super_admin),
     ("GET", "/api/v1/payroll/reimbursements"): AUTHENTICATED,

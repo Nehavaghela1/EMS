@@ -1645,7 +1645,11 @@ The assignment explicitly requires search, filtering, sorting and pagination. Im
 | 83 | POST | `/payroll/employees/{employee_id}/assign` | HR | Assign structure + CTC with `effective_from` |
 | 84 | GET | `/payroll/employees/{employee_id}/salary` | Own, HR | Current structure, CTC, and the computed monthly breakdown |
 | 85 | GET | `/payroll/statutory-config` | HR | Company PF/ESI/PT/LWF/TDS settings |
-| 86 | PUT | `/payroll/statutory-config` | HR | Update (audited) |
+| 86 | PUT | `/payroll/statutory-config` | HR | Update switches, state and regime (audited). Rates and ceilings are not company settings (422); the response shows read-only `effective_rates` |
+| 86a | GET | `/payroll/statutory-rates?scheme=&on_date=` | HR | PF and ESI rate rows (paged), each with its official source |
+| 86b | POST | `/payroll/statutory-rates` | SA | Add an effective-dated PF or ESI rate; ends the open row the day before; source link on the government list required (5.2) |
+
+*5.2 notes:* `statutory_rates` (platform table, no RLS, exclusion constraint: rows of a scheme never overlap) holds the PF and ESI rates and wage ceilings; the ESI row also carries `employee_exempt_daily_wage` (176.00; the daily-wage formula is an assumption, see its `source_note`). The EPF administrative charge is not seeded. `pt_slabs`, `tax_slabs` and `statutory_rates` carry `source_url` (https, host on `app/core/official_sources.py`), `source_title`, `source_note`, `verified_on`. A payroll month uses the rows in force on its **first day**; a missing row stops the run with 409. Gujarat professional tax of a leaver is reduced by the days worked. A salary that starts mid-month is paid by days at the old and new CTC; the payslip keeps `salary_segments_json`.
 | 87 | GET | `/payroll/pt-slabs` | HR | Slabs for the company's state |
 | 88 | PUT | `/payroll/pt-slabs` | SA | Platform-managed — government-defined |
 | 89 | GET | `/payroll/tax-slabs` | HR, SA | Brackets by country / financial year / regime |

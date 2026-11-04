@@ -3,8 +3,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.db.seed.pt_slabs import seed_pt_slabs
+from app.db.seed.statutory_rates import seed_statutory_rates
 from app.db.seed.tax_slabs import seed_tax_slabs
-from tests.conftest import TenantContext
+from tests.conftest import TenantContext, days_ago
 
 
 @pytest.fixture(autouse=True)
@@ -12,6 +13,7 @@ def _seed_statutory_tables(db: Session):
     """Ensure pt_slabs and tax_slabs are seeded for tests."""
     seed_pt_slabs(db)
     seed_tax_slabs(db)
+    seed_statutory_rates(db)
 
 
 def test_get_and_update_statutory_config(client: TestClient, company_a: TenantContext):
@@ -21,18 +23,17 @@ def test_get_and_update_statutory_config(client: TestClient, company_a: TenantCo
     data = res.json()
     assert data["country"] == "IN"
     assert data["pf_enabled"] is True
-    assert data["pf_employee_rate"] == "12.000"
-    assert data["pf_employer_rate"] == "12.000"
-    assert data["pf_wage_ceiling"] == "15000.00"
     assert data["esi_enabled"] is True
-    assert data["esi_employee_rate"] == "0.750"
-    assert data["esi_employer_rate"] == "3.250"
-    assert data["esi_wage_ceiling"] == "21000.00"
     assert data["default_tax_regime"] == "new"
+    # 5.2: the rates and ceilings are platform rows, shown read-only with their source
+    for removed in ("pf_employee_rate", "pf_wage_ceiling", "esi_employee_rate", "esi_wage_ceiling"):
+        assert removed not in data
+    esi = next(r for r in data["effective_rates"] if r["scheme"] == "esi")
+    assert (esi["employee_rate"], esi["employer_rate"]) == ("0.750", "3.250")
+    assert esi["wage_ceiling"] == "21000.00"
 
     # 2. PUT statutory config - HR updates company statutory settings
     update_payload = {
-        "pf_wage_ceiling": "21000.00",
         "pt_state": "Gujarat",
         "esi_enabled": False,
     }
@@ -43,7 +44,6 @@ def test_get_and_update_statutory_config(client: TestClient, company_a: TenantCo
     )
     assert update_res.status_code == 200
     updated_data = update_res.json()
-    assert updated_data["pf_wage_ceiling"] == "21000.00"
     assert updated_data["pt_state"] == "Gujarat"
     assert updated_data["esi_enabled"] is False
 
@@ -55,7 +55,7 @@ def test_statutory_config_access_control(client: TestClient, company_a: TenantCo
 
     res_put = client.put(
         "/api/v1/payroll/statutory-config",
-        json={"pf_wage_ceiling": "18000.00"},
+        json={"pf_enabled": False},
         headers=company_a.employee_headers,
     )
     assert res_put.status_code == 403
@@ -77,6 +77,9 @@ def test_list_and_update_pt_slabs(
         json={
             "state": "Maharashtra",
             "effective_from": "2026-04-01",
+            "source_url": "https://labour.gov.in/test-maharashtra-pt",
+            "source_title": "Test Maharashtra PT slab set",
+            "verified_on": days_ago(0),
             "source_note": "Test Maharashtra PT Slab Notification 2026",
             "slabs": [
                 {
@@ -101,6 +104,9 @@ def test_list_and_update_pt_slabs(
         json={
             "state": "Maharashtra",
             "effective_from": "2026-04-01",
+            "source_url": "https://labour.gov.in/test-maharashtra-pt",
+            "source_title": "Test Maharashtra PT slab set",
+            "verified_on": days_ago(0),
             "source_note": "Test Maharashtra PT Slab Notification 2026",
             "slabs": [
                 {
@@ -147,6 +153,9 @@ def test_list_and_post_tax_slabs(
             "regime": "new",
             "cess_percent": "4.000",
             "effective_from": "2027-04-01",
+            "source_url": "https://www.incometaxindia.gov.in/test-budget-2027",
+            "source_title": "Test Budget 2027 tax slabs",
+            "verified_on": days_ago(0),
             "source_note": "Budget 2027 Notification",
             "brackets": [
                 {
@@ -169,6 +178,9 @@ def test_list_and_post_tax_slabs(
             "regime": "new",
             "cess_percent": "4.000",
             "effective_from": "2027-04-01",
+            "source_url": "https://www.incometaxindia.gov.in/test-budget-2027",
+            "source_title": "Test Budget 2027 tax slabs",
+            "verified_on": days_ago(0),
             "source_note": "Budget 2027 Notification",
             "brackets": [
                 {

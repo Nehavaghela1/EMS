@@ -1478,6 +1478,46 @@ def test_R5_the_cess_comes_from_the_slab_row() -> None:
 
 
 @pytest.mark.parametrize(
+    "ctc,expected_tds",
+    [("499999.92", None), ("500000.04", "833.33")],
+    ids=["exactly at the limit", "just above the limit"],
+)
+def test_R5_the_rebate_applies_at_exactly_the_limit_of_the_row_and_not_above(
+    ctc: str, expected_tds: str | None
+) -> None:
+    """Old regime, flat 2% slab, rebate up to income 499,999.92 (the row's limit) of at most
+    12,500: the yearly income 499,999.92 gets the rebate (no tax), 500,000.04 does not."""
+    rules = {
+        "standard_deduction": "0.00",
+        "rebate_87a": {"income_limit": "499999.92", "max_rebate": "12500.00"},
+    }
+    slab = TaxSlabSpec(
+        country="IN",
+        financial_year="2030-2031",
+        regime="old",
+        min_income=Decimal("0.00"),
+        max_income=None,
+        rate_percent=Decimal("2.000"),
+        cess_percent=Decimal("0.000"),
+        surcharge_rules=rules,
+    )
+    out = calculate_payslip(
+        _engine_input(
+            ctc=Decimal(ctc),
+            statutory=StatutoryConfigSpec(
+                pf_enabled=False,
+                esi_enabled=False,
+                pt_enabled=False,
+                tds_enabled=True,
+                default_tax_regime="old",
+            ),
+            tax_slabs=[slab],
+        )
+    )
+    assert _tds(out) == expected_tds, f"R5: income {ctc} against the row's limit: {_tds(out)}"
+
+
+@pytest.mark.parametrize(
     "rules",
     [
         None,

@@ -24,6 +24,7 @@ from app.modules.payroll.router import (
     pt_slabs_router,
     reimbursements_router,
     statutory_config_router,
+    statutory_rates_router,
     structures_router,
     tax_slabs_router,
 )
@@ -106,6 +107,7 @@ app.include_router(industry_presets_router, prefix=settings.API_V1_PREFIX)
 app.include_router(structures_router, prefix=settings.API_V1_PREFIX)
 app.include_router(employee_salary_router, prefix=settings.API_V1_PREFIX)
 app.include_router(statutory_config_router, prefix=settings.API_V1_PREFIX)
+app.include_router(statutory_rates_router, prefix=settings.API_V1_PREFIX)
 app.include_router(pt_slabs_router, prefix=settings.API_V1_PREFIX)
 app.include_router(tax_slabs_router, prefix=settings.API_V1_PREFIX)
 app.include_router(payroll_runs_router, prefix=settings.API_V1_PREFIX)

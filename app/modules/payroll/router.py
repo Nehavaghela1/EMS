@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse
@@ -39,6 +39,8 @@ from app.modules.payroll.schemas import (
     SalaryStructureUpdateRequest,
     StatutoryConfigResponse,
     StatutoryConfigUpdateRequest,
+    StatutoryRateCreateRequest,
+    StatutoryRateResponse,
     TaxSlabPostRequest,
     TaxSlabResponse,
 )
@@ -50,6 +52,7 @@ from app.modules.payroll.service import (
     ReimbursementService,
     SalaryStructureService,
     StatutoryConfigService,
+    StatutoryRateService,
     TaxSlabService,
 )
 
@@ -57,6 +60,9 @@ structures_router = APIRouter(prefix="/payroll/structures", tags=["Payroll — S
 employee_salary_router = APIRouter(prefix="/payroll/employees", tags=["Payroll — Employee Salary"])
 statutory_config_router = APIRouter(
     prefix="/payroll/statutory-config", tags=["Payroll — Statutory Config"]
+)
+statutory_rates_router = APIRouter(
+    prefix="/payroll/statutory-rates", tags=["Payroll — Statutory Rates"]
 )
 pt_slabs_router = APIRouter(prefix="/payroll/pt-slabs", tags=["Payroll — PT Slabs"])
 tax_slabs_router = APIRouter(prefix="/payroll/tax-slabs", tags=["Payroll — Tax Slabs"])
@@ -279,6 +285,42 @@ def update_statutory_config(
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
     return StatutoryConfigService(db).update(user.company_id, data, user)
+
+
+# --- 5.2: platform statutory rates (PF, ESI) -------------------------------
+
+
+@statutory_rates_router.post("", response_model=StatutoryRateResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def add_statutory_rate(
+    request: Request,
+    data: StatutoryRateCreateRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    rate = StatutoryRateService(db).add_rate(data, user)
+    return StatutoryRateResponse.model_validate(rate)
+
+
+@statutory_rates_router.get("", response_model=Page[StatutoryRateResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def list_statutory_rates(
+    request: Request,
+    scheme: Literal["epf", "esi"] | None = None,
+    on_date: date | None = None,
+    params: PageParams = Depends(page_params),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+):
+    rows, total, pages = StatutoryRateService(db).list_rates(params, scheme, on_date)
+    return Page(
+        items=[StatutoryRateResponse.model_validate(r) for r in rows],
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
+    )
 
 
 # --- Routes 87-88: PT slabs -----------------------------------------------

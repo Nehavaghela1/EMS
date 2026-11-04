@@ -75,6 +75,9 @@ quote-style = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "committed_rates: the test commits its own platform rate rows, so the shared autouse seeding fixture is skipped",
+]
 
 [tool.mypy]
 python_version = "3.12"
