@@ -72,20 +72,10 @@ def _ensure_test_database_exists() -> None:
     superuser: PG_BOOTSTRAP_USER / PG_BOOTSTRAP_PASSWORD, as scripts/setup.sh does), so the
     migrations that follow and the tests that connect as ems_app work with no manual step. A
     database that already exists is left as it is."""
-    migration_url = make_url(settings.TEST_MIGRATION_URL)
-    db_name = migration_url.database
-    admin_engine = create_engine(
-        migration_url.set(database="postgres"), isolation_level="AUTOCOMMIT"
-    )
-    try:
-        with admin_engine.connect() as conn:
-            exists = conn.execute(
-                text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": db_name}
-            ).scalar()
-            if not exists:
-                conn.execute(text(f'CREATE DATABASE "{db_name}"'))
-    finally:
-        admin_engine.dispose()
+    db_name = make_url(settings.TEST_MIGRATION_URL).database
+    assert db_name is not None
+    if not db_tools.database_exists(db_name):
+        db_tools.create_database(db_name)
 
 
 def _migrate_test_database(migration_url: str | None = None) -> None:
