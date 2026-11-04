@@ -3,11 +3,13 @@ from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.approval_authority import DEFAULT_FORBIDDEN_MESSAGE
+from app.core.approval_authority import DEFAULT_FORBIDDEN_MESSAGE, can_approve_for
+from app.core.config import settings
 from app.core.encryption import DecryptionFailedError, decrypt_field, encrypt_field
 from app.core.exceptions import (
     AppError,
@@ -713,6 +715,7 @@ MAX_CHAIN_DEPTH = 20
 CLAIMS_PAGE_URL = "/payroll/reimbursements"
 CLAIM_NOT_FOUND_MESSAGE = "Reimbursement claim not found."
 RECEIPT_NOT_FOUND_MESSAGE = "Receipt file not found."
+RECEIPT_FORBIDDEN_MESSAGE = "You do not have permission to view this receipt."
 RECEIPT_IN_USE_MESSAGE = "This receipt is already attached to another claim."
 DUPLICATE_CLAIM_MESSAGE = "A claim for the same date, type and amount already exists."
 
@@ -1825,6 +1828,55 @@ class ReimbursementService:
         self._audit(company_id, actor, "REIMBURSEMENT_WITHDRAWN", claim)
         self.db.commit()
         return claim
+
+    # --- receipt view -------------------------------------------------------
+
+    def open_receipt(
+        self, company_id: uuid.UUID, reimbursement_id: uuid.UUID, actor: User
+    ) -> tuple[Path, str, str]:
+        """The stored receipt of a claim: (path on disk, file name, content type). Allowed
+        for the claimant, anyone who may approve the claim (reporting chain, HR-level) and
+        HR-level; everyone else gets one refusal. A view by anyone but the claimant is
+        audited, in the same save, only when a file is really served."""
+        claim = self.repo.get_by_id(reimbursement_id, company_id)
+        if claim is None:
+            raise NotFoundError(CLAIM_NOT_FOUND_MESSAGE)
+
+        own = self.employee_repo.get_by_user_id(company_id, actor.id)
+        is_claimant = own is not None and own.id == claim.employee_id
+        if not is_claimant and actor.role not in HR_LEVEL_ROLES:
+            target = self.employee_repo.get_by_id_any_status(claim.employee_id, company_id)
+            try:
+                can_approve_for(self.db, actor, target)
+            except ForbiddenError:
+                raise ForbiddenError(RECEIPT_FORBIDDEN_MESSAGE) from None
+
+        receipt = (
+            self.repo.get_receipt_file(company_id, claim.file_object_id)
+            if claim.file_object_id is not None
+            else None
+        )
+        if receipt is None:
+            raise NotFoundError(RECEIPT_NOT_FOUND_MESSAGE)
+        # The same containment and disk checks the platform file download makes.
+        path = Path(receipt.storage_path).resolve()
+        if not path.is_relative_to(Path(settings.UPLOAD_DIR).resolve()) or not path.is_file():
+            raise NotFoundError(RECEIPT_NOT_FOUND_MESSAGE)
+
+        if not is_claimant:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="REIMBURSEMENT_RECEIPT_VIEWED",
+                entity_type="reimbursement",
+                entity_id=claim.id,
+                details={
+                    "employee_id": str(claim.employee_id),
+                    "file_object_id": str(receipt.id),
+                },
+            )
+            self.db.commit()
+        return path, receipt.file_name, receipt.file_type
 
     # --- shared -------------------------------------------------------------
 

@@ -246,6 +246,8 @@ POLICY: dict[tuple[str, str], Any] = {
     # the chain get the same refusal, as in 4.3 and 4.6.
     ("PUT", "/api/v1/payroll/reimbursements/{id}"): AUTHENTICATED,
     ("POST", "/api/v1/payroll/reimbursements/{id}/withdraw"): AUTHENTICATED,
+    # Claimant, approvers (reporting chain) and HR-level: decided in the service.
+    ("GET", "/api/v1/payroll/reimbursements/{id}/receipt"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("POST", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("DELETE", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin, UserRole.super_admin),

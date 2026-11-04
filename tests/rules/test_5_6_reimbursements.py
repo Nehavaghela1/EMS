@@ -48,7 +48,7 @@ from app.modules.payroll.repository import ReimbursementRepository
 from app.modules.payroll.service import ReimbursementService
 from app.modules.platform.models import AuditLog, FileObject, Notification
 from app.modules.platform.service import AuditService
-from tests.conftest import REPO_ROOT, TenantContext
+from tests.conftest import REPO_ROOT, TenantContext, upload_receipt
 from tests.rules.test_5_4_payroll_runs import (
     RUNS,
     _extra_user,
@@ -938,6 +938,193 @@ def test_R4_a_claim_has_exactly_the_documented_fields(client, db, org) -> None:
         "added_to_payroll_run_id",
         "created_at",
     }, f"R4: response fields changed: {sorted(claim)}"
+
+
+# --- receipt view route: GET /payroll/reimbursements/{id}/receipt
+
+PDF_BYTES = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+
+
+def _receipt_claim(client: TestClient, db: Session, org: dict[str, Any], who: str = "emp"):
+    """A claim whose receipt is a real uploaded PDF (the file is on disk)."""
+    return _claim(client, db, org, who, file_object_id=upload_receipt(client, org[who]["h"]))
+
+
+def _open_receipt(client: TestClient, headers: dict[str, str], claim_id: str):
+    return client.get(f"{BASE}/{claim_id}/receipt", headers=headers)
+
+
+def _viewed(db: Session, org: dict[str, Any]) -> list[AuditLog]:
+    return _audit(db, org["ctx"], "REIMBURSEMENT_RECEIPT_VIEWED")
+
+
+def test_R4_receipt_no_login_gets_401_and_a_bad_id_gives_422(client, db, org) -> None:
+    assert client.get(f"{BASE}/{uuid.uuid4()}/receipt").status_code == 401, "no login: 401"
+    resp = _open_receipt(client, org["emp"]["h"], "not-a-uuid")
+    assert resp.status_code == 422, f"a bad id must give 422: {resp.text}"
+
+
+def test_R4_receipt_the_claimant_opens_their_own_file_without_an_audit_row(client, db, org) -> None:
+    claim = _receipt_claim(client, db, org)
+    resp = _open_receipt(client, org["emp"]["h"], claim["id"])
+    assert resp.status_code == 200, f"the claimant must open the receipt: {resp.text}"
+    assert resp.content == PDF_BYTES, "the stored file must be served unchanged"
+    assert resp.headers["content-type"].startswith("application/pdf"), resp.headers
+    assert "no-store" in resp.headers.get("cache-control", ""), "must not be cached"
+    assert resp.headers.get("x-content-type-options") == "nosniff", "nosniff header"
+    assert "attachment" in resp.headers.get("content-disposition", ""), "served as download"
+    assert _viewed(db, org) == [], "the claimant opening their own receipt writes no audit row"
+
+
+@pytest.mark.parametrize("who", ["mgr", "boss"])
+def test_R4_receipt_the_reporting_chain_can_open_it_and_each_view_is_audited(
+    client, db, org, who
+) -> None:
+    claim = _receipt_claim(client, db, org)
+    resp = _open_receipt(client, org[who]["h"], claim["id"])
+    assert resp.status_code == 200 and resp.content == PDF_BYTES, f"{who}: {resp.status_code}"
+    rows = _viewed(db, org)
+    assert len(rows) == 1, f"one view by {who} must write one audit row, got {len(rows)}"
+    assert rows[0].actor_user_id == org[who]["user"].id, "the actor is the viewer"
+    assert str(rows[0].entity_id) == claim["id"] and rows[0].entity_type == "reimbursement"
+    _open_receipt(client, org[who]["h"], claim["id"])
+    assert len(_viewed(db, org)) == 2, "every view by someone else is audited"
+
+
+@pytest.mark.parametrize("who", ["hr", "hr2", "owner"])
+def test_R4_receipt_hr_level_can_open_it_and_is_audited(client, db, org, who) -> None:
+    claim = _receipt_claim(client, db, org)
+    resp = _open_receipt(client, org[who], claim["id"])
+    assert resp.status_code == 200 and resp.content == PDF_BYTES, f"{who}: {resp.text}"
+    assert len(_viewed(db, org)) == 1, f"{who} opening someone's receipt must be audited"
+
+
+def test_R4_receipt_an_hr_admin_with_a_profile_opens_their_own_without_audit(
+    client, db, org
+) -> None:
+    claim = _receipt_claim(client, db, org, "hr_emp")
+    resp = _open_receipt(client, org["hr_emp"]["h"], claim["id"])
+    assert resp.status_code == 200, resp.text
+    assert _viewed(db, org) == [], "a claimant is never audited for their own receipt"
+
+
+def test_R4_receipt_everyone_else_gets_the_same_403_and_no_audit_row(client, db, org) -> None:
+    claim = _receipt_claim(client, db, org)
+    ctx = org["ctx"]
+    callers = {
+        "colleague employee": org["peer"]["h"],
+        "manager outside the chain": org["other_mgr"]["h"],
+        "user without a profile": ctx.employee_headers,
+        "manager without a profile": ctx.manager_headers,
+    }
+    messages = set()
+    for label, headers in callers.items():
+        resp = _open_receipt(client, headers, claim["id"])
+        assert resp.status_code == 403, f"{label} must get 403: {resp.status_code}"
+        assert PDF_BYTES not in resp.content, f"{label} was served the file"
+        messages.add(_message(resp))
+    assert len(messages) == 1, f"every refusal must carry the same message: {messages}"
+    assert _viewed(db, org) == [], "a refused request must not write an audit row"
+
+
+def test_R4_receipt_another_company_and_a_missing_claim_give_the_same_404(
+    client, db, org, company_b
+) -> None:
+    staff = _staff(client, db, company_b, None)
+    theirs = _claim(
+        client,
+        db,
+        {"ctx": company_b, "emp": staff},
+        "emp",
+        file_object_id=upload_receipt(client, staff["h"]),
+    )
+    responses = [
+        _open_receipt(client, org["hr"], theirs["id"]),
+        _open_receipt(client, org["owner"], theirs["id"]),
+        _open_receipt(client, org["mgr"]["h"], theirs["id"]),
+        _open_receipt(client, org["hr"], str(uuid.uuid4())),
+        _open_receipt(client, org["emp"]["h"], str(uuid.uuid4())),
+    ]
+    assert [r.status_code for r in responses] == [404] * 5, [r.text for r in responses]
+    assert {_message(r) for r in responses} == {"Reimbursement claim not found."}, (
+        "one message for another company's claim and a missing claim"
+    )
+    assert _viewed(db, org) == [] and _viewed(db, {"ctx": company_b}) == []
+
+
+def test_R4_receipt_a_claim_without_a_stored_file_gives_404_and_no_audit_row(
+    client, db, org
+) -> None:
+    ctx = org["ctx"]
+    no_file = _claim(client, db, org, "emp")  # its receipt row exists but nothing is on disk
+    no_receipt = _receipt_claim(client, db, org)
+    _force(db, ctx, no_receipt["id"], file_object_id=None)
+    for claim in (no_file, no_receipt):
+        resp = _open_receipt(client, org["mgr"]["h"], claim["id"])
+        assert resp.status_code == 404, f"a missing file must give 404: {resp.text}"
+        assert _message(resp) == "Receipt file not found.", _message(resp)
+    assert _viewed(db, org) == [], "nothing was served, so nothing is audited"
+
+
+def test_R4_receipt_a_stored_path_outside_the_upload_folder_is_never_served(
+    client, db, org, tmp_path: Path
+) -> None:
+    outside = tmp_path / "outside-secret.pdf"
+    outside.write_bytes(PDF_BYTES)
+    claim = _receipt_claim(client, db, org)
+    assert _open_receipt(client, org["mgr"]["h"], claim["id"]).status_code == 200, (
+        "the file must open before its stored path is moved"
+    )
+    bind_tenant_to_session(db, company_id=org["ctx"].company_id, is_platform_admin=False)
+    file_object = db.get(FileObject, uuid.UUID(claim["file_object_id"]))
+    assert file_object is not None
+    file_object.storage_path = str(outside)
+    db.commit()
+    views_before = len(_viewed(db, org))
+    resp = _open_receipt(client, org["mgr"]["h"], claim["id"])
+    assert resp.status_code == 404, f"a path outside the upload root must give 404: {resp.text}"
+    assert PDF_BYTES not in resp.content, "a file outside the upload root was served"
+    assert len(_viewed(db, org)) == views_before, "a refused view must not be audited"
+
+
+def test_R4_receipt_the_audit_row_holds_ids_only(client, db, org) -> None:
+    claim = _receipt_claim(client, db, org)
+    _open_receipt(client, org["mgr"]["h"], claim["id"])
+    rows = _viewed(db, org)
+    assert len(rows) == 1, f"one view must write one audit row, got {len(rows)}"
+    row = rows[0]
+    assert set(row.details) <= {"employee_id", "file_object_id"}, f"details: {row.details}"
+    assert row.details["file_object_id"] == claim["file_object_id"]
+    shown = f"{row.details} {row.entity_type}"
+    for secret in ("receipt.pdf", "private-receipt-name", claim["description"]):
+        assert secret not in shown, f"the audit row holds {secret}"
+
+
+def test_R4_receipt_a_view_and_its_audit_row_are_one_save(
+    client, db, org, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    claim = _receipt_claim(client, db, org)
+    assert hasattr(ReimbursementService, "open_receipt"), "the service needs open_receipt"
+
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("audit failed")
+
+    monkeypatch.setattr(AuditService, "record", _boom)
+    with pytest.raises(RuntimeError):
+        ReimbursementService(db).open_receipt(
+            org["ctx"].company_id, uuid.UUID(claim["id"]), org["mgr"]["user"]
+        )
+    db.rollback()
+    assert _viewed(db, org) == [], "a failed audit write must leave no audit row behind"
+
+
+def test_R4_receipt_is_limited_to_60_per_minute_per_user(client, db, org, limits_on) -> None:
+    claim = _receipt_claim(client, db, org)
+    codes = [_open_receipt(client, org["emp"]["h"], claim["id"]).status_code for _ in range(61)]
+    assert codes[:60] == [200] * 60 and codes[60] == 429, f"receipt limit wrong: {codes[-3:]}"
+    assert _open_receipt(client, org["mgr"]["h"], claim["id"]).status_code == 200, (
+        "the limit is per user"
+    )
 
 
 # ------------------------------------------------------------------- R5

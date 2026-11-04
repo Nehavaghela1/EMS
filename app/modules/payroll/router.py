@@ -3,6 +3,7 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
@@ -542,6 +543,24 @@ def review_reimbursement_claim(
     service = ReimbursementService(db)
     claim = service.review_claim(user.company_id, id, data, user)
     return ReimbursementResponse.model_validate(claim)
+
+
+@reimbursements_router.get("/{id}/receipt")
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def view_reimbursement_receipt(
+    request: Request,
+    id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    path, file_name, content_type = ReimbursementService(db).open_receipt(user.company_id, id, user)
+    return FileResponse(
+        path=str(path),
+        filename=file_name,
+        media_type=content_type,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"},
+    )
 
 
 @reimbursements_router.post("/{id}/withdraw", response_model=ReimbursementResponse)
