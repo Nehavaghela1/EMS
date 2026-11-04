@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     ENCRYPTION_KEY: str | None = None
     ENCRYPTION_KEY_VERSION: int = 1
+    # After a key rotation: {old version: base64 key}, so blobs written under an old
+    # version byte can still be read (Spec 9.6).
+    ENCRYPTION_PREVIOUS_KEYS: dict[int, str] = {}
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_MINUTES: int = 15
     # Employee invite/activation tokens (Spec 7.3 `activation_expires_at`) —

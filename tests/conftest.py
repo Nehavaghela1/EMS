@@ -1,3 +1,4 @@
+import base64
 import os
 import subprocess
 import sys
@@ -48,6 +49,17 @@ if _database_name(settings.TEST_DATABASE_URL) == _database_name(settings.DATABAS
 # forces it, unconditionally, before any test can run.
 settings.EMAIL_BACKEND = "console"
 settings.DEV_EMAIL_COPY_TO = ""
+
+# A fixed throwaway key for the encryption tests: CI has no ENCRYPTION_KEY and a developer's
+# .env may carry a real or empty one. Set on the settings object (this process) and in the
+# environment (the `alembic upgrade head` subprocess below). Never a real key.
+TEST_ENCRYPTION_KEY = base64.b64encode(bytes(range(32))).decode()
+settings.ENCRYPTION_KEY = TEST_ENCRYPTION_KEY
+settings.ENCRYPTION_KEY_VERSION = 1
+settings.ENCRYPTION_PREVIOUS_KEYS = {}
+os.environ["ENCRYPTION_KEY"] = TEST_ENCRYPTION_KEY
+os.environ["ENCRYPTION_KEY_VERSION"] = "1"
+os.environ.pop("ENCRYPTION_PREVIOUS_KEYS", None)
 
 
 def _ensure_test_database_exists() -> None:

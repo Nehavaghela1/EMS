@@ -23,6 +23,7 @@ dependencies = [
     "slowapi==0.1.10",
     "celery==5.6.3",
     "python-multipart==0.0.32",
+    "cryptography>=50.0.2,<51",
 ]
 
 [project.optional-dependencies]
