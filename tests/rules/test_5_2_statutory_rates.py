@@ -35,6 +35,7 @@ from app.db.seed.pt_slabs import seed_pt_slabs
 from app.db.seed.tax_slabs import seed_tax_slabs
 from app.db.session import get_db
 from app.main import app as fastapi_app
+from app.modules.hr.models import ResignationStatus
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.payroll import payslip_engine
 from app.modules.payroll.payslip_engine import (
@@ -54,7 +55,9 @@ from tests.rules.test_5_4_payroll_runs import (
     _item_for,
     _make_run,
     _month_back,
+    _month_with_days,
     _post_run,
+    _set_flags,
     _staff,
     _structure,
 )
@@ -303,9 +306,11 @@ def test_R1_no_login_gets_401(client: TestClient) -> None:
 
 
 def test_R1_only_super_admin_adds_a_rate(client, db, hr, company_a, super_admin_headers) -> None:
+    owner = _make_user_headers(db, company_a.company_id, UserRole.owner)
+    db.commit()  # a refused request rolls back the session: the new user must be saved first
     for label, headers in (
         ("hr_admin", hr),
-        ("owner", _make_user_headers(db, company_a.company_id, UserRole.owner)),
+        ("owner", owner),
         ("manager", company_a.manager_headers),
         ("employee", company_a.employee_headers),
     ):
@@ -741,8 +746,9 @@ def test_R3_a_run_uses_the_row_in_force_on_the_first_day_of_its_month(
 ) -> None:
     w = rworld
     older = _run_item(client, w, 3)
-    assert _ded(older, "ESI_EE") == "112.50", (
-        f"R3: the seeded 0.75% on 15,000: {older['deductions_json']}"
+    # The structure's balance component is the CTC less the employer PF, so gross is 14,100.
+    assert _ded(older, "ESI_EE") == "105.75", (
+        f"R3: the seeded 0.75% on 14,100: {older['deductions_json']}"
     )
     first_change = _first_of(2)
     mid_month_change = _first_of(1) + timedelta(days=16)
@@ -760,10 +766,10 @@ def test_R3_a_run_uses_the_row_in_force_on_the_first_day_of_its_month(
     middle = _item_for(
         client, w["hr"], _make_run(client, w["hr"], year, month)["id"], w["emp"]["id"]
     )
-    assert _ded(middle, "ESI_EE") == "150.00", f"R3: the 1st-of-month change applies: {middle}"
-    assert _er(middle, "ESI_ER") == "600.00", f"R3: employer share of the new row: {middle}"
+    assert _ded(middle, "ESI_EE") == "141.00", f"R3: the 1st-of-month change applies: {middle}"
+    assert _er(middle, "ESI_ER") == "564.00", f"R3: employer share of the new row: {middle}"
     latest = _run_item(client, w, 1)
-    assert _ded(latest, "ESI_EE") == "150.00", (
+    assert _ded(latest, "ESI_EE") == "141.00", (
         f"R3: a change on the 17th does not apply to that month: {latest['deductions_json']}"
     )
 
@@ -1013,16 +1019,21 @@ def test_R5_the_epf_rows_equal_the_source_table(client, db, hr) -> None:
     for row in (one, two):
         assert (row["employee_rate"], row["employer_rate"]) == ("12.000", "12.000"), row
         assert row["employer_epf_rate"] == "3.670" and row["employer_eps_rate"] == "8.330", row
-        assert row["edli_rate"] == "0.500" and row["admin_charge_rate"] == "0.650", row
+        assert row["edli_rate"] == "0.500", row
+        assert row["admin_charge_rate"] is None, (
+            f"R5: the EPF administrative charge is not seeded (unconfirmed figure): {row}"
+        )
     assert (one["wage_ceiling"], one["effective_to"]) == ("15000.00", "2026-09-16"), one
     assert (two["wage_ceiling"], two["effective_to"]) == ("25000.00", None), two
     assert one["source_url"] == EPF_ROW_1_SOURCE and two["source_url"] == EPF_ROW_2_SOURCE
     for link in (
         "https://www.epfindia.gov.in/site_docs/PDFs/MiscPDFs/Employer_Information_Booklet.pdf",
         "https://pmvbry.epfindia.gov.in/insurance-scheme-edli/",
-        "https://www.epfindia.gov.in/site_docs/PDFs/CBT_Files/220CBT_AGENDA5.pdf",
     ):
         assert link in one["source_note"], f"R5: row 1 note must list {link}"
+    for row in (one, two):
+        assert "220CBT_AGENDA5" not in row["source_note"], "R5: the CBT agenda link is removed"
+        assert "0.65" not in row["source_note"], "R5: the 0.65 administrative figure is removed"
     for link in (
         "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2310811&reg=48&lang=2",
         "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2314111&lang=1&reg=3",
@@ -1047,6 +1058,208 @@ def test_R5_the_esi_row_equals_the_source_table(client, db, hr) -> None:
     assert row["source_url"] == "https://esic.gov.in/contribution", row
     assert "https://esic.gov.in/coverage" in row["source_note"], row["source_note"]
     assert row["edli_rate"] is None and row["admin_charge_rate"] is None, "R5: EPF-only columns"
+    assert row.get("employee_exempt_daily_wage") == "176.00", (
+        f"R5: the ESI row carries the Rs 176 daily-wage exemption: {row}"
+    )
+    note = row["source_note"]
+    for needed in ("176", "assumption", "ESI (Central) Rules, 1950", "calendar days"):
+        assert needed in note, f"R5: the ESI note must say {needed!r}: {note}"
+    assert "does not give a date" in note, "R5: the note says the page gives no date for 176"
+
+
+def test_R5_epf_rows_have_no_daily_wage_exemption(client, db, hr) -> None:
+    _seed_all(db)
+    for row in _items(_list_rates(client, hr, "?scheme=epf")):
+        assert row.get("employee_exempt_daily_wage", "missing") is None, row
+
+
+def _esi_input(gross: str, days: int, exempt: str | None = "176.00") -> PayslipInput:
+    """ESI only: the whole CTC is one BASIC line, so earned gross == `gross` for a full month."""
+    spec = _attr("app.modules.payroll.payslip_engine", "EsiRateSpec")
+    try:
+        rate = spec(
+            employee_rate=Decimal("0.750"),
+            employer_rate=Decimal("3.250"),
+            wage_ceiling=Decimal("21000.00"),
+            employee_exempt_daily_wage=Decimal(exempt) if exempt is not None else None,
+        )
+    except TypeError as exc:
+        pytest.fail(f"R5: EsiRateSpec has no employee_exempt_daily_wage yet: {exc}")
+    return _engine_input(
+        ctc=Decimal(gross) * 12,
+        statutory=StatutoryConfigSpec(
+            pf_enabled=False, esi_enabled=True, pt_enabled=False, tds_enabled=False
+        ),
+        esi_rate=rate,
+        month=4 if days == 30 else 5,
+        working_days=Decimal(days),
+        present_days=Decimal(days),
+    )
+
+
+def _esi(out) -> dict[str, str | None]:
+    return {
+        "ee": next((str(d.amount) for d in out.deductions if d.code == "ESI_EE"), None),
+        "er": next((str(d.amount) for d in out.employer_contributions if d.code == "ESI_ER"), None),
+    }
+
+
+def test_R5_the_average_daily_wage_is_one_named_function() -> None:
+    average = _attr("app.modules.payroll.payslip_engine", "esi_average_daily_wage")
+    assert average(Decimal("5280.00"), Decimal("30")) == Decimal("176.00")
+    assert average(Decimal("5456.00"), Decimal("31")) == Decimal("176.00")
+    assert average(Decimal("5280.01"), Decimal("30")) > Decimal("176.00")
+
+
+@pytest.mark.parametrize(
+    "gross,days,employee_share",
+    [
+        ("5280.00", 30, "0.00"),
+        ("5280.01", 30, "39.60"),
+        ("5456.00", 31, "0.00"),
+        ("5456.01", 31, "40.92"),
+    ],
+)
+def test_R5_the_esi_employee_share_is_nil_at_or_below_the_daily_wage_limit(
+    gross, days, employee_share
+) -> None:
+    result = _esi(calculate_payslip(_esi_input(gross, days)))
+    assert result["ee"] == employee_share, f"R5: gross {gross} over {days} days: {result}"
+
+
+@pytest.mark.parametrize("gross,days", [("5280.00", 30), ("5456.00", 31), ("5280.01", 30)])
+def test_R5_the_employer_esi_share_is_still_charged_when_the_employee_is_exempt(
+    gross, days
+) -> None:
+    result = _esi(calculate_payslip(_esi_input(gross, days)))
+    expected = (Decimal(gross) * Decimal("3.250") / Decimal("100")).quantize(
+        Decimal("0.01"), "ROUND_HALF_UP"
+    )
+    assert result["er"] == str(expected), f"R5: employer share on {gross}: {result}"
+
+
+def test_R5_a_row_without_an_exemption_value_exempts_nobody() -> None:
+    result = _esi(calculate_payslip(_esi_input("5280.00", 30, exempt=None)))
+    assert result["ee"] == "39.60", f"R5: no exemption value means the share is charged: {result}"
+
+
+def test_R5_the_exemption_does_not_override_the_wage_ceiling_check() -> None:
+    spec = _attr("app.modules.payroll.payslip_engine", "EsiRateSpec")
+    try:
+        rate = spec(Decimal("0.750"), Decimal("3.250"), Decimal("4000.00"), Decimal("176.00"))
+    except TypeError as exc:
+        pytest.fail(f"R5: EsiRateSpec has no daily-wage exemption field yet: {exc}")
+    out = calculate_payslip(
+        _engine_input(
+            ctc=Decimal("5280.00") * 12,
+            statutory=StatutoryConfigSpec(
+                pf_enabled=False, esi_enabled=True, pt_enabled=False, tds_enabled=False
+            ),
+            esi_rate=rate,
+            working_days=Decimal("30"),
+        )
+    )
+    assert _esi(out) == {"ee": None, "er": None}, "R5: above the ceiling there is no ESI at all"
+
+
+def test_R5_a_run_gives_a_low_paid_employee_a_nil_employee_share_and_a_charged_employer_share(
+    client, db, rworld
+) -> None:
+    w = rworld
+    low = _staff(client, db, w["ctx"], _structure(client, w["hr"]), ctc="60000.00", exempt=True)
+    year, month = _month_back(1)
+    run = _make_run(client, w["hr"], year, month)
+    item = _item_for(client, w["hr"], run["id"], low["id"])
+    assert _ded(item, "ESI_EE") == "0.00", f"R5: exempt employee share: {item['deductions_json']}"
+    employer = _er(item, "ESI_ER")
+    assert employer is not None and Decimal(employer) > 0, f"R5: employer share stays: {item}"
+
+
+def test_R5_the_rate_route_takes_the_daily_wage_for_esi_only(
+    client, db, super_admin_headers
+) -> None:
+    ok = _post_rate(client, super_admin_headers, employee_exempt_daily_wage="200.00")
+    assert ok.status_code == 201, f"R5: ESI row with an exemption: {ok.text}"
+    assert ok.json().get("employee_exempt_daily_wage") == "200.00", ok.json()
+    for bad in ("-1", "0", "1.005", "100000000.00", "abc"):
+        resp = _post_rate(client, super_admin_headers, employee_exempt_daily_wage=bad)
+        assert resp.status_code == 422, f"R5: exemption {bad!r} must give 422: {resp.text}"
+        assert "employee_exempt_daily_wage" in _fields(resp)
+    epf = _post_rate(client, super_admin_headers, scheme="epf", employee_exempt_daily_wage="176.00")
+    assert epf.status_code == 422, f"R5: an EPF row cannot carry a daily-wage exemption: {epf.text}"
+
+
+# --- Gujarat professional tax for a leaver: reduced by the days worked (Entry 1, Explanation II)
+
+
+def _pt_input(last_working_date: date | None, amount: str = "200.00", **over: Any) -> PayslipInput:
+    return _engine_input(
+        ctc=Decimal("30000.00") * 12,
+        statutory=StatutoryConfigSpec(
+            pf_enabled=False, esi_enabled=False, pt_enabled=True, tds_enabled=False
+        ),
+        pt_slabs=[
+            PTSlabSpec(
+                state="Gujarat",
+                income_min=Decimal("0.00"),
+                income_max=None,
+                monthly_amount=Decimal(amount),
+            )
+        ],
+        month=4,
+        year=2030,
+        working_days=Decimal("30"),
+        last_working_date=last_working_date,
+        **over,
+    )
+
+
+def _pt_amount(out) -> str | None:
+    return next((str(d.amount) for d in out.deductions if d.code == "PT"), None)
+
+
+@pytest.mark.parametrize(
+    "last_day,expected",
+    [
+        (None, "200.00"),
+        (date(2030, 4, 30), "200.00"),
+        (date(2030, 4, 15), "100.00"),
+        (date(2030, 4, 20), "133.33"),
+        (date(2030, 4, 1), "6.67"),
+        (date(2030, 5, 10), "200.00"),
+        (date(2030, 3, 31), "200.00"),
+    ],
+)
+def test_R5_professional_tax_of_a_leaver_is_reduced_in_proportion_to_the_days_worked(
+    last_day, expected
+) -> None:
+    out = calculate_payslip(_pt_input(last_day))
+    assert _pt_amount(out) == expected, f"R5: last working day {last_day}: PT {_pt_amount(out)}"
+
+
+def test_R5_the_proration_rounds_half_up_to_two_decimals() -> None:
+    out = calculate_payslip(_pt_input(date(2030, 4, 3), amount="0.50"))
+    assert _pt_amount(out) == "0.05", f"R5: 0.50 x 3/30 = 0.05: {_pt_amount(out)}"
+    out = calculate_payslip(_pt_input(date(2030, 4, 1), amount="0.15"))
+    assert _pt_amount(out) == "0.01", "R5: 0.15 x 1/30 = 0.005 rounds half up to 0.01"
+
+
+def test_R5_a_run_prorates_the_professional_tax_of_a_leaver(client, db, rworld) -> None:
+    w = rworld
+    year, month = _month_with_days(30)
+    leaver = _staff(client, db, w["ctx"], _structure(client, w["hr"]), ctc="180000.00", exempt=True)
+    _set_flags(
+        db,
+        w["ctx"],
+        leaver["id"],
+        resignation_status=ResignationStatus.approved,
+        last_working_date=date(year, month, 15),
+    )
+    run = _make_run(client, w["hr"], year, month)
+    assert _ded(_item_for(client, w["hr"], run["id"], leaver["id"]), "PT") == "100.00"
+    assert _ded(_item_for(client, w["hr"], run["id"], w["emp"]["id"]), "PT") == "200.00", (
+        "R5: a full month is unchanged"
+    )
 
 
 def test_R5_gujarat_professional_tax_equals_the_source_table(client, db, hr) -> None:
