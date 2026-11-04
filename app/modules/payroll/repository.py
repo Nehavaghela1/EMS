@@ -39,13 +39,37 @@ class SalaryStructureRepository:
             )
         )
 
+    def get_by_id_including_deleted(
+        self, structure_id: uuid.UUID, company_id: uuid.UUID
+    ) -> SalaryStructure | None:
+        """For showing a salary that was assigned under a structure which was deleted later."""
+        return self.db.scalar(
+            select(SalaryStructure)
+            .options(selectinload(SalaryStructure.components))
+            .where(SalaryStructure.id == structure_id, SalaryStructure.company_id == company_id)
+        )
+
+    def get_by_name(
+        self, company_id: uuid.UUID, name: str, exclude_id: uuid.UUID | None = None
+    ) -> SalaryStructure | None:
+        """A live structure with this name, ignoring case and surrounding spaces."""
+        stmt = select(SalaryStructure).where(
+            SalaryStructure.company_id == company_id,
+            func.lower(SalaryStructure.name) == name.strip().lower(),
+            SalaryStructure.deleted_at.is_(None),
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(SalaryStructure.id != exclude_id)
+        return self.db.scalar(stmt)
+
     def list_structures(
         self, company_id: uuid.UUID, page_params: PageParams
     ) -> tuple[list[SalaryStructure], int, int]:
         stmt = (
             select(SalaryStructure)
+            .options(selectinload(SalaryStructure.components))
             .where(SalaryStructure.company_id == company_id, SalaryStructure.deleted_at.is_(None))
-            .order_by(SalaryStructure.name.asc())
+            .order_by(func.lower(SalaryStructure.name).asc(), SalaryStructure.id.asc())
         )
         return paginate(self.db, stmt, page_params)
 
@@ -67,26 +91,22 @@ class SalaryStructureRepository:
         structure.deleted_at = utcnow()
         self.db.flush()
 
-    def count_active_assignments(self, structure_id: uuid.UUID, company_id: uuid.UUID) -> int:
-        """Route 82's 409 gate: a structure currently assigned to any
-        employee (an employee_salaries row with no effective_to, or one
-        that has not yet ended) cannot be deleted."""
-        today = date.today()
-        return (
-            self.db.scalar(
-                select(EmployeeSalary.id)
-                .where(
+    def list_current_and_future_salaries(
+        self, structure_id: uuid.UUID, company_id: uuid.UUID, today: date
+    ) -> list[EmployeeSalary]:
+        """Salaries on this structure that are in force today or start later (an
+        employee_salaries row with no effective_to, or one that has not ended yet)."""
+        return list(
+            self.db.scalars(
+                select(EmployeeSalary).where(
                     EmployeeSalary.structure_id == structure_id,
                     EmployeeSalary.company_id == company_id,
                     EmployeeSalary.deleted_at.is_(None),
-                    EmployeeSalary.effective_from <= today,
                     or_(
                         EmployeeSalary.effective_to.is_(None), EmployeeSalary.effective_to >= today
                     ),
                 )
-                .limit(1)
-            )
-            is not None
+            ).all()
         )
 
 
@@ -161,7 +181,7 @@ class EmployeeSalaryRepository:
         )
         if exclude_id is not None:
             stmt = stmt.where(EmployeeSalary.id != exclude_id)
-        return list(self.db.scalars(stmt).all())
+        return list(self.db.scalars(stmt.order_by(EmployeeSalary.effective_from.asc())).all())
 
     def get_in_force(
         self, employee_id: uuid.UUID, company_id: uuid.UUID, on_date: date
@@ -178,6 +198,41 @@ class EmployeeSalaryRepository:
                 or_(EmployeeSalary.effective_to.is_(None), EmployeeSalary.effective_to >= on_date),
             )
         )
+
+    def list_history(
+        self,
+        employee_id: uuid.UUID,
+        company_id: uuid.UUID,
+        page_params: PageParams,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> tuple[list[EmployeeSalary], int, int]:
+        """Every live salary row of the employee, newest first; the date filters apply to the
+        row's effective_from."""
+        stmt = select(EmployeeSalary).where(
+            EmployeeSalary.employee_id == employee_id,
+            EmployeeSalary.company_id == company_id,
+            EmployeeSalary.deleted_at.is_(None),
+        )
+        if from_date is not None:
+            stmt = stmt.where(EmployeeSalary.effective_from >= from_date)
+        if to_date is not None:
+            stmt = stmt.where(EmployeeSalary.effective_from <= to_date)
+        stmt = stmt.order_by(EmployeeSalary.effective_from.desc(), EmployeeSalary.id.asc())
+        return paginate(self.db, stmt, page_params)
+
+    def structure_names(
+        self, structure_ids: list[uuid.UUID], company_id: uuid.UUID
+    ) -> dict[uuid.UUID, str]:
+        """Names of structures, deleted ones included (history keeps showing them)."""
+        if not structure_ids:
+            return {}
+        rows = self.db.execute(
+            select(SalaryStructure.id, SalaryStructure.name).where(
+                SalaryStructure.id.in_(structure_ids), SalaryStructure.company_id == company_id
+            )
+        ).all()
+        return {row[0]: row[1] for row in rows}
 
     def create(self, **kwargs) -> EmployeeSalary:
         salary = EmployeeSalary(**kwargs)
@@ -302,6 +357,23 @@ class PayrollRunRepository:
     def __init__(self, db: Session):
         self.db = db
 
+    def count_in_flight(self, company_id: uuid.UUID) -> int:
+        """Runs of the company that are being calculated or wait for approval."""
+        return (
+            self.db.scalar(
+                select(func.count())
+                .select_from(PayrollRun)
+                .where(
+                    PayrollRun.company_id == company_id,
+                    PayrollRun.deleted_at.is_(None),
+                    PayrollRun.status.in_(
+                        [PayrollRunStatus.processing, PayrollRunStatus.pending_approval]
+                    ),
+                )
+            )
+            or 0
+        )
+
     def get_by_id(self, run_id: uuid.UUID, company_id: uuid.UUID) -> PayrollRun | None:
         return self.db.scalar(
             select(PayrollRun)
@@ -379,6 +451,27 @@ class PayrollRunRepository:
 class PayrollItemRepository:
     def __init__(self, db: Session):
         self.db = db
+
+    def first_released_month_from(
+        self, employee_id: uuid.UUID, company_id: uuid.UUID, year: int, month: int
+    ) -> tuple[int, int] | None:
+        """The earliest (year, month), from the given month on, that an approved or paid run
+        has already paid this employee for; None when there is none."""
+        row = self.db.execute(
+            select(PayrollRun.year, PayrollRun.month)
+            .join(PayrollItem, PayrollItem.payroll_run_id == PayrollRun.id)
+            .where(
+                PayrollItem.employee_id == employee_id,
+                PayrollItem.company_id == company_id,
+                PayrollRun.company_id == company_id,
+                PayrollRun.deleted_at.is_(None),
+                PayrollRun.status.in_([PayrollRunStatus.approved, PayrollRunStatus.paid]),
+                PayrollRun.year * 12 + PayrollRun.month >= year * 12 + month,
+            )
+            .order_by(PayrollRun.year.asc(), PayrollRun.month.asc())
+            .limit(1)
+        ).first()
+        return (row[0], row[1]) if row else None
 
     def create(self, **kwargs) -> PayrollItem:
         item = PayrollItem(**kwargs)

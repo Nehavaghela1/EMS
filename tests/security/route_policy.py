@@ -232,6 +232,8 @@ POLICY: dict[tuple[str, str], Any] = {
         UserRole.hr_admin, UserRole.super_admin
     ),
     ("GET", "/api/v1/payroll/employees/{employee_id}/salary"): AUTHENTICATED,
+    # 5.3: the service decides (own, owner, HR admin), a manager is refused there.
+    ("GET", "/api/v1/payroll/employees/{employee_id}/salary-history"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/payslips/me"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/payslips/{employee_id}"): ROLES(
         UserRole.hr_admin, UserRole.super_admin

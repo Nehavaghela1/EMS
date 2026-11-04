@@ -111,6 +111,13 @@ def _round(amount: Decimal) -> Decimal:
     return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+NO_SALARY_MESSAGE = "No salary is currently assigned to this employee."
+
+
+def _name_taken(name: str) -> str:
+    return f"A salary structure named '{name}' already exists."
+
+
 class SalaryStructureService:
     """Routes 78-82 (Spec 10.6)."""
 
@@ -118,6 +125,7 @@ class SalaryStructureService:
         self.db = db
         self.repo = SalaryStructureRepository(db)
         self.component_repo = SalaryComponentRepository(db)
+        self.run_repo = PayrollRunRepository(db)
         self.audit = AuditService(db)
 
     def _get_or_404(self, company_id: uuid.UUID, structure_id: uuid.UUID) -> SalaryStructure:
@@ -125,6 +133,69 @@ class SalaryStructureService:
         if structure is None:
             raise NotFoundError("Salary structure not found.")
         return structure
+
+    def _assert_name_free(
+        self, company_id: uuid.UUID, name: str, exclude_id: uuid.UUID | None = None
+    ) -> None:
+        if self.repo.get_by_name(company_id, name, exclude_id) is not None:
+            raise ConflictError(_name_taken(name))
+
+    def _add_components(
+        self,
+        company_id: uuid.UUID,
+        structure_id: uuid.UUID,
+        components: list[SalaryComponentCreateRequest],
+    ) -> None:
+        for c in components:
+            self.component_repo.create(
+                company_id=company_id,
+                structure_id=structure_id,
+                name=c.name,
+                code=c.code,
+                type=c.type,
+                calculation_type=c.calculation_type,
+                value=c.value,
+                percentage_of=c.percentage_of,
+                is_taxable=c.is_taxable,
+                is_statutory=c.is_statutory,
+                display_order=c.display_order,
+            )
+
+    def _assert_assigned_salaries_stay_valid(
+        self,
+        company_id: uuid.UUID,
+        structure_id: uuid.UUID,
+        components: list[SalaryComponentCreateRequest],
+    ) -> None:
+        """An edit may not make a salary that is in force today, or starts later, refuse its
+        own CTC check (Spec 19 WP-16 gate)."""
+        salaries = self.repo.list_current_and_future_salaries(
+            structure_id, company_id, utcnow().date()
+        )
+        earnings = [
+            SalaryComponent(
+                id=uuid.uuid4(),
+                code=c.code,
+                name=c.name,
+                type=c.type,
+                calculation_type=c.calculation_type,
+                value=c.value,
+                percentage_of=c.percentage_of,
+            )
+            for c in components
+            if c.type == SalaryComponentType.earning
+        ]
+        broken = 0
+        for salary in salaries:
+            try:
+                check_ctc_covers_earnings(earnings, salary.ctc)
+            except InsufficientCtcError:
+                broken += 1
+        if broken:
+            raise ConflictError(
+                f"This edit would make {broken} {'salary' if broken == 1 else 'salaries'} "
+                "on this structure invalid. Revise those salaries first."
+            )
 
     @staticmethod
     def _validate_components(components: list[SalaryComponentCreateRequest]) -> None:
@@ -185,30 +256,23 @@ class SalaryStructureService:
         self, company_id: uuid.UUID, data: SalaryStructureCreateRequest, actor: User
     ) -> SalaryStructure:
         self._validate_components(data.components)
-        structure = self.repo.create(
-            company_id=company_id, name=data.name, country=data.country, level=data.level
-        )
-        for c in data.components:
-            self.component_repo.create(
-                company_id=company_id,
-                structure_id=structure.id,
-                name=c.name,
-                code=c.code,
-                type=c.type,
-                calculation_type=c.calculation_type,
-                value=c.value,
-                percentage_of=c.percentage_of,
-                is_taxable=c.is_taxable,
-                is_statutory=c.is_statutory,
-                display_order=c.display_order,
+        self._assert_name_free(company_id, data.name)
+        try:
+            structure = self.repo.create(
+                company_id=company_id, name=data.name, country=data.country, level=data.level
             )
+        except IntegrityError as exc:
+            # Two requests passed the look-up above at the same moment; the unique index decided.
+            self.db.rollback()
+            raise ConflictError(_name_taken(data.name)) from exc
+        self._add_components(company_id, structure.id, data.components)
         self.audit.record(
             company_id=company_id,
             actor=actor,
             action="SALARY_STRUCTURE_CREATED",
             entity_type="salary_structure",
             entity_id=structure.id,
-            details={"name": structure.name, "component_count": len(data.components)},
+            details={"structure_id": str(structure.id), "component_count": len(data.components)},
         )
         self.db.commit()
         reloaded = self.repo.get_by_id(structure.id, company_id)  # reload with components
@@ -232,26 +296,32 @@ class SalaryStructureService:
     ) -> SalaryStructure:
         structure = self._get_or_404(company_id, structure_id)
         updates = data.model_dump(exclude={"components"}, exclude_unset=True)
-        if updates:
-            self.repo.update(structure, **updates)
-
+        # Every check runs before the first write, so a refused edit changes nothing.
+        if "name" in updates:
+            self._assert_name_free(company_id, updates["name"], exclude_id=structure.id)
         if data.components is not None:
             self._validate_components(data.components)
-            self.component_repo.delete_all_for_structure(structure.id, company_id)
-            for c in data.components:
-                self.component_repo.create(
-                    company_id=company_id,
-                    structure_id=structure.id,
-                    name=c.name,
-                    code=c.code,
-                    type=c.type,
-                    calculation_type=c.calculation_type,
-                    value=c.value,
-                    percentage_of=c.percentage_of,
-                    is_taxable=c.is_taxable,
-                    is_statutory=c.is_statutory,
-                    display_order=c.display_order,
+            if self.run_repo.count_in_flight(company_id):
+                raise ConflictError(
+                    "Components cannot be edited while a payroll run is processing or "
+                    "waiting for approval."
                 )
+            self._assert_assigned_salaries_stay_valid(company_id, structure.id, data.components)
+
+        if updates:
+            try:
+                self.repo.update(structure, **updates)
+            except IntegrityError as exc:
+                self.db.rollback()
+                raise ConflictError(_name_taken(updates.get("name", ""))) from exc
+        details: dict = {"structure_id": str(structure.id)}
+        fields = sorted(updates.keys())
+        if data.components is not None:
+            self.component_repo.delete_all_for_structure(structure.id, company_id)
+            self._add_components(company_id, structure.id, data.components)
+            fields = sorted([*fields, "components"])
+            details["component_count"] = len(data.components)
+        details["fields"] = fields
 
         self.audit.record(
             company_id=company_id,
@@ -259,7 +329,7 @@ class SalaryStructureService:
             action="SALARY_STRUCTURE_UPDATED",
             entity_type="salary_structure",
             entity_id=structure.id,
-            details={"fields": sorted(updates.keys())},
+            details=details,
         )
         self.db.commit()
         reloaded = self.repo.get_by_id(structure.id, company_id)
@@ -268,9 +338,13 @@ class SalaryStructureService:
 
     def delete_structure(self, company_id: uuid.UUID, structure_id: uuid.UUID, actor: User) -> None:
         structure = self._get_or_404(company_id, structure_id)
-        if self.repo.count_active_assignments(structure.id, company_id):
+        in_use = len(
+            self.repo.list_current_and_future_salaries(structure.id, company_id, utcnow().date())
+        )
+        if in_use:
             raise ConflictError(
-                "Cannot delete a structure currently assigned to an active employee."
+                f"Cannot delete this structure: {in_use} current or future "
+                f"{'salary uses' if in_use == 1 else 'salaries use'} it."
             )
         self.repo.soft_delete(structure)
         self.audit.record(
@@ -279,7 +353,7 @@ class SalaryStructureService:
             action="SALARY_STRUCTURE_DELETED",
             entity_type="salary_structure",
             entity_id=structure.id,
-            details={"name": structure.name},
+            details={"structure_id": str(structure.id)},
         )
         self.db.commit()
 
@@ -370,6 +444,37 @@ def resolve_earning_breakdown(
     return earning_amounts, deduction_amounts, gross
 
 
+def check_ctc_covers_earnings(earning_components: list[SalaryComponent], ctc: Decimal) -> None:
+    """Spec 19 WP-16 gate: with a balance component the CTC must be at least the fixed and
+    percentage earnings (the balance is what is left and may not go negative); without one the
+    earnings must total the CTC exactly. Raises InsufficientCtcError with the numbers."""
+    resolved = _resolve_earning_amounts(earning_components, ctc)
+    balance_component = next(
+        (c for c in earning_components if c.calculation_type == CalculationType.balance), None
+    )
+    non_balance_total = sum(
+        (
+            amount
+            for cid, amount in resolved.items()
+            if balance_component is None or cid != balance_component.id
+        ),
+        Decimal("0"),
+    )
+    if balance_component is not None:
+        if resolved[balance_component.id] < 0:
+            raise InsufficientCtcError(
+                f"This structure's fixed and percentage earnings total {non_balance_total}, "
+                f"more than the {ctc} CTC being assigned.",
+                details={"required_minimum": str(non_balance_total)},
+            )
+    elif non_balance_total != _round(ctc):
+        raise InsufficientCtcError(
+            f"This structure has no `balance` component, and its earnings total "
+            f"{non_balance_total}, not the {ctc} CTC being assigned.",
+            details={"components_total": str(non_balance_total)},
+        )
+
+
 class EmployeeSalaryService:
     """Route 83-84 (Spec 10.6)."""
 
@@ -385,23 +490,37 @@ class EmployeeSalaryService:
         self, company_id: uuid.UUID, employee_id: uuid.UUID, data: SalaryAssignRequest, actor: User
     ) -> tuple[EmployeeSalary, SalaryStructure, list, list, Decimal]:
         target_company_id = company_id
+        # The employee row is locked first: two assignments for one employee queue up here, so
+        # the second one sees the first one's row when it looks for overlaps.
         if actor.role == UserRole.super_admin:
-            employee = self.employee_repo.get_by_id_any_status(employee_id, None)
-            if employee is None:
+            found = self.employee_repo.get_by_id_any_status(employee_id, None)
+            if found is None:
                 raise NotFoundError("Employee not found.")
-            target_company_id = employee.company_id
+            target_company_id = found.company_id
+            employee = self.employee_repo.get_by_id_for_update(
+                employee_id, target_company_id, allow_inactive=True
+            )
         else:
-            employee = self.employee_repo.get_by_id(employee_id, target_company_id)
-            if employee is None:
-                raise NotFoundError("Employee not found.")
+            employee = self.employee_repo.get_by_id_for_update(employee_id, target_company_id)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
 
         structure = self.structure_repo.get_by_id(data.structure_id, target_company_id)
         if structure is None:
             raise NotFoundError("Salary structure not found.")
+        if not structure.is_active:
+            raise ConflictError("This salary structure is inactive and cannot be assigned.")
 
-        overlapping = self.repo.get_overlapping(employee_id, target_company_id, data.effective_from)
+        if self.repo.count_for_employee(employee_id, target_company_id) and not (
+            data.revision_reason
+        ):
+            raise ValidationError("A reason is required when revising an existing salary.")
+
+        # A new salary is open-ended, so it overlaps every existing row that is still open or
+        # ends on/after its start. The one open-ended row that started earlier is closed below;
+        # everything else is a conflict.
         open_ended = None
-        for row in overlapping:
+        for row in self.repo.get_overlapping(employee_id, target_company_id, data.effective_from):
             if row.effective_to is None:
                 if row.effective_from >= data.effective_from:
                     raise SalaryOverlapError(
@@ -411,11 +530,21 @@ class EmployeeSalaryService:
                     )
                 open_ended = row
             else:
-                if row.effective_from <= data.effective_from <= row.effective_to:
-                    raise SalaryOverlapError(
-                        f"This overlaps an existing salary period "
-                        f"({row.effective_from.isoformat()} to {row.effective_to.isoformat()})."
-                    )
+                raise SalaryOverlapError(
+                    f"This overlaps an existing salary period "
+                    f"({row.effective_from.isoformat()} to {row.effective_to.isoformat()})."
+                )
+
+        # History that a payslip already relies on is not rewritten: no start in, or before, a
+        # month that an approved or paid run has already paid this employee for.
+        paid = self.payroll_item_repo.first_released_month_from(
+            employee_id, target_company_id, data.effective_from.year, data.effective_from.month
+        )
+        if paid is not None:
+            raise ConflictError(
+                f"This employee has already been paid for {paid[1]:02d}/{paid[0]} by an approved "
+                "or paid payroll run. Choose a start date after that month."
+            )
 
         # Validate the CTC actually covers the structure's fixed + percentage
         # earnings before committing anything (Spec 19 WP-16 gate): with a
@@ -425,58 +554,44 @@ class EmployeeSalaryService:
         earning_components = [
             c for c in structure.components if c.type == SalaryComponentType.earning
         ]
-        resolved = _resolve_earning_amounts(earning_components, data.ctc)
-        balance_component = next(
-            (c for c in earning_components if c.calculation_type == CalculationType.balance), None
-        )
-        non_balance_total = sum(
-            (
-                amount
-                for cid, amount in resolved.items()
-                if balance_component is None or cid != balance_component.id
-            ),
-            Decimal("0"),
-        )
-        if balance_component is not None:
-            if resolved[balance_component.id] < 0:
-                raise InsufficientCtcError(
-                    f"This structure's fixed and percentage earnings total {non_balance_total}, "
-                    f"more than the {data.ctc} CTC being assigned.",
-                    details={"required_minimum": str(non_balance_total)},
-                )
-        elif non_balance_total != _round(data.ctc):
-            raise InsufficientCtcError(
-                f"This structure has no `balance` component, and its earnings total "
-                f"{non_balance_total}, not the {data.ctc} CTC being assigned.",
-                details={"components_total": str(non_balance_total)},
+        check_ctc_covers_earnings(earning_components, data.ctc)
+
+        # Closing the old row and creating the new one are one save: any failure rolls both back.
+        try:
+            if open_ended is not None:
+                self.repo.close(open_ended, data.effective_from - timedelta(days=1))
+            salary = self.repo.create(
+                company_id=target_company_id,
+                employee_id=employee_id,
+                structure_id=data.structure_id,
+                ctc=data.ctc,
+                effective_from=data.effective_from,
+                revision_reason=data.revision_reason,
+                created_by=actor.id,
             )
-
-        if open_ended is not None:
-            self.repo.close(open_ended, data.effective_from - timedelta(days=1))
-
-        salary = self.repo.create(
-            company_id=target_company_id,
-            employee_id=employee_id,
-            structure_id=data.structure_id,
-            ctc=data.ctc,
-            effective_from=data.effective_from,
-            revision_reason=data.revision_reason,
-            created_by=actor.id,
-        )
-        self.audit.record(
-            company_id=target_company_id,
-            actor=actor,
-            action="EMPLOYEE_SALARY_ASSIGNED",
-            entity_type="employee_salary",
-            entity_id=salary.id,
-            details={
-                "employee_id": str(employee_id),
-                "structure_id": str(data.structure_id),
-                "ctc": str(data.ctc),
-                "effective_from": data.effective_from.isoformat(),
-            },
-        )
-        self.db.commit()
+            self.audit.record(
+                company_id=target_company_id,
+                actor=actor,
+                action="EMPLOYEE_SALARY_ASSIGNED",
+                entity_type="employee_salary",
+                entity_id=salary.id,
+                details={
+                    "employee_id": str(employee_id),
+                    "structure_id": str(data.structure_id),
+                    "effective_from": data.effective_from.isoformat(),
+                },
+            )
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            if "ex_employee_salaries_no_overlap" in str(exc.orig):
+                raise SalaryOverlapError(
+                    "This overlaps an existing salary period for this employee."
+                ) from exc
+            raise
+        except Exception:
+            self.db.rollback()
+            raise
         earnings, deductions, gross = resolve_earning_breakdown(structure.components, salary.ctc)
         return salary, structure, earnings, deductions, gross
 
@@ -484,28 +599,79 @@ class EmployeeSalaryService:
         self, company_id: uuid.UUID, employee_id: uuid.UUID, current_user: User
     ) -> tuple[EmployeeSalary, SalaryStructure, list, list, Decimal]:
         """Route 84: Own, HR, Super Admin."""
-        lookup_company_id = company_id
+        employee, lookup_company_id = self._employee_visible_to(
+            company_id, employee_id, current_user
+        )
+        salary = self.repo.get_in_force(employee_id, lookup_company_id, utcnow().date())
+        if salary is None:
+            raise NotFoundError(NO_SALARY_MESSAGE)
+        # A structure deleted after the salary was assigned still describes that salary.
+        structure = self.structure_repo.get_by_id_including_deleted(
+            salary.structure_id, lookup_company_id
+        )
+        if structure is None:
+            raise NotFoundError("Salary structure not found.")
+        self._audit_hr_view(lookup_company_id, employee, current_user, "employee_salary")
+        earnings, deductions, gross = resolve_earning_breakdown(structure.components, salary.ctc)
+        return salary, structure, earnings, deductions, gross
+
+    def list_history(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        current_user: User,
+        page_params: PageParams,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> tuple[list[tuple[EmployeeSalary, str]], int, int]:
+        """Every salary row of an employee, newest first, with its structure's name."""
+        if from_date is not None and to_date is not None and from_date > to_date:
+            raise ValidationError("from_date must not be after to_date.")
+        employee, lookup_company_id = self._employee_visible_to(
+            company_id, employee_id, current_user
+        )
+        rows, total, pages = self.repo.list_history(
+            employee_id, lookup_company_id, page_params, from_date, to_date
+        )
+        names = self.repo.structure_names([r.structure_id for r in rows], lookup_company_id)
+        self._audit_hr_view(lookup_company_id, employee, current_user, "employee_salary_history")
+        return [(r, names.get(r.structure_id, "")) for r in rows], total, pages
+
+    def _employee_visible_to(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, current_user: User
+    ) -> tuple[Employee, uuid.UUID]:
+        """Own salary, or owner / HR admin for anyone in the company, or super admin. A
+        manager gets no access, not even to a direct report. Another company's employee and a
+        missing one are the same 404."""
         if current_user.role == UserRole.super_admin:
             employee = self.employee_repo.get_by_id_any_status(employee_id, None)
             if employee is None:
                 raise NotFoundError("Employee not found.")
-            lookup_company_id = employee.company_id
-        else:
-            employee = self.employee_repo.get_by_id_any_status(employee_id, lookup_company_id)
-            if employee is None:
-                raise NotFoundError("Employee not found.")
-            is_hr = current_user.role in HR_LEVEL_ROLES
-            is_own = employee.user_id == current_user.id
-            if not (is_hr or is_own):
-                raise ForbiddenError("You do not have permission to view this employee's salary.")
+            return employee, employee.company_id
+        employee = self.employee_repo.get_by_id_any_status(employee_id, company_id)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+        is_hr = current_user.role in HR_LEVEL_ROLES
+        is_own = employee.user_id == current_user.id
+        if not (is_hr or is_own):
+            raise ForbiddenError("You do not have permission to view this employee's salary.")
+        return employee, company_id
 
-        salary = self.repo.get_in_force(employee_id, lookup_company_id, date.today())
-        if salary is None:
-            raise NotFoundError("No salary is currently assigned to this employee.")
-        structure = self.structure_repo.get_by_id(salary.structure_id, lookup_company_id)
-        assert structure is not None  # FK guarantees this
-        earnings, deductions, gross = resolve_earning_breakdown(structure.components, salary.ctc)
-        return salary, structure, earnings, deductions, gross
+    def _audit_hr_view(
+        self, company_id: uuid.UUID, employee: Employee, viewer: User, entity_type: str
+    ) -> None:
+        """An owner or HR admin reading someone else's pay leaves one audit row (ids only)."""
+        if viewer.role not in (UserRole.hr_admin, UserRole.owner) or employee.user_id == viewer.id:
+            return
+        self.audit.record(
+            company_id=company_id,
+            actor=viewer,
+            action="SALARY_VIEWED_BY_HR",
+            entity_type=entity_type,
+            entity_id=employee.id,
+            details={"employee_id": str(employee.id)},
+        )
+        self.db.commit()
 
 
 # Verified 2026-09-03 against EPFO's and ESIC's own published rates (Spec

@@ -1,4 +1,6 @@
 import uuid
+from datetime import date
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
@@ -16,6 +18,8 @@ from app.modules.payroll.models import (
     TaxSlab,
 )
 from app.modules.payroll.schemas import (
+    MAX_SALARY_DATE,
+    MIN_SALARY_DATE,
     EmployeeSalaryResponse,
     PayrollItemResponse,
     PayrollRunCreateRequest,
@@ -27,6 +31,7 @@ from app.modules.payroll.schemas import (
     ReimbursementResponse,
     ReimbursementReviewRequest,
     SalaryAssignRequest,
+    SalaryHistoryItem,
     SalaryStructureCreateRequest,
     SalaryStructureListItem,
     SalaryStructureResponse,
@@ -64,7 +69,9 @@ def _to_structure_response(structure: SalaryStructure) -> SalaryStructureRespons
 
 
 @structures_router.post("", response_model=SalaryStructureResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def create_structure(
+    request: Request,
     data: SalaryStructureCreateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
@@ -74,7 +81,9 @@ def create_structure(
 
 
 @structures_router.get("", response_model=Page[SalaryStructureListItem])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_structures(
+    request: Request,
     company_id: uuid.UUID | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
@@ -106,7 +115,9 @@ def list_structures(
 
 
 @structures_router.get("/{structure_id}", response_model=SalaryStructureResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_structure(
+    request: Request,
     structure_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
@@ -116,7 +127,9 @@ def get_structure(
 
 
 @structures_router.put("/{structure_id}", response_model=SalaryStructureResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_structure(
+    request: Request,
     structure_id: uuid.UUID,
     data: SalaryStructureUpdateRequest,
     db: Session = Depends(get_tenant_db),
@@ -129,7 +142,9 @@ def update_structure(
 
 
 @structures_router.delete("/{structure_id}", status_code=204)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def delete_structure(
+    request: Request,
     structure_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
@@ -143,7 +158,9 @@ def delete_structure(
 @employee_salary_router.post(
     "/{employee_id}/assign", response_model=EmployeeSalaryResponse, status_code=201
 )
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def assign_salary(
+    request: Request,
     employee_id: uuid.UUID,
     data: SalaryAssignRequest,
     db: Session = Depends(get_tenant_db),
@@ -167,7 +184,9 @@ def assign_salary(
 
 
 @employee_salary_router.get("/{employee_id}/salary", response_model=EmployeeSalaryResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_employee_salary(
+    request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
@@ -187,6 +206,48 @@ def get_employee_salary(
         earnings=earnings,
         deductions=deductions,
         gross_earnings=gross,
+    )
+
+
+@employee_salary_router.get("/{employee_id}/salary-history", response_model=Page[SalaryHistoryItem])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_employee_salary_history(
+    request: Request,
+    employee_id: uuid.UUID,
+    from_date: Annotated[
+        date | None,
+        Query(ge=MIN_SALARY_DATE, le=MAX_SALARY_DATE, description="effective_from on/after"),
+    ] = None,
+    to_date: Annotated[
+        date | None,
+        Query(ge=MIN_SALARY_DATE, le=MAX_SALARY_DATE, description="effective_from on/before"),
+    ] = None,
+    params: PageParams = Depends(page_params),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    rows, total, pages = EmployeeSalaryService(db).list_history(
+        user.company_id, employee_id, user, params, from_date, to_date
+    )
+    return Page(
+        items=[
+            SalaryHistoryItem(
+                id=salary.id,
+                structure_id=salary.structure_id,
+                structure_name=structure_name,
+                ctc=salary.ctc,
+                effective_from=salary.effective_from,
+                effective_to=salary.effective_to,
+                revision_reason=salary.revision_reason,
+                created_at=salary.created_at,
+            )
+            for salary, structure_name in rows
+        ],
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
     )
 
 

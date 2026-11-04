@@ -28,7 +28,7 @@ from sqlalchemy import (
 from sqlalchemy import (
     Numeric as SANumeric,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, ExcludeConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -64,6 +64,14 @@ class SalaryStructure(TenantBase):
     __tablename__ = "salary_structures"
     __table_args__ = (
         Index("ix_salary_structures_company_id_is_active", "company_id", "is_active"),
+        # One live structure per name per company, ignoring case (a deleted one frees its name).
+        Index(
+            "uq_salary_structures_company_lower_name",
+            "company_id",
+            text("lower(name)"),
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
@@ -73,7 +81,7 @@ class SalaryStructure(TenantBase):
 
     components: Mapped[list["SalaryComponent"]] = relationship(
         "SalaryComponent",
-        order_by="SalaryComponent.display_order",
+        order_by="[SalaryComponent.display_order, SalaryComponent.code]",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
@@ -123,16 +131,24 @@ class EmployeeSalary(TenantBase):
     """RLS: Yes. Append a new row for every revision; never update an old
     one (7.6) — the row where `effective_from <= payroll_date AND
     (effective_to IS NULL OR effective_to >= payroll_date)` is the one in
-    force. No two rows for the same employee may overlap; enforced in the
-    service (mirrors employee_shifts' own overlap check, WP-09), not a
-    database constraint — a date-range overlap isn't expressible as a
-    simple UNIQUE/CHECK constraint here any more than shift assignments
-    were.
+    force. No two live rows for the same employee may overlap: the service
+    checks it (with a lock on the employee row) and the database enforces
+    it with an exclusion constraint on the employee and the date range.
     """
 
     __tablename__ = "employee_salaries"
     __table_args__ = (
         Index("ix_employee_salaries_company_id_employee_id", "company_id", "employee_id"),
+        ExcludeConstraint(
+            ("employee_id", "="),
+            (
+                text("daterange(effective_from, coalesce(effective_to, 'infinity'::date), '[]')"),
+                "&&",
+            ),
+            name="ex_employee_salaries_no_overlap",
+            using="gist",
+            where=text("deleted_at IS NULL"),
+        ),
     )
 
     employee_id: Mapped[uuid.UUID] = mapped_column(
