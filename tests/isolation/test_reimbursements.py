@@ -8,7 +8,7 @@ from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
-from tests.conftest import TenantContext
+from tests.conftest import TenantContext, days_ago, upload_receipt
 
 
 def _create_employee_with_user(
@@ -58,8 +58,9 @@ def test_reimbursements_are_tenant_isolated(
         json={
             "type": "travel",
             "amount": "1200.00",
-            "expense_date": "2026-05-15",
+            "expense_date": days_ago(15),
             "description": "Company A travel claim",
+            "file_object_id": upload_receipt(client, emp_a_headers),
         },
         headers=emp_a_headers,
     )

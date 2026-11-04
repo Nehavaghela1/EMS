@@ -1,8 +1,11 @@
+import base64
+import io
 import os
 import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -14,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core import email as email_module
 from app.core.config import settings
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.session import get_db
 from app.main import app as fastapi_app
 from app.modules.identity.models import Company, CompanySettings, CompanyStatus, User, UserRole
@@ -48,6 +52,17 @@ if _database_name(settings.TEST_DATABASE_URL) == _database_name(settings.DATABAS
 # forces it, unconditionally, before any test can run.
 settings.EMAIL_BACKEND = "console"
 settings.DEV_EMAIL_COPY_TO = ""
+
+# A fixed throwaway key for the encryption tests: CI has no ENCRYPTION_KEY and a developer's
+# .env may carry a real or empty one. Set on the settings object (this process) and in the
+# environment (the `alembic upgrade head` subprocess below). Never a real key.
+TEST_ENCRYPTION_KEY = base64.b64encode(bytes(range(32))).decode()
+settings.ENCRYPTION_KEY = TEST_ENCRYPTION_KEY
+settings.ENCRYPTION_KEY_VERSION = 1
+settings.ENCRYPTION_PREVIOUS_KEYS = {}
+os.environ["ENCRYPTION_KEY"] = TEST_ENCRYPTION_KEY
+os.environ["ENCRYPTION_KEY_VERSION"] = "1"
+os.environ.pop("ENCRYPTION_PREVIOUS_KEYS", None)
 
 
 def _ensure_test_database_exists() -> None:
@@ -211,6 +226,24 @@ def _make_user_headers(db: Session, company_id: uuid.UUID, role: UserRole) -> di
     db.flush()
     token = create_access_token(sub=str(user.id), company_id=str(company_id), role=role.value)
     return {"Authorization": f"Bearer {token}"}
+
+
+def upload_receipt(client: TestClient, headers: dict[str, str]) -> str:
+    """Upload a small PDF as the user behind `headers` and return its file_object_id: a
+    reimbursement claim needs a receipt that its claimant uploaded (5.6)."""
+    pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+    resp = client.post(
+        "/api/v1/files/upload",
+        files={"file": ("receipt.pdf", io.BytesIO(pdf), "application/pdf")},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["file_object_id"]
+
+
+def days_ago(days: int) -> str:
+    """An ISO date `days` before today (UTC): claim dates are checked against today."""
+    return (utcnow().date() - timedelta(days=days)).isoformat()
 
 
 def _make_tenant(db: Session, *, name: str, code: str) -> TenantContext:

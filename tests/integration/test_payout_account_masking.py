@@ -2,21 +2,37 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.encryption import decrypt_field
 from app.modules.payroll.models import StatutoryConfig
 from app.modules.platform.models import AuditLog
 from tests.conftest import TenantContext
+
+
+def _stored_number(db: Session, company_a: TenantContext) -> str | None:
+    """What the database really holds, decrypted: the plain column no longer exists (5.7)."""
+    db.expire_all()
+    cfg = db.scalar(
+        select(StatutoryConfig).where(StatutoryConfig.company_id == company_a.company_id)
+    )
+    assert cfg is not None
+    if cfg.payout_account_number_enc is None:
+        return None
+    return decrypt_field(
+        bytes(cfg.payout_account_number_enc),
+        company_id=company_a.company_id,
+        column="payout_account_number",
+    )
 
 
 def test_statutory_config_payout_account_number_masking(
     client: TestClient, db: Session, company_a: TenantContext
 ):
     """
-    Task: mask payout_account_number in StatutoryConfigResponse (app/modules/payroll/schemas.py).
-    - Responses return only the last 4 characters, for example "******1234".
-      A value of 4 characters or fewer is fully masked. None stays None.
-    - PUT still accepts the full number and stores it as before.
-    - If a PUT sends back the masked form unchanged, do not overwrite the stored value.
-    - Audit details still contain no value (only field names in 'fields').
+    - Responses show eight asterisks plus the last four digits, for example "********1234".
+    - PUT accepts the full number and stores it encrypted.
+    - If a PUT sends back the masked form unchanged, the stored value is not overwritten.
+    - Audit details contain no value (only field names in 'fields').
+    The detailed rules are in tests/rules/test_5_7_payout_accounts.py.
     """
     # 1. Initially payout_account_number is None
     res = client.get("/api/v1/payroll/statutory-config", headers=company_a.hr_headers)
@@ -44,21 +60,14 @@ def test_statutory_config_payout_account_number_masking(
     get_data = get_res.json()
     assert get_data["payout_account_number"] == expected_masked
 
-    # 4. Short value masking (<= 4 chars)
+    # 4. A number that is too short is refused (9 to 18 digits) and nothing is stored
     short_put_res = client.put(
         "/api/v1/payroll/statutory-config",
         headers=company_a.hr_headers,
         json={"payout_account_number": "1234"},
     )
-    assert short_put_res.status_code == 200
-    assert short_put_res.json()["payout_account_number"] == "****"
-
-    # Reset back to full account_num
-    client.put(
-        "/api/v1/payroll/statutory-config",
-        headers=company_a.hr_headers,
-        json={"payout_account_number": account_num},
-    )
+    assert short_put_res.status_code == 422
+    assert _stored_number(db, company_a) == account_num
 
     # 5. PUT with the masked form leaves the stored value unchanged
     # Simulates frontend submitting back the response it received (e.g. updating pt_state)
@@ -76,17 +85,10 @@ def test_statutory_config_payout_account_number_masking(
     assert masked_put_data["pt_state"] == "Maharashtra"
 
     # Verify directly from DB that the stored value is still the original unmasked account_num
-    db.expire_all()
-    cfg = db.scalar(
-        select(StatutoryConfig).where(StatutoryConfig.company_id == company_a.company_id)
-    )
-    assert cfg is not None
-    assert cfg.payout_account_number == account_num, (
-        f"Stored value was modified! Expected {account_num}, got {cfg.payout_account_number}"
-    )
+    stored = _stored_number(db, company_a)
+    assert stored == account_num, f"Stored value was modified! Expected {account_num}, got {stored}"
 
-    # 6. None case: explicitly setting payout_account_number to None or clearing it
-    # Note: if a user explicitly passes None, it clears it to None
+    # 6. None case: explicitly setting payout_account_number to None clears it
     none_put_res = client.put(
         "/api/v1/payroll/statutory-config",
         headers=company_a.hr_headers,
@@ -94,13 +96,7 @@ def test_statutory_config_payout_account_number_masking(
     )
     assert none_put_res.status_code == 200
     assert none_put_res.json()["payout_account_number"] is None
-
-    db.expire_all()
-    cfg_none = db.scalar(
-        select(StatutoryConfig).where(StatutoryConfig.company_id == company_a.company_id)
-    )
-    assert cfg_none is not None
-    assert cfg_none.payout_account_number is None
+    assert _stored_number(db, company_a) is None
 
     # 7. Audit details check: audit details still contain no value
     audit_logs = db.scalars(

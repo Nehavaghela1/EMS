@@ -1032,7 +1032,8 @@ Constraint: `uq_payroll_items_run_employee`.
 > **Why JSONB snapshots rather than a normalized child table:** a payslip is a historical financial record. If the salary structure is edited next year, last year's payslip must still show exactly what was paid. Storing the computed breakdown as an immutable JSON snapshot guarantees that. The structure tables describe *how to compute future payslips*; the JSONB describes *what was actually paid*.
 
 #### `reimbursements` — RLS: **Yes**
-`employee_id`, `type ENUM(travel, food, medical, telephone, other)`, `amount NUMERIC(14,2)`, `expense_date DATE`, `description TEXT`, `file_object_id UUID NULL` (receipt), `status ENUM(pending, approved, rejected, paid)`, `approved_by`, `approved_at`, `rejection_reason`, `added_to_payroll_run_id UUID NULL`.
+`employee_id`, `type ENUM(travel, food, medical, telephone, other)`, `amount NUMERIC(14,2)`, `expense_date DATE`, `description TEXT`, `file_object_id UUID NULL FK file_objects(id)` (receipt; required for every new claim), `status ENUM(pending, approved, rejected, paid, withdrawn)`, `approved_by`, `approved_at`, `rejection_reason`, `added_to_payroll_run_id UUID NULL`.
+Partial unique indexes (claims in pending, approved or paid): `uq_reimbursements_open_receipt (company_id, file_object_id)` and `uq_reimbursements_open_claim (company_id, employee_id, expense_date, type, amount)`. A rejected or withdrawn claim frees its receipt.
 
 ---
 
@@ -1430,7 +1431,7 @@ Rules:
 - Build and unit-test this utility **in isolation**, before wiring it into any route. Encrypt → decrypt → assert equality, plus assert that a tampered blob raises.
 - Store `*_last4` alongside so lists and payslips can display a masked value without decrypting anything.
 - Default API responses are masked. Full reveal requires `hr_admin` **and** `?reveal=true`, and writes an audit log row every time.
-- Key rotation: the version byte at the head of every blob selects the key, so a future key change can still decrypt old values. `settings.ENCRYPTION_KEYS` is a `{version: key}` map and `ENCRYPTION_KEY_VERSION` names the one used for new writes. Rotation itself is deferred, but the format must support it from the first row written — retrofitting a version byte onto existing ciphertext means decrypting and rewriting every record.
+- Key rotation: the version byte at the head of every blob selects the key, so a future key change can still decrypt old values. `ENCRYPTION_KEY` is the key for `ENCRYPTION_KEY_VERSION` (used for new writes); `settings.ENCRYPTION_PREVIOUS_KEYS` is a `{version: key}` map of older keys that can still be read. (Implemented as `encrypt_field(plaintext, *, company_id, column)`: the company id and the column name are bound as associated data together with the version byte, so a blob copied to another row or column fails authentication. First user: the company payout account number, 5.7.) Rotation itself is deferred, but the format must support it from the first row written — retrofitting a version byte onto existing ciphertext means decrypting and rewriting every record.
 
 ### 9.7 CORS
 
@@ -1657,7 +1658,10 @@ The assignment explicitly requires search, filtering, sorting and pagination. Im
 | 96 | GET | `/payroll/payslips/{employee_id}` | HR | Any employee's payslips |
 | 97 | POST | `/payroll/reimbursements` | Own | Submit a claim with a receipt |
 | 98 | GET | `/payroll/reimbursements` | Auth | Scoped by role |
-| 99 | PUT | `/payroll/reimbursements/{id}` | HR, Mgr | Approve or reject |
+| 99 | PUT | `/payroll/reimbursements/{id}` | Reporting chain, HR-level | Approve or reject (rejection needs a reason); decided once, row-locked |
+| 99a | POST | `/payroll/reimbursements/{id}/withdraw` | Own | Claimant withdraws a claim that is still pending (status `withdrawn`) |
+
+*5.6 / 5.7 notes:* a claim needs a receipt (`file_object_id`: a pdf, png or jpg the claimant uploaded); list filters are `status`, `employee_id`, `month`, `year`. `GET /payroll/statutory-config?reveal=true` (owner / hr_admin only) returns the plain payout account number, writes a `PAYOUT_ACCOUNT_REVEALED` audit row every time and is limited to 5 per minute per user; without `reveal` the number is masked as `********1234`. A platform `super_admin` never sees or changes the payout fields.
 
 ### 10.7 Projects — 21 routes
 

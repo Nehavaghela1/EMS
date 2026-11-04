@@ -1,9 +1,11 @@
 import ipaddress
 
+from limits import parse
 from slowapi import Limiter
 from starlette.requests import Request
 
 from app.core.config import settings
+from app.core.exceptions import RateLimitedError
 
 
 def _is_ip_in_trusted_proxies(ip_str: str, trusted_proxies: list[str]) -> bool:
@@ -64,6 +66,16 @@ def get_user_or_ip_key(request: Request) -> str:
             pass
 
     return get_client_ip(request)
+
+
+def enforce_user_limit(request: Request, limit: str, *, scope: str) -> None:
+    """A second, conditional per-user limit inside a route (the `@limiter.limit` decorator
+    always applies, e.g. a query flag that needs a stricter cap than the route itself).
+    Uses the same storage and the same on/off switch as the decorator."""
+    if not limiter.enabled:
+        return
+    if not limiter.limiter.hit(parse(limit), scope, get_user_or_ip_key(request)):
+        raise RateLimitedError("Too many requests. Please try again later.")
 
 
 # Redis storage so limits hold across multiple API processes (Spec 9.5).

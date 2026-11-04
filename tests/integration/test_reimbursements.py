@@ -11,7 +11,7 @@ from app.db.seed.pt_slabs import seed_pt_slabs
 from app.db.seed.tax_slabs import seed_tax_slabs
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
-from tests.conftest import TenantContext, _make_user_headers
+from tests.conftest import TenantContext, _make_user_headers, days_ago, upload_receipt
 
 
 @pytest.fixture(autouse=True)
@@ -94,8 +94,9 @@ def test_submit_and_review_reimbursement(client: TestClient, company_a: TenantCo
         json={
             "type": "travel",
             "amount": "1500.00",
-            "expense_date": "2026-05-10",
+            "expense_date": days_ago(10),
             "description": "Flight ticket for client meeting",
+            "file_object_id": upload_receipt(client, emp_headers),
         },
         headers=emp_headers,
     )
@@ -141,8 +142,9 @@ def test_approved_reimbursement_payroll_integration_gate(
         json={
             "type": "medical",
             "amount": "2500.00",
-            "expense_date": "2026-05-12",
+            "expense_date": days_ago(12),
             "description": "Health checkup claim",
+            "file_object_id": upload_receipt(client, emp_headers),
         },
         headers=emp_headers,
     )
@@ -161,8 +163,9 @@ def test_approved_reimbursement_payroll_integration_gate(
         json={
             "type": "food",
             "amount": "800.00",
-            "expense_date": "2026-05-14",
+            "expense_date": days_ago(14),
             "description": "Lunch claim",
+            "file_object_id": upload_receipt(client, emp_headers),
         },
         headers=emp_headers,
     )

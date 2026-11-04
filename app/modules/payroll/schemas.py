@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -8,11 +9,11 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
 
-from app.core.masking import mask_tail
 from app.modules.payroll.models import (
     CalculationType,
     PercentageOf,
@@ -193,8 +194,21 @@ class EmployeeSalaryResponse(BaseModel):
     gross_earnings: Decimal
 
 
-def mask_payout_account_number(v: str | None) -> str | None:
-    return mask_tail(v)
+PAYOUT_ACCOUNT_MASK = "********"
+_ACCOUNT_NUMBER = re.compile(r"[0-9]{9,18}")
+_MASKED_ACCOUNT_NUMBER = re.compile(r"\*+[0-9]{0,4}")
+_IFSC_CODE = re.compile(r"[A-Z]{4}0[A-Z0-9]{6}")
+
+
+def mask_payout_account_number(last4: str | None) -> str | None:
+    """Eight asterisks plus the stored last four digits, whatever the number's length."""
+    return None if last4 is None else PAYOUT_ACCOUNT_MASK + last4
+
+
+def is_masked_account_number(value: str) -> bool:
+    """A value made only of asterisks and (at most) the last four digits: what a client sends
+    back when it re-submits the masked value it was shown."""
+    return _MASKED_ACCOUNT_NUMBER.fullmatch(value) is not None
 
 
 class StatutoryConfigResponse(BaseModel):
@@ -220,15 +234,14 @@ class StatutoryConfigResponse(BaseModel):
     payout_ifsc_code: str | None = None
     payout_enabled: bool = False
 
+    # `payout_account_number` is not a column: the service fills it (masked, or the plain
+    # number on an audited reveal). The blob and last4 columns are never fields here.
     model_config = {"from_attributes": True}
-
-    @field_validator("payout_account_number", mode="after")
-    @classmethod
-    def mask_account_number(cls, v: str | None) -> str | None:
-        return mask_payout_account_number(v)
 
 
 class StatutoryConfigUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     pf_enabled: bool | None = None
     pf_employee_rate: Decimal | None = None
     pf_employer_rate: Decimal | None = None
@@ -249,6 +262,43 @@ class StatutoryConfigUpdateRequest(BaseModel):
     payout_account_number: str | None = None
     payout_ifsc_code: str | None = None
     payout_enabled: bool | None = None
+
+    @field_validator("payout_bank_name")
+    @classmethod
+    def _bank_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not 1 <= len(value) <= 100:
+            raise ValueError("Bank name must be 1 to 100 characters.")
+        return value
+
+    @field_validator("payout_account_number")
+    @classmethod
+    def _account_number(cls, value: str | None) -> str | None:
+        # Never put the submitted value in the message: it is an account number.
+        if value is None:
+            return None
+        value = value.strip()
+        if is_masked_account_number(value) or _ACCOUNT_NUMBER.fullmatch(value):
+            return value
+        raise ValueError("Account number must be 9 to 18 digits.")
+
+    @field_validator("payout_ifsc_code")
+    @classmethod
+    def _ifsc_code(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().upper()
+        if not _IFSC_CODE.fullmatch(value):
+            raise ValueError("IFSC code must be 4 letters, a zero, then 6 letters or digits.")
+        return value
+
+    @model_validator(mode="after")
+    def _enabled_is_not_null(self) -> "StatutoryConfigUpdateRequest":
+        if "payout_enabled" in self.model_fields_set and self.payout_enabled is None:
+            raise ValueError("payout_enabled must be true or false.")
+        return self
 
 
 class PtSlabResponse(BaseModel):
@@ -380,17 +430,37 @@ class PayrollRunDetailResponse(BaseModel):
     items: list[PayrollItemResponse]
 
 
+# Input limits for a claim (5.6): what a request may carry, not statutory figures.
+MAX_REIMBURSEMENT_AMOUNT = Decimal("1000000.00")
+_CLAIM_TEXT = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+_REJECTION_REASON = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
+
+
 class ReimbursementCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: ReimbursementType
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(gt=0, le=MAX_REIMBURSEMENT_AMOUNT, decimal_places=2)
     expense_date: date
-    description: str = Field(min_length=1)
-    file_object_id: uuid.UUID | None = None
+    description: _CLAIM_TEXT
+    file_object_id: uuid.UUID
 
 
 class ReimbursementReviewRequest(BaseModel):
-    action: str = Field(pattern="^(approve|reject)$")
-    rejection_reason: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["approve", "reject"]
+    rejection_reason: _REJECTION_REASON | None = Field(default=None, validate_default=True)
+
+    @field_validator("rejection_reason")
+    @classmethod
+    def _reason_matches_action(cls, value: str | None, info: ValidationInfo) -> str | None:
+        action = info.data.get("action")
+        if action == "reject" and not value:
+            raise ValueError("A rejection needs a reason of 1 to 500 characters.")
+        if action == "approve" and value is not None:
+            raise ValueError("An approval takes no reason.")
+        return value
 
 
 class ReimbursementResponse(BaseModel):

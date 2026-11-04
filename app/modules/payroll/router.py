@@ -2,12 +2,13 @@ import uuid
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
-from app.core.rate_limit import get_user_or_ip_key, limiter
+from app.core.rate_limit import enforce_user_limit, get_user_or_ip_key, limiter
 from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import (
     PayrollRunStatus,
@@ -254,27 +255,30 @@ def get_employee_salary_history(
 # --- Routes 85-86: statutory config --------------------------------------
 
 
-def _to_statutory_config_response(config) -> StatutoryConfigResponse:
-    return StatutoryConfigResponse.model_validate(config)
-
-
 @statutory_config_router.get("", response_model=StatutoryConfigResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_statutory_config(
+    request: Request,
+    response: Response,
+    reveal: bool = False,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
-    config = StatutoryConfigService(db).get_or_create(user.company_id)
-    return _to_statutory_config_response(config)
+    if reveal:
+        enforce_user_limit(request, "5/minute", scope="payout_reveal")
+        response.headers["Cache-Control"] = "no-store"
+    return StatutoryConfigService(db).view(user.company_id, user, reveal=reveal)
 
 
 @statutory_config_router.put("", response_model=StatutoryConfigResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_statutory_config(
+    request: Request,
     data: StatutoryConfigUpdateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
-    config = StatutoryConfigService(db).update(user.company_id, data, user)
-    return _to_statutory_config_response(config)
+    return StatutoryConfigService(db).update(user.company_id, data, user)
 
 
 # --- Routes 87-88: PT slabs -----------------------------------------------
@@ -486,7 +490,9 @@ reimbursements_router = APIRouter(
 
 
 @reimbursements_router.post("", response_model=ReimbursementResponse, status_code=201)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def submit_reimbursement_claim(
+    request: Request,
     data: ReimbursementCreateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
@@ -497,14 +503,21 @@ def submit_reimbursement_claim(
 
 
 @reimbursements_router.get("", response_model=Page[ReimbursementResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_reimbursement_claims(
-    status_filter: ReimbursementStatus | None = None,
+    request: Request,
+    status_filter: ReimbursementStatus | None = Query(None, alias="status"),
+    employee_id: uuid.UUID | None = None,
+    month: int | None = Query(None, ge=1, le=12),
+    year: int | None = Query(None, ge=2000, le=2100),
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
     service = ReimbursementService(db)
-    claims, total, pages = service.list_claims(user.company_id, user, params, status_filter)
+    claims, total, pages = service.list_claims(
+        user.company_id, user, params, status_filter, employee_id, month, year
+    )
     items = [ReimbursementResponse.model_validate(c) for c in claims]
     return Page(
         items=items,
@@ -517,12 +530,46 @@ def list_reimbursement_claims(
 
 
 @reimbursements_router.put("/{id}", response_model=ReimbursementResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def review_reimbursement_claim(
+    request: Request,
     id: uuid.UUID,
     data: ReimbursementReviewRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager)),
+    user: User = Depends(get_current_user),
 ):
+    # Who may decide (reporting chain, HR-level) is checked in the service, with the same
+    # refusal for an employee and for a manager outside the chain.
     service = ReimbursementService(db)
     claim = service.review_claim(user.company_id, id, data, user)
+    return ReimbursementResponse.model_validate(claim)
+
+
+@reimbursements_router.get("/{id}/receipt")
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def view_reimbursement_receipt(
+    request: Request,
+    id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    path, file_name, content_type = ReimbursementService(db).open_receipt(user.company_id, id, user)
+    return FileResponse(
+        path=str(path),
+        filename=file_name,
+        media_type=content_type,
+        content_disposition_type="attachment",
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"},
+    )
+
+
+@reimbursements_router.post("/{id}/withdraw", response_model=ReimbursementResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
+def withdraw_reimbursement_claim(
+    request: Request,
+    id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    claim = ReimbursementService(db).withdraw_claim(user.company_id, id, user)
     return ReimbursementResponse.model_validate(claim)

@@ -16,11 +16,20 @@ from app.modules.payroll.models import (
     PtSlab,
     Reimbursement,
     ReimbursementStatus,
+    ReimbursementType,
     SalaryComponent,
     SalaryStructure,
     StatutoryConfig,
     TaxRegime,
     TaxSlab,
+)
+from app.modules.platform.models import FileObject
+
+# A claim in one of these states keeps its receipt and counts for the duplicate check.
+OPEN_STATUSES = (
+    ReimbursementStatus.pending,
+    ReimbursementStatus.approved,
+    ReimbursementStatus.paid,
 )
 
 
@@ -629,6 +638,72 @@ class ReimbursementRepository:
             )
         )
 
+    def get_by_id_for_update(
+        self, reimbursement_id: uuid.UUID, company_id: uuid.UUID
+    ) -> Reimbursement | None:
+        """The claim, row-locked until the caller's transaction ends: two people deciding or
+        withdrawing at the same moment are served one after the other."""
+        return self.db.scalar(
+            select(Reimbursement)
+            .where(
+                Reimbursement.id == reimbursement_id,
+                Reimbursement.company_id == company_id,
+                Reimbursement.deleted_at.is_(None),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+    def get_receipt_file(self, company_id: uuid.UUID, file_id: uuid.UUID) -> FileObject | None:
+        return self.db.scalar(
+            select(FileObject).where(
+                FileObject.id == file_id,
+                FileObject.company_id == company_id,
+                FileObject.deleted_at.is_(None),
+            )
+        )
+
+    def receipt_in_use(self, company_id: uuid.UUID, file_object_id: uuid.UUID) -> bool:
+        """Is the receipt attached to a pending, approved or paid claim?"""
+        return (
+            self.db.scalar(
+                select(Reimbursement.id)
+                .where(
+                    Reimbursement.company_id == company_id,
+                    Reimbursement.file_object_id == file_object_id,
+                    Reimbursement.status.in_(OPEN_STATUSES),
+                    Reimbursement.deleted_at.is_(None),
+                )
+                .limit(1)
+            )
+            is not None
+        )
+
+    def open_duplicate_exists(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        expense_date: date,
+        claim_type: ReimbursementType,
+        amount: Decimal,
+    ) -> bool:
+        return (
+            self.db.scalar(
+                select(Reimbursement.id)
+                .where(
+                    Reimbursement.company_id == company_id,
+                    Reimbursement.employee_id == employee_id,
+                    Reimbursement.expense_date == expense_date,
+                    Reimbursement.type == claim_type,
+                    Reimbursement.amount == amount,
+                    Reimbursement.status.in_(OPEN_STATUSES),
+                    Reimbursement.deleted_at.is_(None),
+                )
+                .limit(1)
+            )
+            is not None
+        )
+
     def list_unpaid_approved(
         self, company_id: uuid.UUID, employee_id: uuid.UUID
     ) -> list[Reimbursement]:
@@ -653,6 +728,8 @@ class ReimbursementRepository:
         employee_id: uuid.UUID | None = None,
         employee_ids: list[uuid.UUID] | None = None,
         status: ReimbursementStatus | None = None,
+        month: int | None = None,
+        year: int | None = None,
     ) -> tuple[list[Reimbursement], int, int]:
         stmt = (
             select(Reimbursement)
@@ -660,7 +737,7 @@ class ReimbursementRepository:
                 Reimbursement.company_id == company_id,
                 Reimbursement.deleted_at.is_(None),
             )
-            .order_by(Reimbursement.created_at.desc())
+            .order_by(Reimbursement.created_at.desc(), Reimbursement.id.desc())
         )
 
         if employee_id is not None:
@@ -670,6 +747,10 @@ class ReimbursementRepository:
 
         if status is not None:
             stmt = stmt.where(Reimbursement.status == status)
+        if month is not None:
+            stmt = stmt.where(func.extract("month", Reimbursement.expense_date) == month)
+        if year is not None:
+            stmt = stmt.where(func.extract("year", Reimbursement.expense_date) == year)
 
         return paginate(self.db, stmt, page_params)
 

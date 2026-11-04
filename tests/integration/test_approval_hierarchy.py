@@ -8,7 +8,7 @@ from app.core.security import create_access_token, hash_password
 from app.modules.hr.models import Employee
 from app.modules.identity.models import User, UserRole
 from app.modules.performance.models import PerformancePIP
-from tests.conftest import TenantContext
+from tests.conftest import TenantContext, days_ago, upload_receipt
 from tests.integration.test_employees import _create_employee
 
 
@@ -777,8 +777,9 @@ def _create_pending_reimbursement(client: TestClient, emp_headers: dict) -> str:
         json={
             "type": "travel",
             "amount": "1200.00",
-            "expense_date": "2026-06-01",
+            "expense_date": days_ago(10),
             "description": "Travel expense",
+            "file_object_id": upload_receipt(client, emp_headers),
         },
     )
     assert res.status_code == 201, res.text

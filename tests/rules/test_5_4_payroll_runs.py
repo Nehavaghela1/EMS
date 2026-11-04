@@ -55,7 +55,7 @@ from app.modules.time_leave.models import (
     LeaveStatus,
     LeaveType,
 )
-from tests.conftest import TenantContext
+from tests.conftest import TenantContext, upload_receipt
 from tests.rules.test_4_2_punch import _create_employee, _link_user_to_employee
 
 RUNS = "/api/v1/payroll/runs"
@@ -571,6 +571,7 @@ def _claim(client: TestClient, w: dict[str, Any], amount: str) -> str:
             "amount": amount,
             "expense_date": (utcnow().date() - timedelta(days=40)).isoformat(),
             "description": "Team lunch",
+            "file_object_id": upload_receipt(client, w["emp"]["h"]),
         },
         headers=w["emp"]["h"],
     )
