@@ -1522,7 +1522,8 @@ def test_W27_subdomain_uniqueness_and_constraint_mapping(client, db, company_a):
 
 
 # ── M02: Migration subdomain unique index round trip ────────────────────────
-def test_M02_migration_subdomain_unique_index(engine):
+def test_M02_migration_subdomain_unique_index(migration_engine):
+    engine = migration_engine  # the scratch database this round trip runs on
     import os
     import subprocess
     import sys

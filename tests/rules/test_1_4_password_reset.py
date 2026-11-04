@@ -1004,7 +1004,8 @@ def test_formatted_json_line_keeps_metadata_visible_and_hides_nested_secrets():
 
 # ── M01: Migration password_changed_at ────────────────────────────────────────
 # Downgrade to down_revision and upgrade head works and password_changed_at exists on users.
-def test_M01_migration_password_changed_at(engine):
+def test_M01_migration_password_changed_at(migration_engine):
+    engine = migration_engine  # the scratch database this round trip runs on
     import os
     import subprocess
     import sys
