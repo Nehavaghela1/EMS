@@ -17,6 +17,7 @@ from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
 from app.modules.identity.models import User, UserRole
 from app.workers.celery_app import celery_app
+from tests.date_helpers import next_working_day
 
 
 def _create_employee(client, headers, **overrides) -> dict:
@@ -71,7 +72,7 @@ def test_manager_cannot_get_a_single_leave_that_is_not_their_reports(client, com
         headers=company_a.hr_headers,
         json={"name": "Casual", "code": "casual", "annual_allowance": "10"},
     ).json()
-    tomorrow = (utcnow().date() + timedelta(days=1)).isoformat()
+    tomorrow = next_working_day(utcnow().date()).isoformat()
     leave = client.post(
         "/api/v1/leaves",
         headers=outsider_headers,
