@@ -87,6 +87,13 @@ OFFICIAL_HOSTS = {
     "egazette.gov.in",
     "commercialtax.gujarat.gov.in",
     "gujarat.gov.in",
+    # Added by 5.9 for the rate-source pages of other countries.
+    "gov.uk",
+    "cpf.gov.sg",
+    "canada.ca",
+    "ato.gov.au",
+    "ssa.gov",
+    "dubai.ae",
 }
 
 
