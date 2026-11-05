@@ -81,6 +81,16 @@ def _set_country(db: Session, ctx: TenantContext, country: str) -> None:
     db.commit()
 
 
+def _no_state(db: Session, ctx: TenantContext) -> None:
+    """The company has not chosen a professional-tax state (the test companies start with one)."""
+    bind_tenant_to_session(db, company_id=ctx.company_id, is_platform_admin=False)
+    db.execute(
+        text("UPDATE statutory_configs SET pt_state = NULL WHERE company_id = :c"),
+        {"c": ctx.company_id},
+    )
+    db.commit()
+
+
 def _regions_module() -> Any:
     assert importlib.util.find_spec("app.core.regions") is not None, (
         "C1: the shared module app/core/regions.py does not exist yet"
@@ -252,8 +262,9 @@ def test_C4_an_unknown_state_or_a_state_of_another_country_gives_422_on_pt_state
 
 
 def test_C4_pt_enabled_with_no_state_gives_422_but_untouched_settings_still_save(
-    client: TestClient, company_a: TenantContext
+    client: TestClient, db: Session, company_a: TenantContext
 ) -> None:
+    _no_state(db, company_a)
     other = client.put(CONFIG, json={"pf_enabled": False}, headers=company_a.hr_headers)
     assert other.status_code == 200, f"C4: other settings must still save: {other.text}"
     enable = client.put(CONFIG, json={"pt_enabled": True}, headers=company_a.hr_headers)
@@ -315,6 +326,7 @@ def test_C5_pt_on_with_no_state_stops_the_run_with_409_and_creates_no_run(
     client: TestClient, db: Session, company_a: TenantContext
 ) -> None:
     year, month = _payroll_company(client, db, company_a)
+    _no_state(db, company_a)
     resp = _post_run(client, company_a.hr_headers, year, month)
     assert resp.status_code == 409, f"C5: no state must give 409, got {resp.status_code}"
     assert "professional-tax state" in _message(resp), f"C5: unclear message: {_message(resp)}"
@@ -355,10 +367,11 @@ def test_C5_pt_off_needs_no_state(
 
 
 def test_C5_the_engine_default_and_the_slab_list_have_no_hidden_gujarat(
-    client: TestClient, company_a: TenantContext
+    client: TestClient, db: Session, company_a: TenantContext
 ) -> None:
     from app.modules.payroll.payslip_engine import StatutoryConfigSpec
 
+    _no_state(db, company_a)
     assert StatutoryConfigSpec().pt_state is None, "C5: the engine must not default to Gujarat"
     empty = client.get(f"{P}/pt-slabs", headers=company_a.hr_headers)
     assert empty.status_code == 200 and empty.json() == [], (
@@ -568,6 +581,24 @@ def test_C6_the_migration_stops_and_lists_values_that_match_no_state() -> None:
             _purge(engine, cid)
             command.upgrade(cfg, "head")
             engine.dispose()
+
+
+def test_C6_the_models_and_the_migrations_agree_on_the_tables_this_package_changed() -> None:
+    """What `alembic check` does in CI, for the tables of 5.8 and the regions change."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    from app.db.base import Base
+
+    engine = _owner_engine()
+    try:
+        with engine.connect() as conn:
+            diffs = compare_metadata(MigrationContext.configure(conn), Base.metadata)
+    finally:
+        engine.dispose()
+    names = ("employee_bank_accounts", "payroll_run_payments", "pt_slabs", "statutory_rates")
+    mine = [d for d in diffs if any(n in str(d) for n in names)]
+    assert mine == [], f"C6: models and migrations differ: {mine}"
 
 
 def test_C6_seeds_set_the_country(db: Session) -> None:

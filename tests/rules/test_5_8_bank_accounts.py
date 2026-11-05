@@ -25,7 +25,7 @@ from app.db.rls import bind_tenant_to_session
 from app.db.seed.pt_slabs import seed_pt_slabs
 from app.db.seed.statutory_rates import seed_statutory_rates
 from app.db.seed.tax_slabs import seed_tax_slabs
-from app.modules.identity.models import Company, UserRole
+from app.modules.identity.models import Company, User, UserRole
 from app.modules.platform.models import AuditLog, Notification
 from tests.conftest import TenantContext, _make_user_headers
 from tests.rules.test_5_4_payroll_runs import (
@@ -858,7 +858,19 @@ def test_R9_a_save_notifies_the_other_side_after_the_commit_without_the_number(
     again = client.put(ME, json=_body(bank_name="Axis Bank"), headers=world["emp"]["h"])
     assert again.status_code == 200
     total = db.query(Notification).filter(Notification.type == "bank_details_changed").count()
-    assert total - before == 3, f"R9: an unchanged save notifies nobody: {total - before}"
+    hr_level = (
+        db.query(User)
+        .filter(
+            User.company_id == cid,
+            User.role.in_([UserRole.owner, UserRole.hr_admin]),
+            User.is_active.is_(True),
+        )
+        .count()
+    )
+    # One notice to the employee for HR's change, one to each HR-level user for the employee's.
+    assert total - before == 1 + hr_level, (
+        f"R9: an unchanged save notifies nobody: {total - before} (expected {1 + hr_level})"
+    )
 
 
 def test_R9_the_update_and_its_audit_row_are_one_save(
