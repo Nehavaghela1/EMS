@@ -76,11 +76,11 @@ def _seed_all(db: Session) -> None:
 def _what_is_missing(db: Session, first_day: date) -> list[str]:
     missing = []
     rates = StatutoryRateRepository(db)
-    if rates.get_in_force("epf", first_day) is None:
+    if rates.get_in_force("IN", "epf", first_day) is None:
         missing.append("PF")
-    if rates.get_in_force("esi", first_day) is None:
+    if rates.get_in_force("IN", "esi", first_day) is None:
         missing.append("ESI")
-    if not PtSlabRepository(db).list_for_state("Gujarat", on_date=first_day):
+    if not PtSlabRepository(db).list_for_state("IN", "Gujarat", on_date=first_day):
         missing.append("PT")
     year = first_day.year if first_day.month >= 4 else first_day.year - 1
     fy = f"{year}-{year + 1}"

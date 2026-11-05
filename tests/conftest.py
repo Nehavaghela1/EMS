@@ -21,6 +21,7 @@ from app.core.time import utcnow
 from app.db.session import get_db
 from app.main import app as fastapi_app
 from app.modules.identity.models import Company, CompanySettings, CompanyStatus, User, UserRole
+from app.modules.payroll.models import StatutoryConfig
 from app.workers.tasks.email import send_email_task
 from tests import db_tools
 
@@ -353,6 +354,9 @@ def _make_tenant(db: Session, *, name: str, code: str) -> TenantContext:
     # already match company.id before this insert.
     bind_tenant_to_session(db, company_id=company.id, is_platform_admin=False)
     db.add(CompanySettings(company_id=company.id))
+    # There is no default professional-tax state any more (5.2): a test company that runs
+    # payroll chooses one, exactly as a real company must.
+    db.add(StatutoryConfig(company_id=company.id, country="IN", pt_state="Gujarat"))
     db.flush()
 
     hr_headers = _make_user_headers(db, company.id, UserRole.hr_admin)

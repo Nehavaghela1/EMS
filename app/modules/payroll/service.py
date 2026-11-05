@@ -1,3 +1,4 @@
+import logging
 import uuid
 from calendar import monthrange
 from dataclasses import dataclass
@@ -19,13 +20,23 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.pagination import PageParams
+from app.core.regions import (
+    DEFAULT_COUNTRY,
+    allowed_country_codes,
+    canonical_country,
+    canonical_state,
+    country_name,
+    is_payroll_ready,
+)
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.models import Employee, EmploymentType, ResignationStatus
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
+from app.modules.identity.repository import CompanyRepository, UserRepository
 from app.modules.payroll.models import (
     CalculationType,
+    EmployeeBankAccount,
     EmployeeSalary,
     PayrollItem,
     PayrollRun,
@@ -42,6 +53,7 @@ from app.modules.payroll.models import (
     StatutoryRate,
     TaxSlab,
 )
+from app.modules.payroll.payment_files import PAYMENT_FILE_FORMATS, PaymentLine
 from app.modules.payroll.payslip_engine import (
     ComponentSpec,
     EsiRateSpec,
@@ -55,8 +67,10 @@ from app.modules.payroll.payslip_engine import (
     calculate_payslip,
 )
 from app.modules.payroll.repository import (
+    EmployeeBankAccountRepository,
     EmployeeSalaryRepository,
     PayrollItemRepository,
+    PayrollRunPaymentRepository,
     PayrollRunRepository,
     PtSlabRepository,
     ReimbursementRepository,
@@ -67,6 +81,8 @@ from app.modules.payroll.repository import (
     TaxSlabRepository,
 )
 from app.modules.payroll.schemas import (
+    BankAccountRequest,
+    BankAccountResponse,
     PayrollRunCreateRequest,
     PtSlabPutRequest,
     ReimbursementCreateRequest,
@@ -92,6 +108,8 @@ from app.modules.time_leave.service import (
     require_deciding_role,
     verify_approval_authority,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class InvalidStructureError(AppError):
@@ -723,7 +741,14 @@ class StatutoryConfigService:
         self.db = db
         self.repo = StatutoryConfigRepository(db)
         self.rate_repo = StatutoryRateRepository(db)
+        self.company_repo = CompanyRepository(db)
         self.audit = AuditService(db)
+
+    def company_country(self, company_id: uuid.UUID) -> str:
+        """The company's country: the one source for which payroll rules apply. The config's
+        own `country` column is only a copy made when the row is created."""
+        company = self.company_repo.get_by_id(company_id)
+        return company.country if company is not None else DEFAULT_COUNTRY
 
     def get_or_create(self, company_id: uuid.UUID) -> StatutoryConfig:
         """Lazily created on first access with the column defaults (every switch on, the new
@@ -732,7 +757,7 @@ class StatutoryConfigService:
         config = self.repo.get_by_company(company_id)
         if config is not None:
             return config
-        config = self.repo.create(company_id=company_id)
+        config = self.repo.create(company_id=company_id, country=self.company_country(company_id))
         self.db.commit()
         return config
 
@@ -770,6 +795,7 @@ class StatutoryConfigService:
         if payout_touched and actor.role not in PAYOUT_ROLES:
             raise ForbiddenError(PAYOUT_FORBIDDEN_MESSAGE)
         config = self.get_or_create(company_id)
+        self._check_professional_tax(config, changes, self.company_country(company_id))
 
         number_columns: dict[str, object] = {}
         if "payout_account_number" in changes:
@@ -793,16 +819,43 @@ class StatutoryConfigService:
             self.db.commit()
         return self._response(config, actor)
 
+    @staticmethod
+    def _check_professional_tax(
+        config: StatutoryConfig, changes: dict[str, object], country: str
+    ) -> None:
+        """The professional-tax state is CHOSEN from the states of the company's country (a
+        match ignores case and is stored in the canonical spelling); switching professional
+        tax on needs a state. Settings that do not touch either are never blocked here."""
+        if "pt_state" in changes and changes["pt_state"] is not None:
+            canonical = canonical_state(country, str(changes["pt_state"]))
+            if canonical is None:
+                raise ValidationError(
+                    f"The professional-tax state must be one of the states of "
+                    f"{country_name(country)} in the shared list.",
+                    details={"field": "pt_state"},
+                )
+            changes["pt_state"] = canonical
+        if "pt_enabled" in changes or "pt_state" in changes:
+            enabled = changes.get("pt_enabled", config.pt_enabled)
+            state = changes["pt_state"] if "pt_state" in changes else config.pt_state
+            if enabled and not state:
+                raise ValidationError(
+                    "Professional tax is switched on, so a state must be chosen.",
+                    details={"field": "pt_state"},
+                )
+
     def _response(
         self, config: StatutoryConfig, actor: User, *, revealed: str | None = None
     ) -> StatutoryConfigResponse:
+        country = self.company_country(config.company_id)
         response = StatutoryConfigResponse.model_validate(config)
         response = response.model_copy(
             update={
+                "country": country,
                 "effective_rates": [
                     StatutoryRateResponse.model_validate(rate)
-                    for rate in self.rate_repo.list_in_force(utcnow().date())
-                ]
+                    for rate in self.rate_repo.list_in_force(country, utcnow().date())
+                ],
             }
         )
         if actor.role not in PAYOUT_ROLES:
@@ -871,6 +924,29 @@ class StatutoryConfigService:
 
 _ONE_PAISA = Decimal("0.01")
 
+# 5.8 bank details. The column names are part of the encryption's associated data (a number
+# copied to another column fails to decrypt); the snapshot of an approved run has its own.
+BANK_ACCOUNT_COLUMN = "bank_account_number"
+PAYMENT_ACCOUNT_COLUMN = "payment_account_number"
+BANK_ROLES = (UserRole.owner, UserRole.hr_admin)
+BANK_FORBIDDEN_MESSAGE = "You do not have permission to view or change these bank details."
+BANK_NOT_FOUND_MESSAGE = "No bank details are saved for this employee."
+BANK_EMPLOYEE_NOT_FOUND_MESSAGE = "Employee not found."
+BANK_INACTIVE_MESSAGE = "Bank details can be saved only for an active employee."
+BANK_NOTIFICATION_TYPE = "bank_details_changed"
+BANK_PAGE_URL = "/payroll/bank-account"
+PAYMENT_EXCLUDED_NO_BANK = "no_bank_details"
+PAYMENT_EXCLUDED_NET_PAY = "net_pay_not_positive"
+PAYMENT_EXCLUDED_UNREADABLE = "bank_details_unreadable"
+NO_PAYMENT_LINES_MESSAGE = (
+    "This run was approved before payment files existed, so it has no saved payment details; "
+    "a file cannot be built for it."
+)
+NOBODY_PAYABLE_MESSAGE = (
+    "Nobody in this run can be paid by file: every employee is missing bank details or has no "
+    "net pay."
+)
+
 
 def _assert_contiguous(ranges: list[tuple[Decimal, Decimal | None]], what: str) -> None:
     """A slab set must start at 0.00, have no gap and no overlap (the next lower bound is the
@@ -895,6 +971,17 @@ def _assert_contiguous(ranges: list[tuple[Decimal, Decimal | None]], what: str) 
                 raise ValidationError(f"The {what}s have a gap between {high} and {following}.")
 
 
+def _listed_country(code: str) -> str:
+    """The upper-case code of a country in the shared list, else a 422 naming the codes."""
+    country = canonical_country(code)
+    if country is None:
+        raise ValidationError(
+            f"Country must be one of: {allowed_country_codes()}.",
+            details={"field": "country", "allowed": allowed_country_codes().split(", ")},
+        )
+    return country
+
+
 def _periods(rows: list[tuple[date, date | None]]) -> str:
     return ", ".join(f"{start} to {end}" if end else f"{start} onwards" for start, end in rows)
 
@@ -908,17 +995,22 @@ class StatutoryRateService:
         self.audit = AuditService(db)
 
     def list_rates(
-        self, page_params: PageParams, scheme: str | None, on_date: date | None
+        self,
+        page_params: PageParams,
+        scheme: str | None,
+        on_date: date | None,
+        country: str | None = None,
     ) -> tuple[list[StatutoryRate], int, int]:
-        return self.repo.list_rates(page_params, scheme, on_date)
-
-    def rate_in_force(self, scheme: str, on_date: date) -> StatutoryRate | None:
-        return self.repo.get_in_force(scheme, on_date)
+        if country is not None:
+            country = _listed_country(country)
+        return self.repo.list_rates(page_params, scheme, on_date, country)
 
     def add_rate(self, data: StatutoryRateCreateRequest, actor: User) -> StatutoryRate:
         """A new rate adds a row and ends the open row the day before, in one save. Rows of
-        a scheme never overlap: checked here (naming the dates) and by the database."""
-        rows = self.repo.list_for_scheme_locked(data.scheme)
+        a scheme in one country never overlap: checked here (naming the dates) and by the
+        database."""
+        country = _listed_country(data.country)
+        rows = self.repo.list_for_scheme_locked(country, data.scheme)
         start = data.effective_from
         open_row = next((r for r in rows if r.effective_to is None), None)
         clash = (open_row is not None and start <= open_row.effective_from) or any(
@@ -935,6 +1027,7 @@ class StatutoryRateService:
             if open_row is not None:
                 self.repo.set_effective_to(open_row, start - timedelta(days=1))
             rate = self.repo.create(
+                country=country,
                 scheme=data.scheme,
                 employee_rate=data.employee_rate,
                 employer_rate=data.employer_rate,
@@ -965,6 +1058,7 @@ class StatutoryRateService:
             entity_type="statutory_rate",
             entity_id=rate.id,
             details={
+                "country": rate.country,
                 "scheme": rate.scheme,
                 "rate_id": str(rate.id),
                 "closed_rate_id": str(open_row.id) if open_row is not None else None,
@@ -982,16 +1076,30 @@ class PtSlabService:
         self.repo = PtSlabRepository(db)
         self.audit = AuditService(db)
 
-    def list_for_state(self, state: str) -> list:
-        return self.repo.list_for_state(state)
+    def list_for_company(self, company_id: uuid.UUID) -> list:
+        """The slabs of the company's own professional-tax state; none while no state is
+        chosen (there is no default state)."""
+        config = StatutoryConfigService(self.db).get_or_create(company_id)
+        if not config.pt_state:
+            return []
+        country = StatutoryConfigService(self.db).company_country(company_id)
+        return self.repo.list_for_state(country, config.pt_state)
 
     def add_slab_set(self, data: PtSlabPutRequest, actor: User) -> list:
         """SA only. Always adds a new effective-dated set and ends the state's open set the
         day before — never mutates a historical row, so a payroll date before this change
         keeps resolving to whatever was in force then (Spec 12)."""
+        country = _listed_country(data.country)
+        state = canonical_state(country, data.state)
+        if state is None:
+            raise ValidationError(
+                f"The state must be one of the states of {country_name(country)} in the "
+                "shared list.",
+                details={"field": "state"},
+            )
         _assert_contiguous([(s.income_min, s.income_max) for s in data.slabs], "slab")
-        existing = self.repo.list_open_locked(data.state)
-        everything = self.repo.list_for_state(data.state)
+        existing = self.repo.list_open_locked(country, state)
+        everything = self.repo.list_for_state(country, state)
         start = data.effective_from
         if any(
             r.effective_from >= start or (r.effective_to and start <= r.effective_to)
@@ -999,7 +1107,7 @@ class PtSlabService:
         ):
             known = sorted({(r.effective_from, r.effective_to) for r in everything})
             raise ConflictError(
-                f"A new {data.state} professional-tax set starting {start} must start after the "
+                f"A new {state} professional-tax set starting {start} must start after the "
                 f"current set's start date and outside every ended period (existing: "
                 f"{_periods(known)})."
             )
@@ -1007,7 +1115,8 @@ class PtSlabService:
             self.repo.set_effective_to(existing, start - timedelta(days=1))
         created = [
             self.repo.create(
-                state=data.state,
+                country=country,
+                state=state,
                 income_min=row.income_min,
                 income_max=row.income_max,
                 monthly_amount=row.monthly_amount,
@@ -1028,7 +1137,11 @@ class PtSlabService:
             action="PT_SLAB_SET_ADDED",
             entity_type="pt_slab",
             entity_id=created[0].id,
-            details={"state": data.state, "slab_ids": [str(s.id) for s in created]},
+            details={
+                "country": country,
+                "state": state,
+                "slab_ids": [str(s.id) for s in created],
+            },
         )
         self.db.commit()
         return created
@@ -1043,11 +1156,12 @@ class TaxSlabService:
         self.audit = AuditService(db)
 
     def list_for(self, country: str, financial_year: str, regime=None) -> list:
-        return self.repo.list_for(country, financial_year, regime)
+        return self.repo.list_for(_listed_country(country), financial_year, regime)
 
     def add_bracket_set(self, data: TaxSlabPostRequest, actor: User) -> list:
         """SA only. Same append-only reasoning as PtSlabService: a financial year and regime
         gets one bracket set; a second one is refused instead of mixing with the first."""
+        _listed_country(data.country)
         _assert_contiguous([(b.min_income, b.max_income) for b in data.brackets], "bracket")
         if self.repo.list_for(data.country, data.financial_year, data.regime):
             raise ConflictError(
@@ -1195,6 +1309,8 @@ class PayrollRunService:
         from app.modules.projects.repository import ProjectRepository
 
         self.project_repo = ProjectRepository(db)
+        self.payment_repo = PayrollRunPaymentRepository(db)
+        self.bank_repo = EmployeeBankAccountRepository(db)
         self.audit = AuditService(db)
 
     def create_run(
@@ -1217,6 +1333,12 @@ class PayrollRunService:
                 details={"field": "month"},
             )
 
+        # A company's country decides which payroll rules apply; a country whose statutory
+        # tables are not ready is refused before any run row exists (5.2).
+        country = self.statutory_service.company_country(company_id)
+        if not is_payroll_ready(country):
+            raise ConflictError(f"Payroll rules for {country_name(country)} are not available yet")
+
         # 3. Check regular run uniqueness per company/month/year
         regular_message = f"A regular payroll run for {data.month}/{data.year} already exists."
         if data.run_type == "regular":
@@ -1229,7 +1351,7 @@ class PayrollRunService:
 
         # The rates in force on the first day of the payroll month. A row that is missing
         # stops the run here, before any run row exists, with a clear 409.
-        month_rates = self._rates_for_month(statutory_config, data)
+        month_rates = self._rates_for_month(statutory_config, data, country)
 
         # 4. Create Draft Run with Idempotency Key (Spec 11.9 Step 3 & 4). The unique indexes
         # decide a race between two simultaneous creates: the loser gets the same answer as
@@ -1321,24 +1443,25 @@ class PayrollRunService:
         return segments
 
     def _rates_for_month(
-        self, statutory_config: StatutoryConfig, data: PayrollRunCreateRequest
+        self, statutory_config: StatutoryConfig, data: PayrollRunCreateRequest, country: str
     ) -> "MonthRates":
-        """PF, ESI, professional-tax and income-tax rows in force on the FIRST day of the
-        payroll month (a change effective mid-month applies from the next month). An item that
-        is switched on and has no row in force stops the run with a 409; nothing is guessed."""
+        """PF, ESI, professional-tax and income-tax rows of the company's country in force on
+        the FIRST day of the payroll month (a change effective mid-month applies from the next
+        month). An item that is switched on and has no row in force stops the run with a 409;
+        nothing is guessed, and there is no default state."""
         first_day = date(data.year, data.month, 1)
         when = f"{first_day}; ask the platform administrator to add it"
 
         pf_spec: PfRateSpec | None = None
         if statutory_config.pf_enabled:
-            pf_row = self.rate_repo.get_in_force("epf", first_day)
+            pf_row = self.rate_repo.get_in_force(country, "epf", first_day)
             if pf_row is None:
                 raise MissingRateError(f"No EPF rate is in force on {when}.")
             pf_spec = PfRateSpec(pf_row.employee_rate, pf_row.employer_rate, pf_row.wage_ceiling)
 
         esi_spec: EsiRateSpec | None = None
         if statutory_config.esi_enabled:
-            esi_row = self.rate_repo.get_in_force("esi", first_day)
+            esi_row = self.rate_repo.get_in_force(country, "esi", first_day)
             if esi_row is None:
                 raise MissingRateError(f"No ESI rate is in force on {when}.")
             esi_spec = EsiRateSpec(
@@ -1348,10 +1471,15 @@ class PayrollRunService:
                 esi_row.employee_exempt_daily_wage,
             )
 
-        pt_state = statutory_config.pt_state or "Gujarat"
+        pt_state = statutory_config.pt_state
+        if statutory_config.pt_enabled and not pt_state:
+            raise MissingRateError(
+                "Professional tax is switched on but no professional-tax state is set; choose "
+                "the state in the company's statutory settings or switch professional tax off."
+            )
         pt_rows = (
-            self.pt_repo.list_for_state(pt_state, on_date=first_day)
-            if statutory_config.pt_enabled
+            self.pt_repo.list_for_state(country, pt_state, on_date=first_day)
+            if statutory_config.pt_enabled and pt_state
             else []
         )
         if statutory_config.pt_enabled and not pt_rows:
@@ -1365,7 +1493,7 @@ class PayrollRunService:
         )
         tax_rows = (
             self.tax_repo.list_in_force(
-                "IN", fy_str, statutory_config.default_tax_regime, first_day
+                country, fy_str, statutory_config.default_tax_regime, first_day
             )
             if statutory_config.tds_enabled
             else []
@@ -1775,12 +1903,66 @@ class PayrollRunService:
 
     def get_run_detail(
         self, company_id: uuid.UUID, run_id: uuid.UUID
-    ) -> tuple[PayrollRun, list[PayrollItem]]:
+    ) -> tuple[PayrollRun, list[PayrollItem], list[tuple[uuid.UUID, str]] | None]:
+        """The run, its items and, once its payment lines exist, who was left out of the
+        payment file and why (employee id and reason only). None when there are no lines."""
         run = self.repo.get_by_id(run_id, company_id)
         if run is None:
             raise NotFoundError("Payroll run not found.")
         items = self.item_repo.list_by_run_id(run.id, company_id)
-        return run, items
+        lines = self.payment_repo.list_for_run(run.id, company_id)
+        exclusions = (
+            [(line.employee_id, line.excluded_reason) for line in lines if line.excluded_reason]
+            if lines
+            else None
+        )
+        return run, items, exclusions
+
+    def _snapshot_payments(self, run: PayrollRun, company_id: uuid.UUID) -> None:
+        """Save the payment lines of an approved run: the bank details as they are at this
+        moment, so a later change never alters the run's file. A missing or unreadable bank
+        detail or a net pay of 0 or less leaves the employee out with a reason; it never stops
+        the approval."""
+        items = self.item_repo.list_by_run_id(run.id, company_id)
+        employee_ids = [item.employee_id for item in items]
+        codes = self.payment_repo.employee_codes(company_id, employee_ids)
+        banks = self.bank_repo.active_by_employee(company_id, employee_ids)
+        for item in items:
+            amount = item.net_salary.quantize(_ONE_PAISA, rounding=ROUND_HALF_UP)
+            fields: dict[str, object] = {}
+            reason: str | None = None
+            bank = banks.get(item.employee_id)
+            if bank is None:
+                reason = PAYMENT_EXCLUDED_NO_BANK
+            elif amount <= 0:
+                reason = PAYMENT_EXCLUDED_NET_PAY
+            else:
+                try:
+                    number = decrypt_field(
+                        bytes(bank.account_number_enc),
+                        company_id=company_id,
+                        column=BANK_ACCOUNT_COLUMN,
+                    )
+                    fields = {
+                        "account_holder": bank.account_holder,
+                        "bank_name": bank.bank_name,
+                        "account_number_enc": encrypt_field(
+                            number, company_id=company_id, column=PAYMENT_ACCOUNT_COLUMN
+                        ),
+                        "account_last4": bank.account_last4,
+                        "ifsc_code": bank.ifsc_code,
+                    }
+                except AppError:
+                    reason = PAYMENT_EXCLUDED_UNREADABLE
+            self.payment_repo.create(
+                company_id=company_id,
+                payroll_run_id=run.id,
+                employee_id=item.employee_id,
+                employee_code=codes[item.employee_id],
+                amount=amount,
+                excluded_reason=reason,
+                **fields,
+            )
 
     def approve_run(self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User) -> PayrollRun:
         from sqlalchemy import update
@@ -1820,6 +2002,9 @@ class PayrollRunService:
             )
             .values(status=ReimbursementStatus.paid)
         )
+
+        # The payment lines are saved in this same commit (5.8).
+        self._snapshot_payments(run, company_id)
 
         self.audit.record(
             company_id=company_id,
@@ -1946,6 +2131,284 @@ class PayslipService:
             )
             self.db.commit()
         return items, total, pages
+
+
+class EmployeeBankAccountService:
+    """An employee's bank details (5.8). The employee keeps their own; owner and HR admin keep
+    anyone's. The account number is encrypted, shown masked, and revealed in full only to
+    owner and HR admin, with an audit row every time."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.repo = EmployeeBankAccountRepository(db)
+        self.employee_repo = EmployeeRepository(db)
+        self.company_repo = CompanyRepository(db)
+        self.user_repo = UserRepository(db)
+        self.audit = AuditService(db)
+        self.notify = NotificationService(db)
+
+    def _target(self, actor: User, employee_id: uuid.UUID | None, *, write: bool) -> Employee:
+        """The employee whose details are meant: the caller's own when `employee_id` is None."""
+        own = self.employee_repo.get_by_user_id(actor.company_id, actor.id)
+        if employee_id is None:
+            if own is None:
+                raise NotFoundError("Employee profile not found for current user.")
+            target = own
+        else:
+            if actor.role not in BANK_ROLES and (own is None or own.id != employee_id):
+                raise ForbiddenError(BANK_FORBIDDEN_MESSAGE)
+            found = self.employee_repo.get_by_id_any_status(employee_id, actor.company_id)
+            if found is None:
+                raise NotFoundError(BANK_EMPLOYEE_NOT_FOUND_MESSAGE)
+            target = found
+        if write and not target.is_active:
+            raise ConflictError(BANK_INACTIVE_MESSAGE)
+        return target
+
+    @staticmethod
+    def _response(account: EmployeeBankAccount, number: str | None = None) -> BankAccountResponse:
+        shown = number or mask_payout_account_number(account.account_last4)
+        return BankAccountResponse(
+            employee_id=account.employee_id,
+            account_holder=account.account_holder,
+            bank_name=account.bank_name,
+            account_number=shown or "",
+            ifsc_code=account.ifsc_code,
+            updated_at=account.updated_at,
+        )
+
+    def view(
+        self, actor: User, employee_id: uuid.UUID | None, *, reveal: bool = False
+    ) -> BankAccountResponse:
+        if reveal and actor.role not in BANK_ROLES:
+            raise ForbiddenError(BANK_FORBIDDEN_MESSAGE)
+        employee = self._target(actor, employee_id, write=False)
+        account = self.repo.get_active(employee.id, actor.company_id)
+        if account is None:
+            raise NotFoundError(BANK_NOT_FOUND_MESSAGE)
+        if not reveal:
+            return self._response(account)
+        number = decrypt_field(
+            bytes(account.account_number_enc),
+            company_id=actor.company_id,
+            column=BANK_ACCOUNT_COLUMN,
+        )
+        self.audit.record(
+            company_id=actor.company_id,
+            actor=actor,
+            action="BANK_ACCOUNT_REVEALED",
+            entity_type="employee_bank_account",
+            entity_id=account.id,
+            details={"employee_id": str(employee.id)},
+        )
+        self.db.commit()
+        return self._response(account, number)
+
+    def save(
+        self, actor: User, employee_id: uuid.UUID | None, data: BankAccountRequest
+    ) -> BankAccountResponse:
+        company_id = actor.company_id
+        employee = self._target(actor, employee_id, write=True)
+        company = self.company_repo.get_by_id(company_id)
+        if company is None or not is_payroll_ready(company.country):
+            name = country_name(company.country) if company is not None else "this country"
+            raise ConflictError(f"Payroll rules for {name} are not available yet")
+
+        current = self.repo.get_active(employee.id, company_id, lock=True)
+        blob, number_changed = self._number(current, data.account_number, company_id)
+        changed = [
+            name
+            for name, differs in (
+                (
+                    "account_holder",
+                    current is None or current.account_holder != data.account_holder,
+                ),
+                ("bank_name", current is None or current.bank_name != data.bank_name),
+                ("ifsc_code", current is None or current.ifsc_code != data.ifsc_code),
+                ("account_number", number_changed),
+            )
+            if differs
+        ]
+        if current is not None and not changed:
+            return self._response(current)
+
+        if current is not None:
+            self.repo.deactivate(current, utcnow())
+        account = self.repo.create(
+            company_id=company_id,
+            employee_id=employee.id,
+            account_holder=data.account_holder,
+            bank_name=data.bank_name,
+            account_number_enc=blob,
+            account_last4=(
+                current.account_last4
+                if not number_changed and current is not None
+                else data.account_number[-4:]
+            ),
+            ifsc_code=data.ifsc_code,
+            is_active=True,
+            created_by=actor.id,
+        )
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="BANK_ACCOUNT_SAVED",
+            entity_type="employee_bank_account",
+            entity_id=account.id,
+            details={
+                "employee_id": str(employee.id),
+                "fields": changed,
+                "first_save": current is None,
+            },
+        )
+        self.db.commit()
+        self._notify_change(actor, employee)
+        return self._response(account)
+
+    def _number(
+        self, current: EmployeeBankAccount | None, submitted: str, company_id: uuid.UUID
+    ) -> tuple[bytes, bool]:
+        """The blob to store and whether the number differs from the stored one. The mask (or
+        the stored number itself) keeps the stored blob; a new number is encrypted afresh."""
+        if is_masked_account_number(submitted):
+            if current is None:
+                raise ValidationError(
+                    "No account number is stored yet; enter the full number.",
+                    details={"field": "account_number"},
+                )
+            if submitted.lstrip("*") not in ("", current.account_last4):
+                raise ValidationError(
+                    "The masked account number does not match the stored one.",
+                    details={"field": "account_number"},
+                )
+            return bytes(current.account_number_enc), False
+        if current is not None and current.account_last4 == submitted[-4:]:
+            try:
+                stored = decrypt_field(
+                    bytes(current.account_number_enc),
+                    company_id=company_id,
+                    column=BANK_ACCOUNT_COLUMN,
+                )
+            except DecryptionFailedError:
+                stored = None  # a damaged stored value is replaced by the number just entered
+            if stored == submitted:
+                return bytes(current.account_number_enc), False
+        return encrypt_field(submitted, company_id=company_id, column=BANK_ACCOUNT_COLUMN), True
+
+    def _notify_change(self, actor: User, employee: Employee) -> None:
+        """Tell the other side, after the save is committed: the employee when someone else
+        changed their details, HR-level users when the employee did. No number in the text."""
+        company_id = actor.company_id
+        if employee.user_id == actor.id:
+            recipients = [
+                user.id
+                for user in self.user_repo.list_active_by_roles(company_id, BANK_ROLES)
+                if user.id != actor.id
+            ]
+            title = "Employee bank details changed"
+            message = f"Employee {employee.employee_code} changed their bank details."
+        else:
+            recipients = [employee.user_id] if employee.user_id is not None else []
+            title = "Your bank details were changed"
+            message = "Your bank details were updated by HR. Check them on the payroll page."
+        try:
+            for user_id in recipients:
+                self.notify.notify(
+                    company_id=company_id,
+                    user_id=user_id,
+                    type=BANK_NOTIFICATION_TYPE,
+                    title=title,
+                    message=message,
+                    action_url=BANK_PAGE_URL,
+                    entity_type="employee",
+                    entity_id=employee.id,
+                )
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - the save is already committed; a notice must not undo it
+            self.db.rollback()
+            logger.warning("bank_details_notification_failed", exc_info=True)
+
+
+class PaymentFileService:
+    """`GET /payroll/runs/{id}/payment-file` (5.8): the file is built from the payment lines
+    saved when the run was approved, never from today's bank details."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.run_repo = PayrollRunRepository(db)
+        self.payment_repo = PayrollRunPaymentRepository(db)
+        self.company_repo = CompanyRepository(db)
+        self.audit = AuditService(db)
+
+    def export(
+        self, actor: User, run_id: uuid.UUID, format_name: str
+    ) -> tuple[bytes, str, str, int]:
+        """The file bytes, its name, its content type and how many employees were left out."""
+        company_id = actor.company_id
+        file_format = PAYMENT_FILE_FORMATS.get(format_name)
+        if file_format is None:
+            known = ", ".join(sorted(PAYMENT_FILE_FORMATS))
+            raise ValidationError(
+                f"Unknown payment file format '{format_name}'. Known formats: {known}.",
+                details={"field": "format", "allowed": sorted(PAYMENT_FILE_FORMATS)},
+            )
+        run = self.run_repo.get_by_id(run_id, company_id)
+        if run is None:
+            raise NotFoundError("Payroll run not found.")
+        if run.status not in (PayrollRunStatus.approved, PayrollRunStatus.paid):
+            raise ConflictError(
+                f"A payment file can be made only for an approved or paid run; this run is "
+                f"'{run.status.value}'."
+            )
+        lines = self.payment_repo.list_for_run(run.id, company_id)
+        if not lines:
+            raise ConflictError(NO_PAYMENT_LINES_MESSAGE)
+        payable = [line for line in lines if line.excluded_reason is None]
+        if not payable:
+            raise ConflictError(NOBODY_PAYABLE_MESSAGE)
+        company = self.company_repo.get_by_id(company_id)
+        currency = company.currency if company is not None else ""
+        paid_on = (run.approved_at or run.updated_at).date().isoformat()
+        rows = [
+            PaymentLine(
+                payment_reference=f"PAY-{run.year}{run.month:02d}-{line.employee_code}",
+                employee_code=line.employee_code,
+                account_holder=line.account_holder or "",
+                bank_name=line.bank_name or "",
+                account_number=decrypt_field(
+                    bytes(line.account_number_enc or b""),
+                    company_id=company_id,
+                    column=PAYMENT_ACCOUNT_COLUMN,
+                ),
+                ifsc=line.ifsc_code or "",
+                amount=f"{line.amount:.2f}",
+                currency=currency,
+                payment_date=paid_on,
+                narration=f"Salary {run.year}-{run.month:02d}",
+            )
+            for line in payable
+        ]
+        content = file_format.build(rows)
+        excluded = len(lines) - len(payable)
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PAYMENT_FILE_EXPORTED",
+            entity_type="payroll_run",
+            entity_id=run.id,
+            details={
+                "format": file_format.name,
+                "row_count": len(rows),
+                "excluded_count": excluded,
+            },
+        )
+        self.db.commit()
+        return (
+            content,
+            file_format.filename(run.year, run.month),
+            file_format.content_type,
+            excluded,
+        )
 
 
 class ReimbursementService:

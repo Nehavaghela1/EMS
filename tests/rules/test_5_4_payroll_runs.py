@@ -43,6 +43,7 @@ from app.modules.payroll.models import (
     PayrollRunStatus,
     Reimbursement,
     ReimbursementStatus,
+    StatutoryConfig,
 )
 from app.modules.payroll.schemas import PayrollRunCreateRequest
 from app.modules.payroll.service import PayrollRunService
@@ -670,6 +671,7 @@ def test_R6_two_simultaneous_creates_give_one_202_and_one_409(
             setup.flush()
             bind_tenant_to_session(setup, company_id=cid, is_platform_admin=False)
             setup.add(CompanySettings(company_id=cid))
+            setup.add(StatutoryConfig(company_id=cid, country="IN", pt_state="Gujarat"))
             user = User(
                 id=uuid.uuid4(),
                 company_id=cid,

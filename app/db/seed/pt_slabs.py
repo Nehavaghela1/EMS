@@ -65,14 +65,15 @@ GUJARAT_SLABS: list[dict] = [
 
 
 def seed_pt_slabs(db: Session) -> None:
-    """Idempotent — upsert by (state, income_min, effective_from), safe to
-    re-run."""
+    """Idempotent — upsert by (country, state, income_min, effective_from), safe to
+    re-run. Gujarat, India."""
     for row in GUJARAT_SLABS:
         validate_seed_row(row)
     for row in GUJARAT_SLABS:
         existing = (
             db.query(PtSlab)
             .filter_by(
+                country="IN",
                 state="Gujarat",
                 income_min=row["income_min"],
                 effective_from=row["effective_from"],
@@ -80,7 +81,7 @@ def seed_pt_slabs(db: Session) -> None:
             .first()
         )
         if existing is None:
-            db.add(PtSlab(state="Gujarat", **row))
+            db.add(PtSlab(country="IN", state="Gujarat", **row))
         else:
             existing.income_max = row["income_max"]
             existing.monthly_amount = row["monthly_amount"]
