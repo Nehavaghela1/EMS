@@ -1,6 +1,7 @@
 import unicodedata
 import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any, Literal, Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -203,3 +204,24 @@ class GlobalSearchResponse(BaseModel):
     query: str
     total_results: int
     results: list[SearchResultItem]
+
+
+# ── Countries and states (the one shared list, 5.2) ────────────────────────────
+class RegionResponse(BaseModel):
+    code: str
+    name: str
+    # Whether the country's statutory tables hold official rows, so payroll can run there.
+    payroll_ready: bool
+    states: list[str]
+
+
+# ── Platform payroll statistics (super admin, 5.8) ────────────────────────────
+class PayrollMonthStats(BaseModel):
+    """One month, all companies together. Never a company id or name, never a person."""
+
+    month: str
+    companies_with_runs: int
+    runs_total: int
+    runs_by_status: dict[str, int]
+    employees_paid: int
+    total_net_paid: Decimal

@@ -48,6 +48,8 @@ from app.modules.platform.schemas import (
     MarkAllReadResponse,
     NotificationListResponse,
     NotificationResponse,
+    PayrollMonthStats,
+    RegionResponse,
     SignedUrlResponse,
 )
 from app.modules.platform.service import (
@@ -59,6 +61,8 @@ from app.modules.platform.service import (
     GlobalSearchService,
     IndustryPresetService,
     NotificationService,
+    PayrollStatsService,
+    RegionService,
 )
 from app.workers.celery_app import celery_app
 
@@ -722,6 +726,34 @@ def delete_employee_document(
         },
     )
     db.commit()
+
+
+# ── Countries and states: the one shared list (5.2) ─────────────
+regions_router = APIRouter(prefix="/regions", tags=["Regions"])
+
+
+@regions_router.get("", response_model=list[RegionResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def list_regions(request: Request, user: User = Depends(get_current_user)):
+    return RegionService.list_regions()
+
+
+# ── Platform payroll statistics, super admin only (5.8) ─────────
+platform_router = APIRouter(prefix="/platform", tags=["Platform"])
+
+_MONTH_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
+
+
+@platform_router.get("/payroll-stats", response_model=list[PayrollMonthStats])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def payroll_stats(
+    request: Request,
+    from_month: str = Query(..., alias="from", pattern=_MONTH_PATTERN),
+    to_month: str = Query(..., alias="to", pattern=_MONTH_PATTERN),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    return PayrollStatsService(db).stats(from_month, to_month)
 
 
 # ── Global Search (route 134) ───────────────────────────────────
