@@ -190,7 +190,7 @@ Modules: `identity · hr · time_leave · performance · payroll · projects · 
 
 ## Deploy steps
 
-Production runs the `scripts/setup.sh` steps (migrate, then the reference-data seeds: industry presets, statutory rates, professional-tax and income-tax slabs) after every release, and a new tax year needs a new tax set (income-tax slabs, and PF/ESI/professional-tax rows if they changed) added before 1 April, or payroll runs for that year return 409.
+Production runs the `scripts/setup.sh` steps (migrate, then the reference-data seeds: industry presets, statutory rates, professional-tax and income-tax slabs) after every release, and a new tax year needs a new tax set (income-tax slabs, and PF/ESI/professional-tax rows if they changed) added before 1 April, or payroll runs for that year return 409. Production must also run the Celery beat process (one instance), which drives the daily rate check of the platform's rate sources.
 
 ## Commands
 
