@@ -4,26 +4,40 @@ import pytest
 
 from app.modules.payroll.payslip_engine import (
     ComponentSpec,
+    EsiRateSpec,
     PayslipInput,
+    PfRateSpec,
     PTSlabSpec,
     StatutoryConfigSpec,
     TaxSlabSpec,
     calculate_payslip,
 )
 
+# The rate rows a payroll month resolves (5.2): the engine takes them as input, never as
+# literals. These are the figures the tests in this file were written against.
+_PF_RATE = PfRateSpec(
+    employee_rate=Decimal("12.000"),
+    employer_rate=Decimal("12.000"),
+    wage_ceiling=Decimal("15000.00"),
+)
+_ESI_RATE = EsiRateSpec(
+    employee_rate=Decimal("0.750"),
+    employer_rate=Decimal("3.250"),
+    wage_ceiling=Decimal("21000.00"),
+)
+# What the income-tax slab rows carry for the new regime (standard deduction, 87A rebate).
+_NEW_REGIME_RULES = {
+    "standard_deduction": "75000.00",
+    "rebate_87a": {"income_limit": "1200000.00", "max_rebate": "60000.00"},
+}
+
 
 @pytest.fixture
 def default_statutory() -> StatutoryConfigSpec:
     return StatutoryConfigSpec(
         pf_enabled=True,
-        pf_employee_rate=Decimal("12.000"),
-        pf_employer_rate=Decimal("12.000"),
-        pf_wage_ceiling=Decimal("15000.00"),
         pf_restrict_to_ceiling=True,
         esi_enabled=True,
-        esi_employee_rate=Decimal("0.750"),
-        esi_employer_rate=Decimal("3.250"),
-        esi_wage_ceiling=Decimal("21000.00"),
         pt_enabled=True,
         pt_state="Gujarat",
         tds_enabled=True,
@@ -60,7 +74,7 @@ def india_tax_slabs() -> list[TaxSlabSpec]:
             max_income=Decimal("400000.00"),
             rate_percent=Decimal("0.000"),
             cess_percent=Decimal("4.000"),
-            surcharge_rules={"standard_deduction": "75000.00"},
+            surcharge_rules=_NEW_REGIME_RULES,
         ),
         TaxSlabSpec(
             country="IN",
@@ -70,7 +84,7 @@ def india_tax_slabs() -> list[TaxSlabSpec]:
             max_income=Decimal("800000.00"),
             rate_percent=Decimal("5.000"),
             cess_percent=Decimal("4.000"),
-            surcharge_rules={"standard_deduction": "75000.00"},
+            surcharge_rules=_NEW_REGIME_RULES,
         ),
         TaxSlabSpec(
             country="IN",
@@ -80,7 +94,7 @@ def india_tax_slabs() -> list[TaxSlabSpec]:
             max_income=Decimal("1200000.00"),
             rate_percent=Decimal("10.000"),
             cess_percent=Decimal("4.000"),
-            surcharge_rules={"standard_deduction": "75000.00"},
+            surcharge_rules=_NEW_REGIME_RULES,
         ),
     ]
 
@@ -140,6 +154,8 @@ def test_payslip_below_esi_ceiling(
         ctc_annual=Decimal("216000.00"),
         components=standard_components,
         statutory=default_statutory,
+        pf_rate=_PF_RATE,
+        esi_rate=_ESI_RATE,
         pt_slabs=gujarat_pt_slabs,
         tax_slabs=india_tax_slabs,
         month=4,
@@ -200,6 +216,8 @@ def test_payslip_above_esi_ceiling(
         ctc_annual=Decimal("600000.00"),
         components=standard_components,
         statutory=default_statutory,
+        pf_rate=_PF_RATE,
+        esi_rate=_ESI_RATE,
         pt_slabs=gujarat_pt_slabs,
         tax_slabs=india_tax_slabs,
         month=4,
@@ -240,6 +258,8 @@ def test_payslip_pt_slab_boundary(
         ctc_annual=Decimal("144000.00"),
         components=standard_components,
         statutory=default_statutory,
+        pf_rate=_PF_RATE,
+        esi_rate=_ESI_RATE,
         pt_slabs=gujarat_pt_slabs,
         tax_slabs=india_tax_slabs,
         month=4,
@@ -269,6 +289,8 @@ def test_payslip_lop_and_full_lop(
         ctc_annual=Decimal("600000.00"),
         components=standard_components,
         statutory=default_statutory,
+        pf_rate=_PF_RATE,
+        esi_rate=_ESI_RATE,
         pt_slabs=gujarat_pt_slabs,
         tax_slabs=india_tax_slabs,
         month=4,
@@ -292,6 +314,8 @@ def test_payslip_lop_and_full_lop(
         ctc_annual=Decimal("600000.00"),
         components=standard_components,
         statutory=default_statutory,
+        pf_rate=_PF_RATE,
+        esi_rate=_ESI_RATE,
         pt_slabs=gujarat_pt_slabs,
         tax_slabs=india_tax_slabs,
         month=4,
@@ -323,6 +347,8 @@ def test_reimbursement_does_not_affect_statutory_deductions_only_net_salary(
         ctc_annual=Decimal("600000.00"),
         components=standard_components,
         statutory=default_statutory,
+        pf_rate=_PF_RATE,
+        esi_rate=_ESI_RATE,
         pt_slabs=gujarat_pt_slabs,
         tax_slabs=india_tax_slabs,
         month=4,
@@ -371,7 +397,7 @@ TAX_SLABS_EXTENDED = [
         max_income=Decimal("400000.00"),
         rate_percent=Decimal("0.000"),
         cess_percent=Decimal("4.000"),
-        surcharge_rules={"standard_deduction": "75000.00"},
+        surcharge_rules=_NEW_REGIME_RULES,
     ),
     TaxSlabSpec(
         country="IN",
@@ -381,7 +407,7 @@ TAX_SLABS_EXTENDED = [
         max_income=Decimal("800000.00"),
         rate_percent=Decimal("5.000"),
         cess_percent=Decimal("4.000"),
-        surcharge_rules={"standard_deduction": "75000.00"},
+        surcharge_rules=_NEW_REGIME_RULES,
     ),
     TaxSlabSpec(
         country="IN",
@@ -391,7 +417,7 @@ TAX_SLABS_EXTENDED = [
         max_income=Decimal("1200000.00"),
         rate_percent=Decimal("10.000"),
         cess_percent=Decimal("4.000"),
-        surcharge_rules={"standard_deduction": "75000.00"},
+        surcharge_rules=_NEW_REGIME_RULES,
     ),
     TaxSlabSpec(
         country="IN",
@@ -401,7 +427,7 @@ TAX_SLABS_EXTENDED = [
         max_income=Decimal("1600000.00"),
         rate_percent=Decimal("15.000"),
         cess_percent=Decimal("4.000"),
-        surcharge_rules={"standard_deduction": "75000.00"},
+        surcharge_rules=_NEW_REGIME_RULES,
     ),
 ]
 
@@ -618,7 +644,7 @@ def test_tds_projection_april_first_month_zero_ytd():
             max_income=Decimal("2000000.00"),
             rate_percent=Decimal("20.000"),
             cess_percent=Decimal("4.000"),
-            surcharge_rules={"standard_deduction": "75000.00"},
+            surcharge_rules=_NEW_REGIME_RULES,
         ),
     ]
 
@@ -813,7 +839,7 @@ def test_tds_projection_october_with_tds_paid_ytd():
             max_income=Decimal("2000000.00"),
             rate_percent=Decimal("20.000"),
             cess_percent=Decimal("4.000"),
-            surcharge_rules={"standard_deduction": "75000.00"},
+            surcharge_rules=_NEW_REGIME_RULES,
         ),
     ]
 

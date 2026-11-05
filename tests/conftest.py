@@ -22,6 +22,7 @@ from app.db.session import get_db
 from app.main import app as fastapi_app
 from app.modules.identity.models import Company, CompanySettings, CompanyStatus, User, UserRole
 from app.workers.tasks.email import send_email_task
+from tests import db_tools
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -66,32 +67,25 @@ os.environ.pop("ENCRYPTION_PREVIOUS_KEYS", None)
 
 
 def _ensure_test_database_exists() -> None:
-    migration_url = make_url(settings.TEST_MIGRATION_URL)
-    db_name = migration_url.database
-    admin_engine = create_engine(
-        migration_url.set(database="postgres"), isolation_level="AUTOCOMMIT"
-    )
-    try:
-        with admin_engine.connect() as conn:
-            exists = conn.execute(
-                text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": db_name}
-            ).scalar()
-            if not exists:
-                # CREATE DATABASE can't take a bind parameter for the name;
-                # db_name comes from our own settings, not user input.
-                conn.execute(text(f'CREATE DATABASE "{db_name}"'))
-    finally:
-        admin_engine.dispose()
+    """Create the shared test database when it is missing, with the ems_owner / ems_app
+    grants applied in the same step (app/db/seed/bootstrap_roles.sql, run as the bootstrap
+    superuser: PG_BOOTSTRAP_USER / PG_BOOTSTRAP_PASSWORD, as scripts/setup.sh does), so the
+    migrations that follow and the tests that connect as ems_app work with no manual step. A
+    database that already exists is left as it is."""
+    db_name = make_url(settings.TEST_MIGRATION_URL).database
+    assert db_name is not None
+    if not db_tools.database_exists(db_name):
+        db_tools.create_database(db_name)
 
 
-def _migrate_test_database() -> None:
+def _migrate_test_database(migration_url: str | None = None) -> None:
     """Migrations run as ems_owner, via a real `alembic upgrade head` — a
-    subprocess with ALEMBIC_DATABASE_URL overridden to TEST_MIGRATION_URL, so
-    alembic/env.py (which reads settings.ALEMBIC_DATABASE_URL) resolves to
-    the test database without touching this process's own settings object.
+    subprocess with ALEMBIC_DATABASE_URL overridden to the migration URL (the shared test
+    database by default), so alembic/env.py (which reads settings.ALEMBIC_DATABASE_URL)
+    resolves to that database without touching this process's own settings object.
     """
     env = os.environ.copy()
-    env["ALEMBIC_DATABASE_URL"] = settings.TEST_MIGRATION_URL
+    env["ALEMBIC_DATABASE_URL"] = migration_url or settings.TEST_MIGRATION_URL
     result = subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=REPO_ROOT,
@@ -107,14 +101,14 @@ def _migrate_test_database() -> None:
         )
 
 
-def _seed_reference_data() -> None:
+def _seed_reference_data(migration_url: str | None = None) -> None:
     """industry_presets (WP-05) — reference/seed data, not schema, so it
     isn't part of the migration itself. Connects as ems_owner directly
     (the table has no RLS — 7.8 — so this is just a normal insert).
     """
     from app.db.seed.industry_presets import seed_industry_presets
 
-    engine = create_engine(settings.TEST_MIGRATION_URL)
+    engine = create_engine(migration_url or settings.TEST_MIGRATION_URL)
     try:
         with Session(bind=engine) as session:
             seed_industry_presets(session)
@@ -127,6 +121,105 @@ def _test_database_ready() -> None:
     _ensure_test_database_exists()
     _migrate_test_database()
     _seed_reference_data()
+
+
+# --- migration round-trip tests run on their own scratch database ------------------------
+#
+# A test that downgrades and upgrades real migrations adds and drops real columns. On the
+# shared database every such run used up PostgreSQL column slots (a dropped column keeps its
+# slot; the limit is 1,600 per table) and a local database broke after about a dozen full
+# runs. So any test whose code downgrades (`command.downgrade(` or the `alembic downgrade`
+# subprocess) gets this scratch database: created on first use, migrated to head, dropped when
+# the session ends (also after failures).
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    import inspect
+
+    for item in items:
+        function = getattr(item, "function", None)
+        if function is None:
+            continue
+        try:
+            source = inspect.getsource(function)
+        except (OSError, TypeError):
+            continue
+        downgrades = "command.downgrade(" in source or '"alembic", "downgrade"' in source
+        if downgrades and "scratch_migration_db" not in item.fixturenames:
+            # A mark added now would be too late (the fixture list is already built). Appended,
+            # so the session fixtures (which read the shared database) are set up first.
+            item.fixturenames.append("scratch_migration_db")
+
+
+@pytest.fixture(scope="session")
+def _scratch_database(_test_database_ready):
+    with db_tools.scratch_database() as scratch:
+        _migrate_test_database(scratch.owner_url)
+        _seed_reference_data(scratch.owner_url)
+        yield scratch
+
+
+@pytest.fixture
+def scratch_migration_db(_scratch_database, monkeypatch: pytest.MonkeyPatch):
+    """Point every URL a migration test reads at the scratch database for this test, and put
+    the scratch database back to head afterwards, so a failed test cannot leave it half-way."""
+    monkeypatch.setattr(settings, "TEST_MIGRATION_URL", _scratch_database.owner_url)
+    monkeypatch.setattr(settings, "TEST_DATABASE_URL", _scratch_database.app_url)
+    monkeypatch.setattr(settings, "ALEMBIC_DATABASE_URL", _scratch_database.owner_url)
+    yield _scratch_database
+    _migrate_test_database(_scratch_database.owner_url)
+
+
+@pytest.fixture
+def migration_engine(scratch_migration_db):
+    """An ems_app engine on the scratch database, for a round-trip test that looks at the
+    schema through an engine (instead of the session `engine`, which is the shared database)."""
+    migration = create_engine(scratch_migration_db.app_url)
+    yield migration
+    migration.dispose()
+
+
+# --- the shared database must not lose column slots --------------------------------------
+
+_SLOT_TABLES = ["statutory_configs", "reimbursements", "payroll_items", "statutory_rates"]
+
+
+def _column_slots(engine) -> dict[str, int]:
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT c.relname, max(a.attnum) FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid = a.attrelid "
+                "WHERE c.relname = ANY(:names) AND c.relkind = 'r' AND a.attnum > 0 "
+                "GROUP BY c.relname"
+            ),
+            {"names": _SLOT_TABLES},
+        ).fetchall()
+    return {name: int(top) for name, top in rows}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def column_slot_baseline(request: pytest.FixtureRequest, _test_database_ready):
+    """The highest column number (dropped columns included) of the tables the migrations
+    change, read from the catalog when the session starts and again when it ends. They must
+    be equal; the session prints both (see pytest_terminal_summary)."""
+    engine = create_engine(settings.TEST_DATABASE_URL)
+    start = _column_slots(engine)
+    request.config._column_slots = {"start": start, "end": start}  # type: ignore[attr-defined]
+    yield start
+    end = _column_slots(engine)
+    request.config._column_slots["end"] = end  # type: ignore[attr-defined]
+    engine.dispose()
+    assert end == start, f"a test changed the column slots of the shared database: {start} -> {end}"
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    slots = getattr(config, "_column_slots", None)
+    if slots:
+        terminalreporter.write_line(
+            "shared test database column slots (highest column number incl. dropped): "
+            f"start {slots['start']}, end {slots['end']}"
+        )
 
 
 @pytest.fixture(scope="session")

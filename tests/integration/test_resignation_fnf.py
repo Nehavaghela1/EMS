@@ -3,10 +3,12 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.db.seed.statutory_rates import seed_statutory_rates
 from tests.integration.test_employees import _create_employee
 
 
 def test_resignation_and_fnf_workflow(client: TestClient, db: Session, company_a):
+    seed_statutory_rates(db)  # the final-settlement salary uses the EPF row of the last month
     hr_headers = company_a.hr_headers
     emp = _create_employee(client, hr_headers, email="resigning@example.com")
     emp_id = emp["id"]

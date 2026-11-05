@@ -20,6 +20,7 @@ from app.modules.payroll.models import (
     SalaryComponent,
     SalaryStructure,
     StatutoryConfig,
+    StatutoryRate,
     TaxRegime,
     TaxSlab,
 )
@@ -145,6 +146,27 @@ class SalaryComponentRepository:
 class EmployeeSalaryRepository:
     def __init__(self, db: Session):
         self.db = db
+
+    def list_overlapping_month(
+        self, employee_id: uuid.UUID, company_id: uuid.UUID, month_start: date, month_end: date
+    ) -> list[EmployeeSalary]:
+        """Every salary row whose dates touch the month, oldest first."""
+        return list(
+            self.db.scalars(
+                select(EmployeeSalary)
+                .where(
+                    EmployeeSalary.employee_id == employee_id,
+                    EmployeeSalary.company_id == company_id,
+                    EmployeeSalary.deleted_at.is_(None),
+                    EmployeeSalary.effective_from <= month_end,
+                    or_(
+                        EmployeeSalary.effective_to.is_(None),
+                        EmployeeSalary.effective_to >= month_start,
+                    ),
+                )
+                .order_by(EmployeeSalary.effective_from.asc())
+            ).all()
+        )
 
     def get_open_ended(
         self, employee_id: uuid.UUID, company_id: uuid.UUID
@@ -328,6 +350,25 @@ class PtSlabRepository:
             )
         )
 
+    def list_open_locked(self, state: str) -> list[PtSlab]:
+        """The slabs of `state` that have no end date, locked for the duration of the save."""
+        return list(
+            self.db.scalars(
+                select(PtSlab)
+                .where(
+                    PtSlab.state == state,
+                    PtSlab.effective_to.is_(None),
+                    PtSlab.deleted_at.is_(None),
+                )
+                .with_for_update()
+            ).all()
+        )
+
+    def set_effective_to(self, slabs: list[PtSlab], effective_to: date) -> None:
+        for slab in slabs:
+            slab.effective_to = effective_to
+        self.db.flush()
+
     def create(self, **kwargs) -> PtSlab:
         slab = PtSlab(**kwargs)
         self.db.add(slab)
@@ -355,11 +396,103 @@ class TaxSlabRepository:
             self.db.scalars(stmt.order_by(TaxSlab.regime.asc(), TaxSlab.min_income.asc())).all()
         )
 
+    def list_in_force(
+        self, country: str, financial_year: str, regime: TaxRegime, on_date: date
+    ) -> list[TaxSlab]:
+        """The brackets of one financial year and regime that had started by `on_date`."""
+        return list(
+            self.db.scalars(
+                select(TaxSlab)
+                .where(
+                    TaxSlab.country == country,
+                    TaxSlab.financial_year == financial_year,
+                    TaxSlab.regime == regime,
+                    TaxSlab.effective_from <= on_date,
+                    TaxSlab.deleted_at.is_(None),
+                )
+                .order_by(TaxSlab.min_income.asc())
+            ).all()
+        )
+
     def create(self, **kwargs) -> TaxSlab:
         slab = TaxSlab(**kwargs)
         self.db.add(slab)
         self.db.flush()
         return slab
+
+
+class StatutoryRateRepository:
+    """RLS: No — government-defined, platform-managed (5.2)."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def list_rates(
+        self,
+        page_params: PageParams,
+        scheme: str | None = None,
+        on_date: date | None = None,
+    ) -> tuple[list[StatutoryRate], int, int]:
+        stmt = select(StatutoryRate).where(StatutoryRate.deleted_at.is_(None))
+        if scheme is not None:
+            stmt = stmt.where(StatutoryRate.scheme == scheme)
+        if on_date is not None:
+            stmt = stmt.where(
+                StatutoryRate.effective_from <= on_date,
+                or_(StatutoryRate.effective_to.is_(None), StatutoryRate.effective_to >= on_date),
+            )
+        stmt = stmt.order_by(StatutoryRate.scheme.asc(), StatutoryRate.effective_from.asc())
+        return paginate(self.db, stmt, page_params)
+
+    def list_in_force(self, on_date: date) -> list[StatutoryRate]:
+        """One row per scheme: the rates in force on `on_date`."""
+        return list(
+            self.db.scalars(
+                select(StatutoryRate)
+                .where(
+                    StatutoryRate.deleted_at.is_(None),
+                    StatutoryRate.effective_from <= on_date,
+                    or_(
+                        StatutoryRate.effective_to.is_(None),
+                        StatutoryRate.effective_to >= on_date,
+                    ),
+                )
+                .order_by(StatutoryRate.scheme.asc())
+            ).all()
+        )
+
+    def get_in_force(self, scheme: str, on_date: date) -> StatutoryRate | None:
+        """The one row of `scheme` in force on `on_date` (rows never overlap)."""
+        return self.db.scalar(
+            select(StatutoryRate).where(
+                StatutoryRate.scheme == scheme,
+                StatutoryRate.deleted_at.is_(None),
+                StatutoryRate.effective_from <= on_date,
+                or_(StatutoryRate.effective_to.is_(None), StatutoryRate.effective_to >= on_date),
+            )
+        )
+
+    def list_for_scheme_locked(self, scheme: str) -> list[StatutoryRate]:
+        """Every row of the scheme, locked until the caller's transaction ends, so two
+        simultaneous adds look at the same state one after the other."""
+        return list(
+            self.db.scalars(
+                select(StatutoryRate)
+                .where(StatutoryRate.scheme == scheme, StatutoryRate.deleted_at.is_(None))
+                .order_by(StatutoryRate.effective_from.asc())
+                .with_for_update()
+            ).all()
+        )
+
+    def create(self, **kwargs) -> StatutoryRate:
+        rate = StatutoryRate(**kwargs)
+        self.db.add(rate)
+        self.db.flush()
+        return rate
+
+    def set_effective_to(self, rate: StatutoryRate, effective_to: date) -> None:
+        rate.effective_to = effective_to
+        self.db.flush()
 
 
 class PayrollRunRepository:

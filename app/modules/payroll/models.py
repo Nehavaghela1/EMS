@@ -11,6 +11,7 @@ from decimal import Decimal
 from sqlalchemy import (
     ARRAY,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -186,35 +187,12 @@ class StatutoryConfig(TenantBase):
 
     country: Mapped[str] = mapped_column(String(2), nullable=False, default="IN")
 
-    # EPF — verified against EPFO's own "Present Rates of Contribution"
-    # (Spec 12.2, checked 2026-09-03). 12% employee, 12% employer (split
-    # into EPS 8.33%-capped-at-₹1,250 + EDLI 0.5% + the EPF remainder at
-    # calculation time, not stored as separate columns here — Spec 7.6
-    # names only employee/employer totals and the ceiling), ₹15,000 ceiling.
+    # A company only switches PF and ESI on or off here. The rates and wage ceilings are
+    # platform-managed, effective-dated rows in `statutory_rates` (5.2), each with its
+    # official source; the row in force on the first day of the payroll month applies.
     pf_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    pf_employee_rate: Mapped[Decimal] = mapped_column(
-        SANumeric(6, 3), nullable=False, default=Decimal("12.000")
-    )
-    pf_employer_rate: Mapped[Decimal] = mapped_column(
-        SANumeric(6, 3), nullable=False, default=Decimal("12.000")
-    )
-    pf_wage_ceiling: Mapped[Decimal] = mapped_column(
-        SANumeric(14, 2), nullable=False, default=Decimal("15000.00")
-    )
     pf_restrict_to_ceiling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-
-    # ESI — verified against ESIC's own published contribution rates,
-    # effective 01-07-2019 (Spec 12.2, checked 2026-09-03).
     esi_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    esi_employee_rate: Mapped[Decimal] = mapped_column(
-        SANumeric(6, 3), nullable=False, default=Decimal("0.750")
-    )
-    esi_employer_rate: Mapped[Decimal] = mapped_column(
-        SANumeric(6, 3), nullable=False, default=Decimal("3.250")
-    )
-    esi_wage_ceiling: Mapped[Decimal] = mapped_column(
-        SANumeric(14, 2), nullable=False, default=Decimal("21000.00")
-    )
 
     pt_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     pt_state: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -269,7 +247,60 @@ class PtSlab(TimeStampedBase):
     special_month_amount: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True)
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
-    source_note: Mapped[str] = mapped_column(Text, nullable=False)
+    # Official source (5.2): a link on the government list, a title, the day it was checked.
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verified_on: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class StatutoryScheme(str, enum.Enum):
+    epf = "epf"
+    esi = "esi"
+
+
+class StatutoryRate(TimeStampedBase):
+    """RLS: No — government-defined, platform-managed (5.2), like `pt_slabs`. One
+    effective-dated row per scheme and period; old rows are kept so a payroll month always
+    resolves to the numbers in force on its first day. Rows of one scheme never overlap
+    (exclusion constraint). `employer_epf_rate`, `employer_eps_rate`, `edli_rate` and
+    `admin_charge_rate` are EPF-only breakdown figures (null for ESI).
+    """
+
+    __tablename__ = "statutory_rates"
+    __table_args__ = (
+        CheckConstraint("scheme IN ('epf', 'esi')", name="ck_statutory_rates_scheme"),
+        ExcludeConstraint(
+            ("scheme", "="),
+            (
+                text("daterange(effective_from, coalesce(effective_to, 'infinity'::date), '[]')"),
+                "&&",
+            ),
+            name="ex_statutory_rates_no_overlap",
+            using="gist",
+            where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    scheme: Mapped[str] = mapped_column(String(10), nullable=False)
+    employee_rate: Mapped[Decimal] = mapped_column(SANumeric(6, 3), nullable=False)
+    employer_rate: Mapped[Decimal] = mapped_column(SANumeric(6, 3), nullable=False)
+    wage_ceiling: Mapped[Decimal] = mapped_column(SANumeric(14, 2), nullable=False)
+    employer_epf_rate: Mapped[Decimal | None] = mapped_column(SANumeric(6, 3), nullable=True)
+    employer_eps_rate: Mapped[Decimal | None] = mapped_column(SANumeric(6, 3), nullable=True)
+    edli_rate: Mapped[Decimal | None] = mapped_column(SANumeric(6, 3), nullable=True)
+    admin_charge_rate: Mapped[Decimal | None] = mapped_column(SANumeric(6, 3), nullable=True)
+    # ESI only: an employee whose average daily wage is at or below this pays no employee
+    # share (the employer still pays its own).
+    employee_exempt_daily_wage: Mapped[Decimal | None] = mapped_column(
+        SANumeric(14, 2), nullable=True
+    )
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verified_on: Mapped[date] = mapped_column(Date, nullable=False)
 
 
 class TaxSlab(TimeStampedBase):
@@ -300,7 +331,10 @@ class TaxSlab(TimeStampedBase):
     # them from here when it builds the actual TDS projection).
     surcharge_rules: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
-    source_note: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    source_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verified_on: Mapped[date] = mapped_column(Date, nullable=False)
 
 
 class PayrollRunStatus(str, enum.Enum):
@@ -415,6 +449,9 @@ class PayrollItem(TenantBase):
     reimbursement_amount: Mapped[Decimal] = mapped_column(
         SANumeric(14, 2), nullable=False, default=Decimal("0.00")
     )
+    # The salary rows this month was paid at: [{salary_id, from_date, to_date, days, ctc}].
+    # More than one when a raise started mid-month (paid by days at the old and new CTC).
+    salary_segments_json: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
 
 
 class ReimbursementType(str, enum.Enum):

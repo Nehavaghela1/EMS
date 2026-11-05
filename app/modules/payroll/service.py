@@ -32,17 +32,24 @@ from app.modules.payroll.models import (
     PayrollRunStatus,
     PayrollRunType,
     PercentageOf,
+    PtSlab,
     Reimbursement,
     ReimbursementStatus,
     SalaryComponent,
     SalaryComponentType,
     SalaryStructure,
     StatutoryConfig,
+    StatutoryRate,
+    TaxSlab,
 )
 from app.modules.payroll.payslip_engine import (
     ComponentSpec,
+    EsiRateSpec,
+    MissingRateError,
     PayslipInput,
+    PfRateSpec,
     PTSlabSpec,
+    SalarySegment,
     StatutoryConfigSpec,
     TaxSlabSpec,
     calculate_payslip,
@@ -56,6 +63,7 @@ from app.modules.payroll.repository import (
     SalaryComponentRepository,
     SalaryStructureRepository,
     StatutoryConfigRepository,
+    StatutoryRateRepository,
     TaxSlabRepository,
 )
 from app.modules.payroll.schemas import (
@@ -70,6 +78,8 @@ from app.modules.payroll.schemas import (
     SalaryStructureUpdateRequest,
     StatutoryConfigResponse,
     StatutoryConfigUpdateRequest,
+    StatutoryRateCreateRequest,
+    StatutoryRateResponse,
     TaxSlabPostRequest,
     is_masked_account_number,
     mask_payout_account_number,
@@ -684,20 +694,6 @@ class EmployeeSalaryService:
         self.db.commit()
 
 
-# Verified 2026-09-03 against EPFO's and ESIC's own published rates (Spec
-# 12.2) — a one-time row-population default for a NEW company's
-# statutory_configs, mirroring the same literal-Decimal-default pattern
-# CompanySettings already uses for half_day_hours_threshold/full_day_hours.
-# The payslip engine (WP-18) will read a company's own row from this table,
-# never one of these literals directly — a rate change is a data update to
-# an existing row via route 86, never a code change.
-_DEFAULT_PF_EMPLOYEE_RATE = Decimal("12.000")
-_DEFAULT_PF_EMPLOYER_RATE = Decimal("12.000")
-_DEFAULT_PF_WAGE_CEILING = Decimal("15000.00")
-_DEFAULT_ESI_EMPLOYEE_RATE = Decimal("0.750")
-_DEFAULT_ESI_EMPLOYER_RATE = Decimal("3.250")
-_DEFAULT_ESI_WAGE_CEILING = Decimal("21000.00")
-
 # 5.7: only a company's own owner and hr_admin read or change its payout (bank) settings;
 # a platform account (super_admin) must not move a company's bank details.
 PAYOUT_ROLES = (UserRole.owner, UserRole.hr_admin)
@@ -726,25 +722,17 @@ class StatutoryConfigService:
     def __init__(self, db: Session):
         self.db = db
         self.repo = StatutoryConfigRepository(db)
+        self.rate_repo = StatutoryRateRepository(db)
         self.audit = AuditService(db)
 
     def get_or_create(self, company_id: uuid.UUID) -> StatutoryConfig:
-        """Lazily created on first access with the verified defaults above
-        — every company approved before this session existed still gets a
-        correct row the first time anyone asks for it, with no backfill
-        migration needed."""
+        """Lazily created on first access with the column defaults (every switch on, the new
+        regime). Rates and ceilings are not stored here: they are the platform's
+        effective-dated rows in `statutory_rates` (5.2)."""
         config = self.repo.get_by_company(company_id)
         if config is not None:
             return config
-        config = self.repo.create(
-            company_id=company_id,
-            pf_employee_rate=_DEFAULT_PF_EMPLOYEE_RATE,
-            pf_employer_rate=_DEFAULT_PF_EMPLOYER_RATE,
-            pf_wage_ceiling=_DEFAULT_PF_WAGE_CEILING,
-            esi_employee_rate=_DEFAULT_ESI_EMPLOYEE_RATE,
-            esi_employer_rate=_DEFAULT_ESI_EMPLOYER_RATE,
-            esi_wage_ceiling=_DEFAULT_ESI_WAGE_CEILING,
-        )
+        config = self.repo.create(company_id=company_id)
         self.db.commit()
         return config
 
@@ -809,6 +797,14 @@ class StatutoryConfigService:
         self, config: StatutoryConfig, actor: User, *, revealed: str | None = None
     ) -> StatutoryConfigResponse:
         response = StatutoryConfigResponse.model_validate(config)
+        response = response.model_copy(
+            update={
+                "effective_rates": [
+                    StatutoryRateResponse.model_validate(rate)
+                    for rate in self.rate_repo.list_in_force(utcnow().date())
+                ]
+            }
+        )
         if actor.role not in PAYOUT_ROLES:
             return response.model_copy(
                 update={
@@ -873,20 +869,142 @@ class StatutoryConfigService:
             )
 
 
+_ONE_PAISA = Decimal("0.01")
+
+
+def _assert_contiguous(ranges: list[tuple[Decimal, Decimal | None]], what: str) -> None:
+    """A slab set must start at 0.00, have no gap and no overlap (the next lower bound is the
+    previous upper bound plus one paisa) and end with an open-ended slab (5.2 rule 6)."""
+    ordered = sorted(ranges, key=lambda r: r[0])
+    if ordered[0][0] != 0:
+        raise ValidationError(f"The first {what} must start at 0.00.")
+    for index, (low, high) in enumerate(ordered):
+        is_last = index == len(ordered) - 1
+        if high is not None and high < low:
+            raise ValidationError(f"A {what} has an upper limit below its lower limit ({low}).")
+        if high is None and not is_last:
+            raise ValidationError(f"Only the last {what} may have no upper limit.")
+        if is_last and high is not None:
+            raise ValidationError(f"The last {what} must have no upper limit.")
+        if high is not None:
+            expected = high + _ONE_PAISA
+            following = ordered[index + 1][0]
+            if following < expected:
+                raise ValidationError(f"The {what}s overlap at {following}.")
+            if following > expected:
+                raise ValidationError(f"The {what}s have a gap between {high} and {following}.")
+
+
+def _periods(rows: list[tuple[date, date | None]]) -> str:
+    return ", ".join(f"{start} to {end}" if end else f"{start} onwards" for start, end in rows)
+
+
+class StatutoryRateService:
+    """`/payroll/statutory-rates` (5.2): platform-managed, effective-dated PF and ESI rows."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.repo = StatutoryRateRepository(db)
+        self.audit = AuditService(db)
+
+    def list_rates(
+        self, page_params: PageParams, scheme: str | None, on_date: date | None
+    ) -> tuple[list[StatutoryRate], int, int]:
+        return self.repo.list_rates(page_params, scheme, on_date)
+
+    def rate_in_force(self, scheme: str, on_date: date) -> StatutoryRate | None:
+        return self.repo.get_in_force(scheme, on_date)
+
+    def add_rate(self, data: StatutoryRateCreateRequest, actor: User) -> StatutoryRate:
+        """A new rate adds a row and ends the open row the day before, in one save. Rows of
+        a scheme never overlap: checked here (naming the dates) and by the database."""
+        rows = self.repo.list_for_scheme_locked(data.scheme)
+        start = data.effective_from
+        open_row = next((r for r in rows if r.effective_to is None), None)
+        clash = (open_row is not None and start <= open_row.effective_from) or any(
+            r.effective_to is not None and start <= r.effective_to for r in rows
+        )
+        if clash:
+            raise ConflictError(
+                f"A new {data.scheme.upper()} rate starting {start} would overlap or precede the "
+                f"existing rates ({_periods([(r.effective_from, r.effective_to) for r in rows])}). "
+                "A new rate must start after the current rate's start date and outside every "
+                "ended period."
+            )
+        try:
+            if open_row is not None:
+                self.repo.set_effective_to(open_row, start - timedelta(days=1))
+            rate = self.repo.create(
+                scheme=data.scheme,
+                employee_rate=data.employee_rate,
+                employer_rate=data.employer_rate,
+                wage_ceiling=data.wage_ceiling,
+                employer_epf_rate=data.employer_epf_rate,
+                employer_eps_rate=data.employer_eps_rate,
+                edli_rate=data.edli_rate,
+                admin_charge_rate=data.admin_charge_rate,
+                employee_exempt_daily_wage=data.employee_exempt_daily_wage,
+                effective_from=start,
+                effective_to=None,
+                source_url=data.source_url,
+                source_title=data.source_title,
+                source_note=data.source_note,
+                verified_on=data.verified_on,
+            )
+        except IntegrityError:
+            # Two simultaneous adds: the exclusion constraint decides, the loser is a 409.
+            self.db.rollback()
+            raise ConflictError(
+                f"Another {data.scheme.upper()} rate was added at the same time and overlaps "
+                f"the one starting {start}. Reload and try again."
+            ) from None
+        self.audit.record(
+            company_id=actor.company_id,
+            actor=actor,
+            action="STATUTORY_RATE_ADDED",
+            entity_type="statutory_rate",
+            entity_id=rate.id,
+            details={
+                "scheme": rate.scheme,
+                "rate_id": str(rate.id),
+                "closed_rate_id": str(open_row.id) if open_row is not None else None,
+            },
+        )
+        self.db.commit()
+        return rate
+
+
 class PtSlabService:
     """Routes 87-88 (Spec 10.6)."""
 
     def __init__(self, db: Session):
         self.db = db
         self.repo = PtSlabRepository(db)
+        self.audit = AuditService(db)
 
     def list_for_state(self, state: str) -> list:
         return self.repo.list_for_state(state)
 
     def add_slab_set(self, data: PtSlabPutRequest, actor: User) -> list:
-        """SA only. Always adds a new effective-dated set — never mutates
-        a historical row, so a payroll date before this change keeps
-        resolving to whatever was in force then (Spec 12)."""
+        """SA only. Always adds a new effective-dated set and ends the state's open set the
+        day before — never mutates a historical row, so a payroll date before this change
+        keeps resolving to whatever was in force then (Spec 12)."""
+        _assert_contiguous([(s.income_min, s.income_max) for s in data.slabs], "slab")
+        existing = self.repo.list_open_locked(data.state)
+        everything = self.repo.list_for_state(data.state)
+        start = data.effective_from
+        if any(
+            r.effective_from >= start or (r.effective_to and start <= r.effective_to)
+            for r in everything
+        ):
+            known = sorted({(r.effective_from, r.effective_to) for r in everything})
+            raise ConflictError(
+                f"A new {data.state} professional-tax set starting {start} must start after the "
+                f"current set's start date and outside every ended period (existing: "
+                f"{_periods(known)})."
+            )
+        if existing:
+            self.repo.set_effective_to(existing, start - timedelta(days=1))
         created = [
             self.repo.create(
                 state=data.state,
@@ -895,12 +1013,23 @@ class PtSlabService:
                 monthly_amount=row.monthly_amount,
                 special_month=row.special_month,
                 special_month_amount=row.special_month_amount,
-                effective_from=data.effective_from,
+                effective_from=start,
                 effective_to=None,
+                source_url=data.source_url,
+                source_title=data.source_title,
                 source_note=data.source_note,
+                verified_on=data.verified_on,
             )
             for row in data.slabs
         ]
+        self.audit.record(
+            company_id=actor.company_id,
+            actor=actor,
+            action="PT_SLAB_SET_ADDED",
+            entity_type="pt_slab",
+            entity_id=created[0].id,
+            details={"state": data.state, "slab_ids": [str(s.id) for s in created]},
+        )
         self.db.commit()
         return created
 
@@ -911,12 +1040,20 @@ class TaxSlabService:
     def __init__(self, db: Session):
         self.db = db
         self.repo = TaxSlabRepository(db)
+        self.audit = AuditService(db)
 
     def list_for(self, country: str, financial_year: str, regime=None) -> list:
         return self.repo.list_for(country, financial_year, regime)
 
     def add_bracket_set(self, data: TaxSlabPostRequest, actor: User) -> list:
-        """SA only. Same append-only reasoning as PtSlabService."""
+        """SA only. Same append-only reasoning as PtSlabService: a financial year and regime
+        gets one bracket set; a second one is refused instead of mixing with the first."""
+        _assert_contiguous([(b.min_income, b.max_income) for b in data.brackets], "bracket")
+        if self.repo.list_for(data.country, data.financial_year, data.regime):
+            raise ConflictError(
+                f"The {data.regime.value} regime for financial year {data.financial_year} "
+                "already has a bracket set; existing rows are never changed."
+            )
         created = [
             self.repo.create(
                 country=data.country,
@@ -928,10 +1065,26 @@ class TaxSlabService:
                 cess_percent=data.cess_percent,
                 surcharge_rules=data.surcharge_rules,
                 effective_from=data.effective_from,
+                source_url=data.source_url,
+                source_title=data.source_title,
                 source_note=data.source_note,
+                verified_on=data.verified_on,
             )
             for bracket in data.brackets
         ]
+        self.audit.record(
+            company_id=actor.company_id,
+            actor=actor,
+            action="TAX_SLAB_SET_ADDED",
+            entity_type="tax_slab",
+            entity_id=created[0].id,
+            details={
+                "country": data.country,
+                "financial_year": data.financial_year,
+                "regime": data.regime.value,
+                "slab_ids": [str(s.id) for s in created],
+            },
+        )
         self.db.commit()
         return created
 
@@ -949,6 +1102,9 @@ class AttendanceSummary:
     absent_days: Decimal
     half_days: Decimal
     paid_leave_days: Decimal
+    # The loss of pay of each date, so that a month split across salary rows charges every
+    # such day at the daily rate of the segment that contains it (5.3 / 5.4, B3).
+    lop_by_date: tuple[tuple[date, Decimal], ...] = ()
 
 
 def summarise_attendance(
@@ -979,8 +1135,10 @@ def summarise_attendance(
             day += timedelta(days=1)
 
     lop = absent = half = paid_leave = _ZERO
+    lop_dates: list[tuple[date, Decimal]] = []
     day = month_start
     while day <= month_end:
+        lop_before = lop
         if day < joined_on or (last_working_date is not None and day > last_working_date):
             lop += _ONE
         elif day in working:
@@ -999,8 +1157,21 @@ def summarise_attendance(
                 elif status == AttendanceStatus.half_day:
                     lop += _HALF
                     half += _ONE
+        if lop != lop_before:
+            lop_dates.append((day, lop - lop_before))
         day += timedelta(days=1)
-    return AttendanceSummary(lop, absent, half, paid_leave)
+    return AttendanceSummary(lop, absent, half, paid_leave, tuple(lop_dates))
+
+
+@dataclass(frozen=True)
+class MonthRates:
+    """What a payroll month needs, resolved on the first day of that month."""
+
+    pf: PfRateSpec | None
+    esi: EsiRateSpec | None
+    pt_slabs: list[PtSlab]
+    tax_slabs: list[TaxSlab]
+    financial_year: str
 
 
 class PayrollRunService:
@@ -1008,6 +1179,7 @@ class PayrollRunService:
 
     def __init__(self, db: Session):
         self.db = db
+        self.rate_repo = StatutoryRateRepository(db)
         self.repo = PayrollRunRepository(db)
         self.item_repo = PayrollItemRepository(db)
         self.reimbursement_repo = ReimbursementRepository(db)
@@ -1055,6 +1227,10 @@ class PayrollRunService:
         # before the run row does: a commit after the insert would save a half-built run.
         statutory_config = self.statutory_service.get_or_create(company_id)
 
+        # The rates in force on the first day of the payroll month. A row that is missing
+        # stops the run here, before any run row exists, with a clear 409.
+        month_rates = self._rates_for_month(statutory_config, data)
+
         # 4. Create Draft Run with Idempotency Key (Spec 11.9 Step 3 & 4). The unique indexes
         # decide a race between two simultaneous creates: the loser gets the same answer as
         # the sequential case instead of a 500.
@@ -1081,11 +1257,125 @@ class PayrollRunService:
             raise
 
         try:
-            return self._generate_run(company_id, data, run, actor, statutory_config)
+            return self._generate_run(company_id, data, run, actor, statutory_config, month_rates)
         except Exception:
             # Nothing of a half-built run may stay: no run row, no item, no locked claim.
             self.db.rollback()
             raise
+
+    @staticmethod
+    def _component_specs(structure: SalaryStructure) -> list[ComponentSpec]:
+        return [
+            ComponentSpec(
+                code=c.code,
+                name=c.name,
+                type=c.type.value,
+                calculation_type=c.calculation_type.value,
+                value=c.value,
+                percentage_of=c.percentage_of.value if c.percentage_of else None,
+                is_taxable=c.is_taxable,
+                is_statutory=c.is_statutory,
+                display_order=c.display_order,
+            )
+            for c in structure.components
+        ]
+
+    def _salary_segments(
+        self,
+        company_id: uuid.UUID,
+        rows: list[EmployeeSalary],
+        month_end_components: list[ComponentSpec],
+        month_start: date,
+        month_end: date,
+        lop_by_date: tuple[tuple[date, Decimal], ...],
+    ) -> list[SalarySegment] | None:
+        """Split the month by calendar days over the salary rows that overlap it: each row's
+        days are the overlap of its dates with the month, and each loss-of-pay day belongs to
+        the row that contains it. `[]` when no row overlaps (the plain whole-month path);
+        None when a row's structure is missing."""
+        segments: list[SalarySegment] = []
+        for index, row in enumerate(rows):
+            start = max(row.effective_from, month_start)
+            end = min(row.effective_to or month_end, month_end)
+            if end < start:
+                continue
+            if index == len(rows) - 1:
+                components = month_end_components
+            else:
+                structure = self.structure_repo.get_by_id(row.structure_id, company_id)
+                if structure is None:
+                    return None
+                components = self._component_specs(structure)
+            lop = sum((amount for day, amount in lop_by_date if start <= day <= end), _ZERO)
+            segments.append(
+                SalarySegment(
+                    salary_id=str(row.id),
+                    from_date=start,
+                    to_date=end,
+                    days=(end - start).days + 1,
+                    ctc_annual=row.ctc,
+                    components=components,
+                    lop_days=lop,
+                )
+            )
+        return segments
+
+    def _rates_for_month(
+        self, statutory_config: StatutoryConfig, data: PayrollRunCreateRequest
+    ) -> "MonthRates":
+        """PF, ESI, professional-tax and income-tax rows in force on the FIRST day of the
+        payroll month (a change effective mid-month applies from the next month). An item that
+        is switched on and has no row in force stops the run with a 409; nothing is guessed."""
+        first_day = date(data.year, data.month, 1)
+        when = f"{first_day}; ask the platform administrator to add it"
+
+        pf_spec: PfRateSpec | None = None
+        if statutory_config.pf_enabled:
+            pf_row = self.rate_repo.get_in_force("epf", first_day)
+            if pf_row is None:
+                raise MissingRateError(f"No EPF rate is in force on {when}.")
+            pf_spec = PfRateSpec(pf_row.employee_rate, pf_row.employer_rate, pf_row.wage_ceiling)
+
+        esi_spec: EsiRateSpec | None = None
+        if statutory_config.esi_enabled:
+            esi_row = self.rate_repo.get_in_force("esi", first_day)
+            if esi_row is None:
+                raise MissingRateError(f"No ESI rate is in force on {when}.")
+            esi_spec = EsiRateSpec(
+                esi_row.employee_rate,
+                esi_row.employer_rate,
+                esi_row.wage_ceiling,
+                esi_row.employee_exempt_daily_wage,
+            )
+
+        pt_state = statutory_config.pt_state or "Gujarat"
+        pt_rows = (
+            self.pt_repo.list_for_state(pt_state, on_date=first_day)
+            if statutory_config.pt_enabled
+            else []
+        )
+        if statutory_config.pt_enabled and not pt_rows:
+            raise MissingRateError(
+                f"No professional-tax slabs for {pt_state} are in force on {when}."
+            )
+
+        # Financial year key (April to March)
+        fy_str = (
+            f"{data.year}-{data.year + 1}" if data.month >= 4 else f"{data.year - 1}-{data.year}"
+        )
+        tax_rows = (
+            self.tax_repo.list_in_force(
+                "IN", fy_str, statutory_config.default_tax_regime, first_day
+            )
+            if statutory_config.tds_enabled
+            else []
+        )
+        if statutory_config.tds_enabled and not tax_rows:
+            raise MissingRateError(
+                f"No income-tax slabs for the {statutory_config.default_tax_regime.value} "
+                f"regime, financial year {fy_str}, are in force on {when}."
+            )
+        return MonthRates(pf_spec, esi_spec, pt_rows, tax_rows, fy_str)
 
     def _generate_run(
         self,
@@ -1094,19 +1384,14 @@ class PayrollRunService:
         run: PayrollRun,
         actor: User,
         statutory_config: StatutoryConfig,
+        month_rates: "MonthRates",
     ) -> PayrollRun:
         # 5. Generate Payroll Items
         # Statutory config (made before the run row), PT slabs, Tax slabs
         statutory_spec = StatutoryConfigSpec(
             pf_enabled=statutory_config.pf_enabled,
-            pf_employee_rate=statutory_config.pf_employee_rate,
-            pf_employer_rate=statutory_config.pf_employer_rate,
-            pf_wage_ceiling=statutory_config.pf_wage_ceiling,
             pf_restrict_to_ceiling=statutory_config.pf_restrict_to_ceiling,
             esi_enabled=statutory_config.esi_enabled,
-            esi_employee_rate=statutory_config.esi_employee_rate,
-            esi_employer_rate=statutory_config.esi_employer_rate,
-            esi_wage_ceiling=statutory_config.esi_wage_ceiling,
             pt_enabled=statutory_config.pt_enabled,
             pt_state=statutory_config.pt_state,
             lwf_enabled=statutory_config.lwf_enabled,
@@ -1116,13 +1401,8 @@ class PayrollRunService:
             default_tax_regime=statutory_config.default_tax_regime.value,
         )
 
-        pt_state = statutory_config.pt_state or "Gujarat"
         run_date = date(data.year, data.month, 1)
-        db_pt_slabs = self.pt_repo.list_for_state(pt_state, on_date=run_date)
-        if not db_pt_slabs:
-            db_pt_slabs = self.pt_repo.list_for_state(pt_state, on_date=None)
-        if not db_pt_slabs and pt_state != "Gujarat":
-            db_pt_slabs = self.pt_repo.list_for_state("Gujarat", on_date=None)
+        fy_str = month_rates.financial_year
         pt_spec_list = [
             PTSlabSpec(
                 state=s.state,
@@ -1132,16 +1412,9 @@ class PayrollRunService:
                 special_month=s.special_month,
                 special_month_amount=s.special_month_amount,
             )
-            for s in db_pt_slabs
+            for s in month_rates.pt_slabs
         ]
 
-        # Financial year key (April to March)
-        if data.month >= 4:
-            fy_str = f"{data.year}-{data.year + 1}"
-        else:
-            fy_str = f"{data.year - 1}-{data.year}"
-
-        db_tax_slabs = self.tax_repo.list_for("IN", fy_str, statutory_config.default_tax_regime)
         tax_spec_list = [
             TaxSlabSpec(
                 country=s.country,
@@ -1153,7 +1426,7 @@ class PayrollRunService:
                 cess_percent=s.cess_percent,
                 surcharge_rules=s.surcharge_rules,
             )
-            for s in db_tax_slabs
+            for s in month_rates.tax_slabs
         ]
 
         _, last_day = monthrange(data.year, data.month)
@@ -1178,13 +1451,23 @@ class PayrollRunService:
                 skipped.append({"employee_id": str(emp.id), "reason": "not_employed_in_month"})
                 continue
 
-            # Check if salary was active in this pay period (effective_from <= month_end)
-            salary_record = self.salary_repo.get_in_force(emp.id, company_id, month_end)
-            if salary_record is None:
-                # Fallback to run_date (month_start) or latest open-ended salary
-                salary_record = self.salary_repo.get_in_force(emp.id, company_id, run_date)
-            if salary_record is None:
-                salary_record = self.salary_repo.get_open_ended(emp.id, company_id)
+            # Every salary row that overlaps the month (a raise that starts mid-month gives
+            # two or more). The last one is the salary at the month end. With none, fall back to
+            # the earlier lookups so that nothing changes for an employee without a row in the
+            # month.
+            month_salaries = self.salary_repo.list_overlapping_month(
+                emp.id, company_id, month_start, month_end
+            )
+            salary_record: EmployeeSalary | None
+            if month_salaries:
+                salary_record = month_salaries[-1]
+            else:
+                salary_record = self.salary_repo.get_in_force(emp.id, company_id, month_end)
+                if salary_record is None:
+                    # Fallback to run_date (month_start) or latest open-ended salary
+                    salary_record = self.salary_repo.get_in_force(emp.id, company_id, run_date)
+                if salary_record is None:
+                    salary_record = self.salary_repo.get_open_ended(emp.id, company_id)
             if salary_record is None:
                 skipped.append({"employee_id": str(emp.id), "reason": "no_salary"})
                 continue
@@ -1194,20 +1477,7 @@ class PayrollRunService:
                 skipped.append({"employee_id": str(emp.id), "reason": "no_structure"})
                 continue
 
-            component_specs = [
-                ComponentSpec(
-                    code=c.code,
-                    name=c.name,
-                    type=c.type.value,
-                    calculation_type=c.calculation_type.value,
-                    value=c.value,
-                    percentage_of=c.percentage_of.value if c.percentage_of else None,
-                    is_taxable=c.is_taxable,
-                    is_statutory=c.is_statutory,
-                    display_order=c.display_order,
-                )
-                for c in structure.components
-            ]
+            component_specs = self._component_specs(structure)
 
             # ── Attendance: pay is prorated over the calendar days of the month ───────
             working_days = Decimal(str(last_day))
@@ -1292,15 +1562,31 @@ class PayrollRunService:
             # The engine applies the LOP ratio (paid_days/working_days) to scale
             # earned_gross down. Statutory deductions (EPF, ESI, PT) are then
             # computed on earned_gross — not full gross — satisfying Indian law.
+            segments = self._salary_segments(
+                company_id,
+                month_salaries,
+                component_specs,
+                month_start,
+                month_end,
+                summary.lop_by_date,
+            )
+            if segments is None:
+                skipped.append({"employee_id": str(emp.id), "reason": "no_structure"})
+                continue
+
             payslip_in = PayslipInput(
                 ctc_annual=salary_record.ctc,
                 components=component_specs,
+                segments=segments or None,
+                last_working_date=self._approved_last_working_date(emp),
                 statutory=statutory_spec,
                 pt_slabs=pt_spec_list,
                 tax_slabs=tax_spec_list,
                 month=data.month,
                 year=data.year,
                 financial_year=fy_str,
+                pf_rate=month_rates.pf,
+                esi_rate=month_rates.esi,
                 working_days=working_days,
                 present_days=present_days,
                 paid_leave_days=paid_leave_days,
@@ -1373,6 +1659,26 @@ class PayrollRunService:
                 paid_leave_days=paid_leave_days,
                 lop_days=lop_days,
                 reimbursement_amount=reimbursement_amount,
+                salary_segments_json=[
+                    {
+                        "salary_id": s.salary_id,
+                        "from_date": s.from_date.isoformat(),
+                        "to_date": s.to_date.isoformat(),
+                        "days": s.days,
+                        "ctc": str(s.ctc_annual),
+                    }
+                    for s in segments
+                ]
+                if segments
+                else [
+                    {
+                        "salary_id": str(salary_record.id),
+                        "from_date": month_start.isoformat(),
+                        "to_date": month_end.isoformat(),
+                        "days": last_day,
+                        "ctc": str(salary_record.ctc),
+                    }
+                ],
             )
 
             # ── Reimbursement lifecycle: lock into this run ─────────────────

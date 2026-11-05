@@ -914,8 +914,9 @@ def test_R09_writes_rate_limited_per_user(client: TestClient, company_setup):
 # ==============================================================================
 
 
-def test_R10_migration_round_trip_and_safety(engine):
+def test_R10_migration_round_trip_and_safety(migration_engine):
     """Rule 10: Migration applies cleanly and downgrade works with sys.executable & settings."""
+    engine = migration_engine  # the scratch database this round trip runs on
     import subprocess
 
     from sqlalchemy import inspect

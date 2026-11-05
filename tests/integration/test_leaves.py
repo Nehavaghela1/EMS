@@ -12,6 +12,7 @@ from app.core.time import utcnow
 from app.modules.hr.models import Employee
 from app.modules.identity.models import User, UserRole
 from app.modules.time_leave.models import Attendance
+from tests.date_helpers import past_working_day
 
 
 def _create_employee(client, headers, **overrides) -> dict:
@@ -158,7 +159,7 @@ def test_validation_5_start_date_must_not_be_in_the_past_unless_hr(client, compa
         db, company_a.company_id, employee["id"], UserRole.employee
     )
     leave_type = _create_leave_type(client, company_a.hr_headers)
-    past = (utcnow().date() - timedelta(days=5)).isoformat()
+    past = past_working_day(utcnow().date()).isoformat()
 
     employee_resp = client.post(
         "/api/v1/leaves",

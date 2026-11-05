@@ -33,6 +33,9 @@ from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
+from app.db.seed.pt_slabs import seed_pt_slabs
+from app.db.seed.statutory_rates import seed_statutory_rates
+from app.db.seed.tax_slabs import seed_tax_slabs
 from app.db.session import get_db
 from app.main import app as fastapi_app
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
@@ -55,14 +58,26 @@ from tests.rules.test_5_4_payroll_runs import (
     _filled_world,
     _item_for,
     _make_run,
-    _seed_statutory,
     _set_flags,
     _staff,
     world,
 )
 
-# Fixtures borrowed from the 5.4 tests (pytest finds them by name in this module).
-_BORROWED_FIXTURES = (world, _seed_statutory)
+# The `world` fixture is borrowed from the 5.4 tests (pytest finds it by name in this module).
+# The 5.4 autouse seeding fixture is NOT borrowed: its open transaction on the rate tables would
+# block the migration round-trip tests in this file (their DDL waits for it). The run tests
+# ask for the seed explicitly with `@uses_rates`.
+_BORROWED_FIXTURES = (world,)
+
+
+@pytest.fixture
+def seeded_rates(db: Session) -> None:
+    seed_pt_slabs(db)
+    seed_tax_slabs(db)
+    seed_statutory_rates(db)
+
+
+uses_rates = pytest.mark.usefixtures("seeded_rates")
 
 BASE = "/api/v1/payroll/reimbursements"
 MIGRATION_REVISION = "11355755ef14"
@@ -1509,6 +1524,7 @@ def _world_claim(client, db, w: dict[str, Any], amount: str, who: str = "emp") -
     return made["id"]
 
 
+@uses_rates
 def test_R8_a_claim_joins_one_run_stays_approved_until_the_run_is_approved_then_is_paid(
     client, db, world
 ) -> None:
@@ -1527,6 +1543,7 @@ def test_R8_a_claim_joins_one_run_stays_approved_until_the_run_is_approved_then_
     assert str(row.added_to_payroll_run_id) == run["id"], "R8: still the same run"
 
 
+@uses_rates
 def test_R8_the_paid_amount_is_the_sum_of_the_claims_of_that_employee(client, db, world) -> None:
     _filled_world(db, world)
     _world_claim(client, db, world, "1000.50")
@@ -1538,6 +1555,7 @@ def test_R8_the_paid_amount_is_the_sum_of_the_claims_of_that_employee(client, db
     assert other["reimbursement_amount"] == "0.00", "R8: nobody else is paid this"
 
 
+@uses_rates
 def test_R8_a_claim_joins_at_most_one_run(client, db, world) -> None:
     _filled_world(db, world)
     ctx = world["ctx"]
@@ -1554,6 +1572,7 @@ def test_R8_a_claim_joins_at_most_one_run(client, db, world) -> None:
     assert str(_state(db, ctx, claim_id).added_to_payroll_run_id) == first["id"]
 
 
+@uses_rates
 def test_R8_a_claim_is_never_added_to_taxable_pay(client, db, world) -> None:
     _filled_world(db, world)
     _world_claim(client, db, world, "5000.00")
@@ -1567,6 +1586,7 @@ def test_R8_a_claim_is_never_added_to_taxable_pay(client, db, world) -> None:
     assert net_gap == Decimal("5000.00"), f"R8: net pay rises by exactly the claim: {net_gap}"
 
 
+@uses_rates
 def test_R8_pending_rejected_and_withdrawn_claims_never_join_a_run(client, db, world) -> None:
     _filled_world(db, world)
     ctx = world["ctx"]
@@ -1589,6 +1609,7 @@ def test_R8_pending_rejected_and_withdrawn_claims_never_join_a_run(client, db, w
         assert _state(db, ctx, claim["id"]).added_to_payroll_run_id is None
 
 
+@uses_rates
 def test_R8_deleting_an_unapproved_run_releases_its_claims(client, db, world) -> None:
     _filled_world(db, world)
     ctx = world["ctx"]
@@ -1605,6 +1626,7 @@ def test_R8_deleting_an_unapproved_run_releases_its_claims(client, db, world) ->
     assert item["reimbursement_amount"] == "800.00", "R8: the released claim is paid next time"
 
 
+@uses_rates
 @pytest.mark.parametrize("stage", ["in_unapproved_run", "in_approved_run"])
 def test_R8_a_claim_in_a_run_cannot_be_decided_or_withdrawn(client, db, world, stage) -> None:
     _filled_world(db, world)
@@ -1624,6 +1646,7 @@ def test_R8_a_claim_in_a_run_cannot_be_decided_or_withdrawn(client, db, world, s
     )
 
 
+@uses_rates
 def test_R8_approving_the_run_twice_pays_a_claim_once(client, db, world) -> None:
     _filled_world(db, world)
     claim_id = _world_claim(client, db, world, "1200.00")

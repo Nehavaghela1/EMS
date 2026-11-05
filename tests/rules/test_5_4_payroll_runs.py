@@ -25,6 +25,7 @@ from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.db.seed.pt_slabs import seed_pt_slabs
+from app.db.seed.statutory_rates import seed_statutory_rates
 from app.db.seed.tax_slabs import seed_tax_slabs
 from app.db.session import get_db
 from app.main import app as fastapi_app
@@ -63,9 +64,15 @@ PAYSLIPS = "/api/v1/payroll/payslips"
 
 
 @pytest.fixture(autouse=True)
-def _seed_statutory(db: Session) -> None:
+def _seed_statutory(request: pytest.FixtureRequest) -> None:
+    # A test that commits its own rows (a race test with real sessions) must not hold this
+    # fixture's open transaction: mark it `committed_rates` and it is skipped.
+    if request.node.get_closest_marker("committed_rates"):
+        return
+    db: Session = request.getfixturevalue("db")
     seed_pt_slabs(db)
     seed_tax_slabs(db)
+    seed_statutory_rates(db)  # a run needs the PF and ESI rows of its month (5.2)
 
 
 @pytest.fixture
@@ -631,6 +638,7 @@ def test_R6_only_a_completed_month_is_allowed(client, db, world) -> None:
     assert db.query(PayrollRun).count() == 1, "R6: a refused month leaves no run row"
 
 
+@pytest.mark.committed_rates
 def test_R6_two_simultaneous_creates_give_one_202_and_one_409(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -673,6 +681,12 @@ def test_R6_two_simultaneous_creates_give_one_202_and_one_409(
             setup.add(user)
             setup.commit()
             token = create_access_token(sub=str(user.id), company_id=str(cid), role="hr_admin")
+            # The two requests run in their own sessions: the platform rates, professional-tax
+            # and income-tax rows they need must be committed (the upserts are harmless when
+            # setup.sh has already seeded them).
+            seed_pt_slabs(setup)
+            seed_tax_slabs(setup)
+            seed_statutory_rates(setup)
         headers = {"Authorization": f"Bearer {token}"}
         year, month = _month_back()
 
@@ -734,6 +748,8 @@ def _purge(cid: uuid.UUID) -> None:
             ):
                 conn.execute(text(f"DELETE FROM {table} WHERE company_id = :c"), {"c": cid})
             conn.execute(text("DELETE FROM companies WHERE id = :c"), {"c": cid})
+            # The seeded platform rows (rates, professional-tax and income-tax slabs) stay: setup.sh
+            # leaves them in the CI database, and the seeds are idempotent upserts.
     finally:
         owner.dispose()
 
