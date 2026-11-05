@@ -209,7 +209,9 @@ def _new_draft(client: TestClient, sa: dict[str, str], **over: Any) -> dict[str,
 def _verify(client: TestClient, sa: dict[str, str], draft_id: str, urls: list[str] | None = None):
     return client.post(
         f"{DRAFTS}/{draft_id}/verify",
-        json={"sources_checked": urls or ["https://esic.gov.in/contribution"]},
+        json={
+            "sources_checked": urls if urls is not None else ["https://esic.gov.in/contribution"]
+        },
         headers=sa,
     )
 
@@ -229,6 +231,15 @@ def _notes(db: Session, kind: str) -> list[Notification]:
     _platform(db)
     db.expire_all()
     return db.query(Notification).filter(Notification.type == kind).all()
+
+
+def _new_notes(db: Session, kind: str, known: set[uuid.UUID]) -> list[Notification]:
+    """The notifications of `kind` that were not there before (by id, never by row order)."""
+    return [n for n in _notes(db, kind) if n.id not in known]
+
+
+def _note_ids(db: Session, kind: str) -> set[uuid.UUID]:
+    return {n.id for n in _notes(db, kind)}
 
 
 def _super_admin_ids(db: Session) -> set[uuid.UUID]:
@@ -1014,7 +1025,7 @@ def test_R9_a_different_hash_makes_one_no_numbers_draft_and_tells_every_super_ad
         headers=super_admin_headers,
     )
     fetcher.default = PAGE_V2
-    notes_before = len(_notes(db, "rate_draft_created"))
+    known = _note_ids(db, "rate_draft_created")
     _run_check(monkeypatch, db, fetcher)
     row = _source(client, super_admin_headers, source["id"])
     assert row["last_result"] == "changed", f"R9: {row}"
@@ -1029,7 +1040,7 @@ def test_R9_a_different_hash_makes_one_no_numbers_draft_and_tells_every_super_ad
     assert detail["created_by"] is None, "R3: a system draft has no creator"
     assert detail["fetched_sources"][0]["url"] == source["source_url"]
     assert detail["fetched_sources"][0]["hash"] == _normalised_hash(PAGE_V2)
-    created = _notes(db, "rate_draft_created")[notes_before:]
+    created = _new_notes(db, "rate_draft_created", known)
     assert {n.user_id for n in created} == _super_admin_ids(db), (
         "R8: every active super admin is told"
     )
@@ -1049,7 +1060,7 @@ def test_R9_a_different_hash_makes_one_no_numbers_draft_and_tells_every_super_ad
     assert len([d for d in pending if d["source_id"] == source["id"]]) == 1, (
         "R9: one open draft per source"
     )
-    assert len(_notes(db, "rate_draft_created")) == len(created) + notes_before, (
+    assert _new_notes(db, "rate_draft_created", known | {n.id for n in created}) == [], (
         "R8: no repeat notice"
     )
 
@@ -1062,13 +1073,13 @@ def test_R9_a_failed_fetch_is_retried_in_7_days_and_tells_every_super_admin(
 ) -> None:
     source = _due_source(client, super_admin_headers)
     fetcher = FakeFetcher(default=_fetch_error()("The page could not be read."))
-    before = len(_notes(db, "rate_check_failed"))
+    known = _note_ids(db, "rate_check_failed")
     _run_check(monkeypatch, db, fetcher)
     row = _source(client, super_admin_headers, source["id"])
     assert row["last_result"] == "fetch_failed", f"R9: {row}"
     assert row["next_check_on"] == (_today() + timedelta(days=7)).isoformat(), "R9: retry in 7 days"
     assert row["content_hash"] is None
-    sent = _notes(db, "rate_check_failed")[before:]
+    sent = _new_notes(db, "rate_check_failed", known)
     assert {n.user_id for n in sent} == _super_admin_ids(db), (
         "R8: a failure tells every super admin"
     )
@@ -1165,6 +1176,9 @@ def test_R8_a_rate_not_verified_for_180_days_reminds_every_super_admin_at_most_o
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _platform(db)
+    recent = {"d": _today() - timedelta(days=10)}
+    for table in ("statutory_rates", "pt_slabs", "tax_slabs"):
+        db.execute(text(f"UPDATE {table} SET verified_on = :d"), recent)  # noqa: S608
     db.execute(
         text(
             "UPDATE statutory_rates SET verified_on = :d "
@@ -1174,9 +1188,10 @@ def test_R8_a_rate_not_verified_for_180_days_reminds_every_super_admin_at_most_o
     )
     db.commit()
     fetcher = FakeFetcher()
-    before = len(_notes(db, "rate_verification_due"))
+    known = _note_ids(db, "rate_verification_due")
+    before = len(known)
     _run_check(monkeypatch, db, fetcher)
-    sent = _notes(db, "rate_verification_due")[before:]
+    sent = _new_notes(db, "rate_verification_due", known)
     admins = _super_admin_ids(db)
     assert {n.user_id for n in sent} == admins and len(sent) == len(admins), (
         f"R8: one reminder per super admin: {len(sent)}"

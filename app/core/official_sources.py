@@ -23,6 +23,14 @@ OFFICIAL_HOSTS: tuple[str, ...] = (
     "egazette.gov.in",
     "commercialtax.gujarat.gov.in",
     "gujarat.gov.in",
+    # Rate-source pages of other countries (5.9). Each is an exact domain; subdomains of it are
+    # allowed the same way as every host above.
+    "gov.uk",
+    "cpf.gov.sg",
+    "canada.ca",
+    "ato.gov.au",
+    "ssa.gov",
+    "dubai.ae",
 )
 
 SOURCE_URL_MESSAGE = "source_url must be an https link to a government site on the official list."

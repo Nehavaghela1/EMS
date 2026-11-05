@@ -288,6 +288,19 @@ class UserRepository:
             ).all()
         )
 
+    def list_active_super_admins(self) -> list[User]:
+        """Every active platform account, across companies (the caller carries the
+        platform-admin context)."""
+        return list(
+            self.db.scalars(
+                select(User).where(
+                    User.role == UserRole.super_admin,
+                    User.is_active.is_(True),
+                    User.deleted_at.is_(None),
+                )
+            ).all()
+        )
+
     def lock(self, user: User, until: datetime) -> None:
         user.locked_until = until
         self.db.flush()

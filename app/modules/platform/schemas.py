@@ -2,9 +2,20 @@ import unicodedata
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+
+from app.core.official_sources import SOURCE_URL_MESSAGE, is_official_url
+from app.modules.payroll.schemas import PtSlabResponse, StatutoryRateResponse, TaxSlabResponse
 
 
 # --- Existing Jobs / Audit / Dashboard / Notifications ---
@@ -213,6 +224,159 @@ class RegionResponse(BaseModel):
     # Whether the country's statutory tables hold official rows, so payroll can run there.
     payroll_ready: bool
     states: list[str]
+
+
+# ── Platform rate updates (super admin, 5.9) ────────────────────────────
+RateSchemeGroup = Literal["epf_esi", "professional_tax", "income_tax", "social_security", "other"]
+RateDraftKind = Literal["statutory_rate", "pt_slabs", "tax_slabs", "no_numbers"]
+RateDraftStatus = Literal["pending", "verified", "approved", "rejected"]
+
+
+def _official_link(value: str) -> str:
+    value = value.strip()
+    if not is_official_url(value):
+        raise ValueError(SOURCE_URL_MESSAGE)
+    return value
+
+
+OfficialLink = Annotated[str, AfterValidator(_official_link)]
+
+
+class RateSourceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    country: str
+    state: str | None = None
+    scheme_group: RateSchemeGroup
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)]
+    source_url: OfficialLink
+    interval_months: Annotated[int, Field(ge=1, le=24)]
+    next_check_on: date
+    active: bool = True
+
+
+class RateSourceUpdate(BaseModel):
+    """Only the fields a super admin may change; country, state and scheme group are fixed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=150)]
+        | None
+    ) = None
+    source_url: OfficialLink | None = None
+    interval_months: Annotated[int, Field(ge=1, le=24)] | None = None
+    next_check_on: date | None = None
+    active: bool | None = None
+
+    @model_validator(mode="after")
+    def _no_nulls(self) -> Self:
+        for name in self.model_fields_set:
+            if getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null.")
+        return self
+
+
+class RateSourceResponse(BaseModel):
+    id: uuid.UUID
+    country: str
+    state: str | None
+    scheme_group: str
+    title: str
+    source_url: str
+    interval_months: int
+    next_check_on: date
+    active: bool
+    last_checked_on: date | None
+    last_result: str
+    content_hash: str | None
+
+    model_config = {"from_attributes": True}
+
+
+_Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
+
+
+class RateDraftCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: uuid.UUID | None = None
+    country: str
+    state: str | None = None
+    kind: RateDraftKind
+    reason: _Reason
+    # Validated by the same schemas as the direct write routes; null for `no_numbers`.
+    proposed: dict[str, Any] | None = None
+
+
+class RateDraftUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: RateDraftKind | None = None
+    reason: _Reason | None = None
+    proposed: dict[str, Any] | None = None
+
+
+class RateDraftVerify(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sources_checked: Annotated[list[OfficialLink], Field(min_length=1, max_length=10)]
+
+
+class RateDraftReject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
+
+
+class RateDraftApprove(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RateDraftListItem(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID | None
+    country: str
+    state: str | None
+    kind: str
+    status: str
+    effective_from: date | None
+    reason: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RateDraftSource(BaseModel):
+    title: str | None = None
+    url: str
+    fetched_at: str | None = None
+    hash: str | None = None
+
+
+class RateDraftCurrent(BaseModel):
+    """The rows in force today for the draft's country, state and scheme."""
+
+    statutory_rates: list[StatutoryRateResponse] = []
+    pt_slabs: list[PtSlabResponse] = []
+    tax_slabs: list[TaxSlabResponse] = []
+
+
+class RateDraftResponse(RateDraftListItem):
+    proposed: dict[str, Any] | None
+    fetched_sources: list[dict[str, Any]]
+    created_by: uuid.UUID | None
+    verified_by: uuid.UUID | None
+    verified_at: datetime | None
+    sources_checked: list[str] | None
+    approved_by: uuid.UUID | None
+    approved_at: datetime | None
+    decision_note: str | None
+
+
+class RateDraftDetail(RateDraftResponse):
+    current: RateDraftCurrent
+    sources: list[RateDraftSource]
 
 
 # ── Platform payroll statistics (super admin, 5.8) ────────────────────────────

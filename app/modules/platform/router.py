@@ -49,6 +49,17 @@ from app.modules.platform.schemas import (
     NotificationListResponse,
     NotificationResponse,
     PayrollMonthStats,
+    RateDraftApprove,
+    RateDraftCreate,
+    RateDraftDetail,
+    RateDraftListItem,
+    RateDraftReject,
+    RateDraftStatus,
+    RateDraftUpdate,
+    RateDraftVerify,
+    RateSourceCreate,
+    RateSourceResponse,
+    RateSourceUpdate,
     RegionResponse,
     SignedUrlResponse,
 )
@@ -62,6 +73,8 @@ from app.modules.platform.service import (
     IndustryPresetService,
     NotificationService,
     PayrollStatsService,
+    RateDraftService,
+    RateSourceService,
     RegionService,
 )
 from app.workers.celery_app import celery_app
@@ -754,6 +767,143 @@ def payroll_stats(
     user: User = Depends(require_role(UserRole.super_admin)),
 ):
     return PayrollStatsService(db).stats(from_month, to_month)
+
+
+# ── Platform rate updates, super admin only (5.9) ───────────────
+# Sources the daily check reads; drafts a person fills in, verifies and approves. Only an
+# approval changes live rates.
+
+
+@platform_router.get("/rate-sources", response_model=Page[RateSourceResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def list_rate_sources(
+    request: Request,
+    params: PageParams = Depends(page_params),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    items, total, pages = RateSourceService(db).list_sources(params)
+    return Page(
+        items=[RateSourceResponse.model_validate(s) for s in items],
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
+    )
+
+
+@platform_router.post("/rate-sources", response_model=RateSourceResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def create_rate_source(
+    request: Request,
+    data: RateSourceCreate,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    return RateSourceResponse.model_validate(RateSourceService(db).create(data, user))
+
+
+@platform_router.patch("/rate-sources/{source_id}", response_model=RateSourceResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def update_rate_source(
+    request: Request,
+    source_id: uuid.UUID,
+    data: RateSourceUpdate,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    return RateSourceResponse.model_validate(RateSourceService(db).update(source_id, data, user))
+
+
+@platform_router.get("/rate-drafts", response_model=Page[RateDraftListItem])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def list_rate_drafts(
+    request: Request,
+    status: RateDraftStatus | None = None,
+    params: PageParams = Depends(page_params),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    items, total, pages = RateDraftService(db).list_drafts(params, status)
+    return Page(
+        items=[RateDraftListItem.model_validate(d) for d in items],
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
+    )
+
+
+@platform_router.post("/rate-drafts", response_model=RateDraftDetail, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def create_rate_draft(
+    request: Request,
+    data: RateDraftCreate,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    return RateDraftService(db).create(data, user)
+
+
+@platform_router.get("/rate-drafts/{draft_id}", response_model=RateDraftDetail)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_rate_draft(
+    request: Request,
+    draft_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    return RateDraftService(db).detail(draft_id)
+
+
+@platform_router.put("/rate-drafts/{draft_id}", response_model=RateDraftDetail)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def update_rate_draft(
+    request: Request,
+    draft_id: uuid.UUID,
+    data: RateDraftUpdate,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    return RateDraftService(db).update(draft_id, data, user)
+
+
+@platform_router.post("/rate-drafts/{draft_id}/verify", response_model=RateDraftDetail)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def verify_rate_draft(
+    request: Request,
+    draft_id: uuid.UUID,
+    data: RateDraftVerify,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    return RateDraftService(db).verify(draft_id, data, user)
+
+
+@platform_router.post("/rate-drafts/{draft_id}/approve", response_model=RateDraftDetail)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def approve_rate_draft(
+    request: Request,
+    draft_id: uuid.UUID,
+    data: RateDraftApprove,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    return RateDraftService(db).approve(draft_id, user)
+
+
+@platform_router.post("/rate-drafts/{draft_id}/reject", response_model=RateDraftDetail)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def reject_rate_draft(
+    request: Request,
+    draft_id: uuid.UUID,
+    data: RateDraftReject,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.super_admin)),
+):
+    return RateDraftService(db).reject(draft_id, data, user)
 
 
 # ── Global Search (route 134) ───────────────────────────────────
