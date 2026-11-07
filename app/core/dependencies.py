@@ -83,6 +83,33 @@ def get_tenant_db(
     return db
 
 
+COMPANY_FORBIDDEN_MESSAGE = "You do not have permission to perform this action."
+
+
+def get_company_user(user: User = Depends(get_current_user)) -> User:
+    """Any logged-in user of a company, except a platform account: company payroll data
+    (salaries, runs, payslips, claims, bank details) is never opened to a super admin (5.8)."""
+    if user.role == UserRole.super_admin:
+        raise ForbiddenError(COMPANY_FORBIDDEN_MESSAGE)
+    return user
+
+
+def require_company_role(*roles: UserRole):
+    """Like `require_role` for a company's own data: the listed roles (owner is added where
+    hr_admin is allowed) and never super_admin, which `require_role` always lets through."""
+
+    def _check(user: User = Depends(get_current_user)) -> User:
+        allowed_roles = list(roles)
+        if UserRole.hr_admin in roles and UserRole.owner not in allowed_roles:
+            allowed_roles.append(UserRole.owner)
+
+        if user.role == UserRole.super_admin or user.role not in allowed_roles:
+            raise ForbiddenError(COMPANY_FORBIDDEN_MESSAGE)
+        return user
+
+    return _check
+
+
 def require_role(*roles: UserRole):
     """`Depends(require_role(UserRole.hr_admin))` — is this role allowed
     here? (5.1). Composes get_current_user rather than duplicating the

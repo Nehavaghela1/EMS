@@ -6,7 +6,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user, get_tenant_db, require_role
+from app.core.dependencies import (
+    get_company_user,
+    get_tenant_db,
+    require_company_role,
+    require_role,
+)
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import enforce_user_limit, get_user_or_ip_key, limiter
 from app.modules.identity.models import User, UserRole
@@ -21,7 +26,10 @@ from app.modules.payroll.models import (
 from app.modules.payroll.schemas import (
     MAX_SALARY_DATE,
     MIN_SALARY_DATE,
+    BankAccountRequest,
+    BankAccountResponse,
     EmployeeSalaryResponse,
+    PaymentExclusion,
     PayrollItemResponse,
     PayrollRunCreateRequest,
     PayrollRunDetailResponse,
@@ -45,7 +53,9 @@ from app.modules.payroll.schemas import (
     TaxSlabResponse,
 )
 from app.modules.payroll.service import (
+    EmployeeBankAccountService,
     EmployeeSalaryService,
+    PaymentFileService,
     PayrollRunService,
     PayslipService,
     PtSlabService,
@@ -81,7 +91,7 @@ def create_structure(
     request: Request,
     data: SalaryStructureCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     structure = SalaryStructureService(db).create_structure(user.company_id, data, user)
     return _to_structure_response(structure)
@@ -91,15 +101,11 @@ def create_structure(
 @limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_structures(
     request: Request,
-    company_id: uuid.UUID | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
-    target_company_id = (
-        company_id if user.role == UserRole.super_admin and company_id else user.company_id
-    )
-    items, total, pages = SalaryStructureService(db).list_structures(target_company_id, params)
+    items, total, pages = SalaryStructureService(db).list_structures(user.company_id, params)
     return Page(
         items=[
             SalaryStructureListItem(
@@ -127,7 +133,7 @@ def get_structure(
     request: Request,
     structure_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     structure = SalaryStructureService(db).get_structure(user.company_id, structure_id)
     return _to_structure_response(structure)
@@ -140,7 +146,7 @@ def update_structure(
     structure_id: uuid.UUID,
     data: SalaryStructureUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     structure = SalaryStructureService(db).update_structure(
         user.company_id, structure_id, data, user
@@ -154,7 +160,7 @@ def delete_structure(
     request: Request,
     structure_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     SalaryStructureService(db).delete_structure(user.company_id, structure_id, user)
 
@@ -171,7 +177,7 @@ def assign_salary(
     employee_id: uuid.UUID,
     data: SalaryAssignRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     salary, structure, earnings, deductions, gross = EmployeeSalaryService(db).assign_salary(
         user.company_id, employee_id, data, user
@@ -196,7 +202,7 @@ def get_employee_salary(
     request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_company_user),
 ):
     service = EmployeeSalaryService(db)
     salary, structure, earnings, deductions, gross = service.get_current_salary(
@@ -231,7 +237,7 @@ def get_employee_salary_history(
     ] = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_company_user),
 ):
     rows, total, pages = EmployeeSalaryService(db).list_history(
         user.company_id, employee_id, user, params, from_date, to_date
@@ -268,7 +274,7 @@ def get_statutory_config(
     response: Response,
     reveal: bool = False,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     if reveal:
         enforce_user_limit(request, "5/minute", scope="payout_reveal")
@@ -282,7 +288,7 @@ def update_statutory_config(
     request: Request,
     data: StatutoryConfigUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     return StatutoryConfigService(db).update(user.company_id, data, user)
 
@@ -308,11 +314,12 @@ def list_statutory_rates(
     request: Request,
     scheme: Literal["epf", "esi"] | None = None,
     on_date: date | None = None,
+    country: str | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
-    rows, total, pages = StatutoryRateService(db).list_rates(params, scheme, on_date)
+    rows, total, pages = StatutoryRateService(db).list_rates(params, scheme, on_date, country)
     return Page(
         items=[StatutoryRateResponse.model_validate(r) for r in rows],
         page=params.page,
@@ -335,9 +342,7 @@ def list_pt_slabs(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
 ):
-    config = StatutoryConfigService(db).get_or_create(user.company_id)
-    state = config.pt_state or "Gujarat"
-    slabs = PtSlabService(db).list_for_state(state)
+    slabs = PtSlabService(db).list_for_company(user.company_id)
     return [_to_pt_slab_response(s) for s in slabs]
 
 
@@ -380,6 +385,81 @@ def post_tax_slabs(
     return [_to_tax_slab_response(s) for s in slabs]
 
 
+# --- 5.8: employee bank accounts --------------------------------------------
+
+bank_accounts_router = APIRouter(prefix="/payroll", tags=["Payroll — Bank Accounts"])
+
+
+def _bank_view(
+    request: Request,
+    response: Response,
+    db: Session,
+    user: User,
+    employee_id: uuid.UUID | None,
+    reveal: bool,
+) -> BankAccountResponse:
+    if reveal:
+        enforce_user_limit(request, "5/minute", scope="bank_reveal")
+    response.headers["Cache-Control"] = "private, no-store"
+    return EmployeeBankAccountService(db).view(user, employee_id, reveal=reveal)
+
+
+@bank_accounts_router.get("/bank-account/me", response_model=BankAccountResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_my_bank_account(
+    request: Request,
+    response: Response,
+    reveal: bool = False,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    return _bank_view(request, response, db, user, None, reveal)
+
+
+@bank_accounts_router.put("/bank-account/me", response_model=BankAccountResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def save_my_bank_account(
+    request: Request,
+    response: Response,
+    data: BankAccountRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    return EmployeeBankAccountService(db).save(user, None, data)
+
+
+@bank_accounts_router.get(
+    "/employees/{employee_id}/bank-account", response_model=BankAccountResponse
+)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_employee_bank_account(
+    request: Request,
+    response: Response,
+    employee_id: uuid.UUID,
+    reveal: bool = False,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    return _bank_view(request, response, db, user, employee_id, reveal)
+
+
+@bank_accounts_router.put(
+    "/employees/{employee_id}/bank-account", response_model=BankAccountResponse
+)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def save_employee_bank_account(
+    request: Request,
+    response: Response,
+    employee_id: uuid.UUID,
+    data: BankAccountRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    return EmployeeBankAccountService(db).save(user, employee_id, data)
+
+
 # --- Routes 91-94: payroll runs --------------------------------------------
 
 payroll_runs_router = APIRouter(prefix="/payroll/runs", tags=["Payroll — Payroll Runs"])
@@ -392,7 +472,7 @@ def create_payroll_run(
     data: PayrollRunCreateRequest,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     if not idempotency_key:
         raise HTTPException(
@@ -417,7 +497,7 @@ def list_payroll_runs(
     status_filter: PayrollRunStatus | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     service = PayrollRunService(db)
     runs, total, pages = service.list_runs(user.company_id, params, status_filter)
@@ -438,15 +518,44 @@ def get_payroll_run_detail(
     request: Request,
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     # Run totals and everyone's pay are HR-level only; employees and managers read their own
     # pay through the payslip routes.
     service = PayrollRunService(db)
-    run, items = service.get_run_detail(user.company_id, id)
+    run, items, exclusions = service.get_run_detail(user.company_id, id)
     return PayrollRunDetailResponse(
         run=PayrollRunResponse.model_validate(run),
         items=[PayrollItemResponse.model_validate(i) for i in items],
+        payment_exclusions=(
+            None
+            if exclusions is None
+            else [PaymentExclusion(employee_id=e, reason=r) for e, r in exclusions]
+        ),
+    )
+
+
+@payroll_runs_router.get("/{id}/payment-file")
+@limiter.limit("5/minute", key_func=get_user_or_ip_key)
+def download_payment_file(
+    request: Request,
+    id: uuid.UUID,
+    file_format: str = Query("csv", alias="format"),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
+):
+    content, file_name, content_type, excluded = PaymentFileService(db).export(
+        user, id, file_format
+    )
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Excluded-Count": str(excluded),
+        },
     )
 
 
@@ -456,7 +565,7 @@ def approve_payroll_run(
     request: Request,
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     service = PayrollRunService(db)
     run = service.approve_run(user.company_id, id, user)
@@ -469,7 +578,7 @@ def delete_payroll_run(
     request: Request,
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     service = PayrollRunService(db)
     service.delete_run(user.company_id, id, user)
@@ -501,7 +610,7 @@ def list_my_payslips(
     month: int | None = Query(None, ge=1, le=12),
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_company_user),
 ):
     items, total, pages = PayslipService(db).list_own(user, params, year, month)
     return _payslip_page(items, total, pages, params)
@@ -516,7 +625,7 @@ def list_employee_payslips(
     month: int | None = Query(None, ge=1, le=12),
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     items, total, pages = PayslipService(db).list_for_employee(
         user, employee_id, params, year, month
@@ -537,7 +646,7 @@ def submit_reimbursement_claim(
     request: Request,
     data: ReimbursementCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_company_user),
 ):
     service = ReimbursementService(db)
     claim = service.submit_claim(user.company_id, data, user)
@@ -554,7 +663,7 @@ def list_reimbursement_claims(
     year: int | None = Query(None, ge=2000, le=2100),
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_company_user),
 ):
     service = ReimbursementService(db)
     claims, total, pages = service.list_claims(
@@ -578,7 +687,7 @@ def review_reimbursement_claim(
     id: uuid.UUID,
     data: ReimbursementReviewRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_company_user),
 ):
     # Who may decide (reporting chain, HR-level) is checked in the service, with the same
     # refusal for an employee and for a manager outside the chain.
@@ -593,7 +702,7 @@ def view_reimbursement_receipt(
     request: Request,
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_company_user),
 ):
     path, file_name, content_type = ReimbursementService(db).open_receipt(user.company_id, id, user)
     return FileResponse(
@@ -611,7 +720,7 @@ def withdraw_reimbursement_claim(
     request: Request,
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_company_user),
 ):
     claim = ReimbursementService(db).withdraw_claim(user.company_id, id, user)
     return ReimbursementResponse.model_validate(claim)

@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from alembic import command
 from app.core.config import settings
-from app.core.encryption import decrypt_field, encrypt_field
+from app.core.encryption import decrypt_field
 from app.core.rate_limit import limiter
 from app.core.security import decode_access_token
 from app.db.rls import bind_tenant_to_session
@@ -185,33 +185,22 @@ def test_R1_super_admin_gets_403_on_reveal_and_no_audit_row(
     )
 
 
-def test_R1_super_admin_still_reads_and_changes_the_other_settings_but_never_sees_payout(
+def test_R1_super_admin_never_sees_the_company_settings_or_payout(
     client: TestClient, db: Session, super_admin_headers: dict[str, str]
 ) -> None:
+    # Since 5.8 the whole company statutory-settings route family is closed to a super admin
+    # (it used to read the non-payout settings and hide the payout fields).
     _expect_new_columns(db)
     cid = _company_of(super_admin_headers)
     bind_tenant_to_session(db, company_id=cid, is_platform_admin=False)
-    first = _get(client, super_admin_headers)  # makes the config row
-    assert first.status_code == 200, f"R1: super_admin keeps the non-payout read: {first.text}"
-    db.execute(
-        text(
-            "UPDATE statutory_configs SET payout_bank_name = 'Secret Bank', "
-            "payout_ifsc_code = 'SECR0000001', payout_enabled = true, "
-            "payout_account_number_enc = :enc, payout_account_last4 = '9012' "
-            "WHERE company_id = :c"
-        ),
-        {"enc": encrypt_field(ACCOUNT, company_id=cid, column=COLUMN), "c": cid},
-    )
-    db.commit()
-    shown = _get(client, super_admin_headers).json()
-    assert shown["pf_enabled"] is True, "R1: the non-payout settings must still be readable"
-    assert shown["payout_bank_name"] is None, "R1: super_admin must not see the bank name"
-    assert shown["payout_account_number"] is None, "R1: super_admin must not see the number"
-    assert shown["payout_ifsc_code"] is None, "R1: super_admin must not see the IFSC"
-    assert shown["payout_enabled"] is False, "R1: super_admin must not see the enabled flag"
-    changed = _put(client, super_admin_headers, {"pt_state": "Gujarat"})
-    assert changed.status_code == 200, f"R1: non-payout change keeps its role: {changed.text}"
-    assert changed.json()["payout_account_number"] is None, "R1: PUT must hide payout too"
+    for resp in (
+        _get(client, super_admin_headers),
+        _get(client, super_admin_headers, "?reveal=true"),
+        _put(client, super_admin_headers, {"pt_state": "Gujarat"}),
+        _put(client, super_admin_headers, FULL),
+    ):
+        assert resp.status_code == 403, f"R1: super_admin must get 403: {resp.status_code}"
+        assert ACCOUNT not in resp.text and MASKED not in resp.text
 
 
 def test_R1_another_companys_payout_data_is_never_shown(

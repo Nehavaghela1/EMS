@@ -16,6 +16,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.pagination import PageParams
+from app.core.regions import COUNTRY_REGIONS_MAP
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.core.upload_validation import validate_document_upload
@@ -1395,8 +1396,6 @@ class HolidayService:
 
     @staticmethod
     def supported_regions() -> dict:
-        from app.modules.time_leave.constants import COUNTRY_REGIONS_MAP
-
         return COUNTRY_REGIONS_MAP
 
     @staticmethod
@@ -1405,10 +1404,7 @@ class HolidayService:
         project's own region list; the year range is checked by the request schema.
         The lists are not independently verified: HR must confirm them against the
         official notification."""
-        from app.modules.time_leave.constants import (
-            COUNTRY_REGIONS_MAP,
-            get_regional_statutory_holidays,
-        )
+        from app.modules.time_leave.constants import get_regional_statutory_holidays
 
         country_key = (country or "").strip().upper()
         region = COUNTRY_REGIONS_MAP.get(country_key)

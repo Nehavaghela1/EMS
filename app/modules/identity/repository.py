@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlalchemy import func, select, text
@@ -269,6 +270,18 @@ class UserRepository:
                 select(User).where(
                     User.company_id == company_id,
                     User.role == UserRole.owner,
+                    User.is_active.is_(True),
+                    User.deleted_at.is_(None),
+                )
+            ).all()
+        )
+
+    def list_active_by_roles(self, company_id: uuid.UUID, roles: Sequence[UserRole]) -> list[User]:
+        return list(
+            self.db.scalars(
+                select(User).where(
+                    User.company_id == company_id,
+                    User.role.in_(roles),
                     User.is_active.is_(True),
                     User.deleted_at.is_(None),
                 )

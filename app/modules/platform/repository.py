@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import case, func, select
@@ -10,6 +11,7 @@ from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.models import Department, Employee
 from app.modules.identity.models import Company, User, UserRole
+from app.modules.payroll.models import PayrollItem, PayrollRun, PayrollRunStatus
 from app.modules.platform.models import (
     Announcement,
     AuditLog,
@@ -25,6 +27,63 @@ from app.modules.time_leave.models import (
     LeaveBalance,
     LeaveStatus,
 )
+
+
+class PayrollStatsRepository:
+    """Payroll runs of every company, read as aggregates only (5.8). The caller is the super
+    admin, whose session carries the platform-admin context, so row level security lets all
+    tenants' runs be counted; nothing identifying a company or a person is selected."""
+
+    PAID_STATUSES = (PayrollRunStatus.approved, PayrollRunStatus.paid)
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    @staticmethod
+    def _in_range(first: int, last: int):
+        month_key = PayrollRun.year * 12 + PayrollRun.month
+        return (PayrollRun.deleted_at.is_(None), month_key >= first, month_key <= last)
+
+    def runs_by_status(self, first: int, last: int) -> dict[tuple[int, int, str], int]:
+        rows = self.db.execute(
+            select(PayrollRun.year, PayrollRun.month, PayrollRun.status, func.count(PayrollRun.id))
+            .where(*self._in_range(first, last))
+            .group_by(PayrollRun.year, PayrollRun.month, PayrollRun.status)
+        ).all()
+        return {(int(y), int(m), status.value): int(n) for y, m, status, n in rows}
+
+    def companies_with_runs(self, first: int, last: int) -> dict[tuple[int, int], int]:
+        rows = self.db.execute(
+            select(
+                PayrollRun.year, PayrollRun.month, func.count(func.distinct(PayrollRun.company_id))
+            )
+            .where(*self._in_range(first, last))
+            .group_by(PayrollRun.year, PayrollRun.month)
+        ).all()
+        return {(int(y), int(m)): int(n) for y, m, n in rows}
+
+    def employees_paid(self, first: int, last: int) -> dict[tuple[int, int], int]:
+        rows = self.db.execute(
+            select(
+                PayrollRun.year,
+                PayrollRun.month,
+                func.count(func.distinct(PayrollItem.employee_id)),
+            )
+            .join(PayrollItem, PayrollItem.payroll_run_id == PayrollRun.id)
+            .where(*self._in_range(first, last), PayrollRun.status.in_(self.PAID_STATUSES))
+            .group_by(PayrollRun.year, PayrollRun.month)
+        ).all()
+        return {(int(y), int(m)): int(n) for y, m, n in rows}
+
+    def total_net_paid(self, first: int, last: int) -> dict[tuple[int, int], Decimal]:
+        rows = self.db.execute(
+            select(
+                PayrollRun.year, PayrollRun.month, func.coalesce(func.sum(PayrollRun.total_net), 0)
+            )
+            .where(*self._in_range(first, last), PayrollRun.status.in_(self.PAID_STATUSES))
+            .group_by(PayrollRun.year, PayrollRun.month)
+        ).all()
+        return {(int(y), int(m)): Decimal(total) for y, m, total in rows}
 
 
 class IndustryPresetRepository:

@@ -12,10 +12,12 @@ from app.core.cache import delete_by_prefix, get_json, set_json
 from app.core.config import settings
 from app.core.exceptions import AppError, ForbiddenError, NotFoundError, ValidationError
 from app.core.pagination import PageParams
+from app.core.regions import COUNTRY_REGIONS_MAP, is_payroll_ready
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
+from app.modules.payroll.models import PayrollRunStatus
 from app.modules.platform.models import (
     Announcement,
     AuditLog,
@@ -27,11 +29,14 @@ from app.modules.platform.repository import (
     DashboardRepository,
     IndustryPresetRepository,
     NotificationRepository,
+    PayrollStatsRepository,
 )
 from app.modules.platform.schemas import (
     AnnouncementCreate,
     EmployeeDocumentResponse,
     GlobalSearchResponse,
+    PayrollMonthStats,
+    RegionResponse,
     SearchResultItem,
     SignedUrlResponse,
 )
@@ -815,6 +820,72 @@ class EmployeeDocumentService:
             resp.download_url = f"/api/v1/documents/{employee_id}/{doc.id}/download"
             results.append(resp)
         return results
+
+
+class RegionService:
+    """`GET /regions`: the one shared country and state list (5.2)."""
+
+    @staticmethod
+    def list_regions() -> list[RegionResponse]:
+        return [
+            RegionResponse(
+                code=code,
+                name=entry["name"],
+                payroll_ready=is_payroll_ready(code),
+                states=list(entry["states"]),
+            )
+            for code, entry in COUNTRY_REGIONS_MAP.items()
+        ]
+
+
+MAX_STATS_MONTHS = 24
+
+
+def _month_key(value: str) -> tuple[int, int]:
+    year, month = value.split("-")
+    return int(year), int(month)
+
+
+class PayrollStatsService:
+    """`GET /platform/payroll-stats` (5.8): per-month payroll totals across all companies, for
+    the platform's own view. No company, no person, no per-company amount."""
+
+    def __init__(self, db: Session):
+        self.repo = PayrollStatsRepository(db)
+
+    def stats(self, from_month: str, to_month: str) -> list[PayrollMonthStats]:
+        first_year, first_month = _month_key(from_month)
+        last_year, last_month = _month_key(to_month)
+        first = first_year * 12 + first_month
+        last = last_year * 12 + last_month
+        if first > last:
+            raise ValidationError("'from' must not be after 'to'.", details={"field": "from"})
+        if last - first + 1 > MAX_STATS_MONTHS:
+            raise ValidationError(
+                f"At most {MAX_STATS_MONTHS} months can be asked for at once.",
+                details={"field": "to"},
+            )
+        by_status = self.repo.runs_by_status(first, last)
+        companies = self.repo.companies_with_runs(first, last)
+        employees = self.repo.employees_paid(first, last)
+        totals = self.repo.total_net_paid(first, last)
+        result = []
+        for key in range(first, last + 1):
+            year, month = divmod(key - 1, 12)
+            month += 1
+            slot = (year, month)
+            statuses = {s.value: by_status.get((year, month, s.value), 0) for s in PayrollRunStatus}
+            result.append(
+                PayrollMonthStats(
+                    month=f"{year}-{month:02d}",
+                    companies_with_runs=companies.get(slot, 0),
+                    runs_total=sum(statuses.values()),
+                    runs_by_status=statuses,
+                    employees_paid=employees.get(slot, 0),
+                    total_net_paid=totals.get(slot, Decimal("0")).quantize(Decimal("0.01")),
+                )
+            )
+        return result
 
 
 class GlobalSearchService:

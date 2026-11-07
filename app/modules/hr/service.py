@@ -19,6 +19,7 @@ from app.core.exceptions import (
 )
 from app.core.masking import mask_tail
 from app.core.pagination import PageParams
+from app.core.regions import DEFAULT_COUNTRY
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.security import generate_refresh_token, hash_token
 from app.core.time import utcnow
@@ -1603,7 +1604,12 @@ class EmployeeService:
                 # last working month.
                 pf_on = stat_row.pf_enabled if stat_row else True
                 first_day = last_working.replace(day=1)
-                pf_row = StatutoryRateRepository(self.db).get_in_force("epf", first_day)
+                company = self.company_repo.get_by_id(company_id)
+                pf_row = StatutoryRateRepository(self.db).get_in_force(
+                    company.country if company is not None else DEFAULT_COUNTRY,
+                    "epf",
+                    first_day,
+                )
                 stat_spec = StatutoryConfigSpec(
                     pf_enabled=pf_on,
                     pf_restrict_to_ceiling=stat_row.pf_restrict_to_ceiling if stat_row else True,

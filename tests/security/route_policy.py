@@ -228,16 +228,25 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/notifications"): AUTHENTICATED,
     ("PUT", "/api/v1/notifications/read-all"): AUTHENTICATED,
     ("PUT", "/api/v1/notifications/{notification_id}/read"): AUTHENTICATED,
-    ("POST", "/api/v1/payroll/employees/{employee_id}/assign"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin
-    ),
+    # 5.2: the one shared country and state list; any logged-in user may read it.
+    ("GET", "/api/v1/regions"): AUTHENTICATED,
+    # 5.8: anonymous per-month payroll totals across companies, for the platform only.
+    ("GET", "/api/v1/platform/payroll-stats"): ROLES(UserRole.super_admin),
+    # 5.8: company payroll routes use require_company_role / get_company_user, which refuse a
+    # super admin; the roles below are the whole decision. Platform data (statutory rates, PT
+    # slabs, tax slabs) is the exception and still lets super_admin in.
+    ("POST", "/api/v1/payroll/employees/{employee_id}/assign"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/payroll/employees/{employee_id}/salary"): AUTHENTICATED,
     # 5.3: the service decides (own, owner, HR admin), a manager is refused there.
     ("GET", "/api/v1/payroll/employees/{employee_id}/salary-history"): AUTHENTICATED,
+    # 5.8: an employee keeps their own bank details; owner and HR admin keep anyone's. The
+    # service decides (a manager and other employees are refused there).
+    ("GET", "/api/v1/payroll/bank-account/me"): AUTHENTICATED,
+    ("PUT", "/api/v1/payroll/bank-account/me"): AUTHENTICATED,
+    ("GET", "/api/v1/payroll/employees/{employee_id}/bank-account"): AUTHENTICATED,
+    ("PUT", "/api/v1/payroll/employees/{employee_id}/bank-account"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/payslips/me"): AUTHENTICATED,
-    ("GET", "/api/v1/payroll/payslips/{employee_id}"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin
-    ),
+    ("GET", "/api/v1/payroll/payslips/{employee_id}"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/payroll/statutory-rates"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("POST", "/api/v1/payroll/statutory-rates"): ROLES(UserRole.super_admin),
     ("GET", "/api/v1/payroll/pt-slabs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
@@ -250,24 +259,21 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/payroll/reimbursements/{id}/withdraw"): AUTHENTICATED,
     # Claimant, approvers (reporting chain) and HR-level: decided in the service.
     ("GET", "/api/v1/payroll/reimbursements/{id}/receipt"): AUTHENTICATED,
-    ("GET", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
-    ("POST", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
-    ("DELETE", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin, UserRole.super_admin),
-    ("GET", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin, UserRole.super_admin),
-    ("POST", "/api/v1/payroll/runs/{id}/approve"): ROLES(UserRole.hr_admin, UserRole.super_admin),
-    ("GET", "/api/v1/payroll/statutory-config"): ROLES(UserRole.hr_admin, UserRole.super_admin),
-    ("PUT", "/api/v1/payroll/statutory-config"): ROLES(UserRole.hr_admin, UserRole.super_admin),
-    ("GET", "/api/v1/payroll/structures"): ROLES(UserRole.hr_admin, UserRole.super_admin),
-    ("POST", "/api/v1/payroll/structures"): ROLES(UserRole.hr_admin, UserRole.super_admin),
-    ("DELETE", "/api/v1/payroll/structures/{structure_id}"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin
-    ),
-    ("GET", "/api/v1/payroll/structures/{structure_id}"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin
-    ),
-    ("PUT", "/api/v1/payroll/structures/{structure_id}"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin
-    ),
+    ("GET", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin),
+    ("POST", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin),
+    ("DELETE", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin),
+    ("POST", "/api/v1/payroll/runs/{id}/approve"): ROLES(UserRole.hr_admin),
+    # 5.8: owner and HR admin only (owner is added by the role dependency); the file is built
+    # from the payment lines saved at approval.
+    ("GET", "/api/v1/payroll/runs/{id}/payment-file"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/payroll/statutory-config"): ROLES(UserRole.hr_admin),
+    ("PUT", "/api/v1/payroll/statutory-config"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/payroll/structures"): ROLES(UserRole.hr_admin),
+    ("POST", "/api/v1/payroll/structures"): ROLES(UserRole.hr_admin),
+    ("DELETE", "/api/v1/payroll/structures/{structure_id}"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/payroll/structures/{structure_id}"): ROLES(UserRole.hr_admin),
+    ("PUT", "/api/v1/payroll/structures/{structure_id}"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/payroll/tax-slabs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("POST", "/api/v1/payroll/tax-slabs"): ROLES(UserRole.super_admin),
     ("GET", "/api/v1/performance/cycles"): AUTHENTICATED,

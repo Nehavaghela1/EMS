@@ -18,6 +18,7 @@ from app.modules.hr.router import departments_router, employees_router
 from app.modules.identity.router import companies_router, users_router
 from app.modules.identity.router import router as auth_router
 from app.modules.payroll.router import (
+    bank_accounts_router,
     employee_salary_router,
     payroll_runs_router,
     payslips_router,
@@ -37,6 +38,8 @@ from app.modules.platform.router import (
     files_router,
     industry_presets_router,
     notifications_router,
+    platform_router,
+    regions_router,
     search_router,
 )
 from app.modules.platform.router import router as jobs_router
@@ -110,6 +113,7 @@ app.include_router(statutory_config_router, prefix=settings.API_V1_PREFIX)
 app.include_router(statutory_rates_router, prefix=settings.API_V1_PREFIX)
 app.include_router(pt_slabs_router, prefix=settings.API_V1_PREFIX)
 app.include_router(tax_slabs_router, prefix=settings.API_V1_PREFIX)
+app.include_router(bank_accounts_router, prefix=settings.API_V1_PREFIX)
 app.include_router(payroll_runs_router, prefix=settings.API_V1_PREFIX)
 app.include_router(payslips_router, prefix=settings.API_V1_PREFIX)
 app.include_router(reimbursements_router, prefix=settings.API_V1_PREFIX)
@@ -119,6 +123,8 @@ app.include_router(announcements_router, prefix=settings.API_V1_PREFIX)
 app.include_router(files_router, prefix=settings.API_V1_PREFIX)
 app.include_router(documents_router, prefix=settings.API_V1_PREFIX)
 app.include_router(search_router, prefix=settings.API_V1_PREFIX)
+app.include_router(regions_router, prefix=settings.API_V1_PREFIX)
+app.include_router(platform_router, prefix=settings.API_V1_PREFIX)
 
 # One client, reused across requests (redis-py pools connections internally).
 # Short timeouts so a dead Redis makes /health fail fast, not hang.

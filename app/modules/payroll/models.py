@@ -232,8 +232,13 @@ class PtSlab(TimeStampedBase):
     """
 
     __tablename__ = "pt_slabs"
-    __table_args__ = (Index("ix_pt_slabs_state_effective_from", "state", "effective_from"),)
+    __table_args__ = (
+        Index("ix_pt_slabs_country_state_effective_from", "country", "state", "effective_from"),
+    )
 
+    country: Mapped[str] = mapped_column(
+        String(2), nullable=False, default="IN", server_default="IN"
+    )
     state: Mapped[str] = mapped_column(String(50), nullable=False)
     income_min: Mapped[Decimal] = mapped_column(SANumeric(14, 2), nullable=False)
     income_max: Mapped[Decimal | None] = mapped_column(SANumeric(14, 2), nullable=True)
@@ -271,6 +276,7 @@ class StatutoryRate(TimeStampedBase):
     __table_args__ = (
         CheckConstraint("scheme IN ('epf', 'esi')", name="ck_statutory_rates_scheme"),
         ExcludeConstraint(
+            ("country", "="),
             ("scheme", "="),
             (
                 text("daterange(effective_from, coalesce(effective_to, 'infinity'::date), '[]')"),
@@ -282,6 +288,9 @@ class StatutoryRate(TimeStampedBase):
         ),
     )
 
+    country: Mapped[str] = mapped_column(
+        String(2), nullable=False, default="IN", server_default="IN"
+    )
     scheme: Mapped[str] = mapped_column(String(10), nullable=False)
     employee_rate: Mapped[Decimal] = mapped_column(SANumeric(6, 3), nullable=False)
     employer_rate: Mapped[Decimal] = mapped_column(SANumeric(6, 3), nullable=False)
@@ -452,6 +461,64 @@ class PayrollItem(TenantBase):
     # The salary rows this month was paid at: [{salary_id, from_date, to_date, days, ctc}].
     # More than one when a raise started mid-month (paid by days at the old and new CTC).
     salary_segments_json: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
+
+
+class EmployeeBankAccount(TenantBase):
+    """RLS: Yes. An employee's bank details (5.8). One ACTIVE row per employee; a change adds a
+    new row and deactivates the old one, which stays as history. The number is an AES-256-GCM
+    blob (app/core/encryption.py) with its last four digits beside it."""
+
+    __tablename__ = "employee_bank_accounts"
+    __table_args__ = (
+        Index(
+            "uq_employee_bank_accounts_one_active",
+            "employee_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+    )
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id"), nullable=False, index=True
+    )
+    account_holder: Mapped[str] = mapped_column(String(100), nullable=False)
+    bank_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    account_number_enc: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    account_last4: Mapped[str] = mapped_column(String(4), nullable=False)
+    ifsc_code: Mapped[str] = mapped_column(String(11), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+
+
+class PayrollRunPayment(TenantBase):
+    """RLS: Yes. One payment line per employee of an approved run, written in the same save as
+    the approval (5.8). A later change of bank details never alters it. An employee who is left
+    out has no bank fields and an `excluded_reason`."""
+
+    __tablename__ = "payroll_run_payments"
+    __table_args__ = (
+        UniqueConstraint(
+            "payroll_run_id", "employee_id", name="uq_payroll_run_payments_run_employee"
+        ),
+    )
+
+    payroll_run_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("payroll_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id"), nullable=False
+    )
+    employee_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(SANumeric(14, 2), nullable=False)
+    account_holder: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    bank_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    account_number_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    account_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    ifsc_code: Mapped[str | None] = mapped_column(String(11), nullable=True)
+    excluded_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
 
 class ReimbursementType(str, enum.Enum):

@@ -57,7 +57,7 @@ class StatutoryConfigSpec:
     pf_restrict_to_ceiling: bool = True
     esi_enabled: bool = True
     pt_enabled: bool = True
-    pt_state: str | None = "Gujarat"
+    pt_state: str | None = None
     lwf_enabled: bool = False
     lwf_employee_amount: Decimal | None = None
     lwf_months: tuple[int, ...] = ()

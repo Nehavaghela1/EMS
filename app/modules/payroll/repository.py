@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import and_, func, or_, select
@@ -8,9 +8,11 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.pagination import PageParams, paginate
 from app.modules.hr.models import Employee
 from app.modules.payroll.models import (
+    EmployeeBankAccount,
     EmployeeSalary,
     PayrollItem,
     PayrollRun,
+    PayrollRunPayment,
     PayrollRunStatus,
     PayrollRunType,
     PtSlab,
@@ -326,11 +328,13 @@ class PtSlabRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def list_for_state(self, state: str, on_date: date | None = None) -> list[PtSlab]:
+    def list_for_state(self, country: str, state: str, on_date: date | None = None) -> list[PtSlab]:
         """All slabs for a state, or — when on_date is given — only the
         bracket set in force on that date (lookup by date, never "the
         latest row," Spec 12)."""
-        stmt = select(PtSlab).where(PtSlab.state == state, PtSlab.deleted_at.is_(None))
+        stmt = select(PtSlab).where(
+            PtSlab.country == country, PtSlab.state == state, PtSlab.deleted_at.is_(None)
+        )
         if on_date is not None:
             stmt = stmt.where(
                 PtSlab.effective_from <= on_date,
@@ -338,9 +342,12 @@ class PtSlabRepository:
             )
         return list(self.db.scalars(stmt.order_by(PtSlab.income_min.asc())).all())
 
-    def get_for_income(self, state: str, monthly_income, on_date: date) -> PtSlab | None:
+    def get_for_income(
+        self, country: str, state: str, monthly_income, on_date: date
+    ) -> PtSlab | None:
         return self.db.scalar(
             select(PtSlab).where(
+                PtSlab.country == country,
                 PtSlab.state == state,
                 PtSlab.deleted_at.is_(None),
                 PtSlab.income_min <= monthly_income,
@@ -350,12 +357,13 @@ class PtSlabRepository:
             )
         )
 
-    def list_open_locked(self, state: str) -> list[PtSlab]:
+    def list_open_locked(self, country: str, state: str) -> list[PtSlab]:
         """The slabs of `state` that have no end date, locked for the duration of the save."""
         return list(
             self.db.scalars(
                 select(PtSlab)
                 .where(
+                    PtSlab.country == country,
                     PtSlab.state == state,
                     PtSlab.effective_to.is_(None),
                     PtSlab.deleted_at.is_(None),
@@ -432,8 +440,11 @@ class StatutoryRateRepository:
         page_params: PageParams,
         scheme: str | None = None,
         on_date: date | None = None,
+        country: str | None = None,
     ) -> tuple[list[StatutoryRate], int, int]:
         stmt = select(StatutoryRate).where(StatutoryRate.deleted_at.is_(None))
+        if country is not None:
+            stmt = stmt.where(StatutoryRate.country == country)
         if scheme is not None:
             stmt = stmt.where(StatutoryRate.scheme == scheme)
         if on_date is not None:
@@ -441,15 +452,20 @@ class StatutoryRateRepository:
                 StatutoryRate.effective_from <= on_date,
                 or_(StatutoryRate.effective_to.is_(None), StatutoryRate.effective_to >= on_date),
             )
-        stmt = stmt.order_by(StatutoryRate.scheme.asc(), StatutoryRate.effective_from.asc())
+        stmt = stmt.order_by(
+            StatutoryRate.country.asc(),
+            StatutoryRate.scheme.asc(),
+            StatutoryRate.effective_from.asc(),
+        )
         return paginate(self.db, stmt, page_params)
 
-    def list_in_force(self, on_date: date) -> list[StatutoryRate]:
-        """One row per scheme: the rates in force on `on_date`."""
+    def list_in_force(self, country: str, on_date: date) -> list[StatutoryRate]:
+        """One row per scheme: the rates of `country` in force on `on_date`."""
         return list(
             self.db.scalars(
                 select(StatutoryRate)
                 .where(
+                    StatutoryRate.country == country,
                     StatutoryRate.deleted_at.is_(None),
                     StatutoryRate.effective_from <= on_date,
                     or_(
@@ -461,10 +477,11 @@ class StatutoryRateRepository:
             ).all()
         )
 
-    def get_in_force(self, scheme: str, on_date: date) -> StatutoryRate | None:
-        """The one row of `scheme` in force on `on_date` (rows never overlap)."""
+    def get_in_force(self, country: str, scheme: str, on_date: date) -> StatutoryRate | None:
+        """The one row of `scheme` of `country` in force on `on_date` (rows never overlap)."""
         return self.db.scalar(
             select(StatutoryRate).where(
+                StatutoryRate.country == country,
                 StatutoryRate.scheme == scheme,
                 StatutoryRate.deleted_at.is_(None),
                 StatutoryRate.effective_from <= on_date,
@@ -472,13 +489,17 @@ class StatutoryRateRepository:
             )
         )
 
-    def list_for_scheme_locked(self, scheme: str) -> list[StatutoryRate]:
-        """Every row of the scheme, locked until the caller's transaction ends, so two
-        simultaneous adds look at the same state one after the other."""
+    def list_for_scheme_locked(self, country: str, scheme: str) -> list[StatutoryRate]:
+        """Every row of the scheme in one country, locked until the caller's transaction ends,
+        so two simultaneous adds look at the same state one after the other."""
         return list(
             self.db.scalars(
                 select(StatutoryRate)
-                .where(StatutoryRate.scheme == scheme, StatutoryRate.deleted_at.is_(None))
+                .where(
+                    StatutoryRate.country == country,
+                    StatutoryRate.scheme == scheme,
+                    StatutoryRate.deleted_at.is_(None),
+                )
                 .order_by(StatutoryRate.effective_from.asc())
                 .with_for_update()
             ).all()
@@ -898,3 +919,81 @@ class ReimbursementRepository:
             setattr(claim, key, value)
         self.db.flush()
         return claim
+
+
+class EmployeeBankAccountRepository:
+    """RLS: Yes (5.8)."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_active(
+        self, employee_id: uuid.UUID, company_id: uuid.UUID, *, lock: bool = False
+    ) -> EmployeeBankAccount | None:
+        stmt = select(EmployeeBankAccount).where(
+            EmployeeBankAccount.employee_id == employee_id,
+            EmployeeBankAccount.company_id == company_id,
+            EmployeeBankAccount.is_active.is_(True),
+            EmployeeBankAccount.deleted_at.is_(None),
+        )
+        return self.db.scalar(stmt.with_for_update() if lock else stmt)
+
+    def active_by_employee(
+        self, company_id: uuid.UUID, employee_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, EmployeeBankAccount]:
+        rows = self.db.scalars(
+            select(EmployeeBankAccount).where(
+                EmployeeBankAccount.company_id == company_id,
+                EmployeeBankAccount.employee_id.in_(employee_ids),
+                EmployeeBankAccount.is_active.is_(True),
+                EmployeeBankAccount.deleted_at.is_(None),
+            )
+        ).all()
+        return {row.employee_id: row for row in rows}
+
+    def deactivate(self, account: EmployeeBankAccount, when: datetime) -> None:
+        account.is_active = False
+        account.deactivated_at = when
+        self.db.flush()
+
+    def create(self, **kwargs) -> EmployeeBankAccount:
+        account = EmployeeBankAccount(**kwargs)
+        self.db.add(account)
+        self.db.flush()
+        return account
+
+
+class PayrollRunPaymentRepository:
+    """RLS: Yes (5.8). The payment lines of an approved run."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def create(self, **kwargs) -> PayrollRunPayment:
+        line = PayrollRunPayment(**kwargs)
+        self.db.add(line)
+        self.db.flush()
+        return line
+
+    def employee_codes(
+        self, company_id: uuid.UUID, employee_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        rows = self.db.execute(
+            select(Employee.id, Employee.employee_code).where(
+                Employee.company_id == company_id, Employee.id.in_(employee_ids)
+            )
+        ).all()
+        return {row[0]: row[1] for row in rows}
+
+    def list_for_run(self, run_id: uuid.UUID, company_id: uuid.UUID) -> list[PayrollRunPayment]:
+        return list(
+            self.db.scalars(
+                select(PayrollRunPayment)
+                .where(
+                    PayrollRunPayment.payroll_run_id == run_id,
+                    PayrollRunPayment.company_id == company_id,
+                    PayrollRunPayment.deleted_at.is_(None),
+                )
+                .order_by(PayrollRunPayment.employee_code.asc(), PayrollRunPayment.id.asc())
+            ).all()
+        )

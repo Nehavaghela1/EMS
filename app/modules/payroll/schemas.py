@@ -34,6 +34,11 @@ _STRUCTURE_NAME = Annotated[
 ]
 _LEVEL = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10)]
 _COUNTRY = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
+# A country code as sent to a platform write route: spaces cut and upper-cased here, looked up
+# in the shared list by the service.
+_COUNTRY_CODE = Annotated[
+    str, StringConstraints(strip_whitespace=True, to_upper=True, pattern=r"^[A-Z]{2}$")
+]
 _COMPONENT_NAME = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
 ]
@@ -216,6 +221,7 @@ def is_masked_account_number(value: str) -> bool:
 
 class StatutoryRateResponse(BaseModel):
     id: uuid.UUID
+    country: str
     scheme: str
     employee_rate: Decimal
     employer_rate: Decimal
@@ -318,6 +324,7 @@ class StatutoryConfigUpdateRequest(BaseModel):
 
 class PtSlabResponse(BaseModel):
     id: uuid.UUID
+    country: str
     state: str
     income_min: Decimal
     income_max: Decimal | None
@@ -373,6 +380,8 @@ class _SourcedWrite(BaseModel):
 class StatutoryRateCreateRequest(_SourcedWrite):
     """`POST /payroll/statutory-rates`, super_admin only."""
 
+    # Checked against the shared country list by the service (422 naming the allowed codes).
+    country: _COUNTRY_CODE = "IN"
     scheme: Literal["epf", "esi"]
     employee_rate: _RATE
     employer_rate: _RATE
@@ -410,6 +419,9 @@ class PtSlabPutRequest(_SourcedWrite):
     past month must keep resolving to the rate that was actually in force
     then)."""
 
+    # Country and state are checked against the shared list by the service, which also stores
+    # the state in its canonical spelling.
+    country: _COUNTRY_CODE = "IN"
     state: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
     effective_from: date
     slabs: Annotated[list[PtSlabRowInput], Field(min_length=1)]
@@ -448,7 +460,7 @@ class TaxSlabPostRequest(_SourcedWrite):
     """Route 90, SA only. Adds a new financial year's (or regime's)
     brackets — never mutates a past year's row in place."""
 
-    country: Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")] = "IN"
+    country: _COUNTRY_CODE = "IN"
     financial_year: Annotated[str, StringConstraints(pattern=r"^\d{4}-\d{4}$")]
     regime: TaxRegime
     cess_percent: _RATE
@@ -514,9 +526,73 @@ class PayrollItemResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PaymentExclusion(BaseModel):
+    """An employee left out of a run's payment file, and why. Never a bank detail or an amount."""
+
+    employee_id: uuid.UUID
+    reason: str
+
+
 class PayrollRunDetailResponse(BaseModel):
     run: PayrollRunResponse
     items: list[PayrollItemResponse]
+    # None for a run that is not approved yet or was approved before payment lines were saved.
+    payment_exclusions: list[PaymentExclusion] | None = None
+
+
+class BankAccountRequest(BaseModel):
+    """`PUT` of an employee's bank details (5.8). Every field is required; a client that
+    re-submits the masked account number keeps the stored one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    account_holder: str
+    bank_name: str
+    account_number: str
+    ifsc_code: str
+
+    @field_validator("account_holder")
+    @classmethod
+    def _holder(cls, value: str) -> str:
+        value = value.strip()
+        if not 1 <= len(value) <= 100:
+            raise ValueError("Account holder must be 1 to 100 characters.")
+        return value
+
+    @field_validator("bank_name")
+    @classmethod
+    def _bank(cls, value: str) -> str:
+        value = value.strip()
+        if not 1 <= len(value) <= 100:
+            raise ValueError("Bank name must be 1 to 100 characters.")
+        return value
+
+    @field_validator("account_number")
+    @classmethod
+    def _number(cls, value: str) -> str:
+        # Never put the submitted value in the message: it is an account number.
+        value = value.strip()
+        if is_masked_account_number(value) or _ACCOUNT_NUMBER.fullmatch(value):
+            return value
+        raise ValueError("Account number must be 9 to 18 digits.")
+
+    @field_validator("ifsc_code")
+    @classmethod
+    def _ifsc(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not _IFSC_CODE.fullmatch(value):
+            raise ValueError("IFSC code must be 4 letters, a zero, then 6 letters or digits.")
+        return value
+
+
+class BankAccountResponse(BaseModel):
+    employee_id: uuid.UUID
+    account_holder: str
+    bank_name: str
+    # Eight asterisks and the last four digits; the whole number only on an audited reveal.
+    account_number: str
+    ifsc_code: str
+    updated_at: datetime
 
 
 # Input limits for a claim (5.6): what a request may carry, not statutory figures.

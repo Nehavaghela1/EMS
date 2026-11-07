@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from app.core.config import settings
+from app.core.regions import allowed_country_codes, canonical_country
 from app.modules.identity.models import CompanyStatus, UserRole
 
 
@@ -140,10 +141,10 @@ class CompanyRegisterRequest(BaseModel):
     def _validate_country(cls, v: str) -> str:
         if not isinstance(v, str):
             raise ValueError("Country must be text.")
-        v = v.strip().upper()
-        if not re.fullmatch(r"[A-Z]{2}", v):
-            raise ValueError("Country must be a valid 2-letter ISO country code.")
-        return v
+        country = canonical_country(v)
+        if country is None:
+            raise ValueError(f"Country must be one of: {allowed_country_codes()}.")
+        return country
 
     @field_validator("subdomain", mode="before")
     @classmethod
@@ -274,10 +275,10 @@ class AdminCompanyUpdateRequest(CompanyProfileUpdateRequest):
             return None
         if not isinstance(v, str):
             raise ValueError("Country must be text.")
-        v = v.strip().upper()
-        if not re.fullmatch(r"[A-Z]{2}", v):
-            raise ValueError("Country must be a valid 2-letter ISO country code.")
-        return v
+        country = canonical_country(v)
+        if country is None:
+            raise ValueError(f"Country must be one of: {allowed_country_codes()}.")
+        return country
 
 
 # Auth
@@ -422,10 +423,10 @@ class CreateWorkspaceRequest(BaseModel):
     def _validate_country(cls, v: str) -> str:
         if not isinstance(v, str):
             raise ValueError("Country must be text.")
-        v = v.strip().upper()
-        if not re.fullmatch(r"[A-Z]{2}", v):
-            raise ValueError("Country must be a valid 2-letter ISO country code.")
-        return v
+        country = canonical_country(v)
+        if country is None:
+            raise ValueError(f"Country must be one of: {allowed_country_codes()}.")
+        return country
 
     @field_validator("currency", mode="before")
     @classmethod

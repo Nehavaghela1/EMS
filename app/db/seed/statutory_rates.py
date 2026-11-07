@@ -127,18 +127,18 @@ _UPDATED = (
 
 
 def seed_statutory_rates(db: Session) -> None:
-    """Idempotent upsert by (scheme, effective_from). Raises before writing anything if a
-    row has no source or a non-official link."""
+    """Idempotent upsert by (country, scheme, effective_from). Every seeded row is India's.
+    Raises before writing anything if a row has no source or a non-official link."""
     for row in RATE_ROWS:
         validate_seed_row(row)
     for row in RATE_ROWS:
         existing = (
             db.query(StatutoryRate)
-            .filter_by(scheme=row["scheme"], effective_from=row["effective_from"])
+            .filter_by(country="IN", scheme=row["scheme"], effective_from=row["effective_from"])
             .first()
         )
         if existing is None:
-            db.add(StatutoryRate(**row))
+            db.add(StatutoryRate(country="IN", **row))
         else:
             for column in _UPDATED:
                 setattr(existing, column, row[column])
