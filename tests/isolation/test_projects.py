@@ -160,9 +160,7 @@ def test_task_update_permissions(client: TestClient, db: Session, company_a: Ten
     client.put(
         f"/api/v1/projects/tasks/{task_id}", json={"status": "in_progress"}, headers=headers_emp1
     )
-    client.put(
-        f"/api/v1/projects/tasks/{task_id}", json={"status": "review"}, headers=headers_emp1
-    )
+    client.put(f"/api/v1/projects/tasks/{task_id}", json={"status": "review"}, headers=headers_emp1)
     res_nik = client.put(
         f"/api/v1/projects/tasks/{task_id}", json={"status": "done"}, headers=headers_emp1
     )
