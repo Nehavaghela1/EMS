@@ -289,8 +289,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/payroll/tax-slabs"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("POST", "/api/v1/payroll/tax-slabs"): ROLES(UserRole.super_admin),
     ("GET", "/api/v1/performance/cycles"): AUTHENTICATED,
-    ("POST", "/api/v1/performance/cycles"): ROLES(UserRole.hr_admin),
-    ("PUT", "/api/v1/performance/cycles/{id}"): ROLES(UserRole.hr_admin),
+    ("POST", "/api/v1/performance/cycles"): ROLES(UserRole.hr_admin, UserRole.owner),
+    ("PUT", "/api/v1/performance/cycles/{id}"): ROLES(UserRole.hr_admin, UserRole.owner),
     ("POST", "/api/v1/performance/goals"): AUTHENTICATED,
     ("GET", "/api/v1/performance/goals/{employee_id}"): ROLES(
         UserRole.super_admin, UserRole.hr_admin, UserRole.manager, UserRole.employee
@@ -300,6 +300,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ),
     ("POST", "/api/v1/performance/goals/{goal_id}/self-review"): AUTHENTICATED,
     ("PUT", "/api/v1/performance/goals/{id}"): AUTHENTICATED,
+    ("PUT", "/api/v1/performance/goals/{id}/progress"): AUTHENTICATED,
+    ("GET", "/api/v1/performance/goals/{id}/history"): AUTHENTICATED,
     ("GET", "/api/v1/performance/pips"): AUTHENTICATED,
     ("POST", "/api/v1/performance/pips"): ROLES(
         UserRole.hr_admin, UserRole.super_admin, UserRole.manager

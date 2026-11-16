@@ -546,7 +546,20 @@ def test_6_1_R11_notifications_sent_on_cycle_activation(
     )
 
 
-def test_6_1_R12_rate_limit_cycle_write_routes(client: TestClient, p1_setup: dict[str, Any]):
+@pytest.fixture
+def limits_on():
+    limiter.enabled = True
+    limiter.reset()
+    try:
+        yield
+    finally:
+        limiter.reset()
+        limiter.enabled = False
+
+
+def test_6_1_R12_rate_limit_cycle_write_routes(
+    client: TestClient, p1_setup: dict[str, Any], limits_on: None
+):
     """6.1 R12: Write routes are rate limited with a 429 test."""
     hr_headers = _auth_headers(p1_setup["hr_a"])
     limiter.reset()
@@ -912,7 +925,7 @@ def test_6_2_R10_manager_notified_when_someone_else_changes_goal(
 
 
 def test_6_2_R11_rate_limit_goal_write_routes(
-    client: TestClient, p1_setup: dict[str, Any], active_cycle: str
+    client: TestClient, p1_setup: dict[str, Any], active_cycle: str, limits_on: None
 ):
     """6.2 R11: Write routes are rate limited with a 429 test."""
     emp_headers = _auth_headers(p1_setup["emp_user_a"])
