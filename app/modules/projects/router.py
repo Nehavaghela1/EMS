@@ -26,6 +26,7 @@ from app.modules.projects.schemas import (
     TaskCommentCreate,
     TaskCommentResponse,
     TaskCreate,
+    TaskReorder,
     TaskResponse,
     TaskUpdate,
     TimeEntryCreate,
@@ -209,47 +210,49 @@ def get_task(
     current_user: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.get_task(cid, task_id)
+    cid = current_user.company_id
+    return service.get_task(cid, task_id, current_user)
 
 
 @router.put("/tasks/{task_id}", response_model=TaskResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def update_task(
+    request: Request,
     task_id: UUID,
     data: TaskUpdate,
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    is_admin_or_manager = current_user.role in HR_OR_MANAGER_ROLES
-    current_emp_id = None
-    if not is_admin_or_manager:
-        from app.modules.hr.repository import EmployeeRepository
+    cid = current_user.company_id
+    return service.update_task(cid, task_id, current_user, data)
 
-        emp = EmployeeRepository(db).get_by_user_id(current_user.company_id, current_user.id)
-        if emp:
-            current_emp_id = emp.id
-        else:
-            from app.core.exceptions import ForbiddenError
 
-            raise ForbiddenError("Employee profile required to update tasks.")
-    return service.update_task(
-        cid, task_id, data, current_emp_id=current_emp_id, is_admin_or_manager=is_admin_or_manager
-    )
+@router.put("/tasks/{task_id}/reorder", response_model=TaskResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def reorder_task(
+    request: Request,
+    task_id: UUID,
+    data: TaskReorder,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = ProjectService(db)
+    cid = current_user.company_id
+    return service.reorder_task(cid, task_id, current_user, data.position)
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def delete_task(
+    request: Request,
     task_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
-    ),
+    current_user: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    service.delete_task(cid, task_id)
+    cid = current_user.company_id
+    service.delete_task(cid, task_id, current_user)
 
 
 @router.post(
@@ -283,30 +286,30 @@ def list_task_comments(
 
 
 @router.put("/milestones/{milestone_id}", response_model=MilestoneResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def update_milestone(
+    request: Request,
     milestone_id: UUID,
     data: MilestoneUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
-    ),
+    current_user: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.update_milestone(cid, milestone_id, data)
+    cid = current_user.company_id
+    return service.update_milestone(cid, milestone_id, current_user, data)
 
 
 @router.delete("/milestones/{milestone_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def delete_milestone(
+    request: Request,
     milestone_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
-    ),
+    current_user: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    service.delete_milestone(cid, milestone_id)
+    cid = current_user.company_id
+    service.delete_milestone(cid, milestone_id, current_user)
 
 
 # --- Dynamic Project ID Routes ---
@@ -441,28 +444,30 @@ def remove_project_member(
 @router.post(
     "/{project_id}/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED
 )
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def create_task(
+    request: Request,
     project_id: UUID,
     data: TaskCreate,
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.create_task(cid, project_id, current_user.id, data)
+    cid = current_user.company_id
+    return service.create_task(cid, project_id, current_user, data)
 
 
 @router.get("/{project_id}/tasks", response_model=list[TaskResponse])
 def list_tasks(
     project_id: UUID,
-    status: str | None = Query(None, pattern="^(todo|in_progress|review|done)$"),
+    status: str | None = Query(None, pattern="^(todo|in_progress|review|done|cancelled)$"),
     assigned_to: UUID | None = Query(None),
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.list_tasks(cid, project_id, status, assigned_to)
+    cid = current_user.company_id
+    return service.list_tasks(cid, project_id, current_user, status, assigned_to)
 
 
 # --- Project Milestones (Routes 119-120) ---
@@ -473,17 +478,17 @@ def list_tasks(
     response_model=MilestoneResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def create_milestone(
+    request: Request,
     project_id: UUID,
     data: MilestoneCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
-    ),
+    current_user: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.create_milestone(cid, project_id, data)
+    cid = current_user.company_id
+    return service.create_milestone(cid, project_id, current_user, data)
 
 
 @router.get("/{project_id}/milestones", response_model=list[MilestoneResponse])
@@ -493,8 +498,8 @@ def list_milestones(
     current_user: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.list_milestones(cid, project_id)
+    cid = current_user.company_id
+    return service.list_milestones(cid, project_id, current_user)
 
 
 # --- Project Documents ---

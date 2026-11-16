@@ -212,7 +212,7 @@ class ProjectRepository:
             query = query.filter(Task.status == status)
         if assigned_to:
             query = query.filter(Task.assigned_to == assigned_to)
-        return query.order_by(Task.created_at.desc()).all()
+        return query.order_by(Task.position.asc(), Task.created_at.desc()).all()
 
     def list_tasks_with_details(
         self,
@@ -232,7 +232,7 @@ class ProjectRepository:
             query = query.filter(Task.status == status)
         if assigned_to:
             query = query.filter(Task.assigned_to == assigned_to)
-        return query.order_by(Task.created_at.desc()).all()
+        return query.order_by(Task.position.asc(), Task.created_at.desc()).all()
 
     def update_task(self, task: Task, data: TaskUpdate) -> Task:
         update_data = data.dict(exclude_unset=True)
@@ -423,6 +423,10 @@ class ProjectRepository:
         return milestone
 
     def delete_milestone(self, milestone: Milestone) -> None:
+        # Unlink associated tasks (Rule 4: SET NULL, never delete tasks)
+        self.db.query(Task).filter(Task.milestone_id == milestone.id).update(
+            {"milestone_id": None}, synchronize_session=False
+        )
         self.db.delete(milestone)
         self.db.commit()
 

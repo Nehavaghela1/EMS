@@ -132,9 +132,16 @@ class Task(Base):
     )  # critical, high, medium, low
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="todo"
-    )  # todo, in_progress, review, done
+    )  # todo, in_progress, review, done, cancelled
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     estimated_hours: Mapped[Decimal | None] = mapped_column(SANumeric(6, 2), nullable=True)
+    milestone_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("milestones.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    position: Mapped[int] = mapped_column(default=0, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
