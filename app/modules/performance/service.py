@@ -986,8 +986,8 @@ class PerformanceService:
         pips = self.pip_repo.list_pips(company_id, employee_id, status)
         res = []
         for p in pips:
-            emp = self.employee_repo.get_by_id(company_id, p.employee_id)
-            mentor = self.employee_repo.get_by_id(company_id, p.mentor_id) if p.mentor_id else None
+            emp = self.employee_repo.get_by_id(p.employee_id, company_id)
+            mentor = self.employee_repo.get_by_id(p.mentor_id, company_id) if p.mentor_id else None
             res.append(
                 PerformancePIPResponse(
                     id=p.id,
@@ -1020,8 +1020,8 @@ class PerformanceService:
         p = self.pip_repo.get_active_pip_for_employee(company_id, employee_id)
         if p is None:
             return None
-        emp = self.employee_repo.get_by_id(company_id, p.employee_id)
-        mentor = self.employee_repo.get_by_id(company_id, p.mentor_id) if p.mentor_id else None
+        emp = self.employee_repo.get_by_id(p.employee_id, company_id)
+        mentor = self.employee_repo.get_by_id(p.mentor_id, company_id) if p.mentor_id else None
         return PerformancePIPResponse(
             id=p.id,
             employee_id=p.employee_id,

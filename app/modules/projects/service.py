@@ -4,14 +4,23 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
-from app.modules.identity.models import User
+from app.core.exceptions import (
+    AppError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
+from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import EmployeeSalary
+from app.modules.platform.service import AuditService, NotificationService
 from app.modules.projects.repository import ProjectRepository
 from app.modules.projects.schemas import (
+    MemberRateUpdate,
     MilestoneCreate,
     MilestoneResponse,
     MilestoneUpdate,
+    PagedProjectResponse,
     ProjectCreate,
     ProjectDocumentCreate,
     ProjectDocumentResponse,
@@ -34,6 +43,8 @@ from app.modules.projects.schemas import (
 class ProjectService:
     def __init__(self, db: Session):
         self.repo = ProjectRepository(db)
+        self.audit = AuditService(db)
+        self.notifications = NotificationService(db)
 
     def _to_project_response(self, project) -> ProjectResponse:
         resp = ProjectResponse.from_orm(project)
@@ -48,44 +59,313 @@ class ProjectService:
         return resp
 
     # --- Projects ---
-    def create_project(self, company_id: UUID, data: ProjectCreate) -> ProjectResponse:
+    def create_project(
+        self, company_id: UUID, data: ProjectCreate, actor: User | None = None
+    ) -> ProjectResponse:
+        from app.modules.hr.models import Employee
+        from app.modules.projects.models import Project
+
         target_company_id = data.company_id or company_id
-        existing = self.repo.get_project_by_code(target_company_id, data.code)
-        if existing:
+        # Rule 1: Plain employees get 403
+        if actor and actor.role == UserRole.employee:
+            raise ForbiddenError("Employees cannot create projects.")
+
+        # Rule 3: Name is required and unique among company live projects
+        live_statuses = ["active", "planning", "on_hold"]
+        same_name = (
+            self.repo.db.query(Project)
+            .filter(
+                Project.company_id == target_company_id,
+                Project.name == data.name,
+                Project.status.in_(live_statuses),
+            )
+            .first()
+        )
+        if same_name:
+            raise ValidationError(f"A live project with name '{data.name}' already exists.")
+
+        existing_code = self.repo.get_project_by_code(target_company_id, data.code)
+        if existing_code:
             raise ConflictError(f"Project with code '{data.code}' already exists.")
+
+        # Rule 3: project manager must be an active employee of the same company
+        chosen_mgr_emp_id = data.manager_id
+        if chosen_mgr_emp_id:
+            emp = (
+                self.repo.db.query(Employee)
+                .filter(
+                    Employee.id == chosen_mgr_emp_id,
+                    Employee.company_id == target_company_id,
+                    Employee.is_active.is_(True),
+                )
+                .first()
+            )
+            if not emp:
+                raise ValidationError(
+                    "Project manager must be an active employee of the same company."
+                )
+        elif actor and actor.role == UserRole.manager:
+            # The creator becomes the project manager
+            actor_emp = (
+                self.repo.db.query(Employee)
+                .filter(
+                    Employee.user_id == actor.id,
+                    Employee.company_id == target_company_id,
+                    Employee.is_active.is_(True),
+                )
+                .first()
+            )
+            if actor_emp:
+                chosen_mgr_emp_id = actor_emp.id
+
         project_dict = data.dict(exclude={"company_id"})
+        project_dict["manager_id"] = chosen_mgr_emp_id
         project = self.repo.create_project(target_company_id, ProjectCreate(**project_dict))
+
+        # Rule 1: Creator or manager becomes PM and is added with role manager
+        if chosen_mgr_emp_id:
+            existing_mem = self.repo.get_member(target_company_id, project.id, chosen_mgr_emp_id)
+            if not existing_mem:
+                self.repo.add_member(
+                    target_company_id,
+                    project.id,
+                    ProjectMemberCreate(
+                        employee_id=chosen_mgr_emp_id, role="manager", hourly_rate=None
+                    ),
+                )
+
+        # Rule 7: Every create is audited (ids and field names only)
+        self.audit.record(
+            company_id=target_company_id,
+            actor=actor,
+            action="create",
+            entity_type="project",
+            entity_id=project.id,
+            details={"fields": ["name", "code", "status", "budget", "manager_id"]},
+        )
         return self._to_project_response(project)
 
-    def get_project(self, company_id: UUID | None, project_id: UUID) -> ProjectResponse:
+    def get_project(
+        self, company_id: UUID | None, project_id: UUID, actor: User | None = None
+    ) -> ProjectResponse:
+        from app.modules.hr.models import Employee
+
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
+
+        # Rule 2: members and project manager read; HR and owner read all; non-member gets 404
+        if actor and actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+            actor_emp = (
+                self.repo.db.query(Employee)
+                .filter(Employee.user_id == actor.id, Employee.company_id == project.company_id)
+                .first()
+            )
+            is_member = False
+            if actor_emp:
+                mem = self.repo.get_member(project.company_id, project_id, actor_emp.id)
+                if mem:
+                    is_member = True
+            if not is_member and project.manager_id != (actor_emp.id if actor_emp else None):
+                raise NotFoundError("Project not found.")
+
         return self._to_project_response(project)
 
     def list_projects(
-        self, company_id: UUID | None = None, status: str | None = None
-    ) -> list[ProjectResponse]:
-        projects = self.repo.list_projects(company_id, status)
-        return [self._to_project_response(p) for p in projects]
+        self,
+        company_id: UUID | None = None,
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        actor: User | None = None,
+    ) -> PagedProjectResponse:
+        from app.modules.hr.models import Employee
+        from app.modules.projects.models import Project, ProjectMember
+
+        page_size = min(max(page_size, 1), 100)
+        page = max(page, 1)
+
+        query = self.repo.db.query(Project)
+        if company_id is not None:
+            query = query.filter(Project.company_id == company_id)
+        if status:
+            query = query.filter(Project.status == status)
+
+        # Scoping: Plain employees / non-HR see only projects where they are member or manager
+        if actor and actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+            actor_emp = (
+                self.repo.db.query(Employee)
+                .filter(Employee.user_id == actor.id, Employee.company_id == company_id)
+                .first()
+            )
+            if not actor_emp:
+                return PagedProjectResponse(items=[], total=0, page=page, page_size=page_size)
+            member_proj_ids = [
+                row[0]
+                for row in self.repo.db.query(ProjectMember.project_id)
+                .filter(
+                    ProjectMember.company_id == company_id,
+                    ProjectMember.employee_id == actor_emp.id,
+                )
+                .all()
+            ]
+            query = query.filter(
+                (Project.manager_id == actor_emp.id) | (Project.id.in_(member_proj_ids))
+            )
+
+        total = query.count()
+        projects = (
+            query.order_by(Project.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        return PagedProjectResponse(
+            items=[self._to_project_response(p) for p in projects],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
 
     def update_project(
-        self, company_id: UUID | None, project_id: UUID, data: ProjectUpdate
+        self,
+        company_id: UUID | None,
+        project_id: UUID,
+        data: ProjectUpdate,
+        actor: User | None = None,
     ) -> ProjectResponse:
+        from app.modules.hr.models import Employee
+        from app.modules.projects.models import Milestone, Task
+
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
+
+        # Rule 2: Project manager, HR and owner edit; plain members get 403
+        is_pm = False
+        actor_emp_id = None
+        if actor:
+            actor_emp = (
+                self.repo.db.query(Employee)
+                .filter(Employee.user_id == actor.id, Employee.company_id == project.company_id)
+                .first()
+            )
+            if actor_emp:
+                actor_emp_id = actor_emp.id
+                if project.manager_id == actor_emp_id:
+                    is_pm = True
+                else:
+                    mem = self.repo.get_member(project.company_id, project_id, actor_emp_id)
+                    if mem and mem.role == "manager":
+                        is_pm = True
+
+        can_edit = (
+            actor is None
+            or actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+            or is_pm
+        )
+        if not can_edit:
+            raise ForbiddenError("Only project manager, HR and owner can edit the project.")
+
+        # Rule 4: An archived project is read-only; only HR and owner can unarchive
+        if project.status == "archived":
+            if data.status and data.status != "archived":
+                if actor and actor.role not in (
+                    UserRole.hr_admin,
+                    UserRole.owner,
+                    UserRole.super_admin,
+                ):
+                    raise ForbiddenError("Only HR and owner can unarchive a project.")
+            else:
+                raise ConflictError("Archived project is read-only.")
+
+        # Rule 10: Project dates cannot exclude existing milestones or tasks
+        new_start = data.start_date if data.start_date is not None else project.start_date
+        new_end = (
+            data.end_date
+            if data.end_date is not None
+            else (
+                data.deadline
+                if data.deadline is not None
+                else (project.end_date or project.deadline)
+            )
+        )
+
+        if new_start or new_end:
+            if new_start:
+                ms_before = (
+                    self.repo.db.query(Milestone)
+                    .filter(Milestone.project_id == project.id, Milestone.due_date < new_start)
+                    .first()
+                )
+                task_before = (
+                    self.repo.db.query(Task)
+                    .filter(Task.project_id == project.id, Task.due_date < new_start)
+                    .first()
+                )
+                if ms_before or task_before:
+                    raise ConflictError(
+                        "New project start date excludes existing milestones or tasks."
+                    )
+            if new_end:
+                ms_after = (
+                    self.repo.db.query(Milestone)
+                    .filter(Milestone.project_id == project.id, Milestone.due_date > new_end)
+                    .first()
+                )
+                task_after = (
+                    self.repo.db.query(Task)
+                    .filter(Task.project_id == project.id, Task.due_date > new_end)
+                    .first()
+                )
+                if ms_after or task_after:
+                    raise ConflictError(
+                        "New project end date excludes existing milestones or tasks."
+                    )
+
         if data.code and data.code != project.code:
             existing = self.repo.get_project_by_code(project.company_id, data.code)
             if existing:
                 raise ConflictError(f"Project with code '{data.code}' already exists.")
+
+        updated_fields = list(data.dict(exclude_unset=True).keys())
         updated = self.repo.update_project(project, data)
+
+        # Rule 7: Audited
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor,
+            action="status_change" if "status" in updated_fields else "edit",
+            entity_type="project",
+            entity_id=project.id,
+            details={"fields": updated_fields},
+        )
         return self._to_project_response(updated)
 
-    def delete_project(self, company_id: UUID | None, project_id: UUID) -> None:
+    def delete_project(
+        self, company_id: UUID | None, project_id: UUID, actor: User | None = None
+    ) -> None:
+        from app.modules.projects.models import TimeEntry
+
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
+
+        # Rule 5: A project that has time entries can never be deleted
+        has_time_entries = (
+            self.repo.db.query(TimeEntry).filter(TimeEntry.project_id == project.id).first()
+        )
+        if has_time_entries:
+            raise ConflictError("A project with time entries can never be deleted.")
+
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor,
+            action="delete",
+            entity_type="project",
+            entity_id=project.id,
+            details={"fields": ["id", "code"]},
+        )
         self.repo.delete_project(project)
 
     # --- Project Summary Analytics ---
@@ -202,19 +482,77 @@ class ProjectService:
 
     # --- Project Members ---
     def add_member(
-        self, company_id: UUID | None, project_id: UUID, data: ProjectMemberCreate
+        self,
+        company_id: UUID | None,
+        project_id: UUID,
+        data: ProjectMemberCreate,
+        actor: User | None = None,
     ) -> ProjectMemberResponse:
+        from app.modules.hr.models import Department, Employee
+
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
         p_cid = project.company_id
+
+        # Rule 1: A member must be an active employee of the same company
+        target_emp = (
+            self.repo.db.query(Employee)
+            .filter(
+                Employee.id == data.employee_id,
+                Employee.company_id == p_cid,
+                Employee.is_active.is_(True),
+            )
+            .first()
+        )
+        if not target_emp:
+            raise ValidationError("Member must be an active employee of the same company.")
+
+        # Rule 1: Duplicate returns 409
         existing = self.repo.get_member(p_cid, project_id, data.employee_id)
         if existing:
             raise ConflictError("Employee is already a member of this project.")
-        member = self.repo.add_member(p_cid, project_id, data)
-        resp = ProjectMemberResponse.from_orm(member)
-        from app.modules.hr.models import Department, Employee
 
+        # Map role 'lead' to 'manager'
+        assigned_role = data.role
+        data_to_save = data.copy(update={"role": assigned_role})
+
+        member = self.repo.add_member(p_cid, project_id, data_to_save)
+
+        # Rule 4: If hourly billing rate is provided, save to effective-dated rate history
+        if data.hourly_rate is not None and data.hourly_rate >= 0:
+            eff_from = data.effective_from or date.today()
+            self.repo.add_member_rate(
+                company_id=p_cid,
+                project_id=project_id,
+                employee_id=data.employee_id,
+                rate=data.hourly_rate,
+                effective_from=eff_from,
+            )
+
+        # Rule 6: The added member is notified after the commit
+        if target_emp.user_id:
+            self.notifications.notify(
+                company_id=p_cid,
+                user_id=target_emp.user_id,
+                type="project_member_added",
+                title="Added to Project",
+                message=f"You have been added to project {project.name}.",
+                entity_type="project",
+                entity_id=project.id,
+            )
+
+        # Rule 8: Audit
+        self.audit.record(
+            company_id=p_cid,
+            actor=actor,
+            action="add_member",
+            entity_type="project_member",
+            entity_id=member.id,
+            details={"fields": ["employee_id", "role"]},
+        )
+
+        resp = ProjectMemberResponse.from_orm(member)
         emp_data = (
             self.repo.db.query(Employee, Department.name.label("dept_name"))
             .outerjoin(Department, Employee.department_id == Department.id)
@@ -228,18 +566,48 @@ class ProjectService:
             resp.employee_code = emp.employee_code
             resp.designation = emp.position or "Staff"
             resp.department_name = dept_name or "General"
+
+        # Mask rate if caller is not PM / HR / owner
+        if not self._can_view_rates(project, actor):
+            resp.hourly_rate = None
+
         return resp
 
+    def _can_view_rates(self, project, actor: User | None) -> bool:
+        from app.modules.hr.models import Employee
+
+        if not actor:
+            return True
+        if actor.role in (UserRole.hr_admin, UserRole.owner):
+            return True
+        # Check if actor is project manager
+        actor_emp = (
+            self.repo.db.query(Employee)
+            .filter(Employee.user_id == actor.id, Employee.company_id == project.company_id)
+            .first()
+        )
+        if actor_emp:
+            if project.manager_id == actor_emp.id:
+                return True
+            mem = self.repo.get_member(project.company_id, project.id, actor_emp.id)
+            if mem and mem.role == "manager":
+                return True
+        return False
+
     def list_members(
-        self, company_id: UUID | None, project_id: UUID
+        self, company_id: UUID | None, project_id: UUID, actor: User | None = None
     ) -> list[ProjectMemberResponse]:
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
+
+        can_see_rates = self._can_view_rates(project, actor)
         results = self.repo.list_members_with_details(project.company_id, project_id)
         responses = []
         for m, emp, dept_name in results:
             resp = ProjectMemberResponse.from_orm(m)
+            if not can_see_rates:
+                resp.hourly_rate = None
             if emp:
                 resp.employee_name = f"{emp.first_name} {emp.last_name or ''}".strip()
                 resp.employee_email = emp.email
@@ -249,14 +617,108 @@ class ProjectService:
             responses.append(resp)
         return responses
 
-    def remove_member(self, company_id: UUID | None, project_id: UUID, employee_id: UUID) -> None:
+    def update_member_rate(
+        self,
+        company_id: UUID | None,
+        project_id: UUID,
+        employee_id: UUID,
+        data: MemberRateUpdate,
+        actor: User | None = None,
+    ) -> ProjectMemberResponse:
+        project = self.repo.get_project_by_id(company_id, project_id)
+        if not project:
+            raise NotFoundError("Project not found.")
+
+        # Rule 4: Only HR and owner set or change a rate; PM gets 403
+        if actor and actor.role not in (UserRole.hr_admin, UserRole.owner):
+            raise ForbiddenError("Only HR and owner can set or change member billing rates.")
+
+        member = self.repo.get_member(project.company_id, project_id, employee_id)
+        if not member:
+            raise NotFoundError("Project member not found.")
+
+        member.hourly_rate = data.hourly_rate
+        self.repo.db.commit()
+
+        # Save to effective-dated rate history
+        self.repo.add_member_rate(
+            company_id=project.company_id,
+            project_id=project_id,
+            employee_id=employee_id,
+            rate=data.hourly_rate,
+            effective_from=data.effective_from,
+        )
+
+        # Rule 8: Rate changes are audited with field names only (no amounts)
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor,
+            action="rate_change",
+            entity_type="project_member",
+            entity_id=member.id,
+            details={"fields": ["hourly_rate", "effective_from"]},
+        )
+
+        resp = ProjectMemberResponse.from_orm(member)
+        if not self._can_view_rates(project, actor):
+            resp.hourly_rate = None
+        return resp
+
+    def remove_member(
+        self,
+        company_id: UUID | None,
+        project_id: UUID,
+        employee_id: UUID,
+        actor: User | None = None,
+    ) -> None:
+        from app.modules.projects.models import ProjectMember, Task
+
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
         member = self.repo.get_member(project.company_id, project_id, employee_id)
         if not member:
             raise NotFoundError("Project member not found.")
+
+        # Rule 2: A project always keeps at least one manager (removing last returns 409)
+        if member.role == "manager" or (project.manager_id and project.manager_id == employee_id):
+            managers_count = (
+                self.repo.db.query(ProjectMember)
+                .filter(
+                    ProjectMember.project_id == project_id,
+                    ProjectMember.role == "manager",
+                    ProjectMember.employee_id != employee_id,
+                )
+                .count()
+            )
+            if managers_count == 0:
+                raise ConflictError("Cannot remove the last project manager.")
+
+        # Rule 5: Open tasks become unassigned (assigned_to = None)
+        open_tasks = (
+            self.repo.db.query(Task)
+            .filter(
+                Task.project_id == project_id,
+                Task.assigned_to == employee_id,
+                Task.status.notin_(["done", "cancelled"]),
+            )
+            .all()
+        )
+        for t in open_tasks:
+            t.assigned_to = None
+        self.repo.db.flush()
+
         self.repo.remove_member(member)
+
+        # Audit
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor,
+            action="remove_member",
+            entity_type="project_member",
+            entity_id=member.id,
+            details={"fields": ["employee_id"]},
+        )
 
     # --- Tasks ---
     def _enrich_task_response(self, task) -> TaskResponse:
@@ -329,7 +791,7 @@ class ProjectService:
             is_lead = False
             if task.company_id and task.project_id:
                 member = self.repo.get_member(task.company_id, task.project_id, current_emp_id)
-                if member and member.role == "lead":
+                if member and member.role in ("lead", "manager"):
                     is_lead = True
             if not is_assignee and not is_lead:
                 raise ForbiddenError("Only the task assignee or Project Lead can modify this task.")
@@ -381,7 +843,7 @@ class ProjectService:
                 # Check if employee is Project Lead
                 is_lead = False
                 member = self.repo.get_member(company_id, data.project_id, employee_id)
-                if member and member.role == "lead":
+                if member and member.role in ("lead", "manager"):
                     is_lead = True
 
                 if task.assigned_to and task.assigned_to != employee_id and not is_lead:

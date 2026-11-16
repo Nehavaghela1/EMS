@@ -320,7 +320,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/performance/summaries"): ROLES(UserRole.hr_admin, UserRole.manager),
     ("POST", "/api/v1/performance/summary/{employee_id}"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/projects"): AUTHENTICATED,
-    ("POST", "/api/v1/projects"): ROLES(UserRole.super_admin, UserRole.hr_admin, UserRole.manager),
+    ("POST", "/api/v1/projects"): ROLES(UserRole.owner, UserRole.hr_admin, UserRole.manager),
     ("DELETE", "/api/v1/projects/milestones/{milestone_id}"): ROLES(
         UserRole.super_admin, UserRole.hr_admin, UserRole.manager
     ),
@@ -341,10 +341,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/projects/time-entries/{entry_id}/approve"): ROLES(
         UserRole.super_admin, UserRole.hr_admin, UserRole.manager
     ),
-    ("DELETE", "/api/v1/projects/{project_id}"): ROLES(UserRole.super_admin, UserRole.hr_admin),
+    ("DELETE", "/api/v1/projects/{project_id}"): ROLES(UserRole.owner, UserRole.hr_admin),
     ("GET", "/api/v1/projects/{project_id}"): AUTHENTICATED,
     ("PUT", "/api/v1/projects/{project_id}"): ROLES(
-        UserRole.super_admin, UserRole.hr_admin, UserRole.manager
+        UserRole.owner, UserRole.hr_admin, UserRole.manager
     ),
     ("GET", "/api/v1/projects/{project_id}/documents"): AUTHENTICATED,
     ("POST", "/api/v1/projects/{project_id}/documents"): AUTHENTICATED,
@@ -354,10 +354,13 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/projects/{project_id}/documents/{document_id}/download"): AUTHENTICATED,
     ("GET", "/api/v1/projects/{project_id}/members"): AUTHENTICATED,
     ("POST", "/api/v1/projects/{project_id}/members"): ROLES(
-        UserRole.super_admin, UserRole.hr_admin, UserRole.manager
+        UserRole.owner, UserRole.hr_admin, UserRole.manager
     ),
     ("DELETE", "/api/v1/projects/{project_id}/members/{employee_id}"): ROLES(
-        UserRole.super_admin, UserRole.hr_admin, UserRole.manager
+        UserRole.owner, UserRole.hr_admin, UserRole.manager
+    ),
+    ("PUT", "/api/v1/projects/{project_id}/members/{employee_id}/rate"): ROLES(
+        UserRole.owner, UserRole.hr_admin, UserRole.manager
     ),
     ("GET", "/api/v1/projects/{project_id}/milestones"): AUTHENTICATED,
     ("POST", "/api/v1/projects/{project_id}/milestones"): ROLES(
