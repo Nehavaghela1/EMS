@@ -773,6 +773,7 @@ def test_R6_approve_closes_the_old_row_and_inserts_the_new_one_with_source_and_t
     audits = db.query(AuditLog).filter(AuditLog.action == "RATE_DRAFT_APPROVED").all()
     assert len(audits) == 1, f"R6: one audit row: {len(audits)}"
     detail = audits[0].details
+    assert detail is not None, "R6: audit details must not be None"
     assert detail["country"] == "IN" and detail["kind"] == "statutory_rate", detail
     assert "1.000" not in str(detail) and "4.000" not in str(detail), "R6: no rate values in audit"
 

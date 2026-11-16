@@ -1,5 +1,6 @@
 import uuid
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -26,7 +27,9 @@ from app.modules.performance.repository import (
     PerformanceSummaryRepository,
 )
 from app.modules.performance.schemas import (
+    GoalProgressUpdateRequest,
     GoalsCreateRequest,
+    GoalUpdateRequest,
     ManagerReviewRequest,
     PerformanceCycleCreateRequest,
     PerformanceCycleResponse,
@@ -61,6 +64,13 @@ class PerformanceService:
     def create_cycle(
         self, company_id: uuid.UUID, data: PerformanceCycleCreateRequest, actor: User
     ) -> PerformanceCycle:
+        # Check date overlap
+        clash = self.cycle_repo.get_overlapping_cycle(
+            company_id=company_id, start_date=data.start_date, end_date=data.end_date
+        )
+        if clash is not None:
+            raise ConflictError(f"Cycle dates clash with existing cycle '{clash.name}'.")
+
         cycle = self.cycle_repo.create(
             company_id=company_id,
             name=data.name,
@@ -93,6 +103,28 @@ class PerformanceService:
         if cycle is None:
             raise NotFoundError("Performance cycle not found.")
 
+        # Status transition checks
+        if cycle.status == CycleStatus.closed:
+            raise ConflictError("A closed performance cycle cannot be reopened or edited.")
+
+        if cycle.status == CycleStatus.draft:
+            if data.status == CycleStatus.closed:
+                raise ConflictError(
+                    "A draft cycle cannot be closed directly; it must be activated first."
+                )
+            if data.status == CycleStatus.draft:
+                pass  # no-op
+            elif data.status == CycleStatus.active:
+                # Enforce single active cycle
+                existing_active = self.cycle_repo.get_active_cycle(company_id)
+                if existing_active is not None and existing_active.id != cycle.id:
+                    raise ConflictError(
+                        f"Cannot activate cycle: '{existing_active.name}' is already active."
+                    )
+        elif cycle.status == CycleStatus.active:
+            if data.status == CycleStatus.draft:
+                raise ConflictError("An active performance cycle cannot be reverted to draft.")
+
         self.cycle_repo.update(cycle, status=data.status)
         self.audit.record(
             company_id=company_id,
@@ -103,6 +135,38 @@ class PerformanceService:
             details={"status": data.status.value},
         )
         self.db.commit()
+
+        # Notification after commit on activation
+        if data.status == CycleStatus.active:
+            from sqlalchemy import select
+
+            from app.modules.hr.models import Employee
+            from app.modules.platform.models import Notification
+
+            employees = list(
+                self.db.scalars(
+                    select(Employee).where(
+                        Employee.company_id == company_id,
+                        Employee.is_active.is_(True),
+                        Employee.deleted_at.is_(None),
+                    )
+                ).all()
+            )
+            for emp in employees:
+                if emp.user_id:
+                    notif = Notification(
+                        company_id=company_id,
+                        user_id=emp.user_id,
+                        type="performance_cycle_activated",
+                        title=f"Performance Cycle Activated: {cycle.name}",
+                        message=(
+                            f"Performance cycle '{cycle.name}' is now active. "
+                            "Please set your goals."
+                        ),
+                    )
+                    self.db.add(notif)
+            self.db.commit()
+
         return cycle
 
     def list_cycles(
@@ -122,7 +186,7 @@ class PerformanceService:
 
         emp = None
         if data.employee_id:
-            emp = self.employee_repo.get_by_id(company_id, data.employee_id)
+            emp = self.employee_repo.get_by_id(data.employee_id, company_id)
             if emp is None:
                 raise NotFoundError("Specified employee profile not found.")
         else:
@@ -132,6 +196,37 @@ class PerformanceService:
                     "Employee profile not found for current user. Admin or manager "
                     "accounts must select an employee profile when creating goals."
                 )
+
+        # Scoping permission check
+        # Employee sets own; manager sets for people in reporting chain; HR any; others 403
+        current_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+        is_hr = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        if not is_hr:
+            if current_emp is None:
+                raise ForbiddenError("You do not have permission to set goals.")
+            if current_emp.id == emp.id:
+                pass  # Employee setting own goals
+            elif actor.role == UserRole.manager:
+                from app.core.approval_authority import can_approve_for
+
+                try:
+                    can_approve_for(self.db, actor, emp)
+                except Exception as err:
+                    raise ForbiddenError(
+                        "Managers can only set goals for employees in their reporting chain."
+                    ) from err
+            else:
+                raise ForbiddenError("Employees can only set goals for themselves.")
+
+        # Check total weightages sum <= 100
+        existing_goals = self.goal_repo.list_by_employee_and_cycle(company_id, emp.id, cycle.id)
+        current_sum = sum((g.weightage for g in existing_goals), Decimal("0.00"))
+        new_items_sum = sum((item.weightage for item in data.goals), Decimal("0.00"))
+        if current_sum + new_items_sum > Decimal("100.00"):
+            raise WeightageSumError(
+                f"Total goal weightage cannot exceed 100.00%. "
+                f"Current sum: {current_sum}%, attempting to add: {new_items_sum}%"
+            )
 
         created = []
         for item in data.goals:
@@ -144,11 +239,186 @@ class PerformanceService:
                 weightage=item.weightage,
                 target_value=item.target_value,
                 status=GoalStatus.in_progress,
+                progress=0,
             )
             created.append(goal)
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="PERFORMANCE_GOAL_CREATED",
+                entity_type="performance_goal",
+                entity_id=goal.id,
+                details={"title": goal.title, "weightage": str(goal.weightage)},
+            )
 
         self.db.commit()
+
+        # If someone else created/modified goals for the employee, notify the manager
+        if current_emp is None or current_emp.id != emp.id:
+            if emp.reporting_manager_id:
+                mgr = self.employee_repo.get_by_id(emp.reporting_manager_id, company_id)
+                if mgr and mgr.user_id:
+                    from app.modules.platform.models import Notification
+
+                    notif = Notification(
+                        company_id=company_id,
+                        user_id=mgr.user_id,
+                        type="employee_goals_updated",
+                        title="Employee Goals Updated",
+                        message=(
+                            f"Goals for employee {emp.first_name} {emp.last_name} "
+                            f"were updated by {actor.email}."
+                        ),
+                    )
+                    self.db.add(notif)
+                    self.db.commit()
+
         return created
+
+    def update_goal(
+        self,
+        company_id: uuid.UUID,
+        goal_id: uuid.UUID,
+        data: GoalUpdateRequest,
+        actor: User,
+    ) -> PerformanceGoal:
+        goal = self.goal_repo.get_by_id(goal_id, company_id)
+        if goal is None:
+            raise NotFoundError("Performance goal not found.")
+
+        # Cycle lock check
+        cycle = self.cycle_repo.get_by_id(goal.cycle_id, company_id)
+        if cycle is None or cycle.status != CycleStatus.active:
+            raise ConflictError(
+                "Goals cannot be modified when the performance cycle is not active."
+            )
+
+        # Self-review submission freeze check
+        existing_self_rev = self.review_repo.get_by_goal_and_role(
+            company_id, goal.id, ReviewerRole.self
+        )
+        if existing_self_rev is not None:
+            raise ConflictError("Goals are locked after self-review has been submitted.")
+
+        emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+        is_owner = emp and goal.employee_id == emp.id
+        is_hr = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+
+        if not (is_owner or is_hr):
+            raise ForbiddenError("You do not have permission to update this performance goal.")
+
+        # Status rules: completed goal changed only by HR with reason
+        if goal.status == GoalStatus.completed and not is_hr:
+            raise ConflictError("Completed goals can only be modified by HR.")
+
+        if goal.status == GoalStatus.completed and is_hr and not data.reason:
+            raise ConflictError("A reason is required to modify a completed goal.")
+
+        # If weightage is updated, check sum
+        if data.weightage is not None and data.weightage != goal.weightage:
+            emp_goals = self.goal_repo.list_by_employee_and_cycle(
+                company_id, goal.employee_id, goal.cycle_id
+            )
+            other_sum = sum((g.weightage for g in emp_goals if g.id != goal.id), Decimal("0.00"))
+            if other_sum + data.weightage > Decimal("100.00"):
+                raise WeightageSumError("Total goal weightage cannot exceed 100.00%.")
+
+        updated = self.goal_repo.update(
+            goal,
+            title=data.title if data.title is not None else goal.title,
+            description=data.description if data.description is not None else goal.description,
+            weightage=data.weightage if data.weightage is not None else goal.weightage,
+            target_value=data.target_value if data.target_value is not None else goal.target_value,
+            status=data.status if data.status is not None else goal.status,
+        )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PERFORMANCE_GOAL_UPDATED",
+            entity_type="performance_goal",
+            entity_id=goal.id,
+            details={"title": updated.title, "status": updated.status.value},
+        )
+        self.db.commit()
+
+        # If someone else updated the goal, notify manager
+        if not is_owner:
+            target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
+            if target_emp and target_emp.reporting_manager_id:
+                mgr = self.employee_repo.get_by_id(target_emp.reporting_manager_id, company_id)
+                if mgr and mgr.user_id:
+                    from app.modules.platform.models import Notification
+
+                    notif = Notification(
+                        company_id=company_id,
+                        user_id=mgr.user_id,
+                        type="employee_goals_updated",
+                        title="Employee Goals Updated",
+                        message=(
+                            f"Goals for employee {target_emp.first_name} {target_emp.last_name} "
+                            f"were updated by {actor.email}."
+                        ),
+                    )
+                    self.db.add(notif)
+                    self.db.commit()
+
+        return updated
+
+    def update_goal_progress(
+        self,
+        company_id: uuid.UUID,
+        goal_id: uuid.UUID,
+        data: GoalProgressUpdateRequest,
+        actor: User,
+    ) -> PerformanceGoal:
+        goal = self.goal_repo.get_by_id(goal_id, company_id)
+        if goal is None:
+            raise NotFoundError("Performance goal not found.")
+
+        # Cycle lock check
+        cycle = self.cycle_repo.get_by_id(goal.cycle_id, company_id)
+        if cycle is None or cycle.status != CycleStatus.active:
+            raise ConflictError(
+                "Goals cannot be modified when the performance cycle is not active."
+            )
+
+        emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+        is_owner = emp and goal.employee_id == emp.id
+        is_hr = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+
+        if not (is_owner or is_hr):
+            raise ForbiddenError("Employees can only update progress on their own goals.")
+
+        old_progress = goal.progress
+        self.goal_repo.update(goal, progress=data.progress)
+        self.goal_repo.add_progress_history(
+            company_id=company_id,
+            goal_id=goal.id,
+            updated_by_id=actor.id,
+            old_progress=old_progress,
+            new_progress=data.progress,
+            notes=data.notes,
+        )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PERFORMANCE_GOAL_PROGRESS_UPDATED",
+            entity_type="performance_goal",
+            entity_id=goal.id,
+            details={"old_progress": str(old_progress), "new_progress": str(data.progress)},
+        )
+        self.db.commit()
+        return goal
+
+    def get_goal_progress_history(
+        self, company_id: uuid.UUID, goal_id: uuid.UUID, actor: User
+    ) -> list[Any]:
+        goal = self.goal_repo.get_by_id(goal_id, company_id)
+        if goal is None:
+            raise NotFoundError("Performance goal not found.")
+        return self.goal_repo.get_progress_history(company_id, goal.id)
 
     def list_goals(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User

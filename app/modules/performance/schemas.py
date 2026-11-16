@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.modules.performance.models import (
     CycleStatus,
@@ -19,6 +19,23 @@ class PerformanceCycleCreateRequest(BaseModel):
     end_date: date
     self_review_deadline: date | None = None
     manager_review_deadline: date | None = None
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> "PerformanceCycleCreateRequest":
+        if self.end_date <= self.start_date:
+            raise ValueError("end_date must be after start_date.")
+        if self.self_review_deadline is not None:
+            if not (self.start_date <= self.self_review_deadline <= self.end_date):
+                raise ValueError("self_review_deadline must be between start_date and end_date.")
+        if self.manager_review_deadline is not None:
+            if self.self_review_deadline is not None:
+                if not (self.self_review_deadline <= self.manager_review_deadline <= self.end_date):
+                    raise ValueError(
+                        "manager_review_deadline must be between self_review_deadline and end_date."
+                    )
+            elif not (self.start_date <= self.manager_review_deadline <= self.end_date):
+                raise ValueError("manager_review_deadline must be between start_date and end_date.")
+        return self
 
 
 class PerformanceCycleUpdateRequest(BaseModel):
@@ -42,7 +59,7 @@ class PerformanceCycleResponse(BaseModel):
 class GoalCreateItem(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
-    weightage: Decimal = Field(gt=0, le=100)
+    weightage: Decimal = Field(gt=Decimal("0"), le=Decimal("100"))
     target_value: str | None = None
 
 
@@ -52,12 +69,30 @@ class GoalsCreateRequest(BaseModel):
     goals: list[GoalCreateItem] = Field(min_length=1)
 
 
+class GoalProgressUpdateRequest(BaseModel):
+    progress: int = Field(ge=0, le=100)
+    notes: str | None = None
+
+
+class GoalProgressHistoryResponse(BaseModel):
+    id: uuid.UUID
+    goal_id: uuid.UUID
+    updated_by_id: uuid.UUID
+    old_progress: int
+    new_progress: int
+    notes: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class GoalUpdateRequest(BaseModel):
-    title: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
-    weightage: Decimal | None = None
+    weightage: Decimal | None = Field(default=None, gt=Decimal("0"), le=Decimal("100"))
     target_value: str | None = None
     status: GoalStatus | None = None
+    reason: str | None = None
 
 
 class PerformanceGoalResponse(BaseModel):
@@ -69,6 +104,7 @@ class PerformanceGoalResponse(BaseModel):
     weightage: Decimal
     target_value: str | None
     status: GoalStatus
+    progress: int = 0
     self_rating: Decimal | None
     self_comments: str | None
     created_at: datetime
@@ -77,12 +113,12 @@ class PerformanceGoalResponse(BaseModel):
 
 
 class SelfReviewRequest(BaseModel):
-    rating: Decimal = Field(ge=1.0, le=5.0)
+    rating: Decimal = Field(ge=Decimal("1.0"), le=Decimal("5.0"))
     comments: str | None = None
 
 
 class ManagerReviewRequest(BaseModel):
-    rating: Decimal = Field(ge=1.0, le=5.0)
+    rating: Decimal = Field(ge=Decimal("1.0"), le=Decimal("5.0"))
     comments: str | None = None
 
 
