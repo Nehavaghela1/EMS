@@ -109,7 +109,9 @@ class PerformanceService:
 
         if cycle.status == CycleStatus.draft:
             if data.status == CycleStatus.closed:
-                raise ConflictError("A draft cycle cannot be closed directly; it must be activated first.")
+                raise ConflictError(
+                    "A draft cycle cannot be closed directly; it must be activated first."
+                )
             if data.status == CycleStatus.draft:
                 pass  # no-op
             elif data.status == CycleStatus.active:
@@ -137,6 +139,7 @@ class PerformanceService:
         # Notification after commit on activation
         if data.status == CycleStatus.active:
             from sqlalchemy import select
+
             from app.modules.hr.models import Employee
             from app.modules.platform.models import Notification
 
@@ -156,7 +159,10 @@ class PerformanceService:
                         user_id=emp.user_id,
                         type="performance_cycle_activated",
                         title=f"Performance Cycle Activated: {cycle.name}",
-                        message=f"Performance cycle '{cycle.name}' is now active. Please set your goals.",
+                        message=(
+                            f"Performance cycle '{cycle.name}' is now active. "
+                            "Please set your goals."
+                        ),
                     )
                     self.db.add(notif)
             self.db.commit()
@@ -202,10 +208,13 @@ class PerformanceService:
                 pass  # Employee setting own goals
             elif actor.role == UserRole.manager:
                 from app.core.approval_authority import can_approve_for
+
                 try:
                     can_approve_for(self.db, actor, emp)
-                except Exception:
-                    raise ForbiddenError("Managers can only set goals for employees in their reporting chain.")
+                except Exception as err:
+                    raise ForbiddenError(
+                        "Managers can only set goals for employees in their reporting chain."
+                    ) from err
             else:
                 raise ForbiddenError("Employees can only set goals for themselves.")
 
@@ -215,7 +224,8 @@ class PerformanceService:
         new_items_sum = sum((item.weightage for item in data.goals), Decimal("0.00"))
         if current_sum + new_items_sum > Decimal("100.00"):
             raise WeightageSumError(
-                f"Total goal weightage cannot exceed 100.00%. Current sum: {current_sum}%, attempting to add: {new_items_sum}%"
+                f"Total goal weightage cannot exceed 100.00%. "
+                f"Current sum: {current_sum}%, attempting to add: {new_items_sum}%"
             )
 
         created = []
@@ -249,12 +259,16 @@ class PerformanceService:
                 mgr = self.employee_repo.get_by_id(emp.reporting_manager_id, company_id)
                 if mgr and mgr.user_id:
                     from app.modules.platform.models import Notification
+
                     notif = Notification(
                         company_id=company_id,
                         user_id=mgr.user_id,
                         type="employee_goals_updated",
                         title="Employee Goals Updated",
-                        message=f"Goals for employee {emp.first_name} {emp.last_name} were updated by {actor.email}.",
+                        message=(
+                            f"Goals for employee {emp.first_name} {emp.last_name} "
+                            f"were updated by {actor.email}."
+                        ),
                     )
                     self.db.add(notif)
                     self.db.commit()
@@ -275,10 +289,14 @@ class PerformanceService:
         # Cycle lock check
         cycle = self.cycle_repo.get_by_id(goal.cycle_id, company_id)
         if cycle is None or cycle.status != CycleStatus.active:
-            raise ConflictError("Goals cannot be modified when the performance cycle is not active.")
+            raise ConflictError(
+                "Goals cannot be modified when the performance cycle is not active."
+            )
 
         # Self-review submission freeze check
-        existing_self_rev = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.self)
+        existing_self_rev = self.review_repo.get_by_goal_and_role(
+            company_id, goal.id, ReviewerRole.self
+        )
         if existing_self_rev is not None:
             raise ConflictError("Goals are locked after self-review has been submitted.")
 
@@ -298,7 +316,9 @@ class PerformanceService:
 
         # If weightage is updated, check sum
         if data.weightage is not None and data.weightage != goal.weightage:
-            emp_goals = self.goal_repo.list_by_employee_and_cycle(company_id, goal.employee_id, goal.cycle_id)
+            emp_goals = self.goal_repo.list_by_employee_and_cycle(
+                company_id, goal.employee_id, goal.cycle_id
+            )
             other_sum = sum((g.weightage for g in emp_goals if g.id != goal.id), Decimal("0.00"))
             if other_sum + data.weightage > Decimal("100.00"):
                 raise WeightageSumError("Total goal weightage cannot exceed 100.00%.")
@@ -329,12 +349,16 @@ class PerformanceService:
                 mgr = self.employee_repo.get_by_id(target_emp.reporting_manager_id, company_id)
                 if mgr and mgr.user_id:
                     from app.modules.platform.models import Notification
+
                     notif = Notification(
                         company_id=company_id,
                         user_id=mgr.user_id,
                         type="employee_goals_updated",
                         title="Employee Goals Updated",
-                        message=f"Goals for employee {target_emp.first_name} {target_emp.last_name} were updated by {actor.email}.",
+                        message=(
+                            f"Goals for employee {target_emp.first_name} {target_emp.last_name} "
+                            f"were updated by {actor.email}."
+                        ),
                     )
                     self.db.add(notif)
                     self.db.commit()
@@ -355,7 +379,9 @@ class PerformanceService:
         # Cycle lock check
         cycle = self.cycle_repo.get_by_id(goal.cycle_id, company_id)
         if cycle is None or cycle.status != CycleStatus.active:
-            raise ConflictError("Goals cannot be modified when the performance cycle is not active.")
+            raise ConflictError(
+                "Goals cannot be modified when the performance cycle is not active."
+            )
 
         emp = self.employee_repo.get_by_user_id(company_id, actor.id)
         is_owner = emp and goal.employee_id == emp.id

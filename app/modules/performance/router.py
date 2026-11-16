@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
-from app.core.roles import HR_LEVEL_ROLES
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.performance.models import CycleStatus
@@ -29,7 +28,7 @@ from app.modules.performance.schemas import (
     SelfReviewRequest,
     SummaryFinalizeRequest,
 )
-from app.modules.performance.service import PerformanceGoalRepository, PerformanceService
+from app.modules.performance.service import PerformanceService
 
 performance_router = APIRouter(prefix="/performance", tags=["Performance Management"])
 
@@ -187,9 +186,7 @@ def update_goal_progress(
     return PerformanceGoalResponse.model_validate(updated)
 
 
-@performance_router.get(
-    "/goals/{id}/history", response_model=list[GoalProgressHistoryResponse]
-)
+@performance_router.get("/goals/{id}/history", response_model=list[GoalProgressHistoryResponse])
 def get_goal_progress_history(
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
