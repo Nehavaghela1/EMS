@@ -9,6 +9,7 @@ from app.modules.projects.models import (
     Project,
     ProjectDocument,
     ProjectMember,
+    ProjectMemberRate,
     Task,
     TaskComment,
     TimeEntry,
@@ -54,14 +55,22 @@ class ProjectRepository:
         )
 
     def list_projects(
-        self, company_id: UUID | None = None, status: str | None = None
-    ) -> list[Project]:
+        self,
+        company_id: UUID | None = None,
+        status: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> tuple[list[Project], int]:
         query = self.db.query(Project)
         if company_id is not None:
             query = query.filter(Project.company_id == company_id)
         if status:
             query = query.filter(Project.status == status)
-        return query.order_by(Project.created_at.desc()).all()
+        total = query.count()
+        query = query.order_by(Project.created_at.desc())
+        if page is not None and page_size is not None:
+            query = query.offset((page - 1) * page_size).limit(page_size)
+        return query.all(), total
 
     def update_project(self, project: Project, data: ProjectUpdate) -> Project:
         update_data = data.dict(exclude_unset=True)
@@ -85,12 +94,54 @@ class ProjectRepository:
             project_id=project_id,
             employee_id=data.employee_id,
             role=data.role,
+            hourly_rate=data.hourly_rate,
             joined_at=data.joined_at or date.today(),
         )
         self.db.add(member)
         self.db.commit()
         self.db.refresh(member)
         return member
+
+    def add_member_rate(
+        self,
+        company_id: UUID,
+        project_id: UUID,
+        employee_id: UUID,
+        rate: Decimal,
+        effective_from: date,
+        effective_to: date | None = None,
+    ) -> ProjectMemberRate:
+        rate_record = ProjectMemberRate(
+            company_id=company_id,
+            project_id=project_id,
+            employee_id=employee_id,
+            rate=rate,
+            effective_from=effective_from,
+            effective_to=effective_to,
+        )
+        self.db.add(rate_record)
+        self.db.commit()
+        self.db.refresh(rate_record)
+        return rate_record
+
+    def get_effective_member_rate(
+        self, company_id: UUID, project_id: UUID, employee_id: UUID, target_date: date
+    ) -> Decimal | None:
+        rec = (
+            self.db.query(ProjectMemberRate)
+            .filter(
+                ProjectMemberRate.company_id == company_id,
+                ProjectMemberRate.project_id == project_id,
+                ProjectMemberRate.employee_id == employee_id,
+                ProjectMemberRate.effective_from <= target_date,
+            )
+            .order_by(ProjectMemberRate.effective_from.desc())
+            .first()
+        )
+        if rec:
+            return rec.rate
+        member = self.get_member(company_id, project_id, employee_id)
+        return member.hourly_rate if member else None
 
     def get_member(
         self, company_id: UUID, project_id: UUID, employee_id: UUID

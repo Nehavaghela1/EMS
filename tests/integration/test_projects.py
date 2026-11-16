@@ -12,7 +12,7 @@ from tests.conftest import TenantContext
 
 
 def _create_employee_with_user(
-    db: Session, company_id: uuid.UUID, role: UserRole = UserRole.super_admin
+    db: Session, company_id: uuid.UUID, role: UserRole = UserRole.owner
 ) -> tuple[Employee, dict[str, str]]:
     bind_tenant_to_session(db, company_id=company_id, is_platform_admin=False)
     user = User(
@@ -46,7 +46,7 @@ def _create_employee_with_user(
 
 
 def test_project_lifecycle_and_analytics(client: TestClient, db: Session, company_a: TenantContext):
-    employee, headers = _create_employee_with_user(db, company_a.company_id, UserRole.super_admin)
+    employee, headers = _create_employee_with_user(db, company_a.company_id, UserRole.owner)
 
     # 1. Create Project
     code = f"PRJ-{uuid.uuid4().hex[:4].upper()}"
@@ -158,7 +158,7 @@ def test_project_lifecycle_and_analytics(client: TestClient, db: Session, compan
 
 
 def test_daily_time_entry_hour_limit(client: TestClient, db: Session, company_a: TenantContext):
-    employee, headers = _create_employee_with_user(db, company_a.company_id, UserRole.super_admin)
+    employee, headers = _create_employee_with_user(db, company_a.company_id, UserRole.owner)
 
     code = f"PRJ-{uuid.uuid4().hex[:4].upper()}"
     res = client.post(

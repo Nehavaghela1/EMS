@@ -5,13 +5,16 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
-from app.core.exceptions import AppError, NotFoundError
+from app.core.exceptions import AppError, ForbiddenError, NotFoundError
+from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.core.roles import HR_OR_MANAGER_ROLES
 from app.modules.identity.models import User, UserRole
 from app.modules.projects.schemas import (
+    MemberRateUpdate,
     MilestoneCreate,
     MilestoneResponse,
     MilestoneUpdate,
+    PagedProjectResponse,
     ProjectCreate,
     ProjectDocumentCreate,
     ProjectDocumentResponse,
@@ -37,32 +40,39 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def create_project(
+    request: Request,
     data: ProjectCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
-    ),
+    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
-    return service.create_project(current_user.company_id, data)
+    return service.create_project(current_user.company_id, data, actor=current_user)
 
 
-@router.get("", response_model=list[ProjectResponse])
+@router.get("", response_model=PagedProjectResponse)
 def list_projects(
-    status: str | None = Query(None, pattern="^(planning|active|on_hold|completed|cancelled)$"),
-    company_id: UUID | None = Query(None),
+    status: str | None = Query(
+        None, pattern="^(planning|active|on_hold|completed|cancelled|archived)$"
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
-    service = ProjectService(db)
     if current_user.role == UserRole.super_admin:
-        # Super admin can view by selected company or all companies
-        target_company_id = company_id
-    else:
-        # Other roles are strictly restricted to their own company
-        target_company_id = current_user.company_id
-    return service.list_projects(target_company_id, status)
+        raise ForbiddenError("Super admin cannot view company project data.")
+    service = ProjectService(db)
+    return service.list_projects(
+        company_id=current_user.company_id,
+        status=status,
+        page=page,
+        page_size=page_size,
+        actor=current_user,
+    )
 
 
 # --- Time Entries / Timesheets (Routes 115-118) ---
@@ -308,34 +318,39 @@ def get_project(
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot view company project data.")
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.get_project(cid, project_id)
+    return service.get_project(current_user.company_id, project_id, actor=current_user)
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def update_project(
+    request: Request,
     project_id: UUID,
     data: ProjectUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
-    ),
+    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.update_project(cid, project_id, data)
+    return service.update_project(current_user.company_id, project_id, data, actor=current_user)
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def delete_project(
+    request: Request,
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin)),
+    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    service.delete_project(cid, project_id)
+    service.delete_project(current_user.company_id, project_id, actor=current_user)
 
 
 @router.get("/{project_id}/summary", response_model=ProjectSummaryResponse)
@@ -344,9 +359,10 @@ def get_project_summary(
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot view company project data.")
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.get_project_summary(cid, project_id)
+    return service.get_project_summary(current_user.company_id, project_id)
 
 
 # --- Project Members (Routes 105-107) ---
@@ -357,17 +373,18 @@ def get_project_summary(
     response_model=ProjectMemberResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def add_project_member(
+    request: Request,
     project_id: UUID,
     data: ProjectMemberCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
-    ),
+    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.add_member(cid, project_id, data)
+    return service.add_member(current_user.company_id, project_id, data, actor=current_user)
 
 
 @router.get("/{project_id}/members", response_model=list[ProjectMemberResponse])
@@ -376,23 +393,46 @@ def list_project_members(
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot view company project data.")
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.list_members(cid, project_id)
+    return service.list_members(current_user.company_id, project_id, actor=current_user)
+
+
+@router.put(
+    "/{project_id}/members/{employee_id}/rate",
+    response_model=ProjectMemberResponse,
+)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def update_project_member_rate(
+    request: Request,
+    project_id: UUID,
+    employee_id: UUID,
+    data: MemberRateUpdate,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)),
+):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot manage company projects directly.")
+    service = ProjectService(db)
+    return service.update_member_rate(
+        current_user.company_id, project_id, employee_id, data, actor=current_user
+    )
 
 
 @router.delete("/{project_id}/members/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def remove_project_member(
+    request: Request,
     project_id: UUID,
     employee_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
-    ),
+    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    service.remove_member(cid, project_id, employee_id)
+    service.remove_member(current_user.company_id, project_id, employee_id, actor=current_user)
 
 
 # --- Project Tasks (Routes 108-112) ---

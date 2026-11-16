@@ -48,7 +48,9 @@ def test_projects_tenant_isolation(
     # 2. Tenant B listing projects should NOT see Tenant A's project
     res_list_b = client.get("/api/v1/projects", headers=headers_b)
     assert res_list_b.status_code == 200
-    ids_b = [p["id"] for p in res_list_b.json()]
+    data_b = res_list_b.json()
+    items_b = data_b["items"] if isinstance(data_b, dict) and "items" in data_b else data_b
+    ids_b = [p["id"] for p in items_b]
     assert project_id_a not in ids_b
 
     # 3. Tenant B fetching Tenant A's project directly should get 404

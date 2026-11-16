@@ -9,15 +9,25 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class ProjectBase(BaseModel):
-    name: str = Field(..., max_length=255)
-    code: str = Field(..., max_length=50)
+    name: str = Field(..., min_length=1, max_length=255)
+    code: str = Field(..., min_length=1, max_length=50)
     description: str | None = None
-    status: str = Field("planning", pattern="^(planning|active|on_hold|completed|cancelled)$")
+    status: str = Field(
+        "active", pattern="^(active|on_hold|completed|archived|planning|cancelled)$"
+    )
     start_date: date | None = None
     deadline: date | None = None
+    end_date: date | None = None
     budget: Decimal | None = Field(None, ge=0)
     manager_id: UUID | None = None
     client_name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        e_date = self.end_date or self.deadline
+        if self.start_date and e_date and e_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+        return self
 
 
 class ProjectCreate(ProjectBase):
@@ -25,15 +35,25 @@ class ProjectCreate(ProjectBase):
 
 
 class ProjectUpdate(BaseModel):
-    name: str | None = Field(None, max_length=255)
-    code: str | None = Field(None, max_length=50)
+    name: str | None = Field(None, min_length=1, max_length=255)
+    code: str | None = Field(None, min_length=1, max_length=50)
     description: str | None = None
-    status: str | None = Field(None, pattern="^(planning|active|on_hold|completed|cancelled)$")
+    status: str | None = Field(
+        None, pattern="^(active|on_hold|completed|archived|planning|cancelled)$"
+    )
     start_date: date | None = None
     deadline: date | None = None
+    end_date: date | None = None
     budget: Decimal | None = Field(None, ge=0)
     manager_id: UUID | None = None
     client_name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        e_date = self.end_date or self.deadline
+        if self.start_date and e_date and e_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+        return self
 
 
 class ProjectResponse(ProjectBase):
@@ -47,13 +67,27 @@ class ProjectResponse(ProjectBase):
         from_attributes = True
 
 
+class PagedProjectResponse(BaseModel):
+    items: list[ProjectResponse]
+    total: int
+    page: int
+    page_size: int
+
+
 # --- Project Members ---
 
 
 class ProjectMemberCreate(BaseModel):
     employee_id: UUID
-    role: str = Field("member", pattern="^(lead|member)$")
+    role: str = Field("member", pattern="^(manager|member|lead)$")
     joined_at: date | None = None
+    hourly_rate: Decimal | None = Field(None, ge=0)
+    effective_from: date | None = None
+
+
+class MemberRateUpdate(BaseModel):
+    hourly_rate: Decimal = Field(..., ge=0)
+    effective_from: date
 
 
 class ProjectMemberResponse(BaseModel):
@@ -62,6 +96,7 @@ class ProjectMemberResponse(BaseModel):
     project_id: UUID
     employee_id: UUID
     role: str
+    hourly_rate: Decimal | None = None
     joined_at: date
     left_at: date | None = None
     created_at: datetime

@@ -42,6 +42,7 @@ class Project(Base):
     )  # planning, active, on_hold, completed, cancelled
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     budget: Mapped[Decimal | None] = mapped_column(SANumeric(12, 2), nullable=True)
     manager_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True
@@ -82,7 +83,10 @@ class ProjectMember(Base):
         nullable=False,
         index=True,
     )
-    role: Mapped[str] = mapped_column(String(50), nullable=False, default="member")  # lead, member
+    role: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="member"
+    )  # manager, member
+    hourly_rate: Mapped[Decimal | None] = mapped_column(SANumeric(12, 2), nullable=True)
     joined_at: Mapped[date] = mapped_column(Date, default=date.today, nullable=False)
     left_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
@@ -302,4 +306,44 @@ class ProjectDocument(Base):
     __table_args__ = (
         Index("idx_project_documents_project", "project_id"),
         Index("idx_project_documents_company", "company_id"),
+    )
+
+
+class ProjectMemberRate(Base):
+    __tablename__ = "project_member_rates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rate: Mapped[Decimal] = mapped_column(SANumeric(12, 2), nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "idx_project_member_rates_lookup",
+            "company_id",
+            "project_id",
+            "employee_id",
+            "effective_from",
+        ),
     )
