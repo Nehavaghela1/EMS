@@ -109,6 +109,7 @@ class PerformanceGoalProgressHistory(TenantBase):
         PGUUID(as_uuid=True),
         ForeignKey("performance_goals.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     updated_by_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False
