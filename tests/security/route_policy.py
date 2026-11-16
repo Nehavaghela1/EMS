@@ -299,6 +299,9 @@ POLICY: dict[tuple[str, str], Any] = {
         UserRole.hr_admin, UserRole.manager
     ),
     ("POST", "/api/v1/performance/goals/{goal_id}/self-review"): AUTHENTICATED,
+    ("GET", "/api/v1/performance/goals/{goal_id}/reviews"): AUTHENTICATED,
+    ("GET", "/api/v1/performance/reviews/{id}"): AUTHENTICATED,
+    ("POST", "/api/v1/performance/reviews/{id}/reopen"): ROLES(UserRole.hr_admin),
     ("PUT", "/api/v1/performance/goals/{id}"): AUTHENTICATED,
     ("PUT", "/api/v1/performance/goals/{id}/progress"): AUTHENTICATED,
     ("GET", "/api/v1/performance/goals/{id}/history"): AUTHENTICATED,
@@ -314,6 +317,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/performance/summary/{employee_id}"): ROLES(
         UserRole.hr_admin, UserRole.manager, UserRole.employee
     ),
+    ("GET", "/api/v1/performance/summaries"): ROLES(UserRole.hr_admin, UserRole.manager),
     ("POST", "/api/v1/performance/summary/{employee_id}"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/projects"): AUTHENTICATED,
     ("POST", "/api/v1/projects"): ROLES(UserRole.super_admin, UserRole.hr_admin, UserRole.manager),

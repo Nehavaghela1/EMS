@@ -22,9 +22,11 @@ from app.modules.performance.schemas import (
     PerformancePIPResponse,
     PerformanceReportResponse,
     PerformanceReviewResponse,
+    PerformanceSummaryDetailResponse,
     PerformanceSummaryResponse,
     PIPCreateRequest,
     PIPEvaluateRequest,
+    ReviewReopenRequest,
     SelfReviewRequest,
     SummaryFinalizeRequest,
 )
@@ -198,7 +200,9 @@ def get_goal_progress_history(
 
 
 @performance_router.post("/goals/{goal_id}/self-review", response_model=PerformanceReviewResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def submit_self_review(
+    request: Request,
     goal_id: uuid.UUID,
     data: SelfReviewRequest,
     db: Session = Depends(get_tenant_db),
@@ -212,7 +216,9 @@ def submit_self_review(
 @performance_router.post(
     "/goals/{goal_id}/manager-review", response_model=PerformanceReviewResponse
 )
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def submit_manager_review(
+    request: Request,
     goal_id: uuid.UUID,
     data: ManagerReviewRequest,
     db: Session = Depends(get_tenant_db),
@@ -223,29 +229,86 @@ def submit_manager_review(
     return PerformanceReviewResponse.model_validate(review)
 
 
+@performance_router.get("/goals/{goal_id}/reviews", response_model=list[PerformanceReviewResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def list_goal_reviews(
+    request: Request,
+    goal_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    service = PerformanceService(db)
+    reviews = service.list_goal_reviews(user.company_id, goal_id, user)
+    return [PerformanceReviewResponse.model_validate(r) for r in reviews]
+
+
+@performance_router.get("/reviews/{id}", response_model=PerformanceReviewResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_performance_review(
+    request: Request,
+    id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    service = PerformanceService(db)
+    review = service.get_review_by_id(user.company_id, id, user)
+    return PerformanceReviewResponse.model_validate(review)
+
+
+@performance_router.post("/reviews/{id}/reopen", response_model=PerformanceReviewResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def reopen_performance_review(
+    request: Request,
+    id: uuid.UUID,
+    data: ReviewReopenRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin)),
+):
+    service = PerformanceService(db)
+    review = service.reopen_review(user.company_id, id, data.reason, user)
+    return PerformanceReviewResponse.model_validate(review)
+
+
 # --- Routes 75-76: Summaries -----------------------------------------------
 
 
-@performance_router.get("/summary/{employee_id}", response_model=PerformanceSummaryResponse | None)
+@performance_router.get(
+    "/summary/{employee_id}", response_model=PerformanceSummaryDetailResponse | None
+)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_performance_summary(
+    request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.employee)),
 ):
     service = PerformanceService(db)
-
-    if user.role == UserRole.employee:
-        emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
-        if not emp or emp.id != employee_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Employees can only view their own performance summary.",
-            )
-
-    summary = service.get_summary(user.company_id, employee_id)
+    summary = service.get_summary(user.company_id, employee_id, actor=user)
     if summary is None:
         return None
-    return PerformanceSummaryResponse.model_validate(summary)
+    return PerformanceSummaryDetailResponse(**summary)
+
+
+@performance_router.get("/summaries", response_model=Page[PerformanceSummaryResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def list_performance_summaries(
+    request: Request,
+    cycle_id: uuid.UUID = Query(...),
+    params: PageParams = Depends(page_params),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager)),
+):
+    service = PerformanceService(db)
+    summaries, total, pages = service.list_summaries(user.company_id, cycle_id, params, actor=user)
+    items = [PerformanceSummaryResponse.model_validate(s) for s in summaries]
+    return Page(
+        items=items,
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
+    )
 
 
 @performance_router.post("/summary/{employee_id}", response_model=PerformanceSummaryResponse)

@@ -4,7 +4,13 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
+from app.core.exceptions import (
+    AppError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.pagination import PageParams
 from app.core.time import utcnow
 from app.modules.hr.repository import EmployeeRepository
@@ -34,6 +40,7 @@ from app.modules.performance.schemas import (
     PerformanceCycleCreateRequest,
     PerformanceCycleResponse,
     PerformanceCycleUpdateRequest,
+    PerformanceGoalResponse,
     PerformancePIPResponse,
     PerformanceReportResponse,
     PIPCreateRequest,
@@ -436,6 +443,13 @@ class PerformanceService:
         if goal is None:
             raise NotFoundError("Performance goal not found.")
 
+        # Cycle active check
+        cycle = self.cycle_repo.get_by_id(goal.cycle_id, company_id)
+        if cycle is None or cycle.status != CycleStatus.active:
+            raise ConflictError(
+                "Reviews can only be submitted while the performance cycle is active."
+            )
+
         emp = self.employee_repo.get_by_user_id(company_id, actor.id)
         if emp is None or goal.employee_id != emp.id:
             raise ForbiddenError("Employees can only submit self-reviews for their own goals.")
@@ -453,6 +467,26 @@ class PerformanceService:
 
         existing = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.self)
         if existing is not None:
+            if existing.status == "draft":
+                # Re-submitting an HR-reopened review
+                self.review_repo.update(
+                    existing,
+                    rating=data.rating,
+                    comments=data.comments,
+                    status="submitted",
+                    submitted_at=utcnow(),
+                )
+                self.goal_repo.update(goal, self_rating=data.rating, self_comments=data.comments)
+                self.audit.record(
+                    company_id=company_id,
+                    actor=actor,
+                    action="PERFORMANCE_REVIEW_SELF_SUBMITTED",
+                    entity_type="performance_review",
+                    entity_id=existing.id,
+                    details={"goal_id": str(goal.id)},
+                )
+                self.db.commit()
+                return existing
             raise ConflictError("Self-review for this goal has already been submitted.")
 
         review = self.review_repo.create(
@@ -462,10 +496,37 @@ class PerformanceService:
             reviewer_role=ReviewerRole.self,
             rating=data.rating,
             comments=data.comments,
+            status="submitted",
             submitted_at=utcnow(),
         )
 
         self.goal_repo.update(goal, self_rating=data.rating, self_comments=data.comments)
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PERFORMANCE_REVIEW_SELF_SUBMITTED",
+            entity_type="performance_review",
+            entity_id=review.id,
+            details={"goal_id": str(goal.id)},
+        )
+
+        # Notify reporting manager if present
+        if emp.reporting_manager_id:
+            mgr = self.employee_repo.get_by_id(emp.reporting_manager_id, company_id)
+            if mgr and mgr.user_id:
+                from app.modules.platform.models import Notification
+
+                emp_full_name = f"{emp.first_name} {emp.last_name or ''}".strip()
+                notif = Notification(
+                    company_id=company_id,
+                    user_id=mgr.user_id,
+                    type="self_review_submitted",
+                    title="Self-Review Submitted",
+                    message=f"Employee {emp_full_name} submitted a self-review.",
+                )
+                self.db.add(notif)
+
         self.db.commit()
         return review
 
@@ -476,16 +537,63 @@ class PerformanceService:
         if goal is None:
             raise NotFoundError("Performance goal not found.")
 
-        if actor.role == UserRole.manager:
+        # Cycle active check
+        cycle = self.cycle_repo.get_by_id(goal.cycle_id, company_id)
+        if cycle is None or cycle.status != CycleStatus.active:
+            raise ConflictError(
+                "Reviews can only be submitted while the performance cycle is active."
+            )
+
+        # Prerequisite: employee must have submitted self-review for this goal
+        self_rev = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.self)
+        if self_rev is None or self_rev.status != "submitted":
+            raise ConflictError(
+                "Employee must submit their self-review before manager review can be submitted."
+            )
+
+        # Only reporting manager can review. HR cannot submit review if employee has a manager.
+        target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
+        if not target_emp:
+            raise NotFoundError("Employee profile not found.")
+
+        if actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+            # Check if actor is also the reporting manager
+            mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if target_emp.reporting_manager_id is not None:
+                if not mgr_emp or target_emp.reporting_manager_id != mgr_emp.id:
+                    raise ForbiddenError(
+                        "HR administrators cannot submit manager reviews on behalf of managers."
+                    )
+            # If employee has no manager assigned, HR admin / Owner acts as fallback reviewer
+        elif actor.role == UserRole.manager:
             mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
             if not mgr_emp:
                 raise ForbiddenError("Manager profile not found.")
-            team_ids = self.employee_repo.list_direct_report_ids(company_id, mgr_emp.id)
-            if goal.employee_id not in team_ids:
+            if target_emp.reporting_manager_id != mgr_emp.id:
                 raise ForbiddenError("Managers can only review goals for their direct reports.")
+        else:
+            raise ForbiddenError("Only reporting managers can submit manager reviews.")
 
         existing = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.manager)
         if existing is not None:
+            if existing.status == "draft":
+                self.review_repo.update(
+                    existing,
+                    rating=data.rating,
+                    comments=data.comments,
+                    status="submitted",
+                    submitted_at=utcnow(),
+                )
+                self.audit.record(
+                    company_id=company_id,
+                    actor=actor,
+                    action="PERFORMANCE_REVIEW_MANAGER_SUBMITTED",
+                    entity_type="performance_review",
+                    entity_id=existing.id,
+                    details={"goal_id": str(goal.id)},
+                )
+                self.db.commit()
+                return existing
             raise ConflictError("Manager review for this goal has already been submitted.")
 
         review = self.review_repo.create(
@@ -495,18 +603,224 @@ class PerformanceService:
             reviewer_role=ReviewerRole.manager,
             rating=data.rating,
             comments=data.comments,
+            status="submitted",
             submitted_at=utcnow(),
+        )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PERFORMANCE_REVIEW_MANAGER_SUBMITTED",
+            entity_type="performance_review",
+            entity_id=review.id,
+            details={"goal_id": str(goal.id)},
+        )
+
+        # Notify employee
+        target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
+        if target_emp and target_emp.user_id:
+            from app.modules.platform.models import Notification
+
+            notif = Notification(
+                company_id=company_id,
+                user_id=target_emp.user_id,
+                type="manager_review_submitted",
+                title="Manager Review Submitted",
+                message="Your manager has submitted a review for your goal.",
+            )
+            self.db.add(notif)
+
+        self.db.commit()
+        return review
+
+    def reopen_review(
+        self,
+        company_id: uuid.UUID,
+        review_id: uuid.UUID,
+        reason: str,
+        actor: User,
+    ) -> PerformanceReview:
+        if actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+            raise ForbiddenError("Only HR administrators and company owners can reopen reviews.")
+
+        if not reason or not reason.strip():
+            raise ValidationError("Reopening a review requires a non-empty reason.")
+
+        review = self.review_repo.get_by_id(review_id, company_id)
+        if review is None:
+            raise NotFoundError("Performance review not found.")
+
+        self.review_repo.update(
+            review,
+            status="draft",
+            reopened_at=utcnow(),
+            reopened_by_id=actor.id,
+            reopen_reason=reason.strip(),
+        )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PERFORMANCE_REVIEW_REOPENED",
+            entity_type="performance_review",
+            entity_id=review.id,
+            details={"reason": reason.strip(), "review_id": str(review.id)},
         )
         self.db.commit()
         return review
 
+    def get_review_by_id(
+        self, company_id: uuid.UUID, review_id: uuid.UUID, actor: User
+    ) -> PerformanceReview:
+        review = self.review_repo.get_by_id(review_id, company_id)
+        if review is None:
+            raise NotFoundError("Performance review not found.")
+        return review
+
+    def list_goal_reviews(
+        self, company_id: uuid.UUID, goal_id: uuid.UUID, actor: User
+    ) -> list[PerformanceReview]:
+        goal = self.goal_repo.get_by_id(goal_id, company_id)
+        if goal is None:
+            raise NotFoundError("Performance goal not found.")
+
+        reviews = self.review_repo.list_by_goal(company_id, goal_id)
+        emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+        is_goal_owner = emp and goal.employee_id == emp.id
+
+        # Blind review gating: Employee cannot see manager review if unsubmitted
+        if is_goal_owner:
+            reviews = [
+                r
+                for r in reviews
+                if not (r.reviewer_role == ReviewerRole.manager and r.status != "submitted")
+            ]
+
+        return reviews
+
     def get_summary(
-        self, company_id: uuid.UUID, employee_id: uuid.UUID
-    ) -> PerformanceSummary | None:
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User | None = None
+    ) -> dict[str, Any] | None:
+        target_emp = self.employee_repo.get_by_id(employee_id, company_id)
+        if target_emp is None:
+            # Check if employee_id belongs to another company or doesn't exist
+            raise NotFoundError("Employee profile not found.")
+
+        # Scoping permission check
+        if actor is not None:
+            current_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            is_hr_or_owner = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+            if not is_hr_or_owner:
+                if current_emp is None:
+                    raise ForbiddenError("Not authorized to view performance summary.")
+                if current_emp.id == target_emp.id:
+                    pass  # Employee viewing own summary
+                elif actor.role == UserRole.manager:
+                    # Direct reports only or reporting chain
+                    team_ids = self.employee_repo.list_direct_report_ids(company_id, current_emp.id)
+                    if target_emp.id not in team_ids:
+                        raise ForbiddenError(
+                            "Managers can only view summaries for their direct reports."
+                        )
+                else:
+                    raise ForbiddenError("Employees can only view their own performance summary.")
+
         active_cycle = self.cycle_repo.get_active_cycle(company_id)
         if active_cycle is None:
             return None
-        return self.summary_repo.get_by_employee_and_cycle(company_id, employee_id, active_cycle.id)
+
+        # Gather goals for active cycle
+        goals = self.goal_repo.list_by_employee_and_cycle(company_id, employee_id, active_cycle.id)
+
+        # Active PIP status
+        active_pip = self.pip_repo.get_active_pip_for_employee(company_id, employee_id)
+        on_pip = active_pip is not None
+
+        # Existing finalized summary if any
+        finalized_summ = self.summary_repo.get_by_employee_and_cycle(
+            company_id, employee_id, active_cycle.id
+        )
+
+        # Calculate weighted progress: sum(progress * weightage / 100)
+        weighted_progress = Decimal("0.00")
+        for g in goals:
+            weighted_progress += Decimal(str(g.progress)) * (g.weightage / Decimal("100.00"))
+        weighted_progress = weighted_progress.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # Check reviews
+        completed_reviews_count = 0
+        weighted_manager_rating: Decimal | None = None
+        has_pending_mgr_review = False
+        manager_ratings_sum = Decimal("0.00")
+        total_mgr_weightage = Decimal("0.00")
+
+        for g in goals:
+            mgr_rev = self.review_repo.get_by_goal_and_role(company_id, g.id, ReviewerRole.manager)
+            if mgr_rev and mgr_rev.status == "submitted":
+                completed_reviews_count += 1
+                manager_ratings_sum += mgr_rev.rating * (g.weightage / Decimal("100.00"))
+                total_mgr_weightage += g.weightage
+            else:
+                has_pending_mgr_review = True
+
+        if (
+            completed_reviews_count > 0
+            and not has_pending_mgr_review
+            and total_mgr_weightage > Decimal("0.00")
+        ):
+            weighted_manager_rating = manager_ratings_sum.quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+        elif completed_reviews_count > 0 and actor and actor.role != UserRole.employee:
+            # Managers and HR can see partial weighted manager rating if any
+            if total_mgr_weightage == Decimal("100.00"):
+                weighted_manager_rating = manager_ratings_sum.quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+
+        mgr_review_status = (
+            "completed" if (completed_reviews_count == len(goals) and len(goals) > 0) else "pending"
+        )
+
+        # Blind review gating for employee viewing:
+        emp_actor = self.employee_repo.get_by_user_id(company_id, actor.id) if actor else None
+        if (
+            actor
+            and actor.role == UserRole.employee
+            and emp_actor
+            and emp_actor.id == target_emp.id
+        ):
+            # If not all reviews submitted, manager rating is hidden
+            if has_pending_mgr_review:
+                weighted_manager_rating = None
+
+        goal_responses = [PerformanceGoalResponse.model_validate(g) for g in goals]
+
+        return {
+            "employee_id": employee_id,
+            "cycle_id": active_cycle.id,
+            "goals": goal_responses,
+            "weighted_progress": weighted_progress,
+            "weighted_manager_rating": weighted_manager_rating,
+            "manager_review_status": mgr_review_status,
+            "completed_reviews_count": completed_reviews_count,
+            "on_pip": on_pip,
+            "final_rating": finalized_summ.final_rating if finalized_summ else None,
+            "overall_comments": finalized_summ.overall_comments if finalized_summ else None,
+            "finalized_at": finalized_summ.finalized_at if finalized_summ else None,
+        }
+
+    def list_summaries(
+        self, company_id: uuid.UUID, cycle_id: uuid.UUID, page_params: PageParams, actor: User
+    ) -> tuple[list[PerformanceSummary], int, int]:
+        if actor.role not in (
+            UserRole.hr_admin,
+            UserRole.owner,
+            UserRole.super_admin,
+            UserRole.manager,
+        ):
+            raise ForbiddenError("Not authorized to list performance summaries.")
+        return self.summary_repo.list_summaries(company_id, cycle_id, page_params)
 
     def finalize_summary(
         self,

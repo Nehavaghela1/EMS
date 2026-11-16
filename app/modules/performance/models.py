@@ -148,6 +148,12 @@ class PerformanceReview(TenantBase):
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=SANumeric() if False else None
     )
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="submitted")
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reopened_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    reopen_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class PerformanceSummary(TenantBase):
