@@ -5,9 +5,8 @@ Rule 0 (Multi-tenancy),
 6.5 Rules R1-R8 (Scoping, Decimal Half-up Math, Zero PII Leakage, Paging, Rates).
 """
 
-import threading
 import uuid
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -17,11 +16,9 @@ from sqlalchemy.orm import Session
 
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
-from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
-from app.modules.performance.models import CycleStatus, GoalStatus, PerformanceCycle, PerformanceGoal
 from app.modules.platform.models import AuditLog, Notification
 
 
@@ -237,7 +234,9 @@ def setup_active_cycle_with_goals(client: TestClient, p2_setup: dict[str, Any]) 
         headers=hr_headers,
     )
     cycle_id = c.json()["id"]
-    client.put(f"/api/v1/performance/cycles/{cycle_id}", json={"status": "active"}, headers=hr_headers)
+    client.put(
+        f"/api/v1/performance/cycles/{cycle_id}", json={"status": "active"}, headers=hr_headers
+    )
 
     # Set 2 goals summing to 100% (60% and 40%)
     emp_id = str(p2_setup["emp_a"].id)
@@ -405,7 +404,7 @@ def test_6_3_R5_reviews_written_only_while_cycle_active_409(
 def test_6_3_R6_blind_manager_review_hidden_from_employee_until_submitted(
     client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any]
 ):
-    """6.3 R6: Blind review: manager review rating/comments stay hidden from employee until submitted."""
+    """6.3 R6: Blind review: manager review rating stays hidden from employee until submitted."""
     emp_headers = _auth_headers(p2_setup["emp_user_a"])
     mgr_headers = _auth_headers(p2_setup["mgr_user_a"])
     emp_id = str(p2_setup["emp_a"].id)
@@ -430,8 +429,6 @@ def test_6_3_R6_blind_manager_review_hidden_from_employee_until_submitted(
     )
 
     # After submit, manager review is visible
-    goals_resp_after = client.get(f"/api/v1/performance/goals/{emp_id}", headers=emp_headers).json()
-    # Employee can now see submitted review
     review_resp = client.get(f"/api/v1/performance/goals/{g1}/reviews", headers=emp_headers)
     assert review_resp.status_code == 200
     mgr_rev = next(r for r in review_resp.json() if r["reviewer_role"] == "manager")
@@ -439,11 +436,13 @@ def test_6_3_R6_blind_manager_review_hidden_from_employee_until_submitted(
 
 
 def test_6_3_R7_status_flow_and_hr_reopen_with_reason_audited(
-    client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any], db: Session
+    client: TestClient,
+    p2_setup: dict[str, Any],
+    setup_active_cycle_with_goals: dict[str, Any],
+    db: Session,
 ):
-    """6.3 R7: Status moves draft -> submitted; no edits after submit; HR can reopen with reason (audited)."""
+    """6.3 R7: Status moves draft -> submitted; HR can reopen with reason (audited)."""
     emp_headers = _auth_headers(p2_setup["emp_user_a"])
-    mgr_headers = _auth_headers(p2_setup["mgr_user_a"])
     hr_headers = _auth_headers(p2_setup["hr_a"])
     g1 = setup_active_cycle_with_goals["goal_1_id"]
 
@@ -481,10 +480,12 @@ def test_6_3_R7_status_flow_and_hr_reopen_with_reason_audited(
     assert r_reopen.json()["status"] == "draft"
 
     # Check audit log
+    db.expire_all()
     bind_tenant_to_session(db, company_id=p2_setup["cid_a"], is_platform_admin=True)
-    log = db.query(AuditLog).filter(AuditLog.entity_id == uuid.UUID(rev_id)).first()
-    assert log is not None
-    assert "REOPEN" in log.action
+    logs = db.query(AuditLog).filter(AuditLog.entity_id == uuid.UUID(rev_id)).all()
+    assert any("REOPEN" in entry.action for entry in logs), (
+        f"Expected REOPEN action in audit logs, found: {[entry.action for entry in logs]}"
+    )
 
 
 def test_6_3_R8_cross_company_review_returns_404(
@@ -508,7 +509,10 @@ def test_6_3_R8_cross_company_review_returns_404(
 
 
 def test_6_3_R9_review_submit_and_reopen_audited(
-    client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any], db: Session
+    client: TestClient,
+    p2_setup: dict[str, Any],
+    setup_active_cycle_with_goals: dict[str, Any],
+    db: Session,
 ):
     """6.3 R9: Every save and submit is audited (ids and field names only)."""
     emp_headers = _auth_headers(p2_setup["emp_user_a"])
@@ -525,15 +529,19 @@ def test_6_3_R9_review_submit_and_reopen_audited(
     audit = db.query(AuditLog).filter(AuditLog.entity_id == rev_id).first()
     assert audit is not None
     assert "PERFORMANCE_REVIEW" in audit.action
-    assert "rating" not in str(audit.details) or audit.details.get("rating") is None, (
-        "No private evaluation scores leaked into audit details"
-    )
+    assert (
+        "rating" not in str(audit.details)
+        or (audit.details is not None and audit.details.get("rating") is None)
+    ), "No private evaluation scores leaked into audit details"
 
 
 def test_6_3_R10_notifications_post_commit_manager_and_employee(
-    client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any], db: Session
+    client: TestClient,
+    p2_setup: dict[str, Any],
+    setup_active_cycle_with_goals: dict[str, Any],
+    db: Session,
 ):
-    """6.3 R10: Manager notified on self-review submit; employee notified on manager review submit."""
+    """6.3 R10: Manager notified on self-review; employee notified on manager review."""
     emp_headers = _auth_headers(p2_setup["emp_user_a"])
     mgr_headers = _auth_headers(p2_setup["mgr_user_a"])
     g1 = setup_active_cycle_with_goals["goal_1_id"]
@@ -577,7 +585,10 @@ def test_6_3_R10_notifications_post_commit_manager_and_employee(
 
 
 def test_6_3_R11_rate_limit_review_write_routes(
-    client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any], limits_on: None
+    client: TestClient,
+    p2_setup: dict[str, Any],
+    setup_active_cycle_with_goals: dict[str, Any],
+    limits_on: None,
 ):
     """6.3 R11: Write routes are rate limited with a 429 test."""
     emp_headers = _auth_headers(p2_setup["emp_user_a"])
@@ -604,7 +615,7 @@ def test_6_3_R11_rate_limit_review_write_routes(
 def test_6_5_R1_scoping_permissions_employee_manager_hr(
     client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any]
 ):
-    """6.5 R1: Employee sees own; manager sees reporting chain; HR/owner see all; other manager 403."""
+    """6.5 R1: Employee sees own; manager sees chain; HR/owner see all; other manager 403."""
     emp_headers = _auth_headers(p2_setup["emp_user_a"])
     mgr_headers = _auth_headers(p2_setup["mgr_user_a"])
     other_mgr_headers = _auth_headers(p2_setup["other_mgr_user_a"])
@@ -642,7 +653,7 @@ def test_6_5_R1_scoping_permissions_employee_manager_hr(
 def test_6_5_R2_summary_payload_structure(
     client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any]
 ):
-    """6.5 R2: Summary per cycle: goals, weighted progress, self rating, manager rating, PIP flag."""
+    """6.5 R2: Summary: goals, weighted progress, self rating, manager rating, PIP flag."""
     emp_headers = _auth_headers(p2_setup["emp_user_a"])
     emp_id = str(p2_setup["emp_a"].id)
 
@@ -668,11 +679,19 @@ def test_6_5_R3_weighted_score_uses_decimal_half_up(
     # Goal 1: 60% weightage, rating 4.3 -> 60 * 4.3 = 2.58
     # Goal 2: 40% weightage, rating 3.7 -> 40 * 3.7 = 1.48
     # Expected weighted score = 2.58 + 1.48 = 4.06
-    client.post(f"/api/v1/performance/goals/{g1}/self-review", json={"rating": 4.0}, headers=emp_headers)
-    client.post(f"/api/v1/performance/goals/{g2}/self-review", json={"rating": 3.5}, headers=emp_headers)
+    client.post(
+        f"/api/v1/performance/goals/{g1}/self-review", json={"rating": 4.0}, headers=emp_headers
+    )
+    client.post(
+        f"/api/v1/performance/goals/{g2}/self-review", json={"rating": 3.5}, headers=emp_headers
+    )
 
-    client.post(f"/api/v1/performance/goals/{g1}/manager-review", json={"rating": 4.3}, headers=mgr_headers)
-    client.post(f"/api/v1/performance/goals/{g2}/manager-review", json={"rating": 3.7}, headers=mgr_headers)
+    client.post(
+        f"/api/v1/performance/goals/{g1}/manager-review", json={"rating": 4.3}, headers=mgr_headers
+    )
+    client.post(
+        f"/api/v1/performance/goals/{g2}/manager-review", json={"rating": 3.7}, headers=mgr_headers
+    )
 
     res = client.get(f"/api/v1/performance/summary/{emp_id}", headers=mgr_headers)
     assert res.status_code == 200
@@ -683,14 +702,16 @@ def test_6_5_R3_weighted_score_uses_decimal_half_up(
 def test_6_5_R4_only_submitted_reviews_count_drafts_pending(
     client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any]
 ):
-    """6.5 R4: Only submitted reviews count; drafts show as pending; manager rating hidden until submitted."""
+    """6.5 R4: Only submitted reviews count; drafts show pending; rating hidden until submitted."""
     emp_headers = _auth_headers(p2_setup["emp_user_a"])
     mgr_headers = _auth_headers(p2_setup["mgr_user_a"])
     emp_id = str(p2_setup["emp_a"].id)
     g1 = setup_active_cycle_with_goals["goal_1_id"]
 
     # Self review submitted for goal 1 only
-    client.post(f"/api/v1/performance/goals/{g1}/self-review", json={"rating": 4.0}, headers=emp_headers)
+    client.post(
+        f"/api/v1/performance/goals/{g1}/self-review", json={"rating": 4.0}, headers=emp_headers
+    )
 
     # Employee views summary: manager review is pending, not completed
     summary_emp = client.get(f"/api/v1/performance/summary/{emp_id}", headers=emp_headers).json()
@@ -698,7 +719,9 @@ def test_6_5_R4_only_submitted_reviews_count_drafts_pending(
     assert summary_emp.get("weighted_manager_rating") is None
 
     # Manager submits review for goal 1
-    client.post(f"/api/v1/performance/goals/{g1}/manager-review", json={"rating": 4.5}, headers=mgr_headers)
+    client.post(
+        f"/api/v1/performance/goals/{g1}/manager-review", json={"rating": 4.5}, headers=mgr_headers
+    )
 
     # Manager views summary: goal 1 done, goal 2 pending
     summary_mgr = client.get(f"/api/v1/performance/summary/{emp_id}", headers=mgr_headers).json()
@@ -737,7 +760,9 @@ def test_6_5_R7_summary_lists_are_paged_with_bounded_size(
     hr_headers = _auth_headers(p2_setup["hr_a"])
     cid = setup_active_cycle_with_goals["cycle_id"]
 
-    res = client.get(f"/api/v1/performance/summaries?cycle_id={cid}&page=1&limit=50", headers=hr_headers)
+    res = client.get(
+        f"/api/v1/performance/summaries?cycle_id={cid}&page=1&limit=50", headers=hr_headers
+    )
     assert res.status_code == 200
     data = res.json()
     assert "items" in data
@@ -747,7 +772,10 @@ def test_6_5_R7_summary_lists_are_paged_with_bounded_size(
 
 
 def test_6_5_R8_read_routes_rate_limited(
-    client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any], limits_on: None
+    client: TestClient,
+    p2_setup: dict[str, Any],
+    setup_active_cycle_with_goals: dict[str, Any],
+    limits_on: None,
 ):
     """6.5 R8: Read routes are rate limited with a 429 test."""
     emp_headers = _auth_headers(p2_setup["emp_user_a"])

@@ -166,6 +166,15 @@ class PerformanceReviewRepository:
     def __init__(self, db: Session):
         self.db = db
 
+    def get_by_id(self, review_id: uuid.UUID, company_id: uuid.UUID) -> PerformanceReview | None:
+        return self.db.scalar(
+            select(PerformanceReview).where(
+                PerformanceReview.id == review_id,
+                PerformanceReview.company_id == company_id,
+                PerformanceReview.deleted_at.is_(None),
+            )
+        )
+
     def get_by_goal_and_role(
         self, company_id: uuid.UUID, goal_id: uuid.UUID, reviewer_role: ReviewerRole
     ) -> PerformanceReview | None:
@@ -178,9 +187,26 @@ class PerformanceReviewRepository:
             )
         )
 
+    def list_by_goal(self, company_id: uuid.UUID, goal_id: uuid.UUID) -> list[PerformanceReview]:
+        return list(
+            self.db.scalars(
+                select(PerformanceReview).where(
+                    PerformanceReview.company_id == company_id,
+                    PerformanceReview.goal_id == goal_id,
+                    PerformanceReview.deleted_at.is_(None),
+                )
+            ).all()
+        )
+
     def create(self, **kwargs) -> PerformanceReview:
         review = PerformanceReview(**kwargs)
         self.db.add(review)
+        self.db.flush()
+        return review
+
+    def update(self, review: PerformanceReview, **kwargs) -> PerformanceReview:
+        for k, v in kwargs.items():
+            setattr(review, k, v)
         self.db.flush()
         return review
 
@@ -206,6 +232,20 @@ class PerformanceSummaryRepository:
         self.db.add(summary)
         self.db.flush()
         return summary
+
+    def list_summaries(
+        self, company_id: uuid.UUID, cycle_id: uuid.UUID, page_params: PageParams
+    ) -> tuple[list[PerformanceSummary], int, int]:
+        stmt = (
+            select(PerformanceSummary)
+            .where(
+                PerformanceSummary.company_id == company_id,
+                PerformanceSummary.cycle_id == cycle_id,
+                PerformanceSummary.deleted_at.is_(None),
+            )
+            .order_by(PerformanceSummary.created_at.desc())
+        )
+        return paginate(self.db, stmt, page_params)
 
 
 class PerformancePIPRepository:

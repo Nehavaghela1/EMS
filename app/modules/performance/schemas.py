@@ -114,12 +114,16 @@ class PerformanceGoalResponse(BaseModel):
 
 class SelfReviewRequest(BaseModel):
     rating: Decimal = Field(ge=Decimal("1.0"), le=Decimal("5.0"))
-    comments: str | None = None
+    comments: str | None = Field(default=None, max_length=2000)
 
 
 class ManagerReviewRequest(BaseModel):
     rating: Decimal = Field(ge=Decimal("1.0"), le=Decimal("5.0"))
-    comments: str | None = None
+    comments: str | None = Field(default=None, max_length=2000)
+
+
+class ReviewReopenRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class PerformanceReviewResponse(BaseModel):
@@ -130,6 +134,9 @@ class PerformanceReviewResponse(BaseModel):
     rating: Decimal
     comments: str | None
     submitted_at: datetime
+    status: str = "submitted"
+    reopened_at: datetime | None = None
+    reopen_reason: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -139,6 +146,20 @@ class SummaryFinalizeRequest(BaseModel):
     overall_comments: str | None = None
     salary_revision_recommended: bool = False
     recommended_increment_percent: Decimal | None = None
+
+
+class PerformanceSummaryDetailResponse(BaseModel):
+    employee_id: uuid.UUID
+    cycle_id: uuid.UUID
+    goals: list[PerformanceGoalResponse]
+    weighted_progress: Decimal
+    weighted_manager_rating: Decimal | None = None
+    manager_review_status: str
+    completed_reviews_count: int
+    on_pip: bool
+    final_rating: Decimal | None = None
+    overall_comments: str | None = None
+    finalized_at: datetime | None = None
 
 
 class PerformanceSummaryResponse(BaseModel):
