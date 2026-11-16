@@ -88,12 +88,34 @@ class PerformanceGoal(TenantBase):
     status: Mapped[GoalStatus] = mapped_column(
         SAEnum(GoalStatus, name="goal_status"), nullable=False, default=GoalStatus.draft
     )
+    progress: Mapped[int] = mapped_column(nullable=False, default=0)
     self_rating: Mapped[Decimal | None] = mapped_column(SANumeric(3, 1), nullable=True)
     self_comments: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     reviews: Mapped[list["PerformanceReview"]] = relationship(
         "PerformanceReview", cascade="all, delete-orphan", passive_deletes=True
     )
+    progress_history: Mapped[list["PerformanceGoalProgressHistory"]] = relationship(
+        "PerformanceGoalProgressHistory", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class PerformanceGoalProgressHistory(TenantBase):
+    """RLS: Yes."""
+
+    __tablename__ = "performance_goal_progress_history"
+
+    goal_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("performance_goals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    updated_by_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    old_progress: Mapped[int] = mapped_column(nullable=False)
+    new_progress: Mapped[int] = mapped_column(nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class PerformanceReview(TenantBase):

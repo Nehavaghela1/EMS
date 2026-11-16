@@ -1,15 +1,18 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user, get_tenant_db, require_role
 from app.core.pagination import Page, PageParams, page_params
+from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.core.roles import HR_LEVEL_ROLES
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.performance.models import CycleStatus
 from app.modules.performance.schemas import (
+    GoalProgressHistoryResponse,
+    GoalProgressUpdateRequest,
     GoalsCreateRequest,
     GoalUpdateRequest,
     ManagerReviewRequest,
@@ -55,10 +58,12 @@ def list_performance_cycles(
 
 
 @performance_router.post("/cycles", response_model=PerformanceCycleResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def create_performance_cycle(
+    request: Request,
     data: PerformanceCycleCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner)),
 ):
     service = PerformanceService(db)
     cycle = service.create_cycle(user.company_id, data, user)
@@ -66,11 +71,13 @@ def create_performance_cycle(
 
 
 @performance_router.put("/cycles/{id}", response_model=PerformanceCycleResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_performance_cycle(
+    request: Request,
     id: uuid.UUID,
     data: PerformanceCycleUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner)),
 ):
     service = PerformanceService(db)
     cycle = service.update_cycle(user.company_id, id, data, user)
@@ -93,7 +100,9 @@ def get_performance_report(
 
 
 @performance_router.post("/goals", response_model=list[PerformanceGoalResponse], status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def set_performance_goals(
+    request: Request,
     data: GoalsCreateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
@@ -151,36 +160,44 @@ def list_performance_goals(
 
 
 @performance_router.put("/goals/{id}", response_model=PerformanceGoalResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_performance_goal(
+    request: Request,
     id: uuid.UUID,
     data: GoalUpdateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_current_user),
 ):
-    repo = PerformanceGoalRepository(db)
-    goal = repo.get_by_id(id, user.company_id)
-    if goal is None:
-        raise HTTPException(status_code=404, detail="Performance goal not found.")
-
-    emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
-    is_owner = emp and goal.employee_id == emp.id
-    is_admin = user.role in HR_LEVEL_ROLES
-    if not (is_owner or is_admin):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Employees can only update their own performance goals.",
-        )
-
-    updated = repo.update(
-        goal,
-        title=data.title if data.title is not None else goal.title,
-        description=data.description if data.description is not None else goal.description,
-        weightage=data.weightage if data.weightage is not None else goal.weightage,
-        target_value=data.target_value if data.target_value is not None else goal.target_value,
-        status=data.status if data.status is not None else goal.status,
-    )
-    db.commit()
+    service = PerformanceService(db)
+    updated = service.update_goal(user.company_id, id, data, user)
     return PerformanceGoalResponse.model_validate(updated)
+
+
+@performance_router.put("/goals/{id}/progress", response_model=PerformanceGoalResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def update_goal_progress(
+    request: Request,
+    id: uuid.UUID,
+    data: GoalProgressUpdateRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    service = PerformanceService(db)
+    updated = service.update_goal_progress(user.company_id, id, data, user)
+    return PerformanceGoalResponse.model_validate(updated)
+
+
+@performance_router.get(
+    "/goals/{id}/history", response_model=list[GoalProgressHistoryResponse]
+)
+def get_goal_progress_history(
+    id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    service = PerformanceService(db)
+    history = service.get_goal_progress_history(user.company_id, id, user)
+    return [GoalProgressHistoryResponse.model_validate(h) for h in history]
 
 
 @performance_router.post("/goals/{goal_id}/self-review", response_model=PerformanceReviewResponse)

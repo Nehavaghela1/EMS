@@ -1,3 +1,4 @@
+from datetime import date
 import uuid
 
 from sqlalchemy import select
@@ -8,6 +9,7 @@ from app.modules.performance.models import (
     CycleStatus,
     PerformanceCycle,
     PerformanceGoal,
+    PerformanceGoalProgressHistory,
     PerformancePIP,
     PerformanceReview,
     PerformanceSummary,
@@ -36,6 +38,23 @@ class PerformanceCycleRepository:
                 PerformanceCycle.deleted_at.is_(None),
             )
         )
+
+    def get_overlapping_cycle(
+        self,
+        company_id: uuid.UUID,
+        start_date: date,
+        end_date: date,
+        exclude_id: uuid.UUID | None = None,
+    ) -> PerformanceCycle | None:
+        stmt = select(PerformanceCycle).where(
+            PerformanceCycle.company_id == company_id,
+            PerformanceCycle.deleted_at.is_(None),
+            PerformanceCycle.start_date <= end_date,
+            PerformanceCycle.end_date >= start_date,
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(PerformanceCycle.id != exclude_id)
+        return self.db.scalar(stmt)
 
     def list_cycles(
         self, company_id: uuid.UUID, page_params: PageParams, status: CycleStatus | None = None
@@ -105,6 +124,42 @@ class PerformanceGoalRepository:
             setattr(goal, key, value)
         self.db.flush()
         return goal
+
+    def add_progress_history(
+        self,
+        company_id: uuid.UUID,
+        goal_id: uuid.UUID,
+        updated_by_id: uuid.UUID,
+        old_progress: int,
+        new_progress: int,
+        notes: str | None = None,
+    ) -> PerformanceGoalProgressHistory:
+        hist = PerformanceGoalProgressHistory(
+            company_id=company_id,
+            goal_id=goal_id,
+            updated_by_id=updated_by_id,
+            old_progress=old_progress,
+            new_progress=new_progress,
+            notes=notes,
+        )
+        self.db.add(hist)
+        self.db.flush()
+        return hist
+
+    def get_progress_history(
+        self, company_id: uuid.UUID, goal_id: uuid.UUID
+    ) -> list[PerformanceGoalProgressHistory]:
+        return list(
+            self.db.scalars(
+                select(PerformanceGoalProgressHistory)
+                .where(
+                    PerformanceGoalProgressHistory.company_id == company_id,
+                    PerformanceGoalProgressHistory.goal_id == goal_id,
+                    PerformanceGoalProgressHistory.deleted_at.is_(None),
+                )
+                .order_by(PerformanceGoalProgressHistory.created_at.asc())
+            ).all()
+        )
 
 
 class PerformanceReviewRepository:

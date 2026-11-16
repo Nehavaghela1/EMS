@@ -340,7 +340,8 @@ def test_6_1_R4_date_overlap_rejection_409(client: TestClient, p1_setup: dict[st
         headers=hr_headers,
     )
     assert r2.status_code == 409, "Overlapping cycles must return 409"
-    assert "Q1 2027" in r2.json()["detail"], "Clashing cycle name must be in error detail"
+    detail_msg = r2.json().get("detail") or r2.json().get("error", {}).get("message", "")
+    assert "Q1 2027" in detail_msg, f"Clashing cycle name must be in error detail, got: {r2.text}"
 
 
 def test_6_1_R5_single_active_cycle_enforced_409(client: TestClient, p1_setup: dict[str, Any]):
@@ -484,7 +485,7 @@ def test_6_1_R10_audit_logged_on_cycle_lifecycle(client: TestClient, p1_setup: d
     client.put(f"/api/v1/performance/cycles/{cid}", json={"status": "active"}, headers=hr_headers)
 
     # Check audit logs
-    bind_tenant_to_session(db, company_id=p1_setup["cid_a"])
+    bind_tenant_to_session(db, company_id=p1_setup["cid_a"], is_platform_admin=True)
     logs = db.query(AuditLog).filter(AuditLog.entity_id == cid).all()
     actions = [l.action for l in logs]
     assert any("PERFORMANCE_CYCLE" in act for act in actions), "Cycle lifecycle must be audited"
@@ -506,7 +507,7 @@ def test_6_1_R11_notifications_sent_on_cycle_activation(client: TestClient, p1_s
     assert r_act.status_code == 200
 
     # Verify notifications in db
-    bind_tenant_to_session(db, company_id=p1_setup["cid_a"])
+    bind_tenant_to_session(db, company_id=p1_setup["cid_a"], is_platform_admin=True)
     notifs = db.query(Notification).filter(Notification.company_id == p1_setup["cid_a"]).all()
     # At least emp_user_a received a notification
     user_ids = [n.user_id for n in notifs]
@@ -788,7 +789,7 @@ def test_6_2_R9_cross_company_goal_404_and_audited(client: TestClient, p1_setup:
     assert r_b.status_code == 404, "Another company's goal must return 404"
 
     # Verify audit
-    bind_tenant_to_session(db, company_id=p1_setup["cid_a"])
+    bind_tenant_to_session(db, company_id=p1_setup["cid_a"], is_platform_admin=True)
     log = db.query(AuditLog).filter(AuditLog.entity_id == uuid.UUID(gid)).first()
     assert log is not None, "Goal changes must be audited"
 
@@ -807,7 +808,7 @@ def test_6_2_R10_manager_notified_when_someone_else_changes_goal(client: TestCli
     assert res.status_code == 201
 
     # Check notification sent to manager
-    bind_tenant_to_session(db, company_id=p1_setup["cid_a"])
+    bind_tenant_to_session(db, company_id=p1_setup["cid_a"], is_platform_admin=True)
     mgr_notif = (
         db.query(Notification)
         .filter(Notification.user_id == p1_setup["mgr_user_a"].id)
