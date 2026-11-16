@@ -257,6 +257,13 @@ def test_projects_time_entries_query_colleague_forbidden_or_safe(
     assert proj_res.status_code == 201
     project_id = proj_res.json()["id"]
 
+    # Add colleague to project members
+    client.post(
+        f"/api/v1/projects/{project_id}/members",
+        headers=company_a.hr_headers,
+        json={"employee_id": emp_colleague["id"], "role": "member"},
+    )
+
     # Colleague logs a time entry
     entry_res = client.post(
         "/api/v1/projects/time-entries",
@@ -301,6 +308,13 @@ def test_projects_time_entries_query_own_allowed(
     )
     assert proj_res.status_code == 201
     project_id = proj_res.json()["id"]
+
+    # Add own employee to project members
+    client.post(
+        f"/api/v1/projects/{project_id}/members",
+        headers=company_a.hr_headers,
+        json={"employee_id": emp_own["id"], "role": "member"},
+    )
 
     entry_res = client.post(
         "/api/v1/projects/time-entries",

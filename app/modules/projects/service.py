@@ -5,7 +5,6 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
-    AppError,
     ConflictError,
     ForbiddenError,
     NotFoundError,
@@ -371,11 +370,38 @@ class ProjectService:
 
     # --- Project Summary Analytics ---
     def get_project_summary(
-        self, company_id: UUID | None, project_id: UUID
+        self, company_id: UUID | None, project_id: UUID, actor: User | None = None
     ) -> ProjectSummaryResponse:
+        if actor and actor.role == UserRole.super_admin:
+            raise ForbiddenError(
+                "Super Admin cannot access tenant project summary or financial data."
+            )
+
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
+
+        # Check tenant scoping & membership (HR and Owner can access any project in their company)
+        is_hr_or_owner = actor and actor.role in (UserRole.owner, UserRole.hr_admin)
+        is_pm = False
+        is_member = False
+        actor_emp_id = None
+
+        if actor and not is_hr_or_owner:
+            from app.modules.hr.repository import EmployeeRepository
+
+            actor_emp = EmployeeRepository(self.repo.db).get_by_user_id(
+                project.company_id, actor.id
+            )
+            if actor_emp:
+                actor_emp_id = actor_emp.id
+                mem = self.repo.get_member(project.company_id, project_id, actor_emp.id)
+                if mem:
+                    is_member = True
+                    if mem.role in ("lead", "manager"):
+                        is_pm = True
+            if not is_member and project.manager_id != actor_emp_id:
+                raise NotFoundError("Project not found.")
 
         # Always use project's actual company_id for sub-entities
         p_cid = project.company_id
@@ -406,45 +432,62 @@ class ProjectService:
         approved_billable_entries = [e for e in approved_entries if e.is_billable]
         approved_billable_hours = sum((e.hours for e in approved_billable_entries), Decimal("0.00"))
 
-        # Calculate Budget Spent = sum(approved billable hours * employee hourly cost)
-        budget_spent = Decimal("0.00")
-        if approved_billable_entries:
-            from app.modules.payroll.models import EmployeeSalary
-
-            # Fetch salaries for all relevant employees
-            emp_ids = list({e.employee_id for e in approved_billable_entries})
-            salaries = (
-                self.repo.db.query(EmployeeSalary)
-                .filter(
-                    EmployeeSalary.company_id == p_cid,
-                    EmployeeSalary.employee_id.in_(emp_ids),
-                    EmployeeSalary.deleted_at.is_(None),
-                )
-                .order_by(EmployeeSalary.effective_from.desc())
-                .all()
-            )
-            # Map employee_id -> hourly rate
-            emp_rates = {}
-            for s in salaries:
-                if s.employee_id not in emp_rates:
-                    if s.hourly_rate is not None and s.hourly_rate > 0:
-                        emp_rates[s.employee_id] = s.hourly_rate
-                    elif s.ctc and s.ctc > 0:
-                        # Monthly CTC / 160 standard Indian convention
-                        emp_rates[s.employee_id] = (
-                            s.ctc / Decimal("12") / Decimal("160.00")
-                        ).quantize(Decimal("0.01"))
-
-            for e in approved_billable_entries:
-                rate = emp_rates.get(
-                    e.employee_id, Decimal("500.00")
-                )  # Default fallback rate ₹500/hr
-                budget_spent += Decimal(str(e.hours)) * rate
-            budget_spent = budget_spent.quantize(Decimal("0.01"))
-
+        # Calculate Budget Spent = sum(approved billable hours * employee hourly cost
+        # from EmployeeSalary in force on work date)
+        can_view_financials = is_hr_or_owner or is_pm or (actor is None)
+        budget_spent = Decimal("0.00") if can_view_financials else None
         budget_remaining = None
-        if project.budget is not None:
-            budget_remaining = (project.budget - budget_spent).quantize(Decimal("0.01"))
+
+        if can_view_financials:
+            if approved_billable_entries:
+                from app.modules.payroll.models import EmployeeSalary
+
+                emp_ids = list({e.employee_id for e in approved_billable_entries})
+                salaries = (
+                    self.repo.db.query(EmployeeSalary)
+                    .filter(
+                        EmployeeSalary.company_id == p_cid,
+                        EmployeeSalary.employee_id.in_(emp_ids),
+                        EmployeeSalary.deleted_at.is_(None),
+                    )
+                    .order_by(EmployeeSalary.effective_from.asc())
+                    .all()
+                )
+
+                spent_accum = Decimal("0.00")
+                for e in approved_billable_entries:
+                    matching_rate = None
+                    for s in salaries:
+                        if s.employee_id == e.employee_id:
+                            if s.effective_from <= e.date and (
+                                s.effective_to is None or s.effective_to >= e.date
+                            ):
+                                if s.hourly_rate is not None and s.hourly_rate > 0:
+                                    matching_rate = s.hourly_rate
+                                elif s.ctc and s.ctc > 0:
+                                    matching_rate = (
+                                        s.ctc / Decimal("12") / Decimal("160.00")
+                                    ).quantize(Decimal("0.01"))
+                    if matching_rate is None:
+                        # Fallback to latest salary for this employee or default ₹500/hr
+                        emp_salaries = [s for s in salaries if s.employee_id == e.employee_id]
+                        if emp_salaries:
+                            latest_s = emp_salaries[-1]
+                            if latest_s.hourly_rate is not None and latest_s.hourly_rate > 0:
+                                matching_rate = latest_s.hourly_rate
+                            elif latest_s.ctc and latest_s.ctc > 0:
+                                matching_rate = (
+                                    latest_s.ctc / Decimal("12") / Decimal("160.00")
+                                ).quantize(Decimal("0.01"))
+                        if matching_rate is None:
+                            matching_rate = Decimal("500.00")
+
+                    spent_accum += Decimal(str(e.hours)) * matching_rate
+
+                budget_spent = spent_accum.quantize(Decimal("0.01"))
+
+            if project.budget is not None and budget_spent is not None:
+                budget_remaining = (project.budget - budget_spent).quantize(Decimal("0.01"))
 
         # Delivery Health progression:
         # Not Started -> In Progress -> On Schedule (or Needs Attention)
@@ -1103,22 +1146,60 @@ class ProjectService:
     # --- Time Entries ---
     def create_time_entry(
         self,
-        company_id: UUID,
+        company_id: UUID | None,
         employee_id: UUID,
         data: TimeEntryCreate,
         is_admin_or_manager: bool = False,
+        actor: User | None = None,
     ) -> TimeEntryResponse:
+        if actor and actor.role == UserRole.super_admin:
+            raise ForbiddenError("Super Admin cannot log time on tenant projects.")
+
+        if company_id is None:
+            raise ForbiddenError("Super Admin cannot log time on tenant projects.")
+
         project = self.repo.get_project_by_id(company_id, data.project_id)
         if not project:
             raise NotFoundError("Project not found.")
+
+        # Rule 7: Cannot log time on a project in status on_hold, completed, archived (409)
+        if project.status in ("on_hold", "completed", "archived"):
+            raise ConflictError(f"Cannot log time on a project in '{project.status}' status.")
+
+        # Rule 1: Project membership check (HR/Owner can log time on any project)
+        is_hr_or_owner = actor and actor.role in (UserRole.owner, UserRole.hr_admin)
+        if not is_hr_or_owner:
+            member = self.repo.get_member(company_id, data.project_id, employee_id)
+            if not member and project.manager_id != employee_id:
+                raise NotFoundError("Project not found or you are not a member of this project.")
+
+        # Rule 3: Date validation (not in future, not older than 90 days)
+        today = date.today()
+        if data.date > today:
+            raise ValidationError("Time entry date cannot be in the future.")
+        if (today - data.date).days > 90:
+            raise ValidationError("Time entry date cannot be older than 90 days.")
+
+        # Rule 3: Description trimmed (1–500 chars)
+        desc = (data.description or "").strip()
+        if not desc or len(desc) > 500:
+            raise ValidationError("Description must be between 1 and 500 characters.")
+        data.description = desc
+
+        # Rule 3: Hours check (0 < hours <= 24)
+        if data.hours <= Decimal("0.00") or data.hours > Decimal("24.00"):
+            raise ValidationError("Hours must be greater than 0 and at most 24.")
+
         if data.task_id:
             task = self.repo.get_task_by_id(company_id, data.task_id)
             if not task:
                 raise NotFoundError("Task not found.")
-            # Server-side validation:
+            if task.project_id != project.id:
+                raise NotFoundError("Task not found in this project.")
+
+            # Rule 2: Server-side validation:
             # Regular employees can only log time against their own assigned tasks
             if not is_admin_or_manager:
-                # Check if employee is Project Lead
                 is_lead = False
                 member = self.repo.get_member(company_id, data.project_id, employee_id)
                 if member and member.role in ("lead", "manager"):
@@ -1135,18 +1216,36 @@ class ProjectService:
                         "Employees can only log hours on their own assigned tasks."
                     )
 
-        # Check total daily logged hours ceiling (max 14 hrs per day across all tasks combined)
+        # Rule 4: Total hours across all projects combined cannot exceed 24 hours per employee.
+        # Note: Rejected entries do not count towards the 24-hour cap.
         existing_entries = self.repo.list_time_entries(
             company_id, employee_id=employee_id, start_date=data.date, end_date=data.date
         )
-        daily_total = sum((e.hours for e in existing_entries), Decimal("0.00"))
-        if daily_total + data.hours > Decimal("14.00"):
-            raise AppError(
-                "Total logged time across all projects cannot exceed 14 hours per day. "
+        non_rejected_entries = [e for e in existing_entries if e.status != "rejected"]
+        daily_total = sum((e.hours for e in non_rejected_entries), Decimal("0.00"))
+        if daily_total + data.hours > Decimal("24.00"):
+            raise ValidationError(
+                "Total logged time across all projects cannot exceed 24 hours per day. "
                 f"(Currently logged: {daily_total} hrs, attempting: {data.hours} hrs)"
             )
 
         entry = self.repo.create_time_entry(company_id, employee_id, data)
+
+        # Rule 9: Auditing (field names and IDs only)
+        if actor:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="create_time_entry",
+                entity_type="time_entry",
+                entity_id=entry.id,
+                details={
+                    "project_id": str(project.id),
+                    "employee_id": str(employee_id),
+                    "fields": ["project_id", "employee_id", "date", "hours", "task_id"],
+                },
+            )
+
         resp = TimeEntryResponse.from_orm(entry)
         from app.modules.hr.models import Employee
 
@@ -1164,13 +1263,20 @@ class ProjectService:
 
     def list_time_entries(
         self,
-        company_id: UUID,
+        company_id: UUID | None,
         project_id: UUID | None = None,
         employee_id: UUID | None = None,
         status: str | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
+        actor: User | None = None,
     ) -> list[TimeEntryResponse]:
+        if actor and actor.role == UserRole.super_admin:
+            raise ForbiddenError("Super Admin cannot access tenant time entries.")
+
+        if company_id is None:
+            return []
+
         results = self.repo.list_time_entries_with_details(
             company_id, project_id, employee_id, status, start_date, end_date
         )
@@ -1191,56 +1297,115 @@ class ProjectService:
         return responses
 
     def update_time_entry(
-        self, company_id: UUID, entry_id: UUID, user_employee_id: UUID | None, data: TimeEntryUpdate
+        self,
+        company_id: UUID | None,
+        entry_id: UUID,
+        user_employee_id: UUID | None,
+        data: TimeEntryUpdate,
+        actor: User | None = None,
     ) -> TimeEntryResponse:
+        if actor and actor.role == UserRole.super_admin:
+            raise ForbiddenError("Super Admin cannot modify tenant time entries.")
+
+        if company_id is None:
+            raise NotFoundError("Time entry not found.")
+
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
             raise NotFoundError("Time entry not found.")
 
-        # Lock check: once submitted/pending or approved, employees cannot modify it.
-        # Only draft or rejected can be edited.
+        # Rule 6: Status lifecycle - Once approved, immutable (PUT/DELETE returns 409 Conflict)
+        if entry.status == "approved":
+            raise ConflictError("Approved time entries are locked and cannot be modified.")
+
+        # Rule 7: Cannot edit time on a project with status on_hold, completed, or archived
+        project = self.repo.get_project_by_id(company_id, entry.project_id)
+        if project and project.status in ("on_hold", "completed", "archived"):
+            raise ConflictError(
+                f"Cannot modify time entry on a project in '{project.status}' status."
+            )
+
+        # Lock check: once submitted, regular employees cannot modify it unless rejected or draft
         if user_employee_id:
             if entry.employee_id != user_employee_id:
                 raise ForbiddenError("You can only modify your own time entries.")
-            if entry.status in ("approved", "submitted"):
-                raise AppError(
-                    f"Cannot edit time entry in '{entry.status}' status. "
+            if entry.status == "submitted":
+                raise ConflictError(
+                    "Cannot edit time entry in 'submitted' status. "
                     "Only draft or rejected entries can be edited."
                 )
 
         target_date = data.date if data.date is not None else entry.date
-        if data.hours is not None:
-            existing_entries = self.repo.list_time_entries(
-                company_id,
-                employee_id=entry.employee_id,
-                start_date=target_date,
-                end_date=target_date,
+        today = date.today()
+        if target_date > today:
+            raise ValidationError("Time entry date cannot be in the future.")
+        if (today - target_date).days > 90:
+            raise ValidationError("Time entry date cannot be older than 90 days.")
+
+        if data.description is not None:
+            desc = data.description.strip()
+            if not desc or len(desc) > 500:
+                raise ValidationError("Description must be between 1 and 500 characters.")
+            data.description = desc
+
+        target_hours = data.hours if data.hours is not None else entry.hours
+        if target_hours <= Decimal("0.00") or target_hours > Decimal("24.00"):
+            raise ValidationError("Hours must be greater than 0 and at most 24.")
+
+        # Check daily 24h cap across all projects, excluding rejected entries and current entry
+        existing_entries = self.repo.list_time_entries(
+            company_id,
+            employee_id=entry.employee_id,
+            start_date=target_date,
+            end_date=target_date,
+        )
+        non_rejected = [e for e in existing_entries if e.id != entry.id and e.status != "rejected"]
+        daily_total = sum((e.hours for e in non_rejected), Decimal("0.00"))
+        if daily_total + target_hours > Decimal("24.00"):
+            raise ValidationError(
+                "Total logged time across all projects cannot exceed 24 hours per day. "
+                f"(Currently logged: {daily_total} hrs, attempting: {target_hours} hrs)"
             )
-            daily_total = sum(
-                (e.hours for e in existing_entries if e.id != entry.id), Decimal("0.00")
-            )
-            if daily_total + data.hours > Decimal("14.00"):
-                raise AppError(
-                    "Total logged time across all projects cannot exceed 14 hours per day. "
-                    f"(Currently logged: {daily_total} hrs, attempting: {data.hours} hrs)"
-                )
 
         updated = self.repo.update_time_entry(entry, data)
+
+        # Rule 9: Audit
+        if actor:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="update_time_entry",
+                entity_type="time_entry",
+                entity_id=entry.id,
+                details={
+                    "project_id": str(entry.project_id),
+                    "employee_id": str(entry.employee_id),
+                    "fields": list(data.dict(exclude_unset=True).keys()),
+                },
+            )
+
         return TimeEntryResponse.from_orm(updated)
 
     def approve_reject_time_entry(
         self,
-        company_id: UUID,
+        company_id: UUID | None,
         entry_id: UUID,
         status: str,
         approver_user_id: UUID,
         actor: User,
         rejection_reason: str | None = None,
     ) -> TimeEntryResponse:
+        if actor.role == UserRole.super_admin:
+            raise ForbiddenError("Super Admin cannot approve or reject tenant time entries.")
+
+        if company_id is None:
+            raise NotFoundError("Time entry not found.")
+
         if status not in ("approved", "rejected"):
-            raise AppError("Status must be either 'approved' or 'rejected'.")
+            raise ValidationError("Status must be either 'approved' or 'rejected'.")
         if status == "rejected" and not (rejection_reason and rejection_reason.strip()):
-            raise AppError("A rejection reason is required when rejecting a time entry.")
+            raise ValidationError("A rejection reason is required when rejecting a time entry.")
+
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
             raise NotFoundError("Time entry not found.")
@@ -1249,14 +1414,17 @@ class ProjectService:
         from app.modules.hr.models import Employee
 
         target_emp = self.repo.db.get(Employee, entry.employee_id)
-        if not target_emp or not can_approve_for(self.repo.db, actor, target_emp):
+        # Rule 5: Reporting manager, HR, or Owner approves; employee cannot self-approve (403)
+        if not target_emp or not can_approve_for(
+            self.repo.db, actor, target_emp, allow_owner_super_admin_self=False
+        ):
             raise ForbiddenError("Not authorized to approve this request.")
 
+        # Rule 6: If already approved or rejected -> ConflictError 409
         if entry.status in ("approved", "rejected"):
             raise ConflictError(f"Time entry is already {entry.status}.")
 
         if status == "approved" and entry.is_overtime:
-            # Calculate overtime amount
             salary = (
                 self.repo.db.query(EmployeeSalary)
                 .filter(
@@ -1272,29 +1440,79 @@ class ProjectService:
                 multiplier = entry.overtime_multiplier or Decimal("1.00")
                 entry.overtime_amount = entry.hours * salary.hourly_rate * multiplier
 
+        clean_reason = rejection_reason.strip() if rejection_reason else None
         updated = self.repo.approve_reject_time_entry(
             entry,
             status,
             approver_user_id,
-            rejection_reason=rejection_reason.strip() if rejection_reason else None,
+            rejection_reason=clean_reason,
         )
+
+        # Rule 9: Audit
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action=f"{status}_time_entry",
+            entity_type="time_entry",
+            entity_id=entry.id,
+            details={
+                "project_id": str(entry.project_id),
+                "employee_id": str(entry.employee_id),
+                "fields": ["status", "approved_by", "approved_at"]
+                + (["rejection_reason"] if status == "rejected" else []),
+            },
+        )
+
         return TimeEntryResponse.from_orm(updated)
 
     def delete_time_entry(
-        self, company_id: UUID, entry_id: UUID, user_employee_id: UUID | None = None
+        self,
+        company_id: UUID | None,
+        entry_id: UUID,
+        user_employee_id: UUID | None = None,
+        actor: User | None = None,
     ) -> None:
+        if actor and actor.role == UserRole.super_admin:
+            raise ForbiddenError("Super Admin cannot delete tenant time entries.")
+
+        if company_id is None:
+            raise NotFoundError("Time entry not found.")
+
         entry = self.repo.get_time_entry_by_id(company_id, entry_id)
         if not entry:
             raise NotFoundError("Time entry not found.")
+
+        # Rule 6: Once approved, time entries are immutable (PUT or DELETE returns 409 Conflict)
+        if entry.status == "approved":
+            raise ConflictError("Approved time entries are locked and cannot be deleted.")
+
         if user_employee_id:
             if entry.employee_id != user_employee_id:
                 raise ForbiddenError("You can only delete your own time entries.")
-            if entry.status in ("approved", "submitted"):
-                raise AppError(
-                    f"Cannot delete time entry in '{entry.status}' status. "
+            if entry.status == "submitted":
+                raise ConflictError(
+                    "Cannot delete time entry in 'submitted' status. "
                     "Only draft or rejected entries can be deleted."
                 )
+
+        p_id = entry.project_id
+        emp_id = entry.employee_id
         self.repo.delete_time_entry(entry)
+
+        # Rule 9: Audit
+        if actor:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="delete_time_entry",
+                entity_type="time_entry",
+                entity_id=entry_id,
+                details={
+                    "project_id": str(p_id),
+                    "employee_id": str(emp_id),
+                    "fields": ["id"],
+                },
+            )
 
     # --- Milestones ---
     def create_milestone(
