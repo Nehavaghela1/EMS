@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -14,6 +14,7 @@ from app.core.exceptions import (
 from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import EmployeeSalary
 from app.modules.platform.service import AuditService, NotificationService
+from app.modules.projects.models import Task
 from app.modules.projects.repository import ProjectRepository
 from app.modules.projects.schemas import (
     MemberRateUpdate,
@@ -735,30 +736,118 @@ class ProjectService:
         return resp
 
     def create_task(
-        self, company_id: UUID | None, project_id: UUID, created_by: UUID | None, data: TaskCreate
+        self,
+        company_id: UUID | None,
+        project_id: UUID,
+        actor_user: User,
+        data: TaskCreate,
     ) -> TaskResponse:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
-        task = self.repo.create_task(project.company_id, project_id, created_by, data)
+
+        # Check membership / authority (Rule 1)
+        # Owner & HR can create in any project. Project members & PM can create.
+        if actor_user.role not in (UserRole.owner, UserRole.hr_admin):
+            from app.modules.hr.repository import EmployeeRepository
+
+            emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+            if not emp:
+                raise NotFoundError("Project not found.")
+            member = self.repo.get_member(company_id, project_id, emp.id)
+            if not member and project.manager_id != emp.id:
+                raise NotFoundError("Project not found.")
+
+        # Check project status (Rule 7)
+        if project.status in ("on_hold", "completed", "archived"):
+            raise ConflictError(f"Cannot create tasks in a project with status '{project.status}'.")
+
+        # Validation (Rule 2)
+        if not data.title or not data.title.strip():
+            raise ValidationError("Task title cannot be blank.")
+        if len(data.title.strip()) > 255:
+            raise ValidationError("Task title exceeds maximum length of 255 characters.")
+
+        # Due date check against project dates
+        if data.due_date:
+            if project.start_date and data.due_date < project.start_date:
+                raise ValidationError("Task due date cannot precede project start date.")
+            if project.end_date and data.due_date > project.end_date:
+                raise ValidationError("Task due date cannot exceed project end date.")
+
+        # Assignee validation (Rule 2 & 6)
+        if data.assigned_to:
+            assignee_member = self.repo.get_member(company_id, project_id, data.assigned_to)
+            if not assignee_member and project.manager_id != data.assigned_to:
+                raise ValidationError("Task assignee must be an active project member.")
+
+        task = self.repo.create_task(project.company_id, project_id, actor_user.id, data)
+
+        # Audit (Rule 9)
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor_user,
+            action="create_task",
+            entity_type="task",
+            entity_id=task.id,
+            details={"fields": ["title", "priority", "status", "assigned_to", "due_date"]},
+        )
+
         return self._enrich_task_response(task)
 
-    def get_task(self, company_id: UUID | None, task_id: UUID) -> TaskResponse:
+    def get_task(self, company_id: UUID | None, task_id: UUID, actor_user: User) -> TaskResponse:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
             raise NotFoundError("Task not found.")
+
+        # Check project membership scoping
+        if actor_user.role not in (UserRole.owner, UserRole.hr_admin):
+            from app.modules.hr.repository import EmployeeRepository
+
+            emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+            if not emp:
+                raise NotFoundError("Task not found.")
+            project = self.repo.get_project_by_id(company_id, task.project_id)
+            if not project:
+                raise NotFoundError("Task not found.")
+            member = self.repo.get_member(company_id, task.project_id, emp.id)
+            if not member and project.manager_id != emp.id:
+                raise NotFoundError("Task not found.")
+
         return self._enrich_task_response(task)
 
     def list_tasks(
         self,
         company_id: UUID | None,
         project_id: UUID,
+        actor_user: User,
         status: str | None = None,
         assigned_to: UUID | None = None,
     ) -> list[TaskResponse]:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
+
+        # Scoping check
+        if actor_user.role not in (UserRole.owner, UserRole.hr_admin):
+            from app.modules.hr.repository import EmployeeRepository
+
+            emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+            if not emp:
+                raise NotFoundError("Project not found.")
+            member = self.repo.get_member(company_id, project_id, emp.id)
+            if not member and project.manager_id != emp.id:
+                raise NotFoundError("Project not found.")
+
         results = self.repo.list_tasks_with_details(
             project.company_id, project_id, status, assigned_to
         )
@@ -777,33 +866,224 @@ class ProjectService:
         self,
         company_id: UUID | None,
         task_id: UUID,
+        actor_user: User,
         data: TaskUpdate,
-        current_emp_id: UUID | None = None,
-        is_admin_or_manager: bool = False,
     ) -> TaskResponse:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
             raise NotFoundError("Task not found.")
 
-        # Permission check: If not admin/manager, employee must be assignee or project lead
-        if not is_admin_or_manager and current_emp_id:
-            is_assignee = task.assigned_to == current_emp_id
-            is_lead = False
-            if task.company_id and task.project_id:
-                member = self.repo.get_member(task.company_id, task.project_id, current_emp_id)
-                if member and member.role in ("lead", "manager"):
-                    is_lead = True
-            if not is_assignee and not is_lead:
-                raise ForbiddenError("Only the task assignee or Project Lead can modify this task.")
+        project = self.repo.get_project_by_id(company_id, task.project_id)
+        if not project:
+            raise NotFoundError("Project not found.")
+
+        # Determine user roles on the project
+        is_hr_or_owner = actor_user.role in (UserRole.owner, UserRole.hr_admin)
+        is_pm = False
+        is_member = False
+        caller_emp_id = None
+
+        from app.modules.hr.repository import EmployeeRepository
+
+        emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+        if emp:
+            caller_emp_id = emp.id
+            if project.manager_id == emp.id:
+                is_pm = True
+            mem = self.repo.get_member(company_id, project.id, emp.id)
+            if mem:
+                is_member = True
+                if mem.role in ("lead", "manager"):
+                    is_pm = True
+
+        if not is_hr_or_owner and not is_pm and not is_member:
+            raise NotFoundError("Task not found.")
+
+        # In task edits, regular members (neither PM nor HR/Owner nor task assignee)
+        # cannot edit tasks assigned to other teammates.
+        if (
+            not (is_pm or is_hr_or_owner)
+            and task.assigned_to is not None
+            and caller_emp_id != task.assigned_to
+        ):
+            raise ForbiddenError(
+                "Only the task assignee or Project Lead/Manager can update this task."
+            )
+
+        # Cancelled is always allowed by PM, HR, owner
+        is_cancelling = data.status == "cancelled"
+
+        # Parent project status check (Rule 7)
+        if project.status in ("on_hold", "completed", "archived"):
+            if not (is_cancelling and (is_pm or is_hr_or_owner)):
+                raise ConflictError(
+                    f"Cannot edit tasks in a project with status '{project.status}'."
+                )
+
+        update_dict = data.dict(exclude_unset=True)
+
+        # Validation
+        if "title" in update_dict:
+            if not update_dict["title"] or not str(update_dict["title"]).strip():
+                raise ValidationError("Task title cannot be blank.")
+            if len(str(update_dict["title"]).strip()) > 255:
+                raise ValidationError("Task title exceeds maximum length of 255 characters.")
+
+        if "due_date" in update_dict and update_dict["due_date"]:
+            due_d = update_dict["due_date"]
+            if project.start_date and due_d < project.start_date:
+                raise ValidationError("Task due date cannot precede project start date.")
+            if project.end_date and due_d > project.end_date:
+                raise ValidationError("Task due date cannot exceed project end date.")
+
+        if "assigned_to" in update_dict and update_dict["assigned_to"]:
+            assignee_member = self.repo.get_member(
+                company_id, project.id, update_dict["assigned_to"]
+            )
+            if not assignee_member and project.manager_id != update_dict["assigned_to"]:
+                raise ValidationError("Task assignee must be an active project member.")
+
+        # Rule 4: A done task changes only when the project manager reopens it.
+        # Only PM, HR, owner can reopen or edit a done task
+        if task.status == "done":
+            if not (is_pm or is_hr_or_owner):
+                raise ConflictError("A done task can only be reopened by the project manager.")
+
+        # Rule 3: Status transition logic
+        if "status" in update_dict and update_dict["status"] != task.status:
+            new_status = update_dict["status"]
+            old_status = task.status
+            flow = ["todo", "in_progress", "review", "done"]
+
+            if new_status == "cancelled":
+                # Cancelling is allowed by PM, HR, owner
+                if not (is_pm or is_hr_or_owner):
+                    raise ForbiddenError("Only the project manager or HR can cancel tasks.")
+            elif old_status == "done":
+                # Reopening: PM/HR/Owner moving back to in_progress or todo
+                if new_status not in ("in_progress", "todo"):
+                    raise ConflictError(f"Cannot transition done task to {new_status}.")
+            elif old_status in flow and new_status in flow:
+                old_idx = flow.index(old_status)
+                new_idx = flow.index(new_status)
+                # Allowed: one step forward or backward
+                if new_idx == old_idx + 1 or new_idx == old_idx - 1:
+                    pass
+                else:
+                    raise ConflictError(
+                        f"Invalid status transition from '{old_status}' to '{new_status}'. "
+                        "Skipping steps is not allowed."
+                    )
+            elif old_status == "cancelled":
+                if not (is_pm or is_hr_or_owner):
+                    raise ForbiddenError("Only project manager or HR can reopen cancelled tasks.")
 
         updated = self.repo.update_task(task, data)
+
+        # Audit (Rule 9)
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor_user,
+            action="update_task",
+            entity_type="task",
+            entity_id=task.id,
+            details={"fields": list(update_dict.keys())},
+        )
+
         return self._enrich_task_response(updated)
 
-    def delete_task(self, company_id: UUID | None, task_id: UUID) -> None:
+    def reorder_task(
+        self,
+        company_id: UUID | None,
+        task_id: UUID,
+        actor_user: User,
+        position: int,
+    ) -> TaskResponse:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
             raise NotFoundError("Task not found.")
+
+        project = self.repo.get_project_by_id(company_id, task.project_id)
+        if not project:
+            raise NotFoundError("Project not found.")
+
+        # Check permissions
+        if actor_user.role not in (UserRole.owner, UserRole.hr_admin):
+            from app.modules.hr.repository import EmployeeRepository
+
+            emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+            if not emp:
+                raise NotFoundError("Task not found.")
+            member = self.repo.get_member(company_id, project.id, emp.id)
+            if not member and project.manager_id != emp.id:
+                raise NotFoundError("Task not found.")
+
+        task.position = position
+        task.updated_at = datetime.utcnow()
+        self.repo.db.commit()
+        self.repo.db.refresh(task)
+
+        # Audit
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor_user,
+            action="reorder_task",
+            entity_type="task",
+            entity_id=task.id,
+            details={"fields": ["position"]},
+        )
+
+        return self._enrich_task_response(task)
+
+    def delete_task(self, company_id: UUID | None, task_id: UUID, actor_user: User) -> None:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+
+        task = self.repo.get_task_by_id(company_id, task_id)
+        if not task:
+            raise NotFoundError("Task not found.")
+
+        project = self.repo.get_project_by_id(company_id, task.project_id)
+        if not project:
+            raise NotFoundError("Project not found.")
+
+        # Rule 5: Only creator, PM, HR and owner delete a task; others get 403
+        is_creator = task.created_by == actor_user.id
+        is_hr_or_owner = actor_user.role in (UserRole.owner, UserRole.hr_admin)
+        is_pm = False
+
+        from app.modules.hr.repository import EmployeeRepository
+
+        emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+        if emp:
+            if project.manager_id == emp.id:
+                is_pm = True
+            mem = self.repo.get_member(company_id, project.id, emp.id)
+            if mem and mem.role in ("lead", "manager"):
+                is_pm = True
+
+        if not (is_creator or is_pm or is_hr_or_owner):
+            raise ForbiddenError(
+                "Only task creator, project manager, HR or owner can delete tasks."
+            )
+
         self.repo.delete_task(task)
+
+        # Audit
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor_user,
+            action="delete_task",
+            entity_type="task",
+            entity_id=task.id,
+            details={"fields": ["id"]},
+        )
 
     # --- Task Comments ---
     def add_comment(
@@ -1020,35 +1300,220 @@ class ProjectService:
 
     # --- Milestones ---
     def create_milestone(
-        self, company_id: UUID | None, project_id: UUID, data: MilestoneCreate
+        self,
+        company_id: UUID | None,
+        project_id: UUID,
+        actor_user: User,
+        data: MilestoneCreate,
     ) -> MilestoneResponse:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot access tenant project milestones.")
+
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
+
+        # Permissions: PM, HR and Owner create (Rule 1)
+        is_hr_or_owner = actor_user.role in (UserRole.owner, UserRole.hr_admin)
+        is_pm = False
+
+        from app.modules.hr.repository import EmployeeRepository
+
+        emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+        if emp:
+            if project.manager_id == emp.id:
+                is_pm = True
+            mem = self.repo.get_member(company_id, project_id, emp.id)
+            if mem and mem.role in ("lead", "manager"):
+                is_pm = True
+
+        if not (is_pm or is_hr_or_owner):
+            raise ForbiddenError("Only project manager, HR, or owner can create milestones.")
+
+        # Validation (Rule 2)
+        if not data.title or not data.title.strip():
+            raise ValidationError("Milestone title cannot be blank.")
+        if len(data.title.strip()) > 255:
+            raise ValidationError("Milestone title exceeds maximum length of 255 characters.")
+
+        if data.due_date:
+            if project.start_date and data.due_date < project.start_date:
+                raise ValidationError("Milestone due date cannot precede project start date.")
+            if project.end_date and data.due_date > project.end_date:
+                raise ValidationError("Milestone due date cannot exceed project end date.")
+
         milestone = self.repo.create_milestone(project.company_id, project_id, data)
+
+        # Audit (Rule 6)
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor_user,
+            action="create_milestone",
+            entity_type="milestone",
+            entity_id=milestone.id,
+            details={"fields": ["title", "due_date", "status"]},
+        )
+
         return MilestoneResponse.from_orm(milestone)
 
-    def list_milestones(self, company_id: UUID | None, project_id: UUID) -> list[MilestoneResponse]:
+    def list_milestones(
+        self, company_id: UUID | None, project_id: UUID, actor_user: User
+    ) -> list[MilestoneResponse]:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot access tenant project milestones.")
+
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
+
+        # Scoping: Plain employee must be a project member or PM, HR/owner can read all
+        if actor_user.role not in (UserRole.owner, UserRole.hr_admin):
+            from app.modules.hr.repository import EmployeeRepository
+
+            emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+            if not emp:
+                raise NotFoundError("Project not found.")
+            member = self.repo.get_member(company_id, project_id, emp.id)
+            if not member and project.manager_id != emp.id:
+                raise NotFoundError("Project not found.")
+
         milestones = self.repo.list_milestones(project.company_id, project_id)
         return [MilestoneResponse.from_orm(m) for m in milestones]
 
     def update_milestone(
-        self, company_id: UUID | None, milestone_id: UUID, data: MilestoneUpdate
+        self,
+        company_id: UUID | None,
+        milestone_id: UUID,
+        actor_user: User,
+        data: MilestoneUpdate,
     ) -> MilestoneResponse:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot access tenant project milestones.")
+
         milestone = self.repo.get_milestone_by_id(company_id, milestone_id)
         if not milestone:
             raise NotFoundError("Milestone not found.")
+
+        project = self.repo.get_project_by_id(company_id, milestone.project_id)
+        if not project:
+            raise NotFoundError("Milestone not found.")
+
+        # Permissions: PM, HR, owner can edit (Rule 1)
+        # Non-members get 404 (Rule 1)
+        is_hr_or_owner = actor_user.role in (UserRole.owner, UserRole.hr_admin)
+        is_pm = False
+        is_member = False
+
+        from app.modules.hr.repository import EmployeeRepository
+
+        emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+        if emp:
+            if project.manager_id == emp.id:
+                is_pm = True
+            mem = self.repo.get_member(company_id, project.id, emp.id)
+            if mem:
+                is_member = True
+                if mem.role in ("lead", "manager"):
+                    is_pm = True
+
+        if not is_hr_or_owner and not is_pm and not is_member:
+            raise NotFoundError("Milestone not found.")
+
+        if not (is_pm or is_hr_or_owner):
+            raise ForbiddenError("Only project manager, HR, or owner can edit milestones.")
+
+        update_dict = data.dict(exclude_unset=True)
+
+        if "title" in update_dict:
+            if not update_dict["title"] or not str(update_dict["title"]).strip():
+                raise ValidationError("Milestone title cannot be blank.")
+            if len(str(update_dict["title"]).strip()) > 255:
+                raise ValidationError("Milestone title exceeds maximum length of 255 characters.")
+
+        if "due_date" in update_dict and update_dict["due_date"]:
+            due_d = update_dict["due_date"]
+            if project.start_date and due_d < project.start_date:
+                raise ValidationError("Milestone due date cannot precede project start date.")
+            if project.end_date and due_d > project.end_date:
+                raise ValidationError("Milestone due date cannot exceed project end date.")
+
+        # Rule 3: A milestone completes only when all associated tasks are done.
+        # Completing with open tasks returns 409; milestone with only cancelled tasks can complete.
+        if update_dict.get("status") == "completed" or update_dict.get(
+            "completion_percentage"
+        ) == Decimal("100.00"):
+            tasks = (
+                self.repo.db.query(Task)
+                .filter(Task.milestone_id == milestone.id, Task.company_id == project.company_id)
+                .all()
+            )
+            open_tasks = [t for t in tasks if t.status not in ("done", "cancelled")]
+            if open_tasks:
+                raise ConflictError("Cannot complete milestone while it has open tasks.")
+
         updated = self.repo.update_milestone(milestone, data)
+
+        # Audit (Rule 6)
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor_user,
+            action="update_milestone",
+            entity_type="milestone",
+            entity_id=milestone.id,
+            details={"fields": list(update_dict.keys())},
+        )
+
         return MilestoneResponse.from_orm(updated)
 
-    def delete_milestone(self, company_id: UUID | None, milestone_id: UUID) -> None:
+    def delete_milestone(
+        self, company_id: UUID | None, milestone_id: UUID, actor_user: User
+    ) -> None:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot access tenant project milestones.")
+
         milestone = self.repo.get_milestone_by_id(company_id, milestone_id)
         if not milestone:
             raise NotFoundError("Milestone not found.")
+
+        project = self.repo.get_project_by_id(company_id, milestone.project_id)
+        if not project:
+            raise NotFoundError("Milestone not found.")
+
+        # Permissions: PM, HR, owner can delete (Rule 1)
+        # Non-members get 404 (Rule 1)
+        is_hr_or_owner = actor_user.role in (UserRole.owner, UserRole.hr_admin)
+        is_pm = False
+        is_member = False
+
+        from app.modules.hr.repository import EmployeeRepository
+
+        emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+        if emp:
+            if project.manager_id == emp.id:
+                is_pm = True
+            mem = self.repo.get_member(company_id, project.id, emp.id)
+            if mem:
+                is_member = True
+                if mem.role in ("lead", "manager"):
+                    is_pm = True
+
+        if not is_hr_or_owner and not is_pm and not is_member:
+            raise NotFoundError("Milestone not found.")
+
+        if not (is_pm or is_hr_or_owner):
+            raise ForbiddenError("Only project manager, HR, or owner can delete milestones.")
+
         self.repo.delete_milestone(milestone)
+
+        # Audit (Rule 6)
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor_user,
+            action="delete_milestone",
+            entity_type="milestone",
+            entity_id=milestone.id,
+            details={"fields": ["id"]},
+        )
 
     # --- Project Documents ---
     def add_document(

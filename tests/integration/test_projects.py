@@ -136,7 +136,11 @@ def test_project_lifecycle_and_analytics(client: TestClient, db: Session, compan
     )
     assert res_ms.status_code == 201, res_ms.text
 
-    # 7. Complete Task
+    # 7. Complete Task (step-by-step: in_progress -> review -> done)
+    res_review = client.put(
+        f"/api/v1/projects/tasks/{task_id}", json={"status": "review"}, headers=headers
+    )
+    assert res_review.status_code == 200, res_review.text
     res_done = client.put(
         f"/api/v1/projects/tasks/{task_id}", json={"status": "done"}, headers=headers
     )

@@ -118,9 +118,11 @@ class TaskBase(BaseModel):
     description: str | None = None
     assigned_to: UUID | None = None
     priority: str = Field("medium", pattern="^(critical|high|medium|low)$")
-    status: str = Field("todo", pattern="^(todo|in_progress|review|done)$")
+    status: str = Field("todo", pattern="^(todo|in_progress|review|done|cancelled)$")
     due_date: date | None = None
     estimated_hours: Decimal | None = Field(None, ge=0)
+    milestone_id: UUID | None = None
+    position: int = Field(0, ge=0)
 
 
 class TaskCreate(TaskBase):
@@ -132,9 +134,15 @@ class TaskUpdate(BaseModel):
     description: str | None = None
     assigned_to: UUID | None = None
     priority: str | None = Field(None, pattern="^(critical|high|medium|low)$")
-    status: str | None = Field(None, pattern="^(todo|in_progress|review|done)$")
+    status: str | None = Field(None, pattern="^(todo|in_progress|review|done|cancelled)$")
     due_date: date | None = None
     estimated_hours: Decimal | None = Field(None, ge=0)
+    milestone_id: UUID | None = None
+    position: int | None = Field(None, ge=0)
+
+
+class TaskReorder(BaseModel):
+    position: int = Field(..., ge=0)
 
 
 class TaskResponse(TaskBase):
