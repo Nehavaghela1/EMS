@@ -551,21 +551,25 @@ class PerformanceService:
                 "Employee must submit their self-review before manager review can be submitted."
             )
 
-        # Only reporting manager can review. HR cannot submit manager review.
+        # Only reporting manager can review. HR cannot submit review if employee has a manager.
+        target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
+        if not target_emp:
+            raise NotFoundError("Employee profile not found.")
+
         if actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
             # Check if actor is also the reporting manager
             mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
-            target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
-            if not mgr_emp or not target_emp or target_emp.reporting_manager_id != mgr_emp.id:
-                raise ForbiddenError(
-                    "HR administrators cannot submit manager reviews on behalf of managers."
-                )
+            if target_emp.reporting_manager_id is not None:
+                if not mgr_emp or target_emp.reporting_manager_id != mgr_emp.id:
+                    raise ForbiddenError(
+                        "HR administrators cannot submit manager reviews on behalf of managers."
+                    )
+            # If employee has no manager assigned, HR admin / Owner acts as fallback reviewer
         elif actor.role == UserRole.manager:
             mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
             if not mgr_emp:
                 raise ForbiddenError("Manager profile not found.")
-            target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
-            if not target_emp or target_emp.reporting_manager_id != mgr_emp.id:
+            if target_emp.reporting_manager_id != mgr_emp.id:
                 raise ForbiddenError("Managers can only review goals for their direct reports.")
         else:
             raise ForbiddenError("Only reporting managers can submit manager reviews.")
