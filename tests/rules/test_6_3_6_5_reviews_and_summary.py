@@ -529,9 +529,8 @@ def test_6_3_R9_review_submit_and_reopen_audited(
     audit = db.query(AuditLog).filter(AuditLog.entity_id == rev_id).first()
     assert audit is not None
     assert "PERFORMANCE_REVIEW" in audit.action
-    assert (
-        "rating" not in str(audit.details)
-        or (audit.details is not None and audit.details.get("rating") is None)
+    assert "rating" not in str(audit.details) or (
+        audit.details is not None and audit.details.get("rating") is None
     ), "No private evaluation scores leaked into audit details"
 
 
