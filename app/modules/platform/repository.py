@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.pagination import PageParams, paginate
@@ -11,7 +11,14 @@ from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.models import Department, Employee
 from app.modules.identity.models import Company, User, UserRole
-from app.modules.payroll.models import PayrollItem, PayrollRun, PayrollRunStatus
+from app.modules.payroll.models import (
+    PayrollItem,
+    PayrollRun,
+    PayrollRunStatus,
+    PtSlab,
+    StatutoryRate,
+    TaxSlab,
+)
 from app.modules.platform.models import (
     Announcement,
     AuditLog,
@@ -19,6 +26,9 @@ from app.modules.platform.models import (
     FileObject,
     IndustryPreset,
     Notification,
+    RateChangeDraft,
+    RateReminderLog,
+    RateSource,
 )
 from app.modules.time_leave.models import (
     Attendance,
@@ -84,6 +94,179 @@ class PayrollStatsRepository:
             .group_by(PayrollRun.year, PayrollRun.month)
         ).all()
         return {(int(y), int(m)): Decimal(total) for y, m, total in rows}
+
+
+class RateSourceRepository:
+    """RLS: No — platform data (5.9)."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get(self, source_id: uuid.UUID) -> RateSource | None:
+        return self.db.scalar(
+            select(RateSource).where(RateSource.id == source_id, RateSource.deleted_at.is_(None))
+        )
+
+    def get_by_key(
+        self, country: str, state: str | None, scheme_group: str, source_url: str
+    ) -> RateSource | None:
+        return self.db.scalar(
+            select(RateSource).where(
+                RateSource.country == country,
+                func.coalesce(RateSource.state, "") == (state or ""),
+                RateSource.scheme_group == scheme_group,
+                RateSource.source_url == source_url,
+                RateSource.deleted_at.is_(None),
+            )
+        )
+
+    def list_sources(self, page_params: PageParams) -> tuple[list[RateSource], int, int]:
+        stmt = (
+            select(RateSource)
+            .where(RateSource.deleted_at.is_(None))
+            .order_by(RateSource.country, RateSource.title, RateSource.id)
+        )
+        return paginate(self.db, stmt, page_params)
+
+    def due_ids(self, today: date) -> list[uuid.UUID]:
+        return list(
+            self.db.scalars(
+                select(RateSource.id)
+                .where(
+                    RateSource.deleted_at.is_(None),
+                    RateSource.active.is_(True),
+                    RateSource.next_check_on <= today,
+                )
+                .order_by(RateSource.next_check_on, RateSource.id)
+            ).all()
+        )
+
+    def create(self, **kwargs) -> RateSource:
+        source = RateSource(**kwargs)
+        self.db.add(source)
+        self.db.flush()
+        return source
+
+    def update(self, source: RateSource, **kwargs) -> RateSource:
+        for key, value in kwargs.items():
+            setattr(source, key, value)
+        self.db.flush()
+        return source
+
+
+class RateDraftRepository:
+    """RLS: No — platform data (5.9)."""
+
+    OPEN_STATUSES = ("pending", "verified")
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get(self, draft_id: uuid.UUID, *, lock: bool = False) -> RateChangeDraft | None:
+        stmt = select(RateChangeDraft).where(
+            RateChangeDraft.id == draft_id, RateChangeDraft.deleted_at.is_(None)
+        )
+        return self.db.scalar(stmt.with_for_update() if lock else stmt)
+
+    def list_drafts(
+        self, page_params: PageParams, status: str | None
+    ) -> tuple[list[RateChangeDraft], int, int]:
+        stmt = select(RateChangeDraft).where(RateChangeDraft.deleted_at.is_(None))
+        if status is not None:
+            stmt = stmt.where(RateChangeDraft.status == status)
+        return paginate(self.db, stmt.order_by(RateChangeDraft.created_at.desc()), page_params)
+
+    def open_for_source(self, source_id: uuid.UUID) -> RateChangeDraft | None:
+        return self.db.scalar(
+            select(RateChangeDraft).where(
+                RateChangeDraft.source_id == source_id,
+                RateChangeDraft.status.in_(self.OPEN_STATUSES),
+                RateChangeDraft.deleted_at.is_(None),
+            )
+        )
+
+    def create(self, **kwargs) -> RateChangeDraft:
+        draft = RateChangeDraft(**kwargs)
+        self.db.add(draft)
+        self.db.flush()
+        return draft
+
+    def update(self, draft: RateChangeDraft, **kwargs) -> RateChangeDraft:
+        for key, value in kwargs.items():
+            setattr(draft, key, value)
+        self.db.flush()
+        return draft
+
+
+class RateReminderRepository:
+    """RLS: No — platform data (5.9). Which stale rate rows to remind about, and when each was
+    last reminded."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def stale_rows(self, today: date, older_than: date) -> list[tuple[str, uuid.UUID, str, str]]:
+        """(row kind, id, country, label) of the rows in force whose verification is older than
+        `older_than`: statutory rates and PT slabs in force today, tax slabs of the current
+        financial year. PT slabs are grouped to their state."""
+        found: list[tuple[str, uuid.UUID, str, str]] = []
+        for rate in self.db.scalars(
+            select(StatutoryRate).where(
+                StatutoryRate.deleted_at.is_(None),
+                StatutoryRate.effective_from <= today,
+                or_(StatutoryRate.effective_to.is_(None), StatutoryRate.effective_to >= today),
+                StatutoryRate.verified_on < older_than,
+            )
+        ).all():
+            found.append(("statutory_rate", rate.id, rate.country, rate.scheme))
+        seen_states: set[tuple[str, str]] = set()
+        for slab in self.db.scalars(
+            select(PtSlab)
+            .where(
+                PtSlab.deleted_at.is_(None),
+                PtSlab.effective_from <= today,
+                or_(PtSlab.effective_to.is_(None), PtSlab.effective_to >= today),
+                PtSlab.verified_on < older_than,
+            )
+            .order_by(PtSlab.country, PtSlab.state, PtSlab.income_min)
+        ).all():
+            if (slab.country, slab.state) in seen_states:
+                continue
+            seen_states.add((slab.country, slab.state))
+            found.append(("pt_slab", slab.id, slab.country, f"pt {slab.state}"))
+        financial_year = (
+            f"{today.year}-{today.year + 1}"
+            if today.month >= 4
+            else (f"{today.year - 1}-{today.year}")
+        )
+        seen_tax: set[tuple[str, str]] = set()
+        for tax in self.db.scalars(
+            select(TaxSlab)
+            .where(
+                TaxSlab.deleted_at.is_(None),
+                TaxSlab.financial_year == financial_year,
+                TaxSlab.effective_from <= today,
+                TaxSlab.verified_on < older_than,
+            )
+            .order_by(TaxSlab.country, TaxSlab.regime, TaxSlab.min_income)
+        ).all():
+            key = (tax.country, tax.regime.value)
+            if key in seen_tax:
+                continue
+            seen_tax.add(key)
+            found.append(("tax_slab", tax.id, tax.country, f"income tax {tax.regime.value}"))
+        return found
+
+    def last_reminded_on(self, row_kind: str, row_id: uuid.UUID) -> date | None:
+        return self.db.scalar(
+            select(func.max(RateReminderLog.reminded_on)).where(
+                RateReminderLog.row_kind == row_kind, RateReminderLog.row_id == row_id
+            )
+        )
+
+    def log(self, row_kind: str, row_id: uuid.UUID, reminded_on: date) -> None:
+        self.db.add(RateReminderLog(row_kind=row_kind, row_id=row_id, reminded_on=reminded_on))
+        self.db.flush()
 
 
 class IndustryPresetRepository:

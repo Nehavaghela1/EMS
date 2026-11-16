@@ -25,13 +25,14 @@ dependencies = [
     "python-multipart==0.0.32",
     "cryptography>=50.0.2,<51",
     "limits>=5.8.0,<6",
+    # The scheduled rate-source page check (5.9) fetches government pages with it.
+    "httpx==0.28.1",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
-    "httpx==0.28.1",
     "ruff==0.16.5",
     "mypy==2.3.1",
 ]

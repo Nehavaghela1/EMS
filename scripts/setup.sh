@@ -126,4 +126,11 @@ DATABASE_URL="postgresql+psycopg2://ems_app:${PG_APP_PASSWORD}@${PG_HOST}:${PG_P
   python3 -m app.db.seed.tax_slabs \
   || fail "Seeding tax_slabs failed — see the error above."
 
+# The government pages the daily rate check reads (5.9). Nothing is fetched at seed time, and a
+# re-run never resets a source's runtime fields (last result, stored hash, active flag).
+echo "==> Seeding rate-check sources (rate_sources)..."
+DATABASE_URL="postgresql+psycopg2://ems_app:${PG_APP_PASSWORD}@${PG_HOST}:${PG_PORT}/${PG_DB}" \
+  python3 -m app.db.seed.rate_sources \
+  || fail "Seeding rate_sources failed — see the error above."
+
 echo "==> Done. Database '${PG_DB}' is bootstrapped, migrated, and seeded (payroll can run from April 2025 to March 2027)."

@@ -1,41 +1,88 @@
 import logging
 import unicodedata
 import uuid
-from datetime import UTC, date, datetime
+from calendar import monthrange
+from collections import Counter
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.audit_context import audit_context_var
 from app.core.cache import delete_by_prefix, get_json, set_json
 from app.core.config import settings
-from app.core.exceptions import AppError, ForbiddenError, NotFoundError, ValidationError
+from app.core.exceptions import (
+    AppError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.pagination import PageParams
-from app.core.regions import COUNTRY_REGIONS_MAP, is_payroll_ready
+from app.core.regions import (
+    COUNTRY_REGIONS_MAP,
+    allowed_country_codes,
+    canonical_country,
+    canonical_state,
+    country_name,
+    is_payroll_ready,
+)
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
-from app.modules.payroll.models import PayrollRunStatus
+from app.modules.identity.repository import UserRepository
+from app.modules.payroll.models import PayrollRunStatus, TaxRegime
+from app.modules.payroll.repository import (
+    PtSlabRepository,
+    StatutoryRateRepository,
+    TaxSlabRepository,
+)
+from app.modules.payroll.schemas import (
+    PtSlabPutRequest,
+    PtSlabResponse,
+    StatutoryRateCreateRequest,
+    StatutoryRateResponse,
+    TaxSlabPostRequest,
+    TaxSlabResponse,
+)
 from app.modules.platform.models import (
     Announcement,
     AuditLog,
     FileObject,
     Notification,
+    RateChangeDraft,
+    RateSource,
 )
+from app.modules.platform.rate_fetcher import PageFetcher, content_hash
 from app.modules.platform.repository import (
     AuditRepository,
     DashboardRepository,
     IndustryPresetRepository,
     NotificationRepository,
     PayrollStatsRepository,
+    RateDraftRepository,
+    RateReminderRepository,
+    RateSourceRepository,
 )
 from app.modules.platform.schemas import (
     AnnouncementCreate,
     EmployeeDocumentResponse,
     GlobalSearchResponse,
     PayrollMonthStats,
+    RateDraftCreate,
+    RateDraftCurrent,
+    RateDraftDetail,
+    RateDraftReject,
+    RateDraftResponse,
+    RateDraftSource,
+    RateDraftUpdate,
+    RateDraftVerify,
+    RateSourceCreate,
+    RateSourceUpdate,
     RegionResponse,
     SearchResultItem,
     SignedUrlResponse,
@@ -886,6 +933,562 @@ class PayrollStatsService:
                 )
             )
         return result
+
+
+# --- 5.9 platform rate updates ------------------------------------------------------------
+
+FAILED_CHECK_RETRY_DAYS = 7
+STALE_RATE_DAYS = 180
+REMINDER_GAP_DAYS = 30
+DRAFT_CREATED_NOTICE = "rate_draft_created"
+CHECK_FAILED_NOTICE = "rate_check_failed"
+VERIFICATION_DUE_NOTICE = "rate_verification_due"
+
+
+def add_months(day: date, months: int) -> date:
+    """`day` plus whole months; the day of month is cut back to the last day when needed."""
+    index = day.month - 1 + months
+    year, month = day.year + index // 12, index % 12 + 1
+    return day.replace(year=year, month=month, day=min(day.day, monthrange(year, month)[1]))
+
+
+def _listed_country(code: str) -> str:
+    country = canonical_country(code)
+    if country is None:
+        raise ValidationError(
+            f"Country must be one of: {allowed_country_codes()}.", details={"field": "country"}
+        )
+    return country
+
+
+def _listed_state(country: str, state: str | None) -> str | None:
+    if state is None:
+        return None
+    canonical = canonical_state(country, state)
+    if canonical is None:
+        raise ValidationError(
+            f"The state must be one of the states of {country_name(country)} in the shared list.",
+            details={"field": "state"},
+        )
+    return canonical
+
+
+class RateSourceService:
+    """`/platform/rate-sources`: the pages the daily check reads (super admin only)."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.repo = RateSourceRepository(db)
+        self.audit = AuditService(db)
+
+    def list_sources(self, page_params: PageParams):
+        return self.repo.list_sources(page_params)
+
+    def create(self, data: RateSourceCreate, actor: User) -> RateSource:
+        country = _listed_country(data.country)
+        state = _listed_state(country, data.state)
+        if self.repo.get_by_key(country, state, data.scheme_group, data.source_url) is not None:
+            raise ConflictError(DUPLICATE_SOURCE_MESSAGE)
+        try:
+            source = self.repo.create(
+                country=country,
+                state=state,
+                scheme_group=data.scheme_group,
+                title=data.title,
+                source_url=data.source_url,
+                interval_months=data.interval_months,
+                next_check_on=data.next_check_on,
+                active=data.active,
+                last_result="never",
+            )
+        except IntegrityError:
+            self.db.rollback()
+            raise ConflictError(DUPLICATE_SOURCE_MESSAGE) from None
+        self.audit.record(
+            company_id=actor.company_id,
+            actor=actor,
+            action="RATE_SOURCE_CREATED",
+            entity_type="rate_source",
+            entity_id=source.id,
+            details={"country": country, "scheme_group": source.scheme_group},
+        )
+        self.db.commit()
+        return source
+
+    def update(self, source_id: uuid.UUID, data: RateSourceUpdate, actor: User) -> RateSource:
+        source = self.repo.get(source_id)
+        if source is None:
+            raise NotFoundError("Rate source not found.")
+        changes = data.model_dump(exclude_unset=True)
+        new_url = changes.get("source_url")
+        if new_url is not None and new_url != source.source_url:
+            if self.repo.get_by_key(source.country, source.state, source.scheme_group, new_url):
+                raise ConflictError(DUPLICATE_SOURCE_MESSAGE)
+            # A new page starts a new baseline: the old hash says nothing about it.
+            changes.update(content_hash=None, last_result="never", last_checked_on=None)
+        if changes:
+            try:
+                self.repo.update(source, **changes)
+            except IntegrityError:
+                self.db.rollback()
+                raise ConflictError(DUPLICATE_SOURCE_MESSAGE) from None
+            self.audit.record(
+                company_id=actor.company_id,
+                actor=actor,
+                action="RATE_SOURCE_UPDATED",
+                entity_type="rate_source",
+                entity_id=source.id,
+                details={"country": source.country, "fields": sorted(data.model_fields_set)},
+            )
+            self.db.commit()
+        return source
+
+
+DUPLICATE_SOURCE_MESSAGE = (
+    "A source with the same country, state, scheme group and link already exists."
+)
+DRAFT_CLOSED_MESSAGE = "A {status} draft can no longer be changed."
+
+
+def _validation_errors(exc: PydanticValidationError) -> list[dict[str, str]]:
+    """Where and why only: never the submitted value."""
+    return [{"loc": ".".join(str(p) for p in e["loc"]), "msg": e["msg"]} for e in exc.errors()]
+
+
+class RateDraftService:
+    """`/platform/rate-drafts`: a proposed change of live rates. pending -> verified ->
+    approved (or rejected). Only `approve` changes a rate row, and it does so through the very
+    services the direct write routes use (so the overlap, source and date rules are the same)."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.repo = RateDraftRepository(db)
+        self.source_repo = RateSourceRepository(db)
+        self.audit = AuditService(db)
+
+    # --- reading -------------------------------------------------------------------
+
+    def list_drafts(self, page_params: PageParams, status: str | None):
+        return self.repo.list_drafts(page_params, status)
+
+    def detail(self, draft_id: uuid.UUID) -> RateDraftDetail:
+        return self._detail(self._get(draft_id))
+
+    def _get(self, draft_id: uuid.UUID, *, lock: bool = False) -> RateChangeDraft:
+        draft = self.repo.get(draft_id, lock=lock)
+        if draft is None:
+            raise NotFoundError("Rate draft not found.")
+        return draft
+
+    def _detail(self, draft: RateChangeDraft) -> RateDraftDetail:
+        source = self.source_repo.get(draft.source_id) if draft.source_id else None
+        sources: list[RateDraftSource] = []
+        for fetched in draft.fetched_sources or []:
+            url = fetched.get("url", "")
+            sources.append(
+                RateDraftSource(
+                    title=source.title if source and source.source_url == url else None,
+                    url=url,
+                    fetched_at=fetched.get("fetched_at"),
+                    hash=fetched.get("hash"),
+                )
+            )
+        if source is not None and source.source_url not in [s.url for s in sources]:
+            sources.append(RateDraftSource(title=source.title, url=source.source_url))
+        base = RateDraftResponse.model_validate(draft)
+        return RateDraftDetail(
+            **base.model_dump(),
+            current=self._current(draft, source),
+            sources=sources,
+        )
+
+    def _current(self, draft: RateChangeDraft, source: RateSource | None) -> RateDraftCurrent:
+        """The rows in force today for the draft's country, state and scheme."""
+        today = utcnow().date()
+        group = source.scheme_group if source is not None else None
+        proposed = draft.proposed or {}
+        current = RateDraftCurrent()
+        if draft.kind == "statutory_rate" or (draft.kind == "no_numbers" and group == "epf_esi"):
+            scheme = proposed.get("scheme")
+            rows = StatutoryRateRepository(self.db).list_in_force(draft.country, today)
+            current.statutory_rates = [
+                StatutoryRateResponse.model_validate(r)
+                for r in rows
+                if scheme is None or r.scheme == scheme
+            ]
+        if draft.kind == "pt_slabs" or (draft.kind == "no_numbers" and group == "professional_tax"):
+            state = draft.state or (source.state if source is not None else None)
+            if state:
+                slabs = PtSlabRepository(self.db).list_for_state(
+                    draft.country, state, on_date=today
+                )
+                current.pt_slabs = [PtSlabResponse.model_validate(s) for s in slabs]
+        if draft.kind == "tax_slabs" or (draft.kind == "no_numbers" and group == "income_tax"):
+            year = proposed.get("financial_year") or (
+                f"{today.year}-{today.year + 1}"
+                if today.month >= 4
+                else f"{today.year - 1}-{today.year}"
+            )
+            for regime in TaxRegime:
+                rows_t = TaxSlabRepository(self.db).list_in_force(
+                    draft.country, year, regime, today
+                )
+                current.tax_slabs += [TaxSlabResponse.model_validate(t) for t in rows_t]
+        return current
+
+    # --- writing -------------------------------------------------------------------
+
+    @staticmethod
+    def _parse(kind: str, proposed: dict[str, Any], country: str, state: str | None) -> Any:
+        """The proposed numbers, validated by exactly the schema of the matching direct write
+        route, and checked to belong to the draft's country (and state)."""
+        schemas: dict[str, Any] = {
+            "statutory_rate": StatutoryRateCreateRequest,
+            "pt_slabs": PtSlabPutRequest,
+            "tax_slabs": TaxSlabPostRequest,
+        }
+        payload = {"verified_on": utcnow().date().isoformat(), **proposed}
+        try:
+            model = schemas[kind].model_validate(payload)
+        except PydanticValidationError as exc:
+            raise ValidationError(
+                "The proposed numbers are not valid.",
+                details={"field": "proposed", "errors": _validation_errors(exc)},
+            ) from None
+        if model.country != country:
+            raise ValidationError(
+                "The proposed numbers belong to another country than the draft.",
+                details={"field": "proposed"},
+            )
+        if kind == "pt_slabs" and canonical_state(country, model.state) != state:
+            raise ValidationError(
+                "The state of the numbers must be the draft's state.", details={"field": "state"}
+            )
+        return model
+
+    def _numbers(
+        self, kind: str, proposed: dict[str, Any] | None, country: str, state: str | None
+    ) -> tuple[dict[str, Any] | None, date | None]:
+        """What to store for `proposed` and `effective_from`, after checking kind and numbers."""
+        if kind == "no_numbers":
+            if proposed is not None:
+                raise ValidationError(
+                    "A draft without numbers carries no proposed numbers.",
+                    details={"field": "proposed"},
+                )
+            return None, None
+        if proposed is None:
+            raise ValidationError(
+                "The proposed numbers are required for this kind of draft.",
+                details={"field": "proposed"},
+            )
+        if kind == "pt_slabs" and state is None:
+            raise ValidationError(
+                "A professional-tax draft needs its state.", details={"field": "state"}
+            )
+        model = self._parse(kind, proposed, country, state)
+        return model.model_dump(mode="json"), model.effective_from
+
+    def create(self, data: RateDraftCreate, actor: User) -> RateDraftDetail:
+        country = _listed_country(data.country)
+        state = _listed_state(country, data.state)
+        if data.source_id is not None and self.source_repo.get(data.source_id) is None:
+            raise NotFoundError("Rate source not found.")
+        proposed, effective_from = self._numbers(data.kind, data.proposed, country, state)
+        draft = self.repo.create(
+            source_id=data.source_id,
+            country=country,
+            state=state,
+            kind=data.kind,
+            status="pending",
+            proposed=proposed,
+            effective_from=effective_from,
+            reason=data.reason,
+            fetched_sources=[],
+            created_by=actor.id,
+        )
+        self._audit(draft, actor, "RATE_DRAFT_CREATED")
+        self.db.commit()
+        return self._detail(draft)
+
+    def update(self, draft_id: uuid.UUID, data: RateDraftUpdate, actor: User) -> RateDraftDetail:
+        draft = self._get(draft_id, lock=True)
+        if draft.status not in RateDraftRepository.OPEN_STATUSES:
+            raise ConflictError(DRAFT_CLOSED_MESSAGE.format(status=draft.status))
+        fields = data.model_fields_set
+        kind = data.kind if "kind" in fields and data.kind is not None else draft.kind
+        proposed = data.proposed if "proposed" in fields else draft.proposed
+        stored, effective_from = self._numbers(kind, proposed, draft.country, draft.state)
+        changes: dict[str, Any] = {
+            "kind": kind,
+            "proposed": stored,
+            "effective_from": effective_from,
+        }
+        if "reason" in fields and data.reason is not None:
+            changes["reason"] = data.reason
+        if draft.status == "verified":
+            # Verification is void after a change: the sources must be looked at again.
+            changes.update(
+                status="pending", verified_by=None, verified_at=None, sources_checked=None
+            )
+        self.repo.update(draft, **changes)
+        self._audit(draft, actor, "RATE_DRAFT_UPDATED")
+        self.db.commit()
+        return self._detail(draft)
+
+    def verify(self, draft_id: uuid.UUID, data: RateDraftVerify, actor: User) -> RateDraftDetail:
+        draft = self._get(draft_id, lock=True)
+        if draft.status != "pending":
+            raise ConflictError(
+                f"Only a pending draft can be verified; this one is {draft.status}."
+            )
+        if draft.kind == "no_numbers" or draft.proposed is None:
+            raise ConflictError("The numbers must be filled in before this draft can be verified.")
+        if draft.source_id is not None:
+            source = self.source_repo.get(draft.source_id)
+            if source is not None and source.source_url not in data.sources_checked:
+                raise ValidationError(
+                    "The draft's own source must be one of the sources checked.",
+                    details={"field": "sources_checked"},
+                )
+        try:
+            self._parse(draft.kind, draft.proposed, draft.country, draft.state)
+        except ValidationError:
+            raise ConflictError("The proposed numbers are not valid; correct them first.") from None
+        self.repo.update(
+            draft,
+            status="verified",
+            verified_by=actor.id,
+            verified_at=utcnow(),
+            sources_checked=list(data.sources_checked),
+        )
+        self._audit(draft, actor, "RATE_DRAFT_VERIFIED")
+        self.db.commit()
+        return self._detail(draft)
+
+    def approve(self, draft_id: uuid.UUID, actor: User) -> RateDraftDetail:
+        draft = self._get(draft_id, lock=True)
+        if draft.status != "verified":
+            raise ConflictError(
+                f"Only a verified draft can be approved; this one is {draft.status}. "
+                "Verify it first."
+            )
+        # Imported here: payroll's service module imports this module's audit service.
+        from app.modules.payroll.service import (
+            PtSlabService,
+            StatutoryRateService,
+            TaxSlabService,
+        )
+
+        try:
+            model = self._parse(draft.kind, draft.proposed or {}, draft.country, draft.state)
+            model = model.model_copy(update={"verified_on": utcnow().date()})
+            # The same code as the direct routes, without their own commit: the rows are
+            # closed, the new rows added, and the draft marked approved in ONE save.
+            if draft.kind == "statutory_rate":
+                StatutoryRateService(self.db).add_rate(model, actor, commit=False)
+            elif draft.kind == "pt_slabs":
+                PtSlabService(self.db).add_slab_set(model, actor, commit=False)
+            else:
+                TaxSlabService(self.db).add_bracket_set(model, actor, commit=False)
+            self.repo.update(draft, status="approved", approved_by=actor.id, approved_at=utcnow())
+            self._remember_fetched_hash(draft)
+            self._audit(draft, actor, "RATE_DRAFT_APPROVED")
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return self._detail(draft)
+
+    def reject(self, draft_id: uuid.UUID, data: RateDraftReject, actor: User) -> RateDraftDetail:
+        draft = self._get(draft_id, lock=True)
+        if draft.status not in RateDraftRepository.OPEN_STATUSES:
+            raise ConflictError(DRAFT_CLOSED_MESSAGE.format(status=draft.status))
+        self.repo.update(draft, status="rejected", decision_note=data.note)
+        # The page that raised this draft is now the known page: the same unchanged page must
+        # not raise the same draft again.
+        self._remember_fetched_hash(draft)
+        self._audit(draft, actor, "RATE_DRAFT_REJECTED")
+        self.db.commit()
+        return self._detail(draft)
+
+    def _remember_fetched_hash(self, draft: RateChangeDraft) -> None:
+        if draft.source_id is None:
+            return
+        source = self.source_repo.get(draft.source_id)
+        if source is None:
+            return
+        fetched = [f for f in draft.fetched_sources or [] if f.get("url") == source.source_url]
+        if fetched and fetched[-1].get("hash"):
+            self.source_repo.update(source, content_hash=fetched[-1]["hash"])
+
+    def _audit(self, draft: RateChangeDraft, actor: User, action: str) -> None:
+        # Ids, country, kind and status names only: never a rate value or page text.
+        self.audit.record(
+            company_id=actor.company_id,
+            actor=actor,
+            action=action,
+            entity_type="rate_change_draft",
+            entity_id=draft.id,
+            details={"country": draft.country, "kind": draft.kind, "status": draft.status},
+        )
+
+
+class RateCheckService:
+    """The daily page check (5.9). It reads each due source through the fetcher it is given,
+    compares the SHA-256 of the normalised text with the stored one and records the result. A
+    changed page makes a `no_numbers` draft and notifies the super admins; nothing here ever
+    writes to a rate table."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.sources = RateSourceRepository(db)
+        self.drafts = RateDraftRepository(db)
+        self.reminders = RateReminderRepository(db)
+        self.users = UserRepository(db)
+        self.audit = AuditService(db)
+
+    def run(self, fetcher: PageFetcher) -> dict[str, Any]:
+        today = utcnow().date()
+        results: Counter[str] = Counter()
+        for source_id in self.sources.due_ids(today):
+            # One source at a time, each in its own transaction: a bad one cannot stop the rest.
+            try:
+                result, notice = self._check_one(source_id, fetcher, today)
+            except Exception:  # noqa: BLE001 - one source must never stop the others
+                self.db.rollback()
+                logger.exception("rate_source_check_failed", extra={"source_id": str(source_id)})
+                results["error"] += 1
+                continue
+            results[result] += 1
+            if notice is not None:
+                self._notify(*notice)
+        reminded = self._remind_stale(today)
+        return {"checked": sum(results.values()), "results": dict(results), "reminded": reminded}
+
+    def _check_one(
+        self, source_id: uuid.UUID, fetcher: PageFetcher, today: date
+    ) -> tuple[str, tuple[str, RateSource, uuid.UUID | None] | None]:
+        source = self.sources.get(source_id)
+        if source is None or not source.active:
+            return "skipped", None
+        try:
+            page = fetcher.fetch(source.source_url)
+            fetched_hash = content_hash(page.text)
+        except Exception:  # noqa: BLE001 - any failure to read the page is a failed check
+            retry_on = today + timedelta(days=FAILED_CHECK_RETRY_DAYS)
+            self.sources.update(
+                source, last_checked_on=today, last_result="fetch_failed", next_check_on=retry_on
+            )
+            self.db.commit()
+            return "fetch_failed", (CHECK_FAILED_NOTICE, source, None)
+
+        next_check = add_months(today, source.interval_months)
+        notice: tuple[str, RateSource, uuid.UUID | None] | None = None
+        if source.content_hash is None:
+            result = "baseline"
+            self.sources.update(source, content_hash=fetched_hash)
+        elif source.content_hash == fetched_hash:
+            result = "unchanged"
+        else:
+            result = "changed"
+            if self.drafts.open_for_source(source.id) is None:
+                draft = self.drafts.create(
+                    source_id=source.id,
+                    country=source.country,
+                    state=source.state,
+                    kind="no_numbers",
+                    status="pending",
+                    proposed=None,
+                    reason=(
+                        f"The page '{source.title}' changed since it was last checked. Read it, "
+                        "fill in the numbers, verify and approve."
+                    ),
+                    fetched_sources=[
+                        {
+                            "url": source.source_url,
+                            "fetched_at": utcnow().isoformat(),
+                            "hash": fetched_hash,
+                        }
+                    ],
+                )
+                self.audit.record(
+                    company_id=None,
+                    actor=None,
+                    action="RATE_SOURCE_CHANGED",
+                    entity_type="rate_change_draft",
+                    entity_id=draft.id,
+                    details={
+                        "country": source.country,
+                        "scheme_group": source.scheme_group,
+                        "status": draft.status,
+                    },
+                )
+                notice = (DRAFT_CREATED_NOTICE, source, draft.id)
+        self.sources.update(
+            source, last_checked_on=today, last_result=result, next_check_on=next_check
+        )
+        self.db.commit()
+        return result, notice
+
+    def _notify(self, kind: str, source: RateSource, draft_id: uuid.UUID | None) -> None:
+        """After the commit: a failing notice never undoes the saved result."""
+        where = f"{source.country} {source.scheme_group}"
+        if kind == DRAFT_CREATED_NOTICE:
+            title = "Rate page changed"
+            message = f"{where}: the source page changed. A draft was created for review."
+            url = f"/platform/rate-drafts/{draft_id}"
+        else:
+            title = "Rate page check failed"
+            message = (
+                f"{where}: the source page could not be read. It will be tried again on "
+                f"{source.next_check_on.isoformat()}."
+            )
+            url = "/platform/rate-sources"
+        self._tell_super_admins(kind, title, message, url, draft_id or source.id)
+
+    def _tell_super_admins(
+        self, kind: str, title: str, message: str, url: str, entity_id: uuid.UUID
+    ) -> None:
+        try:
+            notifier = NotificationService(self.db)
+            for admin in self.users.list_active_super_admins():
+                notifier.notify(
+                    company_id=admin.company_id,
+                    user_id=admin.id,
+                    type=kind,
+                    title=title,
+                    message=message,
+                    action_url=url,
+                    entity_type="rate",
+                    entity_id=entity_id,
+                )
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - the result is already saved; a notice must not undo it
+            self.db.rollback()
+            logger.warning("rate_notification_failed", exc_info=True)
+
+    def _remind_stale(self, today: date) -> int:
+        """A reminder for each rate row in force that was last verified over 180 days ago, at
+        most one per row per 30 days."""
+        reminded = 0
+        stale = self.reminders.stale_rows(today, today - timedelta(days=STALE_RATE_DAYS))
+        for row_kind, row_id, country, label in stale:
+            last = self.reminders.last_reminded_on(row_kind, row_id)
+            if last is not None and (today - last).days < REMINDER_GAP_DAYS:
+                continue
+            self.reminders.log(row_kind, row_id, today)
+            self.db.commit()
+            self._tell_super_admins(
+                VERIFICATION_DUE_NOTICE,
+                "Rate needs re-checking",
+                f"{country} {label}: the rate in force was last verified over "
+                f"{STALE_RATE_DAYS} days ago. Check it against its official source.",
+                "/platform/rate-sources",
+                row_id,
+            )
+            reminded += 1
+        return reminded
 
 
 class GlobalSearchService:

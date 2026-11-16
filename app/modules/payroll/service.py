@@ -971,6 +971,15 @@ def _assert_contiguous(ranges: list[tuple[Decimal, Decimal | None]], what: str) 
                 raise ValidationError(f"The {what}s have a gap between {high} and {following}.")
 
 
+def _save(db: Session, commit: bool) -> None:
+    """Commit, or only flush when the caller (a rate draft approval) owns the transaction and
+    commits once itself, so a failing step leaves nothing behind."""
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+
+
 def _listed_country(code: str) -> str:
     """The upper-case code of a country in the shared list, else a 422 naming the codes."""
     country = canonical_country(code)
@@ -1005,7 +1014,9 @@ class StatutoryRateService:
             country = _listed_country(country)
         return self.repo.list_rates(page_params, scheme, on_date, country)
 
-    def add_rate(self, data: StatutoryRateCreateRequest, actor: User) -> StatutoryRate:
+    def add_rate(
+        self, data: StatutoryRateCreateRequest, actor: User, *, commit: bool = True
+    ) -> StatutoryRate:
         """A new rate adds a row and ends the open row the day before, in one save. Rows of
         a scheme in one country never overlap: checked here (naming the dates) and by the
         database."""
@@ -1064,7 +1075,7 @@ class StatutoryRateService:
                 "closed_rate_id": str(open_row.id) if open_row is not None else None,
             },
         )
-        self.db.commit()
+        _save(self.db, commit)
         return rate
 
 
@@ -1085,7 +1096,7 @@ class PtSlabService:
         country = StatutoryConfigService(self.db).company_country(company_id)
         return self.repo.list_for_state(country, config.pt_state)
 
-    def add_slab_set(self, data: PtSlabPutRequest, actor: User) -> list:
+    def add_slab_set(self, data: PtSlabPutRequest, actor: User, *, commit: bool = True) -> list:
         """SA only. Always adds a new effective-dated set and ends the state's open set the
         day before — never mutates a historical row, so a payroll date before this change
         keeps resolving to whatever was in force then (Spec 12)."""
@@ -1143,7 +1154,7 @@ class PtSlabService:
                 "slab_ids": [str(s.id) for s in created],
             },
         )
-        self.db.commit()
+        _save(self.db, commit)
         return created
 
 
@@ -1158,7 +1169,9 @@ class TaxSlabService:
     def list_for(self, country: str, financial_year: str, regime=None) -> list:
         return self.repo.list_for(_listed_country(country), financial_year, regime)
 
-    def add_bracket_set(self, data: TaxSlabPostRequest, actor: User) -> list:
+    def add_bracket_set(
+        self, data: TaxSlabPostRequest, actor: User, *, commit: bool = True
+    ) -> list:
         """SA only. Same append-only reasoning as PtSlabService: a financial year and regime
         gets one bracket set; a second one is refused instead of mixing with the first."""
         _listed_country(data.country)
@@ -1199,7 +1212,7 @@ class TaxSlabService:
                 "slab_ids": [str(s.id) for s in created],
             },
         )
-        self.db.commit()
+        _save(self.db, commit)
         return created
 
 

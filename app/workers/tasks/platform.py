@@ -18,7 +18,9 @@ from app.core.csv_safety import csv_safe_cell
 from app.core.exceptions import ExportTooLargeError
 from app.db.rls import bind_tenant_to_session
 from app.db.session import SessionLocal
+from app.modules.platform.rate_fetcher import OfficialPageFetcher, PageFetcher
 from app.modules.platform.repository import AuditRepository
+from app.modules.platform.service import RateCheckService
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger("app")
@@ -197,5 +199,25 @@ def cleanup_old_notifications_task() -> int:
 
         logger.info("old_notifications_cleaned", extra={"deleted_count": deleted_total})
         return deleted_total
+    finally:
+        db.close()
+
+
+def get_page_fetcher() -> PageFetcher:
+    """The fetcher the rate check uses. Overridable by tests, which never call a real site."""
+    return OfficialPageFetcher()
+
+
+@celery_app.task(name="app.workers.tasks.platform.check_rate_sources_task")
+def check_rate_sources_task() -> dict:
+    """5.9: daily. Reads every active rate source that is due, one at a time, and records
+    whether its page changed. It never changes a live rate: a changed page only makes a draft
+    and notifies the super admins. Also sends the stale-rate reminders."""
+    db = get_task_db_session()
+    try:
+        bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
+        result = RateCheckService(db).run(get_page_fetcher())
+        logger.info("rate_sources_checked", extra=result)
+        return result
     finally:
         db.close()

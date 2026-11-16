@@ -62,6 +62,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.platform.cleanup_expired_exports_task",
         "schedule": crontab(hour=3, minute=30),
     },
+    "check-rate-sources-daily": {
+        "task": "app.workers.tasks.platform.check_rate_sources_task",
+        "schedule": crontab(hour=4, minute=0),
+    },
     "cleanup-old-notifications-daily": {
         "task": "app.workers.tasks.platform.cleanup_old_notifications_task",
         "schedule": crontab(hour=2, minute=30),

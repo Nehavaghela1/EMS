@@ -232,6 +232,18 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/regions"): AUTHENTICATED,
     # 5.8: anonymous per-month payroll totals across companies, for the platform only.
     ("GET", "/api/v1/platform/payroll-stats"): ROLES(UserRole.super_admin),
+    # 5.9: platform rate updates. Every route is super_admin only: sources the daily check
+    # reads, and drafts that are filled in, verified and approved (only approval changes rates).
+    ("GET", "/api/v1/platform/rate-sources"): ROLES(UserRole.super_admin),
+    ("POST", "/api/v1/platform/rate-sources"): ROLES(UserRole.super_admin),
+    ("PATCH", "/api/v1/platform/rate-sources/{source_id}"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/rate-drafts"): ROLES(UserRole.super_admin),
+    ("POST", "/api/v1/platform/rate-drafts"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/rate-drafts/{draft_id}"): ROLES(UserRole.super_admin),
+    ("PUT", "/api/v1/platform/rate-drafts/{draft_id}"): ROLES(UserRole.super_admin),
+    ("POST", "/api/v1/platform/rate-drafts/{draft_id}/verify"): ROLES(UserRole.super_admin),
+    ("POST", "/api/v1/platform/rate-drafts/{draft_id}/approve"): ROLES(UserRole.super_admin),
+    ("POST", "/api/v1/platform/rate-drafts/{draft_id}/reject"): ROLES(UserRole.super_admin),
     # 5.8: company payroll routes use require_company_role / get_company_user, which refuse a
     # super admin; the roles below are the whole decision. Platform data (statutory rates, PT
     # slabs, tax slabs) is the exception and still lets super_admin in.
