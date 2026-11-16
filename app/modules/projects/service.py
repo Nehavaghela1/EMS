@@ -909,9 +909,7 @@ class ProjectService:
             and task.assigned_to is not None
             and caller_emp_id != task.assigned_to
         ):
-            raise ForbiddenError(
-                "Only the task assignee or Project Lead/Manager can update this task."
-            )
+            raise ForbiddenError("Only the task assignee or Project Lead can modify this task.")
 
         # Cancelled is always allowed by PM, HR, owner
         is_cancelling = data.status == "cancelled"
