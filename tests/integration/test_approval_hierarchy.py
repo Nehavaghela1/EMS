@@ -957,6 +957,25 @@ def _create_pending_time_entry(
     assert proj.status_code == 201
     proj_id = proj.json()["id"]
 
+    me_res = client.get("/api/v1/auth/me", headers=emp_headers)
+    assert me_res.status_code == 200
+    user_id = me_res.json()["id"]
+
+    emp_res = client.get(f"/api/v1/employees?user_id={user_id}", headers=company.hr_headers)
+    assert emp_res.status_code == 200
+    emp_data = emp_res.json()
+    emp_list = emp_data.get("items", []) if isinstance(emp_data, dict) else emp_data
+    matched = [e for e in emp_list if e.get("user_id") == user_id]
+    emp_id = matched[0]["id"] if matched else emp_list[0]["id"]
+
+    # Add employee as member of project
+    mem_res = client.post(
+        f"/api/v1/projects/{proj_id}/members",
+        headers=company.hr_headers,
+        json={"employee_id": emp_id, "role": "member"},
+    )
+    assert mem_res.status_code == 201, f"Failed to add member {emp_id}: {mem_res.text}"
+
     entry = client.post(
         "/api/v1/projects/time-entries",
         headers=emp_headers,

@@ -80,14 +80,19 @@ def list_projects(
 
 
 @router.post("/time-entries", response_model=TimeEntryResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def create_time_entry(
+    request: Request,
     data: TimeEntryCreate,
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
     from app.modules.hr.models import Employee
 
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot manage company projects directly.")
+
+    cid = current_user.company_id
     service = ProjectService(db)
     project = service.repo.get_project_by_id(cid, data.project_id)
     if not project:
@@ -120,7 +125,11 @@ def create_time_entry(
 
     is_admin_or_manager = current_user.role in HR_OR_MANAGER_ROLES
     return service.create_time_entry(
-        project.company_id, emp_id, data, is_admin_or_manager=is_admin_or_manager
+        project.company_id,
+        emp_id,
+        data,
+        is_admin_or_manager=is_admin_or_manager,
+        actor=current_user,
     )
 
 
@@ -131,9 +140,13 @@ def list_time_entries(
     status: str | None = Query(None, pattern="^(draft|submitted|approved|rejected)$"),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot view company project data.")
     service = ProjectService(db)
     target_employee_id = employee_id
     if current_user.role == UserRole.employee:
@@ -142,17 +155,27 @@ def list_time_entries(
         emp = EmployeeRepository(db).get_by_user_id(current_user.company_id, current_user.id)
         target_employee_id = emp.id if emp else None
     return service.list_time_entries(
-        current_user.company_id, project_id, target_employee_id, status, start_date, end_date
+        current_user.company_id,
+        project_id,
+        target_employee_id,
+        status,
+        start_date,
+        end_date,
+        actor=current_user,
     )
 
 
 @router.put("/time-entries/{entry_id}", response_model=TimeEntryResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def update_time_entry(
+    request: Request,
     entry_id: UUID,
     data: TimeEntryUpdate,
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot modify company project data.")
     service = ProjectService(db)
     user_emp_id = None
     if current_user.role == UserRole.employee:
@@ -160,11 +183,15 @@ def update_time_entry(
 
         emp = EmployeeRepository(db).get_by_user_id(current_user.company_id, current_user.id)
         user_emp_id = emp.id if emp else None
-    return service.update_time_entry(current_user.company_id, entry_id, user_emp_id, data)
+    return service.update_time_entry(
+        current_user.company_id, entry_id, user_emp_id, data, actor=current_user
+    )
 
 
 @router.post("/time-entries/{entry_id}/approve", response_model=TimeEntryResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def approve_time_entry(
+    request: Request,
     entry_id: UUID,
     status_action: str = Query("approved", pattern="^(approved|rejected)$"),
     rejection_reason: str | None = Query(None),
@@ -173,6 +200,8 @@ def approve_time_entry(
         require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
     ),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot approve or reject time entries.")
     service = ProjectService(db)
     return service.approve_reject_time_entry(
         current_user.company_id,
@@ -185,11 +214,15 @@ def approve_time_entry(
 
 
 @router.delete("/time-entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def delete_time_entry(
+    request: Request,
     entry_id: UUID,
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.role == UserRole.super_admin:
+        raise ForbiddenError("Super admin cannot delete company project data.")
     service = ProjectService(db)
     user_emp_id = None
     if current_user.role == UserRole.employee:
@@ -197,7 +230,9 @@ def delete_time_entry(
 
         emp = EmployeeRepository(db).get_by_user_id(current_user.company_id, current_user.id)
         user_emp_id = emp.id if emp else None
-    service.delete_time_entry(current_user.company_id, entry_id, user_employee_id=user_emp_id)
+    service.delete_time_entry(
+        current_user.company_id, entry_id, user_employee_id=user_emp_id, actor=current_user
+    )
 
 
 # --- Tasks & Task Comments Specific Endpoints (not starting with {project_id}) ---
@@ -357,7 +392,9 @@ def delete_project(
 
 
 @router.get("/{project_id}/summary", response_model=ProjectSummaryResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_project_summary(
+    request: Request,
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
     current_user: User = Depends(get_current_user),
@@ -365,7 +402,7 @@ def get_project_summary(
     if current_user.role == UserRole.super_admin:
         raise ForbiddenError("Super admin cannot view company project data.")
     service = ProjectService(db)
-    return service.get_project_summary(current_user.company_id, project_id)
+    return service.get_project_summary(current_user.company_id, project_id, actor=current_user)
 
 
 # --- Project Members (Routes 105-107) ---
