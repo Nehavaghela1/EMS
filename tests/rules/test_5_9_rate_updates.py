@@ -162,7 +162,7 @@ def _source_body(**over: Any) -> dict[str, Any]:
         "state": None,
         "scheme_group": "epf_esi",
         "title": f"Test source {uuid.uuid4().hex[:6]}",
-        "source_url": ESIC_URL,
+        "source_url": f"https://web.esic.gov.in/web/esic/contribution/{uuid.uuid4().hex[:8]}",
         "interval_months": 6,
         "next_check_on": (_today() + timedelta(days=30)).isoformat(),
     }
