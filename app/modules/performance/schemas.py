@@ -59,7 +59,7 @@ class PerformanceCycleResponse(BaseModel):
 class GoalCreateItem(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
-    weightage: Decimal = Field(gt=0, le=100)
+    weightage: Decimal = Field(gt=Decimal("0"), le=Decimal("100"))
     target_value: str | None = None
 
 
@@ -89,7 +89,7 @@ class GoalProgressHistoryResponse(BaseModel):
 class GoalUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
-    weightage: Decimal | None = Field(default=None, gt=0, le=100)
+    weightage: Decimal | None = Field(default=None, gt=Decimal("0"), le=Decimal("100"))
     target_value: str | None = None
     status: GoalStatus | None = None
     reason: str | None = None
@@ -113,12 +113,12 @@ class PerformanceGoalResponse(BaseModel):
 
 
 class SelfReviewRequest(BaseModel):
-    rating: Decimal = Field(ge=1.0, le=5.0)
+    rating: Decimal = Field(ge=Decimal("1.0"), le=Decimal("5.0"))
     comments: str | None = None
 
 
 class ManagerReviewRequest(BaseModel):
-    rating: Decimal = Field(ge=1.0, le=5.0)
+    rating: Decimal = Field(ge=Decimal("1.0"), le=Decimal("5.0"))
     comments: str | None = None
 
 
