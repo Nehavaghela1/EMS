@@ -151,10 +151,18 @@ def list_performance_goals(
 
             can_approve_for(db, user, target_emp)
     else:
-        # If employee_id passed was actually user.id, resolve to employee record if matching
-        emp_by_user = EmployeeRepository(db).get_by_user_id(user.company_id, employee_id)
-        if emp_by_user:
+        # HR/Admin: verify employee exists in this company
+        emp = EmployeeRepository(db).get_by_id(employee_id, user.company_id)
+        if emp is None:
+            emp_by_user = EmployeeRepository(db).get_by_user_id(user.company_id, employee_id)
+            if not emp_by_user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Employee not found.",
+                )
             target_emp_id = emp_by_user.id
+        else:
+            target_emp_id = emp.id
 
     goals = service.list_goals(user.company_id, target_emp_id, user)
     return [PerformanceGoalResponse.model_validate(g) for g in goals]

@@ -650,6 +650,9 @@ class PerformanceService:
         if review is None:
             raise NotFoundError("Performance review not found.")
 
+        if review.status == "draft":
+            raise ConflictError("Review is already in draft status.")
+
         self.review_repo.update(
             review,
             status="draft",
@@ -675,6 +678,16 @@ class PerformanceService:
         review = self.review_repo.get_by_id(review_id, company_id)
         if review is None:
             raise NotFoundError("Performance review not found.")
+
+        # Scoping: HR, owner, reviewer, or the reviewed employee
+        if actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+            goal = self.goal_repo.get_by_id(review.goal_id, company_id)
+            emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            is_reviewer = review.reviewer_id == actor.id
+            is_reviewed_emp = emp and goal and goal.employee_id == emp.id
+            if not (is_reviewer or is_reviewed_emp):
+                raise ForbiddenError("You are not authorized to view this review.")
+
         return review
 
     def list_goal_reviews(
