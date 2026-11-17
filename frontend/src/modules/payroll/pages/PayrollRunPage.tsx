@@ -813,6 +813,17 @@ export function PayrollRunPage() {
             year={r.year}
           />
         )}
+        {/* Delete / Cancel Run confirmation dialog */}
+        <ConfirmDialog
+          open={Boolean(runToDelete)}
+          title="Cancel Draft Payroll Run?"
+          message="Are you sure you want to cancel and delete this draft payroll run?"
+          confirmLabel="Cancel Run"
+          danger
+          busy={deletingRun}
+          onConfirm={handleDeleteRun}
+          onCancel={() => setRunToDelete(null)}
+        />
       </div>
     );
   }
