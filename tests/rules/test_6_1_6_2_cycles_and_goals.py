@@ -564,15 +564,17 @@ def test_6_1_R12_rate_limit_cycle_write_routes(
     hr_headers = _auth_headers(p1_setup["hr_a"])
     limiter.reset()
 
-    # Rapid cycle creation attempts
+    # Rapid cycle creation attempts (limit is 30/minute, so 35+ non-clashing dates will hit 429)
     hit_429 = False
-    for i in range(40):
+    for i in range(50):
+        # Use different years to avoid date overlaps
+        year = 2040 + i
         res = client.post(
             "/api/v1/performance/cycles",
             json={
                 "name": f"Rate Limit Cycle {i}",
-                "start_date": f"2040-{i % 12 + 1:02d}-01",
-                "end_date": f"2040-{i % 12 + 1:02d}-25",
+                "start_date": f"{year}-01-01",
+                "end_date": f"{year}-01-25",
             },
             headers=hr_headers,
         )

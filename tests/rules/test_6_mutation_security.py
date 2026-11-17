@@ -268,7 +268,9 @@ def test_sec_cross_tenant_idor_all_performance_endpoints(
     assert r.status_code == 404
 
     # 3. Attacker tries to read Company A goals -> 404
-    r = client.get(f"/api/v1/performance/goals/{sec_setup['emp_profile_id']}", headers=attacker_h)
+    r = client.get(
+        f"/api/v1/performance/goals/{sec_setup['emp_profile_id']}", headers=attacker_h
+    )
     assert r.status_code == 404
 
     # 4. Attacker tries to modify Company A goal -> 404
@@ -296,7 +298,9 @@ def test_sec_cross_tenant_idor_all_performance_endpoints(
     assert r.status_code == 404
 
 
-def test_sec_unauthorized_manager_spoofing_attempt(client: TestClient, sec_setup: dict[str, Any]):
+def test_sec_unauthorized_manager_spoofing_attempt(
+    client: TestClient, sec_setup: dict[str, Any]
+):
     """
     Security check: A manager who is NOT in the employee's reporting chain
     attempts to rate their goal or initiate a PIP. Must return 403 Forbidden.

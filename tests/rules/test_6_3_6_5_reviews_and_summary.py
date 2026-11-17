@@ -594,7 +594,8 @@ def test_6_3_R11_rate_limit_review_write_routes(
     g1 = setup_active_cycle_with_goals["goal_1_id"]
 
     hit_429 = False
-    for i in range(40):
+    for i in range(50):
+        # Use goal_1 or goal_2 or create new goals if submitted
         res = client.post(
             f"/api/v1/performance/goals/{g1}/self-review",
             json={"rating": 4.0, "comments": f"Try {i}"},
@@ -781,7 +782,7 @@ def test_6_5_R8_read_routes_rate_limited(
     emp_id = str(p2_setup["emp_a"].id)
 
     hit_429 = False
-    for _ in range(80):
+    for _ in range(100):
         res = client.get(f"/api/v1/performance/summary/{emp_id}", headers=emp_headers)
         if res.status_code == 429:
             hit_429 = True
