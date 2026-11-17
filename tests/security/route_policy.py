@@ -329,6 +329,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/api/v1/projects/tasks/{task_id}/reorder"): AUTHENTICATED,
     ("GET", "/api/v1/projects/tasks/{task_id}/comments"): AUTHENTICATED,
     ("POST", "/api/v1/projects/tasks/{task_id}/comments"): AUTHENTICATED,
+    ("PUT", "/api/v1/projects/tasks/{task_id}/comments/{comment_id}"): AUTHENTICATED,
+    ("DELETE", "/api/v1/projects/tasks/{task_id}/comments/{comment_id}"): AUTHENTICATED,
     ("GET", "/api/v1/projects/time-entries"): AUTHENTICATED,
     ("POST", "/api/v1/projects/time-entries"): AUTHENTICATED,
     ("DELETE", "/api/v1/projects/time-entries/{entry_id}"): AUTHENTICATED,
@@ -343,9 +345,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ),
     ("GET", "/api/v1/projects/{project_id}/documents"): AUTHENTICATED,
     ("POST", "/api/v1/projects/{project_id}/documents"): AUTHENTICATED,
-    ("DELETE", "/api/v1/projects/{project_id}/documents/{document_id}"): ROLES(
-        UserRole.super_admin, UserRole.hr_admin, UserRole.manager
-    ),
+    ("DELETE", "/api/v1/projects/{project_id}/documents/{document_id}"): AUTHENTICATED,
     ("GET", "/api/v1/projects/{project_id}/documents/{document_id}/download"): AUTHENTICATED,
     ("GET", "/api/v1/projects/{project_id}/members"): AUTHENTICATED,
     ("POST", "/api/v1/projects/{project_id}/members"): ROLES(

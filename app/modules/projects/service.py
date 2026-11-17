@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -31,6 +32,7 @@ from app.modules.projects.schemas import (
     ProjectUpdate,
     TaskCommentCreate,
     TaskCommentResponse,
+    TaskCommentUpdate,
     TaskCreate,
     TaskResponse,
     TaskUpdate,
@@ -1126,20 +1128,184 @@ class ProjectService:
             details={"fields": ["id"]},
         )
 
+    def _check_project_membership(
+        self,
+        company_id: UUID,
+        project_id: UUID,
+        actor_user: User,
+    ) -> tuple[Any, Any | None, bool]:
+        """
+        Validates actor access to a project.
+        - Super Admin is forbidden (403) from tenant project data operations.
+        - HR and Owner have company-wide access.
+        - Project Manager and project members have access.
+        - Non-members get 404 (NotFoundError).
+        Returns (project, employee_or_none, is_pm).
+        """
+        if actor_user.role == UserRole.super_admin:
+            raise ForbiddenError("Super Admin cannot access tenant project resources.")
+
+        project = self.repo.get_project_by_id(company_id, project_id)
+        if not project:
+            raise NotFoundError("Project not found.")
+
+        from app.modules.hr.repository import EmployeeRepository
+
+        emp = EmployeeRepository(self.repo.db).get_by_user_id(company_id, actor_user.id)
+        is_hr_or_owner = actor_user.role in (UserRole.owner, UserRole.hr_admin)
+
+        is_pm = False
+        is_member = False
+        if emp:
+            if project.manager_id == emp.id:
+                is_pm = True
+            mem = self.repo.get_member(company_id, project.id, emp.id)
+            if mem:
+                is_member = True
+                if mem.role in ("lead", "manager"):
+                    is_pm = True
+
+        if not (is_hr_or_owner or is_pm or is_member):
+            raise NotFoundError("Project not found.")
+
+        return project, emp, is_pm
+
     # --- Task Comments ---
     def add_comment(
-        self, company_id: UUID, task_id: UUID, user_id: UUID, data: TaskCommentCreate
+        self, company_id: UUID, task_id: UUID, actor_user: User, data: TaskCommentCreate
     ) -> TaskCommentResponse:
+        import html
+
+        if actor_user.role == UserRole.super_admin:
+            raise ForbiddenError("Super Admin cannot add comments.")
+
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
             raise NotFoundError("Task not found.")
-        comment = self.repo.add_comment(company_id, task_id, user_id, data.comment)
+
+        project, _, _ = self._check_project_membership(company_id, task.project_id, actor_user)
+
+        if project.status in ("completed", "archived"):
+            raise ConflictError(f"Cannot add comments to a {project.status} project.")
+
+        raw_comment = data.comment.strip()
+        if not raw_comment or len(raw_comment) > 2000:
+            raise ValidationError("Comment must be between 1 and 2000 characters.")
+
+        escaped_comment = html.escape(raw_comment)
+        comment = self.repo.add_comment(company_id, task_id, actor_user.id, escaped_comment)
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor_user,
+            action="create_task_comment",
+            entity_type="task_comment",
+            entity_id=comment.id,
+            details={"task_id": str(task_id)},
+        )
+
         return TaskCommentResponse.from_orm(comment)
 
-    def list_comments(self, company_id: UUID, task_id: UUID) -> list[TaskCommentResponse]:
+    def update_comment(
+        self,
+        company_id: UUID,
+        task_id: UUID,
+        comment_id: UUID,
+        actor_user: User,
+        data: TaskCommentUpdate,
+    ) -> TaskCommentResponse:
+        import html
+
+        if actor_user.role == UserRole.super_admin:
+            raise ForbiddenError("Super Admin cannot edit comments.")
+
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
             raise NotFoundError("Task not found.")
+
+        project, _, _ = self._check_project_membership(company_id, task.project_id, actor_user)
+
+        if project.status in ("completed", "archived"):
+            raise ConflictError(f"Cannot edit comments in a {project.status} project.")
+
+        comment = self.repo.get_comment(company_id, task_id, comment_id)
+        if not comment:
+            raise NotFoundError("Comment not found.")
+
+        if comment.user_id != actor_user.id:
+            raise ForbiddenError("Only the author can edit this comment.")
+
+        raw_comment = data.comment.strip()
+        if not raw_comment or len(raw_comment) > 2000:
+            raise ValidationError("Comment must be between 1 and 2000 characters.")
+
+        escaped_comment = html.escape(raw_comment)
+        updated = self.repo.update_comment(comment, escaped_comment)
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor_user,
+            action="update_task_comment",
+            entity_type="task_comment",
+            entity_id=updated.id,
+            details={"task_id": str(task_id)},
+        )
+
+        return TaskCommentResponse.from_orm(updated)
+
+    def delete_comment(
+        self,
+        company_id: UUID,
+        task_id: UUID,
+        comment_id: UUID,
+        actor_user: User,
+    ) -> None:
+        if actor_user.role == UserRole.super_admin:
+            raise ForbiddenError("Super Admin cannot delete comments.")
+
+        task = self.repo.get_task_by_id(company_id, task_id)
+        if not task:
+            raise NotFoundError("Task not found.")
+
+        project, _, is_pm = self._check_project_membership(company_id, task.project_id, actor_user)
+
+        if project.status in ("completed", "archived"):
+            raise ConflictError(f"Cannot delete comments in a {project.status} project.")
+
+        comment = self.repo.get_comment(company_id, task_id, comment_id)
+        if not comment:
+            raise NotFoundError("Comment not found.")
+
+        is_author = comment.user_id == actor_user.id
+        is_hr_or_owner = actor_user.role in (UserRole.owner, UserRole.hr_admin)
+
+        if not (is_author or is_pm or is_hr_or_owner):
+            raise ForbiddenError("Only author, project manager, HR, or owner can delete comments.")
+
+        self.repo.delete_comment(comment)
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor_user,
+            action="delete_task_comment",
+            entity_type="task_comment",
+            entity_id=comment.id,
+            details={"task_id": str(task_id)},
+        )
+
+    def list_comments(
+        self, company_id: UUID, task_id: UUID, actor_user: User | None = None
+    ) -> list[TaskCommentResponse]:
+        if actor_user and actor_user.role == UserRole.super_admin:
+            raise ForbiddenError("Super Admin cannot view comments.")
+
+        task = self.repo.get_task_by_id(company_id, task_id)
+        if not task:
+            raise NotFoundError("Task not found.")
+
+        if actor_user:
+            self._check_project_membership(company_id, task.project_id, actor_user)
+
         comments = self.repo.list_comments(company_id, task_id)
         return [TaskCommentResponse.from_orm(c) for c in comments]
 
@@ -1737,26 +1903,43 @@ class ProjectService:
         company_id: UUID | None,
         project_id: UUID,
         data: ProjectDocumentCreate,
-        uploaded_by: UUID | None = None,
+        actor_user: User,
     ) -> ProjectDocumentResponse:
-        project = self.repo.get_project_by_id(company_id, project_id)
-        if not project:
-            raise NotFoundError("Project not found.")
-        doc = self.repo.create_project_document(project.company_id, project_id, data, uploaded_by)
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot upload project documents.")
+
+        project, _, _ = self._check_project_membership(company_id, project_id, actor_user)
+
+        if project.status in ("completed", "archived"):
+            raise ConflictError(f"Cannot upload documents to a {project.status} project.")
+
+        doc = self.repo.create_project_document(project.company_id, project_id, data, actor_user.id)
         resp = ProjectDocumentResponse.from_orm(doc)
         from app.modules.platform.service import FileService
 
         resp.download_url = FileService(self.repo.db).build_signed_url(
             project.company_id, doc.file_id
         )
+
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor_user,
+            action="create_project_document",
+            entity_type="project_document",
+            entity_id=doc.id,
+            details={"project_id": str(project_id), "file_id": str(doc.file_id)},
+        )
+
         return resp
 
     def list_documents(
-        self, company_id: UUID | None, project_id: UUID
+        self, company_id: UUID | None, project_id: UUID, actor_user: User
     ) -> list[ProjectDocumentResponse]:
-        project = self.repo.get_project_by_id(company_id, project_id)
-        if not project:
-            raise NotFoundError("Project not found.")
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot list project documents.")
+
+        project, _, _ = self._check_project_membership(company_id, project_id, actor_user)
+
         results = self.repo.list_project_documents(project.company_id, project_id)
         responses = []
         from app.modules.platform.service import FileService
@@ -1769,11 +1952,36 @@ class ProjectService:
             responses.append(resp)
         return responses
 
-    def delete_document(self, company_id: UUID | None, project_id: UUID, document_id: UUID) -> None:
-        project = self.repo.get_project_by_id(company_id, project_id)
-        if not project:
-            raise NotFoundError("Project not found.")
+    def delete_document(
+        self, company_id: UUID | None, project_id: UUID, document_id: UUID, actor_user: User
+    ) -> None:
+        if actor_user.role == UserRole.super_admin or company_id is None:
+            raise ForbiddenError("Super Admin cannot delete project documents.")
+
+        project, _, is_pm = self._check_project_membership(company_id, project_id, actor_user)
+
+        if project.status == "archived":
+            raise ConflictError(f"Cannot delete documents from an {project.status} project.")
+
         doc = self.repo.get_project_document(project.company_id, document_id)
         if not doc:
             raise NotFoundError("Document not found.")
+
+        is_uploader = doc.uploaded_by == actor_user.id
+        is_hr_or_owner = actor_user.role in (UserRole.owner, UserRole.hr_admin)
+
+        if not (is_uploader or is_pm or is_hr_or_owner):
+            raise ForbiddenError(
+                "Only the uploader, project manager, HR, or owner can delete documents."
+            )
+
         self.repo.delete_project_document(doc)
+
+        self.audit.record(
+            company_id=project.company_id,
+            actor=actor_user,
+            action="delete_project_document",
+            entity_type="project_document",
+            entity_id=doc.id,
+            details={"project_id": str(project_id), "file_id": str(doc.file_id)},
+        )

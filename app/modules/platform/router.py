@@ -446,6 +446,21 @@ def download_file(
         raise ForbiddenError("Invalid file signature.")
 
     # 4. Containment and disk check
+    from app.modules.projects.models import ProjectDocument
+
+    # If the file belongs to a ProjectDocument that has been soft-deleted, it cannot be downloaded
+    is_deleted_project_doc = (
+        db.query(ProjectDocument)
+        .filter(
+            ProjectDocument.file_id == file_id,
+            ProjectDocument.deleted_at.is_not(None),
+        )
+        .first()
+        is not None
+    )
+    if is_deleted_project_doc:
+        raise NotFoundError("File object not found.")
+
     upload_root = Path(settings.UPLOAD_DIR).resolve()
     resolved_path = Path(file_obj.storage_path).resolve()
     if not resolved_path.is_relative_to(upload_root):
