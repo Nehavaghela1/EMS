@@ -49,7 +49,7 @@ class ProjectService:
         self.notifications = NotificationService(db)
 
     def _to_project_response(self, project) -> ProjectResponse:
-        resp = ProjectResponse.from_orm(project)
+        resp = ProjectResponse.model_validate(project)
         if getattr(project, "company", None):
             resp.company_name = project.company.name
         else:
@@ -598,7 +598,7 @@ class ProjectService:
             details={"fields": ["employee_id", "role"]},
         )
 
-        resp = ProjectMemberResponse.from_orm(member)
+        resp = ProjectMemberResponse.model_validate(member)
         emp_data = (
             self.repo.db.query(Employee, Department.name.label("dept_name"))
             .outerjoin(Department, Employee.department_id == Department.id)
@@ -651,7 +651,7 @@ class ProjectService:
         results = self.repo.list_members_with_details(project.company_id, project_id)
         responses = []
         for m, emp, dept_name in results:
-            resp = ProjectMemberResponse.from_orm(m)
+            resp = ProjectMemberResponse.model_validate(m)
             if not can_see_rates:
                 resp.hourly_rate = None
             if emp:
@@ -705,7 +705,7 @@ class ProjectService:
             details={"fields": ["hourly_rate", "effective_from"]},
         )
 
-        resp = ProjectMemberResponse.from_orm(member)
+        resp = ProjectMemberResponse.model_validate(member)
         if not self._can_view_rates(project, actor):
             resp.hourly_rate = None
         return resp
@@ -768,7 +768,7 @@ class ProjectService:
 
     # --- Tasks ---
     def _enrich_task_response(self, task) -> TaskResponse:
-        resp = TaskResponse.from_orm(task)
+        resp = TaskResponse.model_validate(task)
         if task.assigned_to:
             from app.modules.hr.models import Employee
 
@@ -898,7 +898,7 @@ class ProjectService:
         )
         responses = []
         for t, emp in results:
-            resp = TaskResponse.from_orm(t)
+            resp = TaskResponse.model_validate(t)
             if emp:
                 resp.assigned_to_name = f"{emp.first_name} {emp.last_name or ''}".strip()
                 resp.assigned_to_email = emp.email
@@ -1204,7 +1204,7 @@ class ProjectService:
             details={"task_id": str(task_id)},
         )
 
-        return TaskCommentResponse.from_orm(comment)
+        return TaskCommentResponse.model_validate(comment)
 
     def update_comment(
         self,
@@ -1251,7 +1251,7 @@ class ProjectService:
             details={"task_id": str(task_id)},
         )
 
-        return TaskCommentResponse.from_orm(updated)
+        return TaskCommentResponse.model_validate(updated)
 
     def delete_comment(
         self,
@@ -1307,7 +1307,7 @@ class ProjectService:
             self._check_project_membership(company_id, task.project_id, actor_user)
 
         comments = self.repo.list_comments(company_id, task_id)
-        return [TaskCommentResponse.from_orm(c) for c in comments]
+        return [TaskCommentResponse.model_validate(c) for c in comments]
 
     # --- Time Entries ---
     def create_time_entry(
@@ -1412,7 +1412,7 @@ class ProjectService:
                 },
             )
 
-        resp = TimeEntryResponse.from_orm(entry)
+        resp = TimeEntryResponse.model_validate(entry)
         from app.modules.hr.models import Employee
 
         emp = self.repo.db.query(Employee).filter(Employee.id == employee_id).first()
@@ -1448,7 +1448,7 @@ class ProjectService:
         )
         responses = []
         for entry, emp, task_title, proj_name, proj_code in results:
-            resp = TimeEntryResponse.from_orm(entry)
+            resp = TimeEntryResponse.model_validate(entry)
             if emp:
                 resp.employee_name = f"{emp.first_name} {emp.last_name or ''}".strip()
                 resp.employee_email = emp.email
@@ -1550,7 +1550,7 @@ class ProjectService:
                 },
             )
 
-        return TimeEntryResponse.from_orm(updated)
+        return TimeEntryResponse.model_validate(updated)
 
     def approve_reject_time_entry(
         self,
@@ -1629,7 +1629,7 @@ class ProjectService:
             },
         )
 
-        return TimeEntryResponse.from_orm(updated)
+        return TimeEntryResponse.model_validate(updated)
 
     def delete_time_entry(
         self,
@@ -1736,7 +1736,7 @@ class ProjectService:
             details={"fields": ["title", "due_date", "status"]},
         )
 
-        return MilestoneResponse.from_orm(milestone)
+        return MilestoneResponse.model_validate(milestone)
 
     def list_milestones(
         self, company_id: UUID | None, project_id: UUID, actor_user: User
@@ -1760,7 +1760,7 @@ class ProjectService:
                 raise NotFoundError("Project not found.")
 
         milestones = self.repo.list_milestones(project.company_id, project_id)
-        return [MilestoneResponse.from_orm(m) for m in milestones]
+        return [MilestoneResponse.model_validate(m) for m in milestones]
 
     def update_milestone(
         self,
@@ -1845,7 +1845,7 @@ class ProjectService:
             details={"fields": list(update_dict.keys())},
         )
 
-        return MilestoneResponse.from_orm(updated)
+        return MilestoneResponse.model_validate(updated)
 
     def delete_milestone(
         self, company_id: UUID | None, milestone_id: UUID, actor_user: User
@@ -1914,7 +1914,7 @@ class ProjectService:
             raise ConflictError(f"Cannot upload documents to a {project.status} project.")
 
         doc = self.repo.create_project_document(project.company_id, project_id, data, actor_user.id)
-        resp = ProjectDocumentResponse.from_orm(doc)
+        resp = ProjectDocumentResponse.model_validate(doc)
         from app.modules.platform.service import FileService
 
         resp.download_url = FileService(self.repo.db).build_signed_url(
@@ -1946,7 +1946,7 @@ class ProjectService:
 
         file_service = FileService(self.repo.db)
         for doc, user_email in results:
-            resp = ProjectDocumentResponse.from_orm(doc)
+            resp = ProjectDocumentResponse.model_validate(doc)
             resp.uploaded_by_name = user_email or "Team Member"
             resp.download_url = file_service.build_signed_url(project.company_id, doc.file_id)
             responses.append(resp)
