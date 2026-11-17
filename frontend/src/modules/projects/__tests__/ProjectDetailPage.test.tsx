@@ -3,6 +3,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { ProjectDetailPage } from "../pages/ProjectDetailPage";
 import * as api from "../api";
+import type {
+  ProjectSummary,
+  Task,
+  ProjectMember,
+  Milestone,
+  ProjectDocument,
+  TaskComment,
+} from "../types";
 import * as hrApi from "../../hr/api";
 import { ToastProvider } from "../../../app/toast-context";
 import { TimerProvider } from "../../../app/timer-context";
@@ -11,7 +19,7 @@ import * as AuthContextModule from "../../../app/auth-context";
 vi.mock("../api");
 vi.mock("../../hr/api");
 
-const mockProjectSummary: api.ProjectSummary = {
+const mockProjectSummary: ProjectSummary = {
   project: {
     id: "proj-1",
     company_id: "comp-1",
@@ -42,7 +50,7 @@ const mockProjectSummary: api.ProjectSummary = {
   approved_logged_hours: 110,
 };
 
-const mockTasks: api.Task[] = [
+const mockTasks: Task[] = [
   {
     id: "task-1",
     company_id: "comp-1",
@@ -75,7 +83,7 @@ const mockTasks: api.Task[] = [
   },
 ];
 
-const mockMembers: api.ProjectMember[] = [
+const mockMembers: ProjectMember[] = [
   {
     id: "pm-1",
     company_id: "comp-1",
@@ -102,7 +110,7 @@ const mockMembers: api.ProjectMember[] = [
   },
 ];
 
-const mockMilestones: api.Milestone[] = [
+const mockMilestones: Milestone[] = [
   {
     id: "ms-1",
     company_id: "comp-1",
@@ -129,7 +137,7 @@ const mockMilestones: api.Milestone[] = [
   },
 ];
 
-const mockDocuments: api.ProjectDocument[] = [
+const mockDocuments: ProjectDocument[] = [
   {
     id: "doc-1",
     company_id: "comp-1",
@@ -145,7 +153,7 @@ const mockDocuments: api.ProjectDocument[] = [
   },
 ];
 
-const mockComments: api.TaskComment[] = [
+const mockComments: TaskComment[] = [
   {
     id: "comment-1",
     company_id: "comp-1",
@@ -158,18 +166,28 @@ const mockComments: api.TaskComment[] = [
 
 function setupAuth(userRole = "hr_admin", employeeId = "emp-1") {
   vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+    status: "authenticated",
     user: {
       id: "u-1",
       email: "admin@company.com",
       role: userRole as any,
       company_id: "comp-1",
-      employee: { id: employeeId } as any,
-    } as any,
-    token: "mock-token",
+      is_active: true,
+      must_change_password: false,
+      permissions: [],
+      employee: {
+        id: employeeId,
+        employee_code: "EMP-001",
+        first_name: "Admin",
+        last_name: "User",
+        department_id: null,
+        position: null,
+      },
+    },
     login: vi.fn(),
+    establishSession: vi.fn(),
     logout: vi.fn(),
-    refreshUser: vi.fn(),
-    isLoading: false,
+    sessionExpired: false,
   });
 }
 
@@ -286,9 +304,7 @@ describe("ProjectDetailPage (Module 7.2 Tasks, 7.3 Milestones, 7.4 Members, 7.6 
 
   it("7.6 Documents & Lifecycle: displays document vault and handles download", async () => {
     setupAuth("hr_admin");
-    vi.mocked(api.downloadProjectDocument).mockResolvedValue({
-      download_url: "https://storage.example.com/System_Architecture_Diagram.pdf",
-    });
+    vi.mocked(api.downloadProjectDocument).mockResolvedValue(undefined);
 
     renderComponent();
 

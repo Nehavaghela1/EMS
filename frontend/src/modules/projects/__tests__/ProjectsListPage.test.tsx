@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { ProjectsListPage } from "../pages/ProjectsListPage";
 import * as api from "../api";
+import type { Project } from "../types";
 import { ToastProvider } from "../../../app/toast-context";
 import * as AuthContextModule from "../../../app/auth-context";
 
@@ -16,7 +17,7 @@ vi.mock("../../../app/api-client", () => ({
   },
 }));
 
-const mockProjects: api.Project[] = [
+const mockProjects: Project[] = [
   {
     id: "proj-1",
     company_id: "comp-1",
@@ -49,18 +50,28 @@ const mockProjects: api.Project[] = [
 
 function setupAuth(userRole = "hr_admin") {
   vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+    status: "authenticated",
     user: {
       id: "u-1",
       email: "admin@company.com",
       role: userRole as any,
       company_id: "comp-1",
-      employee: { id: "emp-1" } as any,
-    } as any,
-    token: "mock-token",
+      is_active: true,
+      must_change_password: false,
+      permissions: [],
+      employee: {
+        id: "emp-1",
+        employee_code: "EMP-001",
+        first_name: "Admin",
+        last_name: "User",
+        department_id: null,
+        position: null,
+      },
+    },
     login: vi.fn(),
+    establishSession: vi.fn(),
     logout: vi.fn(),
-    refreshUser: vi.fn(),
-    isLoading: false,
+    sessionExpired: false,
   });
 }
 
