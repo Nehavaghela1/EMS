@@ -166,7 +166,11 @@ class TaskResponse(TaskBase):
 
 
 class TaskCommentCreate(BaseModel):
-    comment: str = Field(..., min_length=1)
+    comment: str = Field(..., min_length=1, max_length=2000)
+
+
+class TaskCommentUpdate(BaseModel):
+    comment: str = Field(..., min_length=1, max_length=2000)
 
 
 class TaskCommentResponse(BaseModel):
@@ -175,7 +179,9 @@ class TaskCommentResponse(BaseModel):
     task_id: UUID
     user_id: UUID
     comment: str
+    is_edited: bool = False
     created_at: datetime
+    updated_at: datetime | None = None
 
     class Config:
         from_attributes = True

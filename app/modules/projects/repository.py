@@ -262,13 +262,41 @@ class ProjectRepository:
         self.db.refresh(tc)
         return tc
 
+    def get_comment(self, company_id: UUID, task_id: UUID, comment_id: UUID) -> TaskComment | None:
+        return (
+            self.db.query(TaskComment)
+            .filter(
+                TaskComment.company_id == company_id,
+                TaskComment.task_id == task_id,
+                TaskComment.id == comment_id,
+                TaskComment.deleted_at.is_(None),
+            )
+            .first()
+        )
+
     def list_comments(self, company_id: UUID, task_id: UUID) -> list[TaskComment]:
         return (
             self.db.query(TaskComment)
-            .filter(TaskComment.company_id == company_id, TaskComment.task_id == task_id)
+            .filter(
+                TaskComment.company_id == company_id,
+                TaskComment.task_id == task_id,
+                TaskComment.deleted_at.is_(None),
+            )
             .order_by(TaskComment.created_at.asc())
             .all()
         )
+
+    def update_comment(self, comment: TaskComment, new_text: str) -> TaskComment:
+        comment.comment = new_text
+        comment.is_edited = True
+        comment.updated_at = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(comment)
+        return comment
+
+    def delete_comment(self, comment: TaskComment) -> None:
+        comment.deleted_at = datetime.utcnow()
+        self.db.commit()
 
     # --- Time Entries ---
     def create_time_entry(
@@ -460,7 +488,9 @@ class ProjectRepository:
             self.db.query(ProjectDocument, User.email.label("uploaded_by_name"))
             .outerjoin(User, ProjectDocument.uploaded_by == User.id)
             .filter(
-                ProjectDocument.company_id == company_id, ProjectDocument.project_id == project_id
+                ProjectDocument.company_id == company_id,
+                ProjectDocument.project_id == project_id,
+                ProjectDocument.deleted_at.is_(None),
             )
             .order_by(ProjectDocument.created_at.desc())
             .all()
@@ -469,10 +499,14 @@ class ProjectRepository:
     def get_project_document(self, company_id: UUID, document_id: UUID) -> ProjectDocument | None:
         return (
             self.db.query(ProjectDocument)
-            .filter(ProjectDocument.company_id == company_id, ProjectDocument.id == document_id)
+            .filter(
+                ProjectDocument.company_id == company_id,
+                ProjectDocument.id == document_id,
+                ProjectDocument.deleted_at.is_(None),
+            )
             .first()
         )
 
     def delete_project_document(self, doc: ProjectDocument) -> None:
-        self.db.delete(doc)
+        doc.deleted_at = datetime.utcnow()
         self.db.commit()

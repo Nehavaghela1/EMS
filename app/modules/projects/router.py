@@ -25,6 +25,7 @@ from app.modules.projects.schemas import (
     ProjectUpdate,
     TaskCommentCreate,
     TaskCommentResponse,
+    TaskCommentUpdate,
     TaskCreate,
     TaskReorder,
     TaskResponse,
@@ -295,7 +296,9 @@ def delete_task(
     response_model=TaskCommentResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def add_task_comment(
+    request: Request,
     task_id: UUID,
     data: TaskCommentCreate,
     db: Session = Depends(get_tenant_db),
@@ -303,7 +306,42 @@ def add_task_comment(
 ):
     service = ProjectService(db)
     cid = current_user.company_id
-    return service.add_comment(cid, task_id, current_user.id, data)
+    return service.add_comment(cid, task_id, current_user, data)
+
+
+@router.put(
+    "/tasks/{task_id}/comments/{comment_id}",
+    response_model=TaskCommentResponse,
+)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def update_task_comment(
+    request: Request,
+    task_id: UUID,
+    comment_id: UUID,
+    data: TaskCommentUpdate,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = ProjectService(db)
+    cid = current_user.company_id
+    return service.update_comment(cid, task_id, comment_id, current_user, data)
+
+
+@router.delete(
+    "/tasks/{task_id}/comments/{comment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def delete_task_comment(
+    request: Request,
+    task_id: UUID,
+    comment_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = ProjectService(db)
+    cid = current_user.company_id
+    service.delete_comment(cid, task_id, comment_id, current_user)
 
 
 @router.get("/tasks/{task_id}/comments", response_model=list[TaskCommentResponse])
@@ -314,7 +352,7 @@ def list_task_comments(
 ):
     service = ProjectService(db)
     cid = current_user.company_id
-    return service.list_comments(cid, task_id)
+    return service.list_comments(cid, task_id, current_user)
 
 
 # --- Milestones Global Update/Delete ---
@@ -547,6 +585,7 @@ def list_milestones(
     response_model=ProjectDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 async def add_project_document(
     project_id: UUID,
     request: Request,
@@ -560,19 +599,21 @@ async def add_project_document(
     if "multipart/form-data" in content_type:
         from starlette.datastructures import UploadFile
 
+        from app.core.exceptions import PayloadTooLargeError, ValidationError
+        from app.core.upload_validation import read_upload_file_capped
         from app.modules.platform.service import FileService
 
         form = await request.form()
         uploaded_file = form.get("file")
         if not isinstance(uploaded_file, UploadFile):
-            from app.core.exceptions import ValidationError
-
             raise ValidationError("File is required for upload.")
-        from app.core.upload_validation import read_upload_file_capped
+
+        file_bytes = await read_upload_file_capped(uploaded_file, request=request)
+        if len(file_bytes) > 10 * 1024 * 1024:
+            raise PayloadTooLargeError("File size exceeds project document limit of 10 MB.")
 
         desc = form.get("description")
         desc_str = str(desc) if desc else None
-        file_bytes = await read_upload_file_capped(uploaded_file, request=request)
         file_name = getattr(uploaded_file, "filename", "document") or "document"
         file_type = (
             getattr(uploaded_file, "content_type", "application/octet-stream")
@@ -595,12 +636,12 @@ async def add_project_document(
             file_type=file_obj.file_type,
             description=desc_str,
         )
-        return service.add_document(cid, project_id, doc_create, current_user.id)
+        return service.add_document(cid, project_id, doc_create, current_user)
     else:
         # Standard JSON body
         body = await request.json()
         doc_create = ProjectDocumentCreate.model_validate(body)
-        return service.add_document(cid, project_id, doc_create, current_user.id)
+        return service.add_document(cid, project_id, doc_create, current_user)
 
 
 @router.get("/{project_id}/documents", response_model=list[ProjectDocumentResponse])
@@ -611,21 +652,21 @@ def list_project_documents(
 ):
     service = ProjectService(db)
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    return service.list_documents(cid, project_id)
+    return service.list_documents(cid, project_id, current_user)
 
 
 @router.delete("/{project_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def delete_project_document(
+    request: Request,
     project_id: UUID,
     document_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
-    ),
+    current_user: User = Depends(get_current_user),
 ):
     service = ProjectService(db)
     cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    service.delete_document(cid, project_id, document_id)
+    service.delete_document(cid, project_id, document_id, current_user)
 
 
 @router.get("/{project_id}/documents/{document_id}/download")
@@ -641,14 +682,16 @@ def download_project_document(
 
     from app.modules.platform.models import FileObject
 
+    if current_user.role == UserRole.super_admin or current_user.company_id is None:
+        raise ForbiddenError("Super Admin cannot download project documents.")
+
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
-    project = service.repo.get_project_by_id(cid, project_id)
-    if not project:
-        raise NotFoundError("Project not found.")
+    cid = current_user.company_id
+    # Rule 1 & Rule 5: Project membership check (members, PM, HR, owner)
+    project, _, _ = service._check_project_membership(cid, project_id, current_user)
 
     doc = service.repo.get_project_document(project.company_id, document_id)
-    if not doc:
+    if not doc or doc.deleted_at is not None:
         raise NotFoundError("Document not found.")
 
     file_obj = db.query(FileObject).filter(FileObject.id == doc.file_id).first()

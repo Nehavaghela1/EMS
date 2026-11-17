@@ -690,6 +690,7 @@ class FileService:
             .filter(
                 ProjectDocument.company_id == company_id,
                 ProjectDocument.file_id == file_obj.id,
+                ProjectDocument.deleted_at.is_(None),
             )
             .all()
         )
