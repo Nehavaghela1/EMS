@@ -101,17 +101,19 @@ Proof columns: Works, Bad input rejected, HR-only / own payslip, Other company 4
 | 5.6 | Reimbursements | receipt required; approver = reporting chain; paid only once | |
 | 5.7 | Payout accounts | masked to last 4 (PR #11); encrypted at rest (missing today) | full reveal only with audit? |
 
-### Module 6 Performance: not started (0 of 5). Folder `app/modules/performance/`
+### Module 6 Performance: DONE (5 of 5). Folder `app/modules/performance/`
 
 Proof columns: Works, Bad input rejected, Own / team scope, Other company 404, Right employee looked up, Status flow, Tests, CI green.
 
-| ID | Sub-feature | Suggested rules (tracker) | Open decisions |
-|---|---|---|---|
-| 6.1 | Appraisal cycles | HR-level create; goals only inside an active cycle; cycle dates do not overlap | |
-| 6.2 | Goals | employee sets own, manager for team, HR any; fix swapped lookup (`service.py:126`) | must weightage total 100%? |
-| 6.3 | Self and manager reviews | self-review only by the employee; manager review only by reporting chain; no edits after submit | |
-| 6.4 | PIPs | manager only for team, HR any; mentor exists and active (PR #10); failed outcome exits the employee (broken today) | |
-| 6.5 | Performance summary | employee own, manager team, HR all (any manager today) | |
+| ID | Sub-feature | PR / proof |
+|---|---|---|
+| 6.1 | Appraisal cycles | PR #51 (c7884e5) |
+| 6.2 | Goals | PR #51 (c7884e5) |
+| 6.3 | Self and manager reviews | PR #52 (merge complete) |
+| 6.4 | PIPs | PR #53 (e7eb9b0) |
+| 6.5 | Performance summary | PR #52 (merge complete) |
+
+Backend complete; 53 rule tests passing across modules 6.1 to 6.5. Frontend test files created in `frontend/src/modules/performance/tests/`.
 
 ### Module 7 Projects: not started (0 of 7). Folder `app/modules/projects/`
 
