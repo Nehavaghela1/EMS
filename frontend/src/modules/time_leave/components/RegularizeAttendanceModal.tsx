@@ -84,6 +84,10 @@ export const RegularizeAttendanceModal: React.FC<Props> = ({
       } else {
         window.open(blobUrl, "_blank");
       }
+      // Revoke the blob URL after the new tab or browser has initiated load to prevent memory leaks
+      setTimeout(() => {
+        URL.revokeObjectURL(blobUrl);
+      }, 60000);
     } catch (err) {
       if (newTab) {
         newTab.close();
