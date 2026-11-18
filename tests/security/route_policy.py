@@ -310,6 +310,14 @@ POLICY: dict[tuple[str, str], Any] = {
         UserRole.hr_admin, UserRole.super_admin, UserRole.manager
     ),
     ("GET", "/api/v1/performance/pips/active/{employee_id}"): AUTHENTICATED,
+    ("POST", "/api/v1/performance/pips/{pip_id}/activate"): ROLES(
+        UserRole.hr_admin, UserRole.super_admin, UserRole.manager
+    ),
+    ("POST", "/api/v1/performance/pips/{pip_id}/extend"): ROLES(
+        UserRole.hr_admin, UserRole.super_admin, UserRole.manager
+    ),
+    ("GET", "/api/v1/performance/pips/{pip_id}/check-ins"): AUTHENTICATED,
+    ("POST", "/api/v1/performance/pips/{pip_id}/check-ins"): AUTHENTICATED,
     ("POST", "/api/v1/performance/pips/{pip_id}/evaluate"): ROLES(
         UserRole.hr_admin, UserRole.super_admin, UserRole.manager
     ),

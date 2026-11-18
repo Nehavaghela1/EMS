@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
@@ -916,8 +917,8 @@ def test_7_7_r2_and_r3_effective_dated_internal_cost_vs_client_billing_rate(
     # Let's adjust employee salary effective dates to cover today's date!
     # Today's date is 2026-11-17.
     # In p3_setup, sal2 has effective_from = 2025-07-01 and effective_to = None.
-    # For today, sal2 is in force: CTC 2,880,000 -> hourly cost = 2880000 / 12 / 160 = 1500/hr.
-    today_str = (date.today() - timedelta(days=1)).isoformat()
+    # For today, sal2 is in force: CTC 2,880,000 -> hourly cost = 2880000 / 12 / 176 = 1363.64/hr.
+    today_str = (utcnow().date() - timedelta(days=1)).isoformat()
 
     # Log 10 hours on today's date
     r1 = client.post(
@@ -949,13 +950,13 @@ def test_7_7_r2_and_r3_effective_dated_internal_cost_vs_client_billing_rate(
 
     # After approval:
     # approved_billable_hours = 10.00
-    # budget_spent = 10 * 1500 = 15,000.00
-    # budget_remaining = 80,000 - 15,000 = 65,000.00
+    # budget_spent = 10 * 1363.64 = 13,636.40
+    # budget_remaining = 80,000 - 13,636.40 = 66,363.60
     s_after = client.get(f"/api/v1/projects/{proj_id}/summary", headers=pm_hdr).json()
     assert Decimal(s_after["approved_logged_hours"]) == Decimal("10.00")
     assert Decimal(s_after["approved_billable_hours"]) == Decimal("10.00")
-    assert Decimal(s_after["budget_spent"]) == Decimal("15000.00")
-    assert Decimal(s_after["budget_remaining"]) == Decimal("65000.00")
+    assert Decimal(s_after["budget_spent"]) == Decimal("13636.40")
+    assert Decimal(s_after["budget_remaining"]) == Decimal("66363.60")
 
 
 def test_7_7_r5_cross_tenant_project_summary(client: TestClient, p3_setup: dict):
