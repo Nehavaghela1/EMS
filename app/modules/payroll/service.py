@@ -1172,15 +1172,25 @@ class TaxSlabService:
     def add_bracket_set(
         self, data: TaxSlabPostRequest, actor: User, *, commit: bool = True
     ) -> list:
-        """SA only. Same append-only reasoning as PtSlabService: a financial year and regime
-        gets one bracket set; a second one is refused instead of mixing with the first."""
+        """SA only. Always adds a new effective-dated set and ends the open set the day before —
+        never mutates a historical row (5.9 / T2)."""
         _listed_country(data.country)
         _assert_contiguous([(b.min_income, b.max_income) for b in data.brackets], "bracket")
-        if self.repo.list_for(data.country, data.financial_year, data.regime):
+        existing = self.repo.list_open_locked(data.country, data.financial_year, data.regime)
+        everything = self.repo.list_for(data.country, data.financial_year, data.regime)
+        start = data.effective_from
+        if any(
+            r.effective_from >= start or (r.effective_to and start <= r.effective_to)
+            for r in everything
+        ):
+            known = sorted({(r.effective_from, r.effective_to) for r in everything})
             raise ConflictError(
-                f"The {data.regime.value} regime for financial year {data.financial_year} "
-                "already has a bracket set; existing rows are never changed."
+                f"A new {data.regime.value} regime set starting {start} must start after the "
+                f"current set's start date and outside every ended period (existing: "
+                f"{_periods(known)})."
             )
+        if existing:
+            self.repo.set_effective_to(existing, start - timedelta(days=1))
         created = [
             self.repo.create(
                 country=data.country,
@@ -1192,6 +1202,7 @@ class TaxSlabService:
                 cess_percent=data.cess_percent,
                 surcharge_rules=data.surcharge_rules,
                 effective_from=data.effective_from,
+                effective_to=None,
                 source_url=data.source_url,
                 source_title=data.source_title,
                 source_note=data.source_note,

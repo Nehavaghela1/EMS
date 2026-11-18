@@ -340,6 +340,7 @@ class TaxSlab(TimeStampedBase):
     # them from here when it builds the actual TDS projection).
     surcharge_rules: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     source_title: Mapped[str] = mapped_column(String(200), nullable=False)
     source_note: Mapped[str | None] = mapped_column(Text, nullable=True)
