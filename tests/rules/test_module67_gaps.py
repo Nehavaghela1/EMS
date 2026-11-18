@@ -841,16 +841,29 @@ def test_c2_time_entry_submitted_and_approved_rejected_notifications(
     assert any(n.user_id == gap_setup["emp_u"].id for n in app_notifs)
 
 
-def test_c3_c4_budget_threshold_alerts_80_and_100_percent_fired_once(
-    client: TestClient, db: Session, gap_setup: dict[str, Any]
+def test_c3_c4_w4_budget_threshold_alerts_moved_to_celery_task(
+    client: TestClient,
+    db: Session,
+    gap_setup: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    limits_off: None,
 ):
-    """C3, C4: When approved cost crosses 80% and then 100% of project.budget:
-    - Notifies project manager and all hr_admin users of that company.
-    - Each threshold fires ONCE per project even when summary is read five times.
-    - Crossing 100% still sends the 100% alert.
+    """C3, C4, W4: Budget threshold alerts must not live in a GET.
+    - 65 GET requests to /summary against a project that crossed the threshold
+      write nothing to the database, leave the sent_at columns NULL, and send no notifications.
+    - Running the scheduled task directly sends the 80% notification to the PM and company
+      HR admins, and sets budget_alert_80_sent_at.
+    - Running it a second time sends nothing.
+    - Running it after spend crosses 100% sends 100% alert and sets budget_alert_100_sent_at.
     """
+    from app.modules.projects.models import Project
+    from app.workers.tasks.projects import check_project_budget_alerts_task
+
+    monkeypatch.setattr("app.workers.tasks.projects.get_task_db_session", lambda: db)
+
     # Project budget = 10,000.00
-    proj_id, task_id = _create_project_and_task(client, gap_setup, budget="10000.00")
+    proj_id_str, task_id_str = _create_project_and_task(client, gap_setup, budget="10000.00")
+    proj_id = uuid.UUID(proj_id_str)
     emp_h = _auth_headers(gap_setup["emp_u"])
     pm_h = _auth_headers(gap_setup["pm_u"])
 
@@ -877,8 +890,8 @@ def test_c3_c4_budget_threshold_alerts_80_and_100_percent_fired_once(
     r1 = client.post(
         "/api/v1/projects/time-entries",
         json={
-            "project_id": proj_id,
-            "task_id": task_id,
+            "project_id": proj_id_str,
+            "task_id": task_id_str,
             "date": (utcnow().date() - timedelta(days=2)).isoformat(),
             "hours": "8.00",
             "description": "80% threshold work",
@@ -891,11 +904,36 @@ def test_c3_c4_budget_threshold_alerts_80_and_100_percent_fired_once(
         headers=pm_h,
     )
 
-    # Read summary 5 times
-    for _ in range(5):
-        client.get(f"/api/v1/projects/{proj_id}/summary", headers=pm_h)
+    # Read summary 65 times (W4)
+    for _ in range(65):
+        resp = client.get(f"/api/v1/projects/{proj_id_str}/summary", headers=pm_h)
+        assert resp.status_code == 200
 
-    # Verify 80% alerts: PM and HR Admin got exactly ONE alert each
+    # Assert 65 GET requests wrote nothing to DB, left sent_at NULL, and sent no notifications
+    bind_tenant_to_session(db, company_id=gap_setup["cid"], is_platform_admin=True)
+    proj = db.get(Project, proj_id)
+    assert proj.budget_alert_80_sent_at is None
+    assert proj.budget_alert_100_sent_at is None
+
+    notifs_before = (
+        db.query(Notification)
+        .filter(
+            Notification.company_id == gap_setup["cid"],
+            Notification.type == "budget_threshold_alert",
+        )
+        .all()
+    )
+    assert len(notifs_before) == 0, "GET /summary must send no notifications"
+
+    # Now run scheduled task directly
+    alerts_run_1 = check_project_budget_alerts_task()
+    assert alerts_run_1 >= 1
+
+    bind_tenant_to_session(db, company_id=gap_setup["cid"], is_platform_admin=True)
+    proj = db.get(Project, proj_id)
+    assert proj.budget_alert_80_sent_at is not None
+    assert proj.budget_alert_100_sent_at is None
+
     notifs_80 = (
         db.query(Notification)
         .filter(
@@ -910,12 +948,27 @@ def test_c3_c4_budget_threshold_alerts_80_and_100_percent_fired_once(
     assert len(pm_80) == 1, f"PM must receive exactly 1 alert for 80%, got {len(pm_80)}"
     assert len(hr_80) == 1, f"HR Admin must receive exactly 1 alert for 80%, got {len(hr_80)}"
 
+    # Running it a second time sends nothing
+    alerts_run_2 = check_project_budget_alerts_task()
+    assert alerts_run_2 == 0
+
+    notifs_80_again = (
+        db.query(Notification)
+        .filter(
+            Notification.company_id == gap_setup["cid"],
+            Notification.type == "budget_threshold_alert",
+            Notification.title.ilike("%80%%"),
+        )
+        .all()
+    )
+    assert len(notifs_80_again) == len(notifs_80), "Second run must send no duplicate 80% alerts"
+
     # Entry 2: 2 hours = 2,000.00 -> total 10,000.00 (100%)
     r2 = client.post(
         "/api/v1/projects/time-entries",
         json={
-            "project_id": proj_id,
-            "task_id": task_id,
+            "project_id": proj_id_str,
+            "task_id": task_id_str,
             "date": (utcnow().date() - timedelta(days=1)).isoformat(),
             "hours": "2.00",
             "description": "Crossing 100% threshold",
@@ -928,8 +981,19 @@ def test_c3_c4_budget_threshold_alerts_80_and_100_percent_fired_once(
         headers=pm_h,
     )
 
-    # Read summary again
-    client.get(f"/api/v1/projects/{proj_id}/summary", headers=pm_h)
+    # Read summary again - still no side-effects
+    client.get(f"/api/v1/projects/{proj_id_str}/summary", headers=pm_h)
+    bind_tenant_to_session(db, company_id=gap_setup["cid"], is_platform_admin=True)
+    proj = db.get(Project, proj_id)
+    assert proj.budget_alert_100_sent_at is None
+
+    # Running scheduled task after spend crosses 100% sends 100% alert
+    alerts_run_3 = check_project_budget_alerts_task()
+    assert alerts_run_3 >= 1
+
+    bind_tenant_to_session(db, company_id=gap_setup["cid"], is_platform_admin=True)
+    proj = db.get(Project, proj_id)
+    assert proj.budget_alert_100_sent_at is not None
 
     notifs_100 = (
         db.query(Notification)
@@ -946,8 +1010,14 @@ def test_c3_c4_budget_threshold_alerts_80_and_100_percent_fired_once(
     assert len(hr_100) == 1, f"HR Admin must receive exactly 1 alert for 100%, got {len(hr_100)}"
 
 
-def test_c3_no_budget_never_alerts(client: TestClient, db: Session, gap_setup: dict[str, Any]):
+def test_c3_no_budget_never_alerts(
+    client: TestClient, db: Session, gap_setup: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
     """C3: A project with no budget never alerts."""
+    from app.workers.tasks.projects import check_project_budget_alerts_task
+
+    monkeypatch.setattr("app.workers.tasks.projects.get_task_db_session", lambda: db)
+
     proj_id, task_id = _create_project_and_task(client, gap_setup, budget=None)
     emp_h = _auth_headers(gap_setup["emp_u"])
     pm_h = _auth_headers(gap_setup["pm_u"])
@@ -988,6 +1058,7 @@ def test_c3_no_budget_never_alerts(client: TestClient, db: Session, gap_setup: d
     )
 
     client.get(f"/api/v1/projects/{proj_id}/summary", headers=pm_h)
+    check_project_budget_alerts_task()
 
     alerts = (
         db.query(Notification)

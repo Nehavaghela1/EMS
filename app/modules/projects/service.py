@@ -504,60 +504,6 @@ class ProjectService:
                     Decimal("0.01"), rounding=ROUND_HALF_UP
                 )
 
-                # Budget threshold alerts (C3): 80% and 100%
-                if project.budget > Decimal("0.00"):
-                    ratio = budget_spent / project.budget
-                    recipients: set[UUID] = set()
-                    from app.modules.hr.models import Employee
-
-                    if project.manager_id:
-                        pm_emp = self.repo.db.get(Employee, project.manager_id)
-                        if pm_emp and pm_emp.user_id:
-                            recipients.add(pm_emp.user_id)
-                    hr_admins = (
-                        self.repo.db.query(User)
-                        .filter(
-                            User.company_id == p_cid,
-                            User.role == UserRole.hr_admin,
-                            User.is_active.is_(True),
-                        )
-                        .all()
-                    )
-                    for hr in hr_admins:
-                        recipients.add(hr.id)
-
-                    should_commit_alerts = False
-                    if ratio >= Decimal("0.80") and not project.budget_alert_80_sent_at:
-                        for uid in recipients:
-                            self.notifications.notify(
-                                company_id=p_cid,
-                                user_id=uid,
-                                type="budget_threshold_alert",
-                                title="Budget Alert: 80% Reached",
-                                message=f"Project '{project.name}' has reached 80% of its budget.",
-                                entity_type="project",
-                                entity_id=project.id,
-                            )
-                        project.budget_alert_80_sent_at = utcnow()
-                        should_commit_alerts = True
-
-                    if ratio >= Decimal("1.00") and not project.budget_alert_100_sent_at:
-                        for uid in recipients:
-                            self.notifications.notify(
-                                company_id=p_cid,
-                                user_id=uid,
-                                type="budget_threshold_alert",
-                                title="Budget Alert: 100% Reached",
-                                message=f"Project '{project.name}' has reached 100% of its budget.",
-                                entity_type="project",
-                                entity_id=project.id,
-                            )
-                        project.budget_alert_100_sent_at = utcnow()
-                        should_commit_alerts = True
-
-                    if should_commit_alerts:
-                        self.repo.db.commit()
-
         # Delivery Health progression:
         # Not Started -> In Progress -> On Schedule (or Needs Attention)
         has_in_progress_tasks = any(t.status == "in_progress" for t in tasks)
