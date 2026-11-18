@@ -9,13 +9,11 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
@@ -527,15 +525,6 @@ def test_R8_attendance_scoping(
 
 
 # --- Rule 4.2.9: Rate limits (punches 10/min, reads 60/min; punches not audited) ---
-
-
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    yield
-    limiter.reset()
-    limiter.enabled = False
 
 
 def test_R9_punch_rate_limits(

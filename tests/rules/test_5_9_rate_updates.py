@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 
 import app.workers.tasks.platform as platform_tasks
 from app.core.official_sources import is_official_url
-from app.core.rate_limit import limiter
 from app.core.security import decode_access_token
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
@@ -117,17 +116,6 @@ def _seed_rates(db: Session) -> None:
     seed_pt_slabs(db)
     seed_tax_slabs(db)
     seed_statutory_rates(db)
-
-
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
 
 # ---------------------------------------------------------------- helpers

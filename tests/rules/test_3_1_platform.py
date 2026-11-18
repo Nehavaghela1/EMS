@@ -10,7 +10,6 @@ from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Department, Employee
@@ -18,7 +17,7 @@ from app.modules.identity.models import User, UserRole
 from app.modules.platform.models import Announcement, AuditLog, Notification
 from app.modules.platform.service import NotificationService
 from app.modules.projects.models import Project, ProjectMember, Task
-from tests.conftest import TenantContext
+from tests.conftest import TenantContext, rate_limits
 
 
 def _auth_headers(user: User) -> dict[str, str]:
@@ -699,10 +698,8 @@ def test_n7_audit_logging_and_rate_limits(
     assert audit_del.details.get("announcement_id") == ann_id
 
     # 3. Rate limits
-    # (a) POST create: 10/min -> 11th gives 429
-    limiter.enabled = True
-    try:
-        limiter.reset()
+    with rate_limits():
+        # (a) POST create: 10/min -> 11th gives 429
         post_statuses = []
         for i in range(11):
             r = client.post(
@@ -717,53 +714,38 @@ def test_n7_audit_logging_and_rate_limits(
             post_statuses.append(r.status_code)
         assert all(s == 201 for s in post_statuses[:10])
         assert post_statuses[10] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
-    # (b) DELETE: 30/min -> 31st gives 429
-    # Create 31 announcements directly
-    bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
-    del_ids = []
-    for i in range(31):
-        a = Announcement(
-            company_id=company_a.company_id,
-            created_by=hr_user.id,
-            title=f"Del {i}",
-            content="Del content",
-            expires_at=datetime.now(UTC) + timedelta(days=1),
-        )
-        db.add(a)
-        db.flush()
-        del_ids.append(str(a.id))
-    db.commit()
+        # (b) DELETE: 30/min -> 31st gives 429
+        # Create 31 announcements directly
+        bind_tenant_to_session(db, company_id=company_a.company_id, is_platform_admin=False)
+        del_ids = []
+        for i in range(31):
+            a = Announcement(
+                company_id=company_a.company_id,
+                created_by=hr_user.id,
+                title=f"Del {i}",
+                content="Del content",
+                expires_at=datetime.now(UTC) + timedelta(days=1),
+            )
+            db.add(a)
+            db.flush()
+            del_ids.append(str(a.id))
+        db.commit()
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
         del_statuses = []
         for aid in del_ids:
             r = client.delete(f"/api/v1/announcements/{aid}", headers=headers)
             del_statuses.append(r.status_code)
         assert all(s == 204 for s in del_statuses[:30])
         assert del_statuses[30] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
-    # (c) GET list: 60/min -> 61st gives 429
-    limiter.enabled = True
-    try:
-        limiter.reset()
+        # (c) GET list: 60/min -> 61st gives 429
         list_statuses = []
         for _ in range(61):
             r = client.get("/api/v1/announcements", headers=headers)
             list_statuses.append(r.status_code)
         assert all(s == 200 for s in list_statuses[:60])
         assert list_statuses[60] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1013,7 +995,7 @@ def test_t4_action_url_backslash_and_control_chars_rejected(
 
 
 def test_t6_notifications_rate_limits(
-    client: TestClient, db: Session, company_a: TenantContext
+    client: TestClient, db: Session, company_a: TenantContext, limits_on
 ) -> None:
     """T6: Rate limits: list 60/min (61st gives 429), mark one 60/min (61st gives 429),
     mark all 10/min (11th gives 429).
@@ -1039,46 +1021,28 @@ def test_t6_notifications_rate_limits(
     headers = _auth_headers(user)
 
     # 1. GET list: 60/min -> 61st gives 429
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        list_codes = []
-        for _ in range(61):
-            r = client.get("/api/v1/notifications", headers=headers)
-            list_codes.append(r.status_code)
-        assert all(c == 200 for c in list_codes[:60])
-        assert list_codes[60] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    list_codes = []
+    for _ in range(61):
+        r = client.get("/api/v1/notifications", headers=headers)
+        list_codes.append(r.status_code)
+    assert all(c == 200 for c in list_codes[:60])
+    assert list_codes[60] == 429
 
     # 2. PUT mark one: 60/min -> 61st gives 429
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        mark_codes = []
-        for n in notifs:
-            r = client.put(f"/api/v1/notifications/{n.id}/read", headers=headers)
-            mark_codes.append(r.status_code)
-        assert all(c == 200 for c in mark_codes[:60])
-        assert mark_codes[60] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    mark_codes = []
+    for n in notifs:
+        r = client.put(f"/api/v1/notifications/{n.id}/read", headers=headers)
+        mark_codes.append(r.status_code)
+    assert all(c == 200 for c in mark_codes[:60])
+    assert mark_codes[60] == 429
 
     # 3. PUT mark all: 10/min -> 11th gives 429
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        all_codes = []
-        for _ in range(11):
-            r = client.put("/api/v1/notifications/read-all", headers=headers)
-            all_codes.append(r.status_code)
-        assert all(c == 200 for c in all_codes[:10])
-        assert all_codes[10] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    all_codes = []
+    for _ in range(11):
+        r = client.put("/api/v1/notifications/read-all", headers=headers)
+        all_codes.append(r.status_code)
+    assert all(c == 200 for c in all_codes[:10])
+    assert all_codes[10] == 429
 
 
 def test_t7_cleanup_old_notifications_task(
@@ -1608,18 +1572,13 @@ def test_s7_search_rate_limit_and_no_audit(
     assert before_audit_count == after_audit_count
 
     # 2. Rate limit: 30/min -> 31st gives 429
-    limiter.enabled = True
-    try:
-        limiter.reset()
+    with rate_limits():
         codes = []
         for _ in range(31):
             r = client.get("/api/v1/search?q=RateCheck", headers=headers)
             codes.append(r.status_code)
         assert all(c == 200 for c in codes[:30])
         assert codes[30] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
 
 # ══════════════════════════════════════════════════════════════════

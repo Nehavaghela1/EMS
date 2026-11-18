@@ -14,7 +14,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
@@ -33,17 +32,6 @@ def _auth_headers(user: User) -> dict[str, str]:
         role=role_val,
     )
     return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
 
 @pytest.fixture

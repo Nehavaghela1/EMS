@@ -9,11 +9,9 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
 from app.modules.hr.models import Department, Employee
@@ -433,15 +431,6 @@ def test_R8_attendance_exempt_employees_never_absent(
 
 
 # --- Rule 4.4.9: Reads limited to 60/min and not audited ---
-
-
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    yield
-    limiter.reset()
-    limiter.enabled = False
 
 
 def test_R9_calendar_rate_limit(client: TestClient, company_a: TenantContext, limits_on) -> None:

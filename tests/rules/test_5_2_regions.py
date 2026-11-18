@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session
 
 from alembic import command
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.db.rls import bind_tenant_to_session
 from app.db.seed.pt_slabs import seed_pt_slabs
 from app.db.seed.statutory_rates import seed_statutory_rates
@@ -50,17 +49,6 @@ def _seed_rates(db: Session) -> None:
     seed_pt_slabs(db)
     seed_tax_slabs(db)
     seed_statutory_rates(db)
-
-
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
 
 def _message(resp) -> str:

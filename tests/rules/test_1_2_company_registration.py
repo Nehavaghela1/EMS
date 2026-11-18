@@ -8,7 +8,6 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.platform.models import AuditLog
@@ -299,26 +298,20 @@ def test_R08_same_company_name_generates_different_codes(client):
 
 
 # ── R09: Rate limiting on registration ────────────────────────────────────────
-def test_R09_registration_rate_limiting(client):
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        responses = [
-            client.post(
-                "/api/v1/companies/register",
-                json={
-                    "company_name": f"Rate Corp {i}",
-                    "company_email": f"rate-{i}-{uuid.uuid4().hex[:6]}@example.com",
-                    "password": "Password123!",
-                },
-            )
-            for i in range(6)
-        ]
-        # If registration has a rate limit (e.g. 5/window), 6th must return 429
-        assert responses[-1].status_code == 429
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+def test_R09_registration_rate_limiting(client, limits_on):
+    responses = [
+        client.post(
+            "/api/v1/companies/register",
+            json={
+                "company_name": f"Rate Corp {i}",
+                "company_email": f"rate-{i}-{uuid.uuid4().hex[:6]}@example.com",
+                "password": "Password123!",
+            },
+        )
+        for i in range(6)
+    ]
+    # If registration has a rate limit (e.g. 5/window), 6th must return 429
+    assert responses[-1].status_code == 429
 
 
 # ── A01: Role guards on company endpoints ─────────────────────────────────────

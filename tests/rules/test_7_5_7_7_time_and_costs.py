@@ -11,7 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
@@ -812,7 +811,7 @@ def test_7_5_r9_audit_logging(client: TestClient, db: Session, p3_setup: dict):
     assert "approved_time_entry" in actions
 
 
-def test_7_5_r10_rate_limiting_and_paging(client: TestClient, p3_setup: dict):
+def test_7_5_r10_rate_limiting_and_paging(client: TestClient, p3_setup: dict, limits_on: None):
     """Rule 10: Write routes are rate limited (with 429 verified); lists are paged."""
     proj_id, task_id = _create_project_with_members(client, p3_setup)
     today_str = (date.today() - timedelta(days=8)).isoformat()
@@ -824,29 +823,23 @@ def test_7_5_r10_rate_limiting_and_paging(client: TestClient, p3_setup: dict):
     assert isinstance(r_list.json(), list)
 
     # 2. Rate limit check (simulate 65 requests)
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        got_429 = False
-        for _ in range(65):
-            resp = client.post(
-                "/api/v1/projects/time-entries",
-                json={
-                    "project_id": proj_id,
-                    "task_id": task_id,
-                    "date": today_str,
-                    "hours": "0.10",
-                    "description": "Rate limit probe",
-                },
-                headers=emp1_hdr,
-            )
-            if resp.status_code == 429:
-                got_429 = True
-                break
-        assert got_429, "Expected 429 Too Many Requests on time entry write route"
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    got_429 = False
+    for _ in range(65):
+        resp = client.post(
+            "/api/v1/projects/time-entries",
+            json={
+                "project_id": proj_id,
+                "task_id": task_id,
+                "date": today_str,
+                "hours": "0.10",
+                "description": "Rate limit probe",
+            },
+            headers=emp1_hdr,
+        )
+        if resp.status_code == 429:
+            got_429 = True
+            break
+    assert got_429, "Expected 429 Too Many Requests on time entry write route"
 
 
 # =============================================================================
@@ -977,21 +970,15 @@ def test_7_7_r6_super_admin_forbidden_on_summary(client: TestClient, p3_setup: d
     assert r.status_code == 403, r.text
 
 
-def test_7_7_r7_summary_rate_limited(client: TestClient, p3_setup: dict):
+def test_7_7_r7_summary_rate_limited(client: TestClient, p3_setup: dict, limits_on: None):
     """Rule 7: Summary route is rate-limited (60/minute)."""
     proj_id, task_id = _create_project_with_members(client, p3_setup)
     pm_hdr = _auth_headers(p3_setup["pm_u"])
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        got_429 = False
-        for _ in range(65):
-            resp = client.get(f"/api/v1/projects/{proj_id}/summary", headers=pm_hdr)
-            if resp.status_code == 429:
-                got_429 = True
-                break
-        assert got_429, "Expected 429 on /summary route after 60 requests"
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    got_429 = False
+    for _ in range(65):
+        resp = client.get(f"/api/v1/projects/{proj_id}/summary", headers=pm_hdr)
+        if resp.status_code == 429:
+            got_429 = True
+            break
+    assert got_429, "Expected 429 on /summary route after 60 requests"

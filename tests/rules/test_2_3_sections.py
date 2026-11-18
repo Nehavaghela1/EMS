@@ -9,7 +9,6 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.db.session import get_db
@@ -1934,6 +1933,7 @@ def test_r10_a3_rate_limiting_exact_30_per_min(
     route_type: str,
     path_template: str,
     method: str,
+    limits_on,
 ) -> None:
     """A3. R10: parametrize rate-limit test over every write route
     (POST, PUT, DELETE, verify, unverify): 31st call gives 429. Exact expectations.
@@ -1955,32 +1955,24 @@ def test_r10_a3_rate_limiting_exact_30_per_min(
 
     url = path_template.format(emp_id=staff_emp.id, entry_id=entry_id)
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        status_codes: list[int] = []
-        for i in range(35):
-            if method == "POST":
-                payload = (
-                    {"name": f"SkillR-{i}", "level": "intermediate"}
-                    if route_type == "post"
-                    else None
-                )
-                res = client.post(url, headers=hr_headers, json=payload)
-            elif method == "PUT":
-                res = client.put(url, headers=hr_headers, json={"level": "expert"})
-            elif method == "DELETE":
-                res = client.delete(url, headers=hr_headers)
-            status_codes.append(res.status_code)
+    status_codes: list[int] = []
+    for i in range(35):
+        if method == "POST":
+            payload = (
+                {"name": f"SkillR-{i}", "level": "intermediate"} if route_type == "post" else None
+            )
+            res = client.post(url, headers=hr_headers, json=payload)
+        elif method == "PUT":
+            res = client.put(url, headers=hr_headers, json={"level": "expert"})
+        elif method == "DELETE":
+            res = client.delete(url, headers=hr_headers)
+        status_codes.append(res.status_code)
 
-        # First 30 calls must not be 429
-        assert all(c != 429 for c in status_codes[:30]), (
-            f"[{route_type}] Expected first 30 calls not 429, got: {status_codes[:30]}"
-        )
-        # Calls 31 to 35 must all be 429
-        assert all(c == 429 for c in status_codes[30:]), (
-            f"[{route_type}] Expected calls 31-35 to be 429, got: {status_codes[30:]}"
-        )
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    # First 30 calls must not be 429
+    assert all(c != 429 for c in status_codes[:30]), (
+        f"[{route_type}] Expected first 30 calls not 429, got: {status_codes[:30]}"
+    )
+    # Calls 31 to 35 must all be 429
+    assert all(c == 429 for c in status_codes[30:]), (
+        f"[{route_type}] Expected calls 31-35 to be 429, got: {status_codes[30:]}"
+    )

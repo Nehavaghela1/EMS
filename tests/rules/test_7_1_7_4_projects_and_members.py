@@ -11,7 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
@@ -451,26 +450,20 @@ def test_7_1_r8_paged_list(client: TestClient, db: Session, p1_setup: dict):
         assert res_over.json()["page_size"] <= 100
 
 
-def test_7_1_r9_rate_limiting(client: TestClient, db: Session, p1_setup: dict):
+def test_7_1_r9_rate_limiting(client: TestClient, db: Session, p1_setup: dict, limits_on: None):
     """Rule 9: Write routes are rate limited, with a 429 test."""
     hr_headers = _auth_headers(p1_setup["hr_u"])
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        hit_429 = False
-        for i in range(65):
-            r = client.post(
-                "/api/v1/projects",
-                json={"name": f"RL Proj {i}", "code": f"PRJ-RL-{i}"},
-                headers=hr_headers,
-            )
-            if r.status_code == 429:
-                hit_429 = True
-                break
-        assert hit_429, "Rate limiter did not return 429 on excessive POST /projects"
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    hit_429 = False
+    for i in range(65):
+        r = client.post(
+            "/api/v1/projects",
+            json={"name": f"RL Proj {i}", "code": f"PRJ-RL-{i}"},
+            headers=hr_headers,
+        )
+        if r.status_code == 429:
+            hit_429 = True
+            break
+    assert hit_429, "Rate limiter did not return 429 on excessive POST /projects"
 
 
 def test_7_1_r10_project_dates_cannot_exclude_milestones_tasks(

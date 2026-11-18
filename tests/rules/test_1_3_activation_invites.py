@@ -11,7 +11,6 @@ import pytest
 from sqlalchemy import func, select
 
 from app.core import email_templates
-from app.core.rate_limit import limiter
 from app.core.security import hash_token
 from app.modules.hr.models import Employee, InvitationStatus
 from app.modules.identity.models import User, UserRole
@@ -177,38 +176,29 @@ def test_I03_resend_invite_guards_and_activated_conflict(
 
 
 # ── I04: Rate limits: preview 429 after 20/min, activate 429 after 10/min ─────
-def test_I04_rate_limits_on_preview_and_activate(client, company_a, email_outbox):
+def test_I04_rate_limits_on_preview_and_activate(client, company_a, email_outbox, limits_on):
     email = f"i04-{uuid.uuid4().hex[:6]}@example.com"
     _emp_data, token = _create_employee_via_api(client, company_a.hr_headers, email_outbox, email)
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
+    # Preview: 20/min limit. The first request must NOT be 429. The 21st must be 429.
+    preview_resps = [client.get(f"/api/v1/auth/activate/{token}") for _ in range(21)]
+    assert preview_resps[0].status_code == 200
+    assert preview_resps[-1].status_code == 429
 
-        # Preview: 20/min limit. The first request must NOT be 429. The 21st must be 429.
-        preview_resps = [client.get(f"/api/v1/auth/activate/{token}") for _ in range(21)]
-        assert preview_resps[0].status_code == 200
-        assert preview_resps[-1].status_code == 429
-
-        limiter.reset()
-
-        # Activate: 10/min limit. The first request must NOT be 429. The 11th must be 429.
-        activate_resps = [
-            client.post(
-                "/api/v1/auth/activate",
-                json={
-                    "token": "invalid_tok",
-                    "username": f"probe_{i}",
-                    "password": "ValidPassword123!",
-                },
-            )
-            for i in range(11)
-        ]
-        assert activate_resps[0].status_code != 429
-        assert activate_resps[-1].status_code == 429
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+    # Activate: 10/min limit. The first request must NOT be 429. The 11th must be 429.
+    activate_resps = [
+        client.post(
+            "/api/v1/auth/activate",
+            json={
+                "token": "invalid_tok",
+                "username": f"probe_{i}",
+                "password": "ValidPassword123!",
+            },
+        )
+        for i in range(11)
+    ]
+    assert activate_resps[0].status_code != 429
+    assert activate_resps[-1].status_code == 429
 
 
 # ── I05: Username validation: invalid usernames return 422; token still works; normalized
@@ -602,31 +592,27 @@ def test_I14_resend_invite_requires_actor_parameter(db, company_a):
 
 
 # ── Gap 7: Trusted proxy client IP extraction & rate limiting ─────────────────
-def test_gap7_untrusted_client_xff_ignored_rotating_xff_does_not_bypass(client, monkeypatch):
+def test_gap7_untrusted_client_xff_ignored_rotating_xff_does_not_bypass(
+    client, monkeypatch, limits_on
+):
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "TRUSTED_PROXIES", [])
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        # With no trusted proxies, rotating X-Forwarded-For should NOT bypass the limit
-        # Preview endpoint is 20/min
-        token = "dummy_token"
-        resps = []
-        for i in range(21):
-            resps.append(
-                client.get(
-                    f"/api/v1/auth/activate/{token}",
-                    headers={"X-Forwarded-For": f"198.51.100.{i}"},
-                )
+    # With no trusted proxies, rotating X-Forwarded-For should NOT bypass the limit
+    # Preview endpoint is 20/min
+    token = "dummy_token"
+    resps = []
+    for i in range(21):
+        resps.append(
+            client.get(
+                f"/api/v1/auth/activate/{token}",
+                headers={"X-Forwarded-For": f"198.51.100.{i}"},
             )
-        assert resps[0].status_code != 429
-        assert resps[-1].status_code == 429, (
-            "Rotating X-Forwarded-For from untrusted peer bypassed rate limit!"
         )
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+    assert resps[0].status_code != 429
+    assert resps[-1].status_code == 429, (
+        "Rotating X-Forwarded-For from untrusted peer bypassed rate limit!"
+    )
 
 
 def test_gap7_trusted_proxy_uses_forwarded_client_ip(monkeypatch):

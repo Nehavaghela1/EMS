@@ -19,7 +19,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
@@ -754,7 +753,7 @@ def test_rule_7_cross_company_isolation(client: TestClient, p4_setup: dict[str, 
 
 
 def test_rule_8_auditing_and_rate_limiting(
-    client: TestClient, p4_setup: dict[str, Any], db: Session
+    client: TestClient, p4_setup: dict[str, Any], db: Session, limits_on: None
 ):
     headers_owner = _auth_headers(p4_setup["owner_u"])
     headers_emp1 = _auth_headers(p4_setup["emp1_u"])
@@ -802,19 +801,14 @@ def test_rule_8_auditing_and_rate_limiting(
     assert audit_update is not None
 
     # 2. Rate limiting verification (60/minute)
-    orig_enabled = limiter.enabled
-    try:
-        limiter.enabled = True
-        got_429 = False
-        for i in range(65):
-            res = client.post(
-                f"/api/v1/projects/tasks/{task_id}/comments",
-                json={"comment": f"Spam test {i}"},
-                headers=headers_emp1,
-            )
-            if res.status_code == 429:
-                got_429 = True
-                break
-        assert got_429, "Expected 429 Too Many Requests when exceeding 60/min limit"
-    finally:
-        limiter.enabled = orig_enabled
+    got_429 = False
+    for i in range(65):
+        res = client.post(
+            f"/api/v1/projects/tasks/{task_id}/comments",
+            json={"comment": f"Spam test {i}"},
+            headers=headers_emp1,
+        )
+        if res.status_code == 429:
+            got_429 = True
+            break
+    assert got_429, "Expected 429 Too Many Requests when exceeding 60/min limit"

@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from alembic import command
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
@@ -681,15 +680,6 @@ def test_R7_audit_rows_for_shift_operations(
 
 
 # --- Rule 4.1.8: Rate limits (writes 30/min, reads 60/min) ---
-
-
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    yield
-    limiter.reset()
-    limiter.enabled = False
 
 
 def test_R8_rate_limits(client: TestClient, company_a: TenantContext, limits_on) -> None:

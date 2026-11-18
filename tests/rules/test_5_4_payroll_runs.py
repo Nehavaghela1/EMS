@@ -76,17 +76,6 @@ def _seed_statutory(request: pytest.FixtureRequest) -> None:
     seed_statutory_rates(db)  # a run needs the PF and ESI rows of its month (5.2)
 
 
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
-
-
 # ---------------------------------------------------------------- helpers
 
 

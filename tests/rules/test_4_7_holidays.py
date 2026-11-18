@@ -24,7 +24,13 @@ from app.db.session import get_db
 from app.main import app as fastapi_app
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.platform.models import AuditLog
-from tests.conftest import REPO_ROOT, TenantContext, _make_user_headers
+from tests.conftest import (
+    REPO_ROOT,
+    TenantContext,
+    _make_user_headers,
+    rate_limits,
+    rate_limits_off,
+)
 from tests.integration.test_leaves import (
     _create_employee,
     _create_leave_type,
@@ -535,17 +541,6 @@ def test_R8_failed_create_writes_no_audit_row(
 # ---------------------------------------------------------- R9 rate limits
 
 
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
-
-
 def test_R9_create_is_limited_to_30_per_minute(client, company_a, limits_on):
     codes = [
         _create(client, company_a.hr_headers, date=f"2040-01-{i:02d}").status_code
@@ -555,20 +550,16 @@ def test_R9_create_is_limited_to_30_per_minute(client, company_a, limits_on):
 
 
 def test_R9_delete_is_limited_to_30_per_minute(client, company_a):
-    ids = [
-        _create(client, company_a.hr_headers, date=f"2041-01-{i:02d}").json()["id"]
-        for i in range(1, 32)
-    ]
-    limiter.enabled = True
-    limiter.reset()
-    try:
+    with rate_limits_off():
+        ids = [
+            _create(client, company_a.hr_headers, date=f"2041-01-{i:02d}").json()["id"]
+            for i in range(1, 32)
+        ]
+    with rate_limits():
         codes = [
             client.delete(f"{HOLIDAYS}/{i}", headers=company_a.hr_headers).status_code for i in ids
         ]
-    finally:
-        limiter.reset()
-        limiter.enabled = False
-    assert codes[:30] == [204] * 30 and codes[30] == 429, f"R9: delete limit wrong: {codes}"
+        assert codes[:30] == [204] * 30 and codes[30] == 429, f"R9: delete limit wrong: {codes}"
 
 
 def test_R9_reads_are_limited_to_60_per_minute(client, company_a, limits_on):
