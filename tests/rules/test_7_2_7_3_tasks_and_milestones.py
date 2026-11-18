@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
@@ -251,7 +252,7 @@ def test_7_2_r2_r6_validation_and_assignee(client: TestClient, db: Session, p2_s
     estimate >= 0; due date valid and bounded by project [start_date, end_date];
     assignee must be an active project member of the same project; bad input returns 422.
     """
-    today = date.today()
+    today = utcnow().date()
     proj_id = _create_standard_project(
         client, p2_setup, start_date=today, end_date=today + timedelta(days=30)
     )
@@ -672,7 +673,7 @@ def test_7_3_r1_create_edit_scoping(client: TestClient, db: Session, p2_setup: d
     # 1. PM can create milestone
     r_ms = client.post(
         f"/api/v1/projects/{proj_id}/milestones",
-        json={"title": "M1 Initial", "due_date": str(date.today() + timedelta(days=5))},
+        json={"title": "M1 Initial", "due_date": str(utcnow().date() + timedelta(days=5))},
         headers=pm_headers,
     )
     assert r_ms.status_code == 201
@@ -723,7 +724,7 @@ def test_7_3_r2_r6_validation_and_due_date_bounds(client: TestClient, db: Sessio
     """Rule 2: Title is required with length limit; due date must fall within project
     start_date and end_date (if set); bad input returns 422.
     """
-    today = date.today()
+    today = utcnow().date()
     proj_id = _create_standard_project(
         client, p2_setup, start_date=today, end_date=today + timedelta(days=20)
     )

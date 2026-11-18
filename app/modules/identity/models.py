@@ -290,5 +290,5 @@ class CompanySettings(TenantBase):
     payroll_working_days_basis: Mapped[PayrollWorkingDaysBasis] = mapped_column(
         Enum(PayrollWorkingDaysBasis, name="payroll_working_days_basis"),
         nullable=False,
-        default=PayrollWorkingDaysBasis.working_days,
+        default=PayrollWorkingDaysBasis.calendar_days,
     )

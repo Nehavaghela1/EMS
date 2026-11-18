@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
@@ -223,7 +224,7 @@ def test_sec_cross_tenant_idor_all_performance_endpoints(
     attacker_h = _auth_headers(sec_setup["attacker_hr"])
 
     # Setup valid active cycle and goals in Company A
-    today = date.today()
+    today = utcnow().date()
     c_res = client.post(
         "/api/v1/performance/cycles",
         headers=hr_a_h,
@@ -305,7 +306,7 @@ def test_sec_unauthorized_manager_spoofing_attempt(client: TestClient, sec_setup
     emp_a_h = _auth_headers(sec_setup["emp_a"])
     rogue_mgr_h = _auth_headers(sec_setup["rogue_mgr_a"])
 
-    today = date.today()
+    today = utcnow().date()
     c = client.post(
         "/api/v1/performance/cycles",
         headers=hr_a_h,
@@ -365,7 +366,7 @@ def test_sec_blind_review_leak_prevention(client: TestClient, sec_setup: dict[st
     emp_a_h = _auth_headers(sec_setup["emp_a"])
     mgr_a_h = _auth_headers(sec_setup["mgr_a"])
 
-    today = date.today()
+    today = utcnow().date()
     c = client.post(
         "/api/v1/performance/cycles",
         headers=hr_a_h,
@@ -433,7 +434,7 @@ def test_mut_decimal_weightage_sum_gate_strictness(client: TestClient, sec_setup
     hr_a_h = _auth_headers(sec_setup["hr_a"])
     emp_a_h = _auth_headers(sec_setup["emp_a"])
 
-    today = date.today()
+    today = utcnow().date()
     c = client.post(
         "/api/v1/performance/cycles",
         headers=hr_a_h,
@@ -536,7 +537,7 @@ def test_mut_cannot_reopen_without_mandatory_reason_and_hr_role(
     emp_a_h = _auth_headers(sec_setup["emp_a"])
     mgr_a_h = _auth_headers(sec_setup["mgr_a"])
 
-    today = date.today()
+    today = utcnow().date()
     c = client.post(
         "/api/v1/performance/cycles",
         headers=hr_a_h,

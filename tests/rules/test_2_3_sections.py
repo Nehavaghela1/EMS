@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.db.session import get_db
 from app.main import app as fastapi_app
@@ -717,7 +718,7 @@ BAD_POST_CASES = [
         "education",
         {
             **VALID_SAMPLES["education"],
-            "start_date": (date.today() + timedelta(days=2)).isoformat(),
+            "start_date": (utcnow().date() + timedelta(days=2)).isoformat(),
         },
     ),
     (
@@ -728,7 +729,10 @@ BAD_POST_CASES = [
     (
         "edu_future_end",
         "education",
-        {**VALID_SAMPLES["education"], "end_date": (date.today() + timedelta(days=5)).isoformat()},
+        {
+            **VALID_SAMPLES["education"],
+            "end_date": (utcnow().date() + timedelta(days=5)).isoformat(),
+        },
     ),
     ("edu_overlong_inst", "education", {**VALID_SAMPLES["education"], "institution": "A" * 151}),
     ("exp_empty", "experience", {}),
@@ -741,7 +745,7 @@ BAD_POST_CASES = [
         "experience",
         {
             **VALID_SAMPLES["experience"],
-            "start_date": (date.today() + timedelta(days=5)).isoformat(),
+            "start_date": (utcnow().date() + timedelta(days=5)).isoformat(),
         },
     ),
     (
@@ -752,7 +756,10 @@ BAD_POST_CASES = [
     (
         "exp_future_end",
         "experience",
-        {**VALID_SAMPLES["experience"], "end_date": (date.today() + timedelta(days=5)).isoformat()},
+        {
+            **VALID_SAMPLES["experience"],
+            "end_date": (utcnow().date() + timedelta(days=5)).isoformat(),
+        },
     ),
     ("exp_overlong_employer", "experience", {**VALID_SAMPLES["experience"], "employer": "A" * 151}),
 ]

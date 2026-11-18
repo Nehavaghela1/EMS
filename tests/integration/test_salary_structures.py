@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.payroll.models import EmployeeSalary
@@ -225,7 +226,7 @@ def test_assign_and_get_employee_salary(client: TestClient, company_a: TenantCon
         last_name="SalaryEmp",
         email=f"salary-{uuid.uuid4().hex[:6]}@example.test",
         employment_type=EmploymentType.full_time,
-        hire_date=date.today(),
+        hire_date=utcnow().date(),
         is_active=True,
         invitation_status=InvitationStatus.activated,
     )
@@ -275,7 +276,7 @@ def test_assign_and_get_employee_salary(client: TestClient, company_a: TenantCon
         json={
             "structure_id": struct_id,
             "ctc": "1200000.00",  # 12 LPA -> 1,00,000 per month
-            "effective_from": date.today().isoformat(),
+            "effective_from": utcnow().date().isoformat(),
             "revision_reason": "Joining bonus & offer",
         },
         headers=company_a.hr_headers,
@@ -323,7 +324,7 @@ def test_assign_salary_overlap_error(client: TestClient, company_a: TenantContex
         last_name="Emp",
         email=f"overlap-{uuid.uuid4().hex[:6]}@example.test",
         employment_type=EmploymentType.full_time,
-        hire_date=date.today(),
+        hire_date=utcnow().date(),
         is_active=True,
         invitation_status=InvitationStatus.activated,
     )
@@ -347,7 +348,7 @@ def test_assign_salary_overlap_error(client: TestClient, company_a: TenantContex
     )
     struct_id = struct_res.json()["id"]
 
-    today = date.today()
+    today = utcnow().date()
     # First assignment starting today
     client.post(
         f"/api/v1/payroll/employees/{employee.id}/assign",
@@ -385,7 +386,7 @@ def test_salary_assignment_revision_and_overlap_scenarios(
         last_name="Emp",
         email=f"revision-{uuid.uuid4().hex[:6]}@example.test",
         employment_type=EmploymentType.full_time,
-        hire_date=date.today(),
+        hire_date=utcnow().date(),
         is_active=True,
         invitation_status=InvitationStatus.activated,
     )

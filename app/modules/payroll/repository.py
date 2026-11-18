@@ -407,7 +407,7 @@ class TaxSlabRepository:
     def list_in_force(
         self, country: str, financial_year: str, regime: TaxRegime, on_date: date
     ) -> list[TaxSlab]:
-        """The brackets of one financial year and regime that had started by `on_date`."""
+        """The brackets of one financial year and regime that are in force on `on_date`."""
         return list(
             self.db.scalars(
                 select(TaxSlab)
@@ -416,11 +416,35 @@ class TaxSlabRepository:
                     TaxSlab.financial_year == financial_year,
                     TaxSlab.regime == regime,
                     TaxSlab.effective_from <= on_date,
+                    or_(TaxSlab.effective_to.is_(None), TaxSlab.effective_to >= on_date),
                     TaxSlab.deleted_at.is_(None),
                 )
                 .order_by(TaxSlab.min_income.asc())
             ).all()
         )
+
+    def list_open_locked(
+        self, country: str, financial_year: str, regime: TaxRegime
+    ) -> list[TaxSlab]:
+        """The brackets of `financial_year` and `regime` that have no end date, locked."""
+        return list(
+            self.db.scalars(
+                select(TaxSlab)
+                .where(
+                    TaxSlab.country == country,
+                    TaxSlab.financial_year == financial_year,
+                    TaxSlab.regime == regime,
+                    TaxSlab.effective_to.is_(None),
+                    TaxSlab.deleted_at.is_(None),
+                )
+                .with_for_update()
+            ).all()
+        )
+
+    def set_effective_to(self, slabs: list[TaxSlab], effective_to: date) -> None:
+        for slab in slabs:
+            slab.effective_to = effective_to
+        self.db.flush()
 
     def create(self, **kwargs) -> TaxSlab:
         slab = TaxSlab(**kwargs)
@@ -650,6 +674,21 @@ class PayrollItemRepository:
                     PayrollItem.company_id == company_id,
                     PayrollItem.deleted_at.is_(None),
                 )
+            ).all()
+        )
+
+    def list_by_run_id_for_update(
+        self, run_id: uuid.UUID, company_id: uuid.UUID
+    ) -> list[PayrollItem]:
+        return list(
+            self.db.scalars(
+                select(PayrollItem)
+                .where(
+                    PayrollItem.payroll_run_id == run_id,
+                    PayrollItem.company_id == company_id,
+                    PayrollItem.deleted_at.is_(None),
+                )
+                .with_for_update()
             ).all()
         )
 

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus, ResignationStatus
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
@@ -306,7 +307,7 @@ def test_6_4_R1_create_pip_authority_and_scoping(client: TestClient, p3_setup: d
     emp_headers = _auth_headers(p3_setup["emp_user_a"])
 
     target_emp_id = str(p3_setup["emp_a"].id)
-    today = date.today()
+    today = utcnow().date()
 
     # 1. Employee cannot initiate PIP
     r_emp = client.post(
@@ -391,7 +392,7 @@ def test_6_4_R2_mentor_validation(client: TestClient, p3_setup: dict[str, Any]):
     """
     mgr_headers = _auth_headers(p3_setup["other_mgr_user_a"])
     target_emp_id = str(p3_setup["other_emp_a"].id)
-    today = date.today()
+    today = utcnow().date()
 
     # 1. Mentor from Company B -> 404
     r_cross = client.post(
@@ -456,7 +457,7 @@ def test_6_4_R3_single_active_pip_invariant(client: TestClient, p3_setup: dict[s
     mgr_headers = _auth_headers(p3_setup["mgr_user_a"])
     hr_headers = _auth_headers(p3_setup["hr_a"])
     target_emp_id = str(p3_setup["emp_a"].id)
-    today = date.today()
+    today = utcnow().date()
 
     # Create first PIP
     r1 = client.post(
@@ -508,7 +509,7 @@ def test_6_4_R4_pip_read_scoping_and_blindness(client: TestClient, p3_setup: dic
     hr_b_headers = _auth_headers(p3_setup["hr_b"])
 
     target_emp_id = str(p3_setup["emp_a"].id)
-    today = date.today()
+    today = utcnow().date()
 
     # Create PIP
     r_create = client.post(
@@ -572,7 +573,7 @@ def test_6_4_R5_pip_evaluation_authority_and_state(client: TestClient, p3_setup:
     other_mgr_headers = _auth_headers(p3_setup["other_mgr_user_a"])
     emp_headers = _auth_headers(p3_setup["emp_user_a"])
     target_emp_id = str(p3_setup["emp_a"].id)
-    today = date.today()
+    today = utcnow().date()
 
     # Create PIP
     r_create = client.post(
@@ -646,7 +647,7 @@ def test_6_4_R6_failed_pip_triggers_atomic_separation(
     mgr_headers = _auth_headers(p3_setup["other_mgr_user_a"])
     target_emp = p3_setup["other_emp_a"]
     target_emp_id = str(target_emp.id)
-    today = date.today()
+    today = utcnow().date()
 
     # Create PIP
     r_create = client.post(
@@ -718,8 +719,8 @@ def test_6_4_R7_rate_limit_post_pips(client: TestClient, p3_setup: dict[str, Any
             json={
                 "employee_id": target_emp_id,
                 "title": f"PIP {i}",
-                "start_date": str(date.today()),
-                "end_date": str(date.today() + timedelta(days=30)),
+                "start_date": str(utcnow().date()),
+                "end_date": str(utcnow().date() + timedelta(days=30)),
             },
         )
         if res.status_code == 429:
@@ -758,7 +759,7 @@ def test_6_4_R9_rate_limit_post_pips_extend(
             f"/api/v1/performance/pips/{fake_pip_id}/extend",
             headers=mgr_headers,
             json={
-                "new_end_date": str(date.today() + timedelta(days=60)),
+                "new_end_date": str(utcnow().date() + timedelta(days=60)),
                 "reason": "More time needed",
             },
         )

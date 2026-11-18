@@ -1,10 +1,10 @@
 import uuid
-from datetime import date
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
@@ -89,7 +89,7 @@ def test_task_update_permissions(client: TestClient, db: Session, company_a: Ten
         first_name="Nik",
         last_name="Vaghela",
         email=user_1.email,
-        hire_date=date.today(),
+        hire_date=utcnow().date(),
         employment_type=EmploymentType.full_time,
         invitation_status=InvitationStatus.activated,
     )
@@ -112,7 +112,7 @@ def test_task_update_permissions(client: TestClient, db: Session, company_a: Ten
         first_name="Yashvi",
         last_name="Patel",
         email=user_2.email,
-        hire_date=date.today(),
+        hire_date=utcnow().date(),
         employment_type=EmploymentType.full_time,
         invitation_status=InvitationStatus.activated,
     )
@@ -194,7 +194,7 @@ def test_task_update_permissions(client: TestClient, db: Session, company_a: Ten
     time_payload_forbidden = {
         "project_id": project_id,
         "task_id": task_id,
-        "date": str(date.today()),
+        "date": str(utcnow().date()),
         "hours": 4.5,
         "description": "Attempting to log on Nik's task",
     }
@@ -211,7 +211,7 @@ def test_task_update_permissions(client: TestClient, db: Session, company_a: Ten
     time_payload_nik = {
         "project_id": project_id,
         "task_id": task_id,
-        "date": str(date.today()),
+        "date": str(utcnow().date()),
         "hours": 3.0,
         "description": "Logged 3 hours on Nik's feature task",
     }
@@ -226,7 +226,7 @@ def test_task_update_permissions(client: TestClient, db: Session, company_a: Ten
     # 4c. General time entry without task -> Allowed for any project member
     general_time_payload = {
         "project_id": project_id,
-        "date": str(date.today()),
+        "date": str(utcnow().date()),
         "hours": 2.0,
         "description": "Weekly alignment and planning meeting",
     }

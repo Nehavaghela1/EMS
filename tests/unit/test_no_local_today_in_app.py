@@ -31,3 +31,29 @@ def test_no_local_date_today_or_utcnow_in_app():
 
     msg = "Found forbidden date.today() or datetime.utcnow() in app/:\n" + "\n".join(violations)
     assert not violations, msg
+
+
+def test_no_local_date_today_in_tests():
+    """Ensure tests/ uses utcnow().date() and never local date.today()."""
+    root = Path(__file__).resolve().parents[1]
+    violations: list[str] = []
+    this_file = Path(__file__).resolve()
+
+    for py_file in root.rglob("*.py"):
+        if py_file.resolve() == this_file:
+            continue
+        try:
+            content = py_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+
+        for line_no, line in enumerate(content.splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            rel = py_file.relative_to(root.parent)
+            if "date.today()" in line:
+                violations.append(f"{rel}:{line_no}: forbidden date.today() -> {line}")
+
+    msg = "Found forbidden date.today() in tests/:\n" + "\n".join(violations)
+    assert not violations, msg

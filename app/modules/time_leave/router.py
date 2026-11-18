@@ -141,7 +141,9 @@ def check_out(
 
 
 @attendance_router.post("/export", response_model=JobQueuedResponse, status_code=202)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def export_attendance(
+    request: Request,
     data: AttendanceExportRequest,
     db=Depends(get_tenant_db),
     _user: User = Depends(require_role(UserRole.hr_admin)),
@@ -280,7 +282,9 @@ def get_attendance(
 
 
 @attendance_router.put("/{attendance_id}", response_model=AttendanceResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def regularize_attendance(
+    request: Request,
     attendance_id: uuid.UUID,
     data: AttendanceRegularizeRequest,
     db=Depends(get_tenant_db),
@@ -393,7 +397,9 @@ def approve_regularization(
 
 
 @attendance_router.delete("/{attendance_id}", status_code=204)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def delete_attendance(
+    request: Request,
     attendance_id: uuid.UUID,
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
@@ -630,7 +636,9 @@ def list_leave_types(
 
 
 @leave_types_router.post("", response_model=LeaveTypeResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def create_leave_type(
+    request: Request,
     data: LeaveTypeCreateRequest,
     db=Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
@@ -640,7 +648,9 @@ def create_leave_type(
 
 
 @leave_types_router.put("/{leave_type_id}", response_model=LeaveTypeResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_leave_type(
+    request: Request,
     leave_type_id: uuid.UUID,
     data: LeaveTypeUpdateRequest,
     db=Depends(get_tenant_db),

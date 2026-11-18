@@ -1,10 +1,10 @@
 import uuid
-from datetime import date
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
@@ -47,7 +47,7 @@ def _create_employee_with_user(
         first_name="Project",
         last_name="Emp",
         email=user.email,
-        hire_date=date.today(),
+        hire_date=utcnow().date(),
         employment_type=EmploymentType.full_time,
         invitation_status=InvitationStatus.activated,
         is_active=True,
@@ -128,7 +128,7 @@ def test_owner_log_time_entry_explicit_employee_id(
         "project_id": project_id,
         "task_id": task_id,
         "employee_id": str(emp1_id),
-        "date": str(date.today()),
+        "date": str(utcnow().date()),
         "hours": 2.0,
         "description": "Emp2 attempting to log for emp1",
     }
@@ -140,7 +140,7 @@ def test_owner_log_time_entry_explicit_employee_id(
         "project_id": project_id,
         "task_id": task_id,
         "employee_id": str(emp1_id),
-        "date": str(date.today()),
+        "date": str(utcnow().date()),
         "hours": 2.0,
         "description": "Owner B logging for emp1",
     }
@@ -155,7 +155,7 @@ def test_owner_log_time_entry_explicit_employee_id(
         "project_id": project_id,
         "task_id": task_id,
         "employee_id": str(emp1_id),
-        "date": str(date.today()),
+        "date": str(utcnow().date()),
         "hours": 2.5,
         "description": "Owner A logging for emp1",
     }
@@ -196,7 +196,7 @@ def test_owner_create_time_entry_is_admin_or_manager_path(
     payload = {
         "project_id": project_id,
         "task_id": task_id,
-        "date": str(date.today()),
+        "date": str(utcnow().date()),
         "hours": 1.5,
         "description": "Owner logging on someone else's task",
     }

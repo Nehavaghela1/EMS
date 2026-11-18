@@ -213,7 +213,7 @@ def test_salary_view_owner_consistency(
         json={
             "structure_id": struct_id,
             "ctc": "600000.00",
-            "effective_from": date.today().isoformat(),
+            "effective_from": utcnow().date().isoformat(),
             "revision_reason": "Hired",
         },
     )

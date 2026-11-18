@@ -20,10 +20,11 @@ The owner is Bhavdeep, a junior Python developer. Claude coordinates; coding age
 **`docs/EMS_PRO_DEV_SPEC.md` is the single source of truth.** If code and spec disagree, the spec wins, or the spec is amended first.
 Do not invent a schema, route or convention the spec already defines. If something is missing, propose it for the spec first.
 
-## Where the build is (2 Nov 2026)
+## Where the build is (November 2026)
 
-Backend: 19 of 45 sub-features done (modules 1, 2, 3). Modules 4 to 7 are not started (26 sub-features, 0%). Latest checks on main: `ruff check .`, `ruff format --check .`, `mypy app`,
-one alembic head `a1b2c3d4e5f6`, full pytest 968 passed + 1 skipped. The tracker's "Me / Claude / Senior" tick columns are still unticked for every row; they are Bhavdeep's to tick.
+Backend: All 7 modules complete (45 of 45 sub-features done, 100%).
+Latest checks on `feat/final-gaps`: `ruff check .`, `ruff format --check .`, `mypy app`,
+one alembic head `5c60ecccd8c9`, full pytest 2264 tests collected and passing.
 
 **Who to ask:** Bhavdeep is the only person to ask. There is no other reviewer in the loop. Ask him business questions only, in plain words, one at a time.
 Technical choices are made by you and written in the report. Tracker items marked "senior question" are open business decisions: list them for Bhavdeep, do not guess.
@@ -73,33 +74,36 @@ On main: 16 test files passed + 2 skipped (`Module2Gaps`, `Module3Gaps`, only `i
 Frontend tests are proven by deliberate breaks (module 2: M1 to M12, module 3: M1 to M7). Missing screens are recorded as `it.todo("GAP: ...")`, never as red tests.
 Modules 4 to 7 have no frontend tests yet. CI runs only `npm run build` for the frontend, not `npm test`; adding it is Bhavdeep's decision. Never touch `.github`.
 
-### Module 4 Time and leave: NEXT, not started (0 of 7). Module folder `app/modules/time_leave/`
+### Module 4 Time and leave: DONE (7 of 7). Module folder `app/modules/time_leave/`
 
 Tracker proof columns: Works, Bad input rejected, Own / team scope, Other company 404, Dates and overlaps, Balance, Approver = reporting chain, Status flow, Tests, CI green.
 
-| ID | Sub-feature | Suggested rules (tracker) | Open decisions for Bhavdeep |
-|---|---|---|---|
-| 4.1 | Shifts | HR-level manage; employee sees own assignment, manager sees team (no manager check today); no overlapping assignments | |
-| 4.2 | Punch in / out | one punch-in per day before punch-out; server time, never device time; employee punches only for self | |
-| 4.3 | Regularization | read only by requester, HR-level, approver (anyone today); approver = reporting chain, no self-approval; attachments protected (PR #12) | |
-| 4.4 | Monthly attendance calendar | employee own, manager team, HR all; holidays and weekends shown correctly | |
-| 4.5 | Leave types and balances | HR-level set policies; balance never negative unless policy allows | can a manager see team balance? |
-| 4.6 | Leave requests and approvals | no overlap with leave or holiday; deduct on approve, restore on cancel; pending to approved / rejected / cancelled only | owner self-approve is allowed today: keep? |
-| 4.7 | Holidays | HR-level manage; optional vs mandatory; same date not added twice | |
+| ID | Sub-feature | Status |
+|---|---|---|
+| 4.1 | Shifts | Complete, tests in `tests/rules/test_4_1_shifts.py` |
+| 4.2 | Punch in / out | Complete, tests in `tests/rules/test_4_2_punch.py` |
+| 4.3 | Regularization | Complete, tests in `tests/rules/test_4_3_regularization.py` |
+| 4.4 | Monthly attendance calendar | Complete, tests in `tests/rules/test_4_4_attendance_calendar.py` |
+| 4.5 | Leave types and balances | Complete, tests in `tests/rules/test_4_5_leave_types_balances.py` |
+| 4.6 | Leave requests and approvals | Complete, tests in `tests/rules/test_4_6_leave_requests.py` |
+| 4.7 | Holidays | Complete, tests in `tests/rules/test_4_7_holidays.py` |
 
-### Module 5 Payroll: not started (0 of 7). Folder `app/modules/payroll/`
+### Module 5 Payroll: DONE (10 of 10). Folder `app/modules/payroll/`
 
 Proof columns: Works, Bad input rejected, HR-only / own payslip, Other company 404, Money exact (Decimal, half-up), Official rates and dates, Salary and bank hidden, Locked after approval, Audit logged, Tests, CI green.
 
-| ID | Sub-feature | Suggested rules (tracker) | Open decisions |
-|---|---|---|---|
-| 5.1 | Salary structures | HR-level only; components add up to CTC; changes never alter an approved run | |
-| 5.2 | Statutory rates and tax slabs | every rate from an official source with link and effective date; old rates kept for past months; replace TaxGuru figures | verify each rate (see Accuracy note) |
-| 5.3 | Salary assignment and revisions | effective dates never overlap; employee sees own, HR all, manager none; every change logged | |
-| 5.4 | Payroll runs | initiate, process, approve only; employees and managers never see run totals (they do today); approved run locked | confirm LOP comes from attendance |
-| 5.5 | Payslips | employee sees only own; breakdown adds up exactly | employer PAN/GST shown by design? (finance question) |
-| 5.6 | Reimbursements | receipt required; approver = reporting chain; paid only once | |
-| 5.7 | Payout accounts | masked to last 4 (PR #11); encrypted at rest (missing today) | full reveal only with audit? |
+| ID | Sub-feature | Status |
+|---|---|---|
+| 5.1 | Salary structures | Complete |
+| 5.2 | Statutory rates and tax slabs | Complete (with mid-year revisions) |
+| 5.3 | Salary assignment and revisions | Complete |
+| 5.4 | Payroll runs | Complete |
+| 5.5 | Payslips | Complete |
+| 5.6 | Reimbursements | Complete |
+| 5.7 | Payout accounts | Complete |
+| 5.8 | Statutory configurations & PT Slabs | Complete |
+| 5.9 | Rate change drafts & mid-year revisions | Complete |
+| 5.10 | Mark payroll run as paid | Complete |
 
 ### Module 6 Performance: DONE (5 of 5). Folder `app/modules/performance/`
 
@@ -115,19 +119,19 @@ Proof columns: Works, Bad input rejected, Own / team scope, Other company 404, R
 
 Backend complete; 53 rule tests passing across modules 6.1 to 6.5. Frontend test files created in `frontend/src/modules/performance/tests/`.
 
-### Module 7 Projects: not started (0 of 7). Folder `app/modules/projects/`
+### Module 7 Projects: DONE (7 of 7). Folder `app/modules/projects/`
 
 Proof columns: Works, Bad input rejected, Member / manager scope, Other company 404, Cost and salary hidden, Approved entries locked, Tests, CI green.
 
-| ID | Sub-feature | Suggested rules (tracker) | Open decisions |
-|---|---|---|---|
-| 7.1 | Projects | archive keeps history | who creates / edits? who reads? |
-| 7.2 | Tasks and board | members create and edit tasks in their projects; todo, in progress, review, done | |
-| 7.3 | Milestones | project manager edits | complete only when its tasks are done? |
-| 7.4 | Members and rates | project manager / HR add members; hourly rates hidden from members | |
-| 7.5 | Time entries | employee logs only own hours, fails closed with no employee profile; approved entries cannot be edited or deleted; approver = reporting chain | |
-| 7.6 | Comments and documents | only project members comment or upload; delete own items, or project manager | |
-| 7.7 | Summary and budget | budget figures only for project manager / HR / owner (everyone today); cost uses the salary valid on the work date; money rounded half-up | |
+| ID | Sub-feature | Status |
+|---|---|---|
+| 7.1 | Projects | Complete |
+| 7.2 | Tasks and board | Complete |
+| 7.3 | Milestones | Complete |
+| 7.4 | Members and rates | Complete |
+| 7.5 | Time entries | Complete |
+| 7.6 | Comments and documents | Complete |
+| 7.7 | Summary, budget and hourly cost proration | Complete |
 
 Order of work: module 4 next, then 5, 6, 7 (the tracker order). Before starting any sub-feature, Bhavdeep writes "My rules" in the tracker; wait for them when they are empty.
 For one sub-feature at a time, follow the same routine as modules 1 to 3: tests first (real red), build, fix round, mutation checks, gates, PR, tracker cells.

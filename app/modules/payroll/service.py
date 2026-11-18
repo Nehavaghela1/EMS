@@ -2,10 +2,11 @@ import logging
 import uuid
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,8 +33,12 @@ from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.models import Employee, EmploymentType, ResignationStatus
 from app.modules.hr.repository import EmployeeRepository
-from app.modules.identity.models import User, UserRole
-from app.modules.identity.repository import CompanyRepository, UserRepository
+from app.modules.identity.models import PayrollWorkingDaysBasis, User, UserRole
+from app.modules.identity.repository import (
+    CompanyRepository,
+    CompanySettingsRepository,
+    UserRepository,
+)
 from app.modules.payroll.models import (
     CalculationType,
     EmployeeBankAccount,
@@ -83,6 +88,7 @@ from app.modules.payroll.repository import (
 from app.modules.payroll.schemas import (
     BankAccountRequest,
     BankAccountResponse,
+    PayrollPaymentRecordRequest,
     PayrollRunCreateRequest,
     PtSlabPutRequest,
     ReimbursementCreateRequest,
@@ -1172,15 +1178,25 @@ class TaxSlabService:
     def add_bracket_set(
         self, data: TaxSlabPostRequest, actor: User, *, commit: bool = True
     ) -> list:
-        """SA only. Same append-only reasoning as PtSlabService: a financial year and regime
-        gets one bracket set; a second one is refused instead of mixing with the first."""
+        """SA only. Always adds a new effective-dated set and ends the open set the day before —
+        never mutates a historical row (5.9 / T2)."""
         _listed_country(data.country)
         _assert_contiguous([(b.min_income, b.max_income) for b in data.brackets], "bracket")
-        if self.repo.list_for(data.country, data.financial_year, data.regime):
+        existing = self.repo.list_open_locked(data.country, data.financial_year, data.regime)
+        everything = self.repo.list_for(data.country, data.financial_year, data.regime)
+        start = data.effective_from
+        if any(
+            r.effective_from >= start or (r.effective_to and start <= r.effective_to)
+            for r in everything
+        ):
+            known = sorted({(r.effective_from, r.effective_to) for r in everything})
             raise ConflictError(
-                f"The {data.regime.value} regime for financial year {data.financial_year} "
-                "already has a bracket set; existing rows are never changed."
+                f"A new {data.regime.value} regime set starting {start} must start after the "
+                f"current set's start date and outside every ended period (existing: "
+                f"{_periods(known)})."
             )
+        if existing:
+            self.repo.set_effective_to(existing, start - timedelta(days=1))
         created = [
             self.repo.create(
                 country=data.country,
@@ -1192,6 +1208,7 @@ class TaxSlabService:
                 cess_percent=data.cess_percent,
                 surcharge_rules=data.surcharge_rules,
                 effective_from=data.effective_from,
+                effective_to=None,
                 source_url=data.source_url,
                 source_title=data.source_title,
                 source_note=data.source_note,
@@ -1324,6 +1341,8 @@ class PayrollRunService:
         self.project_repo = ProjectRepository(db)
         self.payment_repo = PayrollRunPaymentRepository(db)
         self.bank_repo = EmployeeBankAccountRepository(db)
+        self.settings_repo = CompanySettingsRepository(db)
+        self.notification_service = NotificationService(db)
         self.audit = AuditService(db)
 
     def create_run(
@@ -1620,14 +1639,29 @@ class PayrollRunService:
 
             component_specs = self._component_specs(structure)
 
-            # ── Attendance: pay is prorated over the calendar days of the month ───────
-            working_days = Decimal(str(last_day))
+            # ── Attendance: prorated over working days, calendar days, or fixed 30 ────
+            settings = self.settings_repo.get_by_company(company_id)
+            emp_working_dates = self.leave_service.working_dates(
+                company_id, emp.department_id, month_start, month_end
+            )
+            basis = (
+                settings.payroll_working_days_basis
+                if settings is not None
+                else PayrollWorkingDaysBasis.calendar_days
+            )
+            if basis == PayrollWorkingDaysBasis.calendar_days:
+                working_days = Decimal(str(last_day))
+            elif basis == PayrollWorkingDaysBasis.working_days:
+                working_days = Decimal(str(len(emp_working_dates)))
+            elif basis == PayrollWorkingDaysBasis.fixed_30:
+                working_days = Decimal("30.0")
+            else:
+                raise ValueError(f"Unsupported payroll working days basis: {basis}")
+
             summary = summarise_attendance(
                 month_start=month_start,
                 month_end=month_end,
-                working_dates=self.leave_service.working_dates(
-                    company_id, emp.department_id, month_start, month_end
-                ),
+                working_dates=emp_working_dates,
                 joined_on=emp.hire_date,
                 last_working_date=self._approved_last_working_date(emp),
                 attendance=self.attendance_repo.status_by_date(
@@ -1703,15 +1737,19 @@ class PayrollRunService:
             # The engine applies the LOP ratio (paid_days/working_days) to scale
             # earned_gross down. Statutory deductions (EPF, ESI, PT) are then
             # computed on earned_gross — not full gross — satisfying Indian law.
-            segments = self._salary_segments(
-                company_id,
-                month_salaries,
-                component_specs,
-                month_start,
-                month_end,
-                summary.lop_by_date,
+            segments = (
+                self._salary_segments(
+                    company_id,
+                    month_salaries,
+                    component_specs,
+                    month_start,
+                    month_end,
+                    summary.lop_by_date,
+                )
+                if len(month_salaries) > 1
+                else None
             )
-            if segments is None:
+            if segments is None and len(month_salaries) > 1:
                 skipped.append({"employee_id": str(emp.id), "reason": "no_structure"})
                 continue
 
@@ -1978,7 +2016,6 @@ class PayrollRunService:
             )
 
     def approve_run(self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User) -> PayrollRun:
-        from sqlalchemy import update
 
         run = self.repo.get_by_id_for_update(run_id, company_id)
         if run is None:
@@ -2035,6 +2072,118 @@ class PayrollRunService:
         self.db.commit()
         return run
 
+    def record_payments(
+        self,
+        company_id: uuid.UUID,
+        run_id: uuid.UUID,
+        data: PayrollPaymentRecordRequest,
+        actor: User,
+    ) -> PayrollRun:
+        """Mark items in an approved run as paid or failed (5.10).
+        If all items are paid, run status transitions to 'paid'."""
+        run = self.repo.get_by_id_for_update(run_id, company_id)
+        if run is None:
+            raise NotFoundError("Payroll run not found.")
+
+        if run.status not in (PayrollRunStatus.approved, PayrollRunStatus.paid):
+            raise ConflictError(
+                f"Cannot record payments for a run with status '{run.status.value}'. "
+                "Only an approved run can have payments recorded."
+            )
+
+        items = self.item_repo.list_by_run_id_for_update(run.id, company_id)
+        item_map = {item.id: item for item in items}
+
+        today_utc = utcnow().date()
+        if run.approved_at:
+            if run.approved_at.tzinfo is not None:
+                approved_date = run.approved_at.astimezone(UTC).date()
+            else:
+                approved_date = run.approved_at.date()
+        else:
+            approved_date = today_utc
+        updated_item_ids: list[str] = []
+        paid_employees: list[uuid.UUID] = []
+
+        for p in data.payments:
+            if p.item_id not in item_map:
+                raise NotFoundError(f"Payroll item {p.item_id} not found in this run.")
+            item = item_map[p.item_id]
+
+            if item.payment_status == "paid":
+                raise ConflictError(
+                    f"Payroll item {item.id} has already been paid and cannot be modified."
+                )
+
+            if p.status == "paid":
+                paid_on = p.paid_on or today_utc
+                if paid_on > today_utc:
+                    raise ValidationError(
+                        "Payment date cannot be in the future.",
+                        details={"field": "paid_on"},
+                    )
+                if paid_on < approved_date:
+                    raise ValidationError(
+                        "Payment date cannot be before the payroll run approval date.",
+                        details={"field": "paid_on"},
+                    )
+                item.payment_status = "paid"
+                item.paid_on = paid_on
+                item.bank_reference = p.bank_reference
+                paid_employees.append(item.employee_id)
+            else:
+                item.payment_status = "failed"
+                item.paid_on = None
+                item.bank_reference = p.bank_reference
+
+            updated_item_ids.append(str(item.id))
+
+        # Check if all items in the run are paid
+        if all(it.payment_status == "paid" for it in items):
+            run.status = PayrollRunStatus.paid
+            self.repo.update(run, status=PayrollRunStatus.paid)
+
+        # Notify employees who were marked paid (after commit or during transaction via notify)
+        emp_users: dict[uuid.UUID, uuid.UUID] = {}
+        if paid_employees:
+            emp_rows = list(
+                self.db.scalars(
+                    select(Employee).where(
+                        Employee.company_id == company_id,
+                        Employee.id.in_(paid_employees),
+                    )
+                ).all()
+            )
+            emp_users = {emp.id: emp.user_id for emp in emp_rows if emp.user_id is not None}
+        for emp_id in paid_employees:
+            u_id = emp_users.get(emp_id)
+            if u_id:
+                self.notification_service.notify(
+                    company_id=company_id,
+                    user_id=u_id,
+                    type="PAYROLL_PAID",
+                    title="Salary Disbursed",
+                    message=f"Your salary for {run.month}/{run.year} has been marked as paid.",
+                    action_url="/payroll/payslips/me",
+                    entity_type="payroll_run",
+                    entity_id=run.id,
+                )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PAYROLL_PAYMENT_RECORDED",
+            entity_type="payroll_run",
+            entity_id=run.id,
+            details={
+                "run_id": str(run.id),
+                "item_ids": updated_item_ids,
+                "fields_changed": ["payment_status", "paid_on", "bank_reference"],
+            },
+        )
+        self.db.commit()
+        return run
+
     def delete_run(self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User) -> None:
         """Delete/cancel a payroll run. Allowed only if status in
         ('draft', 'processing', 'pending_approval') and not 'approved'/'paid'.
@@ -2053,7 +2202,6 @@ class PayrollRunService:
         # run but never finalised. Since approve_run hasn't been called yet,
         # their status is still APPROVED (not PAID). Clear the run reference so
         # they roll forward into the next pay cycle automatically.
-        from sqlalchemy import update
 
         self.db.execute(
             update(Reimbursement)

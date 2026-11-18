@@ -1,10 +1,11 @@
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.modules.hr.models import Employee
 from app.modules.identity.models import User, UserRole
 from app.modules.performance.models import PerformancePIP
@@ -65,7 +66,7 @@ def test_assigned_shift_colleague_forbidden_or_safe(
     assign_res = client.post(
         f"/api/v1/shifts/{shift_id}/assign",
         headers=company_a.hr_headers,
-        json={"employee_id": emp_colleague["id"], "effective_from": date.today().isoformat()},
+        json={"employee_id": emp_colleague["id"], "effective_from": utcnow().date().isoformat()},
     )
     assert assign_res.status_code == 201
 
@@ -100,7 +101,7 @@ def test_assigned_shift_own_allowed(client: TestClient, db: Session, company_a: 
     client.post(
         f"/api/v1/shifts/{shift_id}/assign",
         headers=company_a.hr_headers,
-        json={"employee_id": emp_own["id"], "effective_from": date.today().isoformat()},
+        json={"employee_id": emp_own["id"], "effective_from": utcnow().date().isoformat()},
     )
 
     res = client.get(f"/api/v1/shifts/assigned/{emp_own['id']}", headers=headers_own)
@@ -128,7 +129,7 @@ def test_assigned_shift_hr_admin_own_company_allowed(client: TestClient, company
     client.post(
         f"/api/v1/shifts/{shift_id}/assign",
         headers=company_a.hr_headers,
-        json={"employee_id": emp["id"], "effective_from": date.today().isoformat()},
+        json={"employee_id": emp["id"], "effective_from": utcnow().date().isoformat()},
     )
 
     res = client.get(f"/api/v1/shifts/assigned/{emp['id']}", headers=company_a.hr_headers)
@@ -180,8 +181,8 @@ def test_performance_pips_query_colleague_forbidden_or_safe(
         company_id=company_a.company_id,
         employee_id=uuid.UUID(emp_colleague["id"]),
         title="Colleague Improvement Plan",
-        start_date=date.today(),
-        end_date=date.today() + timedelta(days=30),
+        start_date=utcnow().date(),
+        end_date=utcnow().date() + timedelta(days=30),
         status="active",
     )
     db.add(colleague_pip)
@@ -211,8 +212,8 @@ def test_performance_pips_query_own_allowed(
         company_id=company_a.company_id,
         employee_id=uuid.UUID(emp_own["id"]),
         title="Own Improvement Plan",
-        start_date=date.today(),
-        end_date=date.today() + timedelta(days=30),
+        start_date=utcnow().date(),
+        end_date=utcnow().date() + timedelta(days=30),
         status="active",
     )
     db.add(own_pip)
@@ -270,7 +271,7 @@ def test_projects_time_entries_query_colleague_forbidden_or_safe(
         headers=headers_colleague,
         json={
             "project_id": project_id,
-            "date": date.today().isoformat(),
+            "date": utcnow().date().isoformat(),
             "hours": "4.00",
             "description": "Colleague secret work",
         },
@@ -321,7 +322,7 @@ def test_projects_time_entries_query_own_allowed(
         headers=headers_own,
         json={
             "project_id": project_id,
-            "date": date.today().isoformat(),
+            "date": utcnow().date().isoformat(),
             "hours": "5.00",
             "description": "Own time entry",
         },
@@ -529,7 +530,7 @@ def test_payroll_salary_colleague_forbidden(
         json={
             "structure_id": struct_id,
             "ctc": "600000.00",
-            "effective_from": date.today().isoformat(),
+            "effective_from": utcnow().date().isoformat(),
             "revision_reason": "Hired",
         },
     )
@@ -574,7 +575,7 @@ def test_payroll_salary_own_allowed(client: TestClient, db: Session, company_a: 
         json={
             "structure_id": struct_id,
             "ctc": "600000.00",
-            "effective_from": date.today().isoformat(),
+            "effective_from": utcnow().date().isoformat(),
             "revision_reason": "Hired",
         },
     )
@@ -639,8 +640,8 @@ def test_performance_pips_active_colleague_forbidden(
         company_id=company_a.company_id,
         employee_id=uuid.UUID(emp_colleague["id"]),
         title="Colleague Active PIP",
-        start_date=date.today(),
-        end_date=date.today() + timedelta(days=30),
+        start_date=utcnow().date(),
+        end_date=utcnow().date() + timedelta(days=30),
         status="active",
     )
     db.add(colleague_pip)
@@ -663,8 +664,8 @@ def test_performance_pips_active_own_allowed(
         company_id=company_a.company_id,
         employee_id=uuid.UUID(emp_own["id"]),
         title="Own Active PIP",
-        start_date=date.today(),
-        end_date=date.today() + timedelta(days=30),
+        start_date=utcnow().date(),
+        end_date=utcnow().date() + timedelta(days=30),
         status="active",
     )
     db.add(own_pip)

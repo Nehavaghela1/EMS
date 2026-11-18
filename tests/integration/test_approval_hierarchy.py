@@ -1,10 +1,11 @@
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.modules.hr.models import Employee
 from app.modules.identity.models import User, UserRole
 from app.modules.performance.models import PerformancePIP
@@ -447,7 +448,7 @@ def test_regularization_approval_j_inactive_manager_denied(
 # 3. RESIGNATION APPROVAL: PUT /api/v1/employees/{employee_id}/resignation/approve
 # =============================================================================
 def _submit_resignation(client: TestClient, emp_id: str, emp_headers: dict) -> None:
-    today = date.today()
+    today = utcnow().date()
     res = client.post(
         f"/api/v1/employees/{emp_id}/resignation",
         headers=emp_headers,
@@ -981,7 +982,7 @@ def _create_pending_time_entry(
         headers=emp_headers,
         json={
             "project_id": proj_id,
-            "date": date.today().isoformat(),
+            "date": utcnow().date().isoformat(),
             "hours": "3.50",
             "description": "Dev work",
         },
@@ -1165,8 +1166,8 @@ def _seed_active_pip(db: Session, company_id: uuid.UUID, emp_id: str) -> str:
         company_id=company_id,
         employee_id=uuid.UUID(emp_id),
         title="Performance Plan",
-        start_date=date.today(),
-        end_date=date.today() + timedelta(days=30),
+        start_date=utcnow().date(),
+        end_date=utcnow().date() + timedelta(days=30),
         status="active",
     )
     db.add(pip)
@@ -1402,7 +1403,7 @@ def _setup_clearance_environment(client: TestClient, db: Session, company: Tenan
     emp_headers = _link_user_to_employee(db, company.company_id, emp["id"], UserRole.employee)
 
     # Submit and approve resignation to prepare for clearance
-    today = date.today()
+    today = utcnow().date()
     client.post(
         f"/api/v1/employees/{emp['id']}/resignation",
         headers=emp_headers,

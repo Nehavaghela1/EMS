@@ -1,10 +1,11 @@
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
@@ -33,7 +34,7 @@ def _create_employee_with_user(
         last_name="Tester",
         email=user.email,
         employment_type=EmploymentType.full_time,
-        hire_date=date.today(),
+        hire_date=utcnow().date(),
         is_active=True,
         invitation_status=InvitationStatus.activated,
     )
@@ -57,8 +58,8 @@ def test_project_lifecycle_and_analytics(client: TestClient, db: Session, compan
             "code": code,
             "description": "Migration to microservices",
             "status": "active",
-            "start_date": str(date.today()),
-            "deadline": str(date.today() + timedelta(days=90)),
+            "start_date": str(utcnow().date()),
+            "deadline": str(utcnow().date() + timedelta(days=90)),
             "budget": "50000.00",
             "client_name": "Acme Corp",
         },
@@ -105,7 +106,7 @@ def test_project_lifecycle_and_analytics(client: TestClient, db: Session, compan
         json={
             "project_id": project_id,
             "task_id": task_id,
-            "date": str(date.today()),
+            "date": str(utcnow().date()),
             "hours": "6.50",
             "description": "Worked on initial PostgreSQL schema",
             "is_billable": True,
@@ -128,7 +129,7 @@ def test_project_lifecycle_and_analytics(client: TestClient, db: Session, compan
         f"/api/v1/projects/{project_id}/milestones",
         json={
             "title": "Architecture Blueprint",
-            "due_date": str(date.today() + timedelta(days=14)),
+            "due_date": str(utcnow().date() + timedelta(days=14)),
             "status": "in_progress",
             "completion_percentage": "50.00",
         },
@@ -175,7 +176,7 @@ def test_daily_time_entry_hour_limit(client: TestClient, db: Session, company_a:
         "/api/v1/projects/time-entries",
         json={
             "project_id": project_id,
-            "date": str(date.today()),
+            "date": str(utcnow().date()),
             "hours": "16.00",
             "description": "Shift 1",
         },
@@ -188,7 +189,7 @@ def test_daily_time_entry_hour_limit(client: TestClient, db: Session, company_a:
         "/api/v1/projects/time-entries",
         json={
             "project_id": project_id,
-            "date": str(date.today()),
+            "date": str(utcnow().date()),
             "hours": "10.00",
             "description": "Shift 2",
         },
@@ -208,7 +209,7 @@ def test_time_entry_fails_for_user_without_employee_profile(
             "name": "Member Project",
             "code": f"MBR-{uuid.uuid4().hex[:4].upper()}",
             "status": "active",
-            "start_date": str(date.today()),
+            "start_date": str(utcnow().date()),
         },
         headers=company_a.hr_headers,
     )
@@ -228,7 +229,7 @@ def test_time_entry_fails_for_user_without_employee_profile(
         "/api/v1/projects/time-entries",
         json={
             "project_id": proj_id,
-            "date": str(date.today()),
+            "date": str(utcnow().date()),
             "hours": "4.00",
             "description": "Logging as unlinked admin",
         },

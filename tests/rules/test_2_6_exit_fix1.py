@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
+from app.core.time import utcnow
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus, ResignationStatus
 from app.modules.identity.models import RefreshToken, User, UserRole
 from app.modules.platform.models import AuditLog
@@ -66,7 +67,7 @@ def test_f01_zero_notice_period_days(
     """
     hr_headers = _auth_headers(exit_setup["hr_user"])
     cid = exit_setup["company_a"].id
-    today = date.today()
+    today = utcnow().date()
 
     # Create employee with notice_period_days = 0
     emp_user, emp = _create_user_and_employee(
@@ -119,7 +120,7 @@ def test_f02_settlement_turns_access_off(
     """
     hr_headers = _auth_headers(exit_setup["hr_user"])
     cid = exit_setup["company_a"].id
-    today = date.today()
+    today = utcnow().date()
 
     emp_user, emp = _create_user_and_employee(
         db, cid, UserRole.employee, email=f"settle-off-{uuid.uuid4().hex[:6]}@example.com"
@@ -132,7 +133,6 @@ def test_f02_settlement_turns_access_off(
 
     # 1. Employee has an active refresh token
     from app.core.security import generate_refresh_token, hash_token
-    from app.core.time import utcnow
 
     raw_token = generate_refresh_token()
     token_rec = RefreshToken(
@@ -223,7 +223,7 @@ def test_f03_apply_exit_commit_flag_and_atomicity(
 
     hr_headers = _auth_headers(exit_setup["hr_user"])
     cid = exit_setup["company_a"].id
-    today = date.today()
+    today = utcnow().date()
 
     emp_user, emp = _create_user_and_employee(
         db, cid, UserRole.employee, email=f"f3-idemp-{uuid.uuid4().hex[:6]}@example.com"
@@ -302,7 +302,7 @@ def test_f04_audit_money_changes_and_clearance_flags(
     """
     hr_headers = _auth_headers(exit_setup["hr_user"])
     cid = exit_setup["company_a"].id
-    today = date.today()
+    today = utcnow().date()
 
     emp_user, emp = _create_user_and_employee(
         db, cid, UserRole.employee, email=f"f4-audit-{uuid.uuid4().hex[:6]}@example.com"
@@ -428,7 +428,7 @@ def test_f06_notice_defaults_fallback_and_put_shape(
     - Partial PUT body gives 422.
     """
     hr_headers = _auth_headers(exit_setup["hr_user"])
-    today = date.today()
+    today = utcnow().date()
 
     # Clear company notice defaults
     company = exit_setup["company_a"]
@@ -526,7 +526,7 @@ def test_f07_payslip_already_paid_counts_paid_runs(
 
     hr_headers = _auth_headers(exit_setup["hr_user"])
     cid = exit_setup["company_a"].id
-    today = date.today()
+    today = utcnow().date()
 
     emp_user, emp = _create_user_and_employee(
         db, cid, UserRole.employee, email=f"f7-paid-{uuid.uuid4().hex[:6]}@example.com"
@@ -629,7 +629,7 @@ def test_f09_rate_limiting_all_routes(
 ) -> None:
     """F9: With limiter enabled, exceeding rate limit gives 429."""
     cid = exit_setup["company_a"].id
-    today = date.today()
+    today = utcnow().date()
     hr_headers = _auth_headers(exit_setup["hr_user"])
 
     user, emp = _create_user_and_employee(
@@ -685,7 +685,7 @@ def test_f10_reply_shapes_per_role(
     """
     hr_headers = _auth_headers(exit_setup["hr_user"])
     cid = exit_setup["company_a"].id
-    today = date.today()
+    today = utcnow().date()
 
     emp_user, emp = _create_user_and_employee(
         db, cid, UserRole.employee, email=f"f10-reply-{uuid.uuid4().hex[:6]}@example.com"
@@ -791,7 +791,7 @@ def test_f11_scope_tests(client: TestClient, exit_setup: dict[str, Any], db: Ses
     - Department-function manager sees only employees whose own function is still pending.
     """
     cid = exit_setup["company_a"].id
-    today = date.today()
+    today = utcnow().date()
     hr_headers = _auth_headers(exit_setup["hr_user"])
 
     # 1. Plain employee gets 403 on clearance-queue

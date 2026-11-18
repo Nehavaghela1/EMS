@@ -9,6 +9,7 @@ from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import (
     Department,
@@ -378,7 +379,7 @@ def test_r01_who_can_submit_withdraw_approve_reject_terminate_settle(
     hr_headers = _auth_headers(exit_setup["hr_user"])
     hr_b_headers = _auth_headers(exit_setup["hr_user_b"])
 
-    today = date.today()
+    today = utcnow().date()
     lwd = today + timedelta(days=30)
     sub_payload = {
         "resignation_date": str(today),
@@ -503,8 +504,8 @@ def test_r01_nobody_approves_own_resignation_including_owner_and_super_admin(
         invitation_status=InvitationStatus.activated,
         is_active=True,
         resignation_status=ResignationStatus.submitted,
-        resignation_date=date.today(),
-        last_working_date=date.today() + timedelta(days=30),
+        resignation_date=utcnow().date(),
+        last_working_date=utcnow().date() + timedelta(days=30),
     )
     db.add(hr_emp)
     db.commit()
@@ -527,7 +528,7 @@ def test_r01_terminate_and_settle_roles(client: TestClient, exit_setup: dict[str
     emp_headers = _auth_headers(exit_setup["emp_user"])
     mgr_headers = _auth_headers(exit_setup["manager_user"])
 
-    today = date.today()
+    today = utcnow().date()
     term_payload = {
         "termination_date": str(today),
         "reason": "Performance issues",
@@ -578,7 +579,7 @@ def test_r02_resignation_input_validation(
     emp_headers = _auth_headers(exit_setup["emp_user"])
     owner_emp = exit_setup["owner_emp"]
     owner_headers = _auth_headers(exit_setup["owner_user"])
-    today = date.today()
+    today = utcnow().date()
 
     # 1. Resignation date in future -> 422
     future_date = today + timedelta(days=1)
@@ -797,7 +798,7 @@ def test_r03_notice_defaults_policy_and_employee_creation(
     assert r_update_level.json()["notice_period_days"] == 20
 
     # 6. Cannot edit notice_period_days (409) while exit is submitted or approved
-    today = date.today()
+    today = utcnow().date()
     client.post(
         f"/api/v1/employees/{emp_l1_id}/resignation",
         headers=hr_headers,
@@ -820,7 +821,7 @@ def test_r03_waiver_and_recovery_days_by_role(
     emp = exit_setup["emp"]
     hr_headers = _auth_headers(exit_setup["hr_user"])
     mgr_headers = _auth_headers(exit_setup["manager_user"])
-    today = date.today()
+    today = utcnow().date()
 
     # emp has notice_period_days = 30
     # Submit with 10 days served (shortfall = 20)
@@ -876,7 +877,7 @@ def test_r04_status_transitions_withdraw_amendment_concurrency(
     emp = exit_setup["emp"]
     emp_headers = _auth_headers(exit_setup["emp_user"])
     hr_headers = _auth_headers(exit_setup["hr_user"])
-    today = date.today()
+    today = utcnow().date()
 
     # 1. Decision on non-pending resignation gives 409
     assert (
@@ -991,7 +992,7 @@ def test_r05_termination_rules(client: TestClient, exit_setup: dict[str, Any], d
     emp = exit_setup["emp"]
     hr_headers = _auth_headers(exit_setup["hr_user"])
     owner_emp = exit_setup["owner_emp"]
-    today = date.today()
+    today = utcnow().date()
 
     # 1. Cannot terminate self -> 409
     hr_emp_user = exit_setup["hr_user"]
@@ -1097,7 +1098,7 @@ def test_r06_apply_exit_and_scheduled_job(
     emp_user = exit_setup["emp_user"]
     dept_gen = exit_setup["dept_gen"]
     hr_headers = _auth_headers(exit_setup["hr_user"])
-    today = date.today()
+    today = utcnow().date()
 
     # Assign emp as department head of dept_gen to verify clearing
     dept_gen.head_employee_id = emp.id
@@ -1213,7 +1214,7 @@ def test_r07_clearance_signoffs_queue_and_limited_replies(
     hr_headers = _auth_headers(exit_setup["hr_user"])
     it_headers = _auth_headers(exit_setup["it_mgr_user"])
     fin_headers = _auth_headers(exit_setup["fin_mgr_user"])
-    today = date.today()
+    today = utcnow().date()
 
     # 0. Clearance rejected if employee does not have an approved exit
     emp.resignation_status = ResignationStatus.submitted
@@ -1311,7 +1312,7 @@ def test_r08_settlement_gates_snapshot_and_math(
     emp = exit_setup["emp"]
     emp_headers = _auth_headers(exit_setup["emp_user"])
     hr_headers = _auth_headers(exit_setup["hr_user"])
-    today = date.today()
+    today = utcnow().date()
 
     emp.is_active = True
     emp.resignation_status = ResignationStatus.approved
@@ -1408,7 +1409,7 @@ def test_r09_audit_rows_details_and_failures(
     emp = exit_setup["emp"]
     hr_headers = _auth_headers(exit_setup["hr_user"])
     cid = exit_setup["company_a"].id
-    today = date.today()
+    today = utcnow().date()
 
     # Reset emp
     emp.resignation_status = ResignationStatus.none
@@ -1538,8 +1539,8 @@ def test_r09_row_locks_sql_capture(
             f"/api/v1/employees/{emp.id}/resignation",
             headers=hr_headers,
             json={
-                "resignation_date": str(date.today()),
-                "last_working_date": str(date.today() + timedelta(days=30)),
+                "resignation_date": str(utcnow().date()),
+                "last_working_date": str(utcnow().date() + timedelta(days=30)),
             },
         )
         has_for_update = any(
@@ -1586,8 +1587,8 @@ def test_r10_pip_failure_uses_apply_exit(
         company_id=cid,
         employee_id=emp.id,
         title="Performance Plan",
-        start_date=date.today() - timedelta(days=30),
-        end_date=date.today(),
+        start_date=utcnow().date() - timedelta(days=30),
+        end_date=utcnow().date(),
         status=PIPStatus.active,
     )
     db.add(pip)

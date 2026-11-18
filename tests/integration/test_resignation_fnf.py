@@ -3,6 +3,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.time import utcnow
 from app.db.seed.statutory_rates import seed_statutory_rates
 from tests.integration.test_employees import _create_employee
 
@@ -14,9 +15,9 @@ def test_resignation_and_fnf_workflow(client: TestClient, db: Session, company_a
     emp_id = emp["id"]
     assert emp["notice_period_days"] == 30
 
-    from datetime import date, timedelta
+    from datetime import timedelta
 
-    today = date.today()
+    today = utcnow().date()
     res_date = today - timedelta(days=14)
     lwd_date = today
 
@@ -220,9 +221,9 @@ def test_department_clearance_function_authorization(client: TestClient, db: Ses
     # 5. Create employee undergoing resignation
     emp = _create_employee(client, hr_headers, email="target-resigning@example.com")
     emp_id = emp["id"]
-    from datetime import date, timedelta
+    from datetime import timedelta
 
-    today = date.today()
+    today = utcnow().date()
     res_sub = client.post(
         f"/api/v1/employees/{emp_id}/resignation",
         json={
@@ -361,9 +362,9 @@ def test_put_department_clearance_function_and_authorization(
     # 7. Resigning employee for clearance testing
     target_emp = _create_employee(client, hr_headers, email="target-finance-clear@example.com")
     target_id = target_emp["id"]
-    from datetime import date, timedelta
+    from datetime import timedelta
 
-    today = date.today()
+    today = utcnow().date()
     client.post(
         f"/api/v1/employees/{target_id}/resignation",
         json={
@@ -481,9 +482,9 @@ def test_department_head_can_review_resignation_using_department_repo(
     sub_id = subordinate["id"]
 
     # 4. Subordinate submits resignation
-    from datetime import date, timedelta
+    from datetime import timedelta
 
-    today = date.today()
+    today = utcnow().date()
     res_sub = client.post(
         f"/api/v1/employees/{sub_id}/resignation",
         json={

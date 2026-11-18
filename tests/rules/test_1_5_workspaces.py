@@ -5,7 +5,6 @@ Strictly tests first; no product code modified in this step.
 
 import logging
 import uuid
-from datetime import date
 
 import pytest
 from sqlalchemy import func, select
@@ -13,6 +12,7 @@ from sqlalchemy import func, select
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import (
     Company,
@@ -91,7 +91,7 @@ def _create_user_in_company(
         first_name="Test",
         last_name="User",
         email=email,
-        hire_date=date.today(),
+        hire_date=utcnow().date(),
         is_active=is_active,
         invitation_status=invitation_status,
         employment_type=EmploymentType.full_time,
@@ -1270,7 +1270,7 @@ def test_W25_exhaustive_truth_table_memberships(client, db, company_a, limits_of
                             employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
                             first_name="Test",
                             email=caller.email,
-                            hire_date=date.today(),
+                            hire_date=utcnow().date(),
                             is_active=True,
                             invitation_status=InvitationStatus.activated,
                             employment_type=EmploymentType.full_time,
@@ -1284,7 +1284,7 @@ def test_W25_exhaustive_truth_table_memberships(client, db, company_a, limits_of
                             employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
                             first_name="Test",
                             email=caller.email,
-                            hire_date=date.today(),
+                            hire_date=utcnow().date(),
                             is_active=True,
                             invitation_status=InvitationStatus.sent,
                             employment_type=EmploymentType.full_time,
@@ -1298,7 +1298,7 @@ def test_W25_exhaustive_truth_table_memberships(client, db, company_a, limits_of
                             employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
                             first_name="Test",
                             email=caller.email,
-                            hire_date=date.today(),
+                            hire_date=utcnow().date(),
                             is_active=True,
                             invitation_status=InvitationStatus.sent,
                             employment_type=EmploymentType.full_time,

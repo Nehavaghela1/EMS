@@ -340,6 +340,7 @@ class TaxSlab(TimeStampedBase):
     # them from here when it builds the actual TDS projection).
     surcharge_rules: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     source_title: Mapped[str] = mapped_column(String(200), nullable=False)
     source_note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -461,6 +462,12 @@ class PayrollItem(TenantBase):
     # The salary rows this month was paid at: [{salary_id, from_date, to_date, days, ctc}].
     # More than one when a raise started mid-month (paid by days at the old and new CTC).
     salary_segments_json: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
+
+    payment_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="pending", default="pending"
+    )
+    paid_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    bank_reference: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class EmployeeBankAccount(TenantBase):
