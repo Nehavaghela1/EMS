@@ -24,8 +24,11 @@ from app.modules.performance.schemas import (
     PerformanceReviewResponse,
     PerformanceSummaryDetailResponse,
     PerformanceSummaryResponse,
+    PIPCheckInCreateRequest,
+    PIPCheckInResponse,
     PIPCreateRequest,
     PIPEvaluateRequest,
+    PIPExtendRequest,
     ReviewReopenRequest,
     SelfReviewRequest,
     SummaryFinalizeRequest,
@@ -341,10 +344,53 @@ def initiate_pip(
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
 ):
     service = PerformanceService(db)
-    pip = service.create_pip(user.company_id, data, user)
-    return service.get_active_pip(
-        user.company_id, pip.employee_id
-    ) or PerformancePIPResponse.model_validate(pip)
+    return service.create_pip(user.company_id, data, user)
+
+
+@performance_router.post("/pips/{pip_id}/activate", response_model=PerformancePIPResponse)
+def activate_pip(
+    pip_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
+):
+    service = PerformanceService(db)
+    return service.activate_pip(user.company_id, pip_id, user)
+
+
+@performance_router.post("/pips/{pip_id}/extend", response_model=PerformancePIPResponse)
+def extend_pip(
+    pip_id: uuid.UUID,
+    data: PIPExtendRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
+):
+    service = PerformanceService(db)
+    return service.extend_pip(user.company_id, pip_id, data, user)
+
+
+@performance_router.post(
+    "/pips/{pip_id}/check-ins", response_model=PIPCheckInResponse, status_code=201
+)
+def add_pip_checkin(
+    pip_id: uuid.UUID,
+    data: PIPCheckInCreateRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    service = PerformanceService(db)
+    checkin = service.add_pip_checkin(user.company_id, pip_id, data, user)
+    return PIPCheckInResponse.model_validate(checkin)
+
+
+@performance_router.get("/pips/{pip_id}/check-ins", response_model=list[PIPCheckInResponse])
+def list_pip_checkins(
+    pip_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_current_user),
+):
+    service = PerformanceService(db)
+    checkins = service.list_pip_checkins(user.company_id, pip_id, user)
+    return [PIPCheckInResponse.model_validate(c) for c in checkins]
 
 
 @performance_router.get("/pips", response_model=list[PerformancePIPResponse])

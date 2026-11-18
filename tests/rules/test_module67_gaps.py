@@ -471,12 +471,11 @@ def test_b3_tz_asia_kolkata_today_utc_accepted_and_daily_cap(
 # ==============================================================================
 
 
-def test_c1_cycle_activated_notifies_employees_with_goals_only(
+def test_c1_cycle_activated_notifies_active_employees(
     client: TestClient, db: Session, gap_setup: dict[str, Any]
 ):
-    """C1: Cycle activated -> every employee with a goal in that cycle (if none, nobody)."""
+    """C1: Cycle activated -> active company employees are notified."""
     hr_h = _auth_headers(gap_setup["hr_u"])
-    emp_h = _auth_headers(gap_setup["emp_u"])
 
     # Create cycle
     r_c = client.post(
@@ -493,25 +492,6 @@ def test_c1_cycle_activated_notifies_employees_with_goals_only(
 
     # Clear notifications for clean count
     bind_tenant_to_session(db, company_id=gap_setup["cid"], is_platform_admin=True)
-    db.query(Notification).filter(Notification.company_id == gap_setup["cid"]).delete()
-    db.commit()
-
-    # Employee 1 creates a goal in the cycle
-    r_g = client.post(
-        "/api/v1/performance/goals",
-        json={
-            "cycle_id": cycle_id,
-            "title": "Emp 1 Goal",
-            "category": "technical",
-            "weightage": "100.00",
-        },
-        headers=emp_h,
-    )
-    assert r_g.status_code == 201
-
-    # Employee 2 has NO goal in this cycle
-
-    # Clear notifications before activation
     db.query(Notification).filter(Notification.company_id == gap_setup["cid"]).delete()
     db.commit()
 
@@ -532,8 +512,9 @@ def test_c1_cycle_activated_notifies_employees_with_goals_only(
         .all()
     )
     recipients = {n.user_id for n in notifs}
-    assert gap_setup["emp_u"].id in recipients, "Employee with goal must be notified"
-    assert gap_setup["emp2_u"].id not in recipients, "Employee without goal must not be notified"
+    assert gap_setup["emp_u"].id in recipients, (
+        "Active employee must be notified on cycle activation"
+    )
 
 
 def test_c1_goal_created_or_edited_by_other_notifies_employee_and_manager(
@@ -571,9 +552,12 @@ def test_c1_goal_created_or_edited_by_other_notifies_employee_and_manager(
         "/api/v1/performance/goals",
         json={
             "cycle_id": cycle_id,
-            "title": "Own Goal",
-            "category": "technical",
-            "weightage": "50.00",
+            "goals": [
+                {
+                    "title": "Own Goal",
+                    "weightage": "50.00",
+                }
+            ],
         },
         headers=emp_h,
     )
@@ -595,9 +579,12 @@ def test_c1_goal_created_or_edited_by_other_notifies_employee_and_manager(
         json={
             "cycle_id": cycle_id,
             "employee_id": str(gap_setup["emp_e"].id),
-            "title": "HR Assigned Goal",
-            "category": "business",
-            "weightage": "50.00",
+            "goals": [
+                {
+                    "title": "HR Assigned Goal",
+                    "weightage": "50.00",
+                }
+            ],
         },
         headers=hr_h,
     )
@@ -646,13 +633,17 @@ def test_c1_self_and_manager_reviews_notifications(
         "/api/v1/performance/goals",
         json={
             "cycle_id": cycle_id,
-            "title": "Goal for Review",
-            "category": "technical",
-            "weightage": "100.00",
+            "goals": [
+                {
+                    "title": "Goal for Review",
+                    "weightage": "100.00",
+                }
+            ],
         },
         headers=emp_h,
     )
-    goal_id = r_g.json()["id"]
+    assert r_g.status_code == 201
+    goal_id = r_g.json()[0]["id"]
 
     bind_tenant_to_session(db, company_id=gap_setup["cid"], is_platform_admin=True)
     db.query(Notification).filter(Notification.company_id == gap_setup["cid"]).delete()
@@ -660,11 +651,11 @@ def test_c1_self_and_manager_reviews_notifications(
 
     # Self-review submitted -> manager notified
     r_self = client.post(
-        f"/api/v1/performance/reviews/self/{goal_id}",
+        f"/api/v1/performance/goals/{goal_id}/self-review",
         json={"rating": "4.5", "comments": "Good progress"},
         headers=emp_h,
     )
-    assert r_self.status_code == 201
+    assert r_self.status_code == 200
 
     self_notifs = (
         db.query(Notification)
@@ -678,11 +669,11 @@ def test_c1_self_and_manager_reviews_notifications(
 
     # Manager review submitted -> employee notified
     r_mgr = client.post(
-        f"/api/v1/performance/reviews/manager/{goal_id}",
+        f"/api/v1/performance/goals/{goal_id}/manager-review",
         json={"rating": "4.0", "comments": "Agreed"},
         headers=pm_h,
     )
-    assert r_mgr.status_code == 201
+    assert r_mgr.status_code == 200
 
     mgr_notifs = (
         db.query(Notification)

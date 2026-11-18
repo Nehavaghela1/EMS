@@ -946,6 +946,10 @@ def test_r05_department_head_auto_clear_on_pip_failed(
     assert res_pip.status_code == 201
     pip_id = res_pip.json()["id"]
 
+    # Activate PIP before evaluating
+    res_act = client.post(f"/api/v1/performance/pips/{pip_id}/activate", headers=hr_headers)
+    assert res_act.status_code == 200
+
     # Evaluate PIP with outcome failed -> deactivates employee and should clear department head!
     res_eval = client.post(
         f"/api/v1/performance/pips/{pip_id}/evaluate",

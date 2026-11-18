@@ -11,6 +11,7 @@ from app.modules.performance.models import (
     PerformanceGoal,
     PerformanceGoalProgressHistory,
     PerformancePIP,
+    PerformancePIPCheckIn,
     PerformanceReview,
     PerformanceSummary,
     ReviewerRole,
@@ -287,7 +288,19 @@ class PerformancePIPRepository:
             select(PerformancePIP).where(
                 PerformancePIP.company_id == company_id,
                 PerformancePIP.employee_id == employee_id,
-                PerformancePIP.status == "active",
+                PerformancePIP.status.in_(["active", "extended"]),
+                PerformancePIP.deleted_at.is_(None),
+            )
+        )
+
+    def get_open_pip_for_employee(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID
+    ) -> PerformancePIP | None:
+        return self.db.scalar(
+            select(PerformancePIP).where(
+                PerformancePIP.company_id == company_id,
+                PerformancePIP.employee_id == employee_id,
+                PerformancePIP.status.in_(["draft", "active", "extended"]),
                 PerformancePIP.deleted_at.is_(None),
             )
         )
@@ -303,3 +316,24 @@ class PerformancePIPRepository:
             setattr(pip, k, v)
         self.db.flush()
         return pip
+
+    def create_checkin(self, **kwargs) -> PerformancePIPCheckIn:
+        checkin = PerformancePIPCheckIn(**kwargs)
+        self.db.add(checkin)
+        self.db.flush()
+        return checkin
+
+    def list_checkins(
+        self, company_id: uuid.UUID, pip_id: uuid.UUID
+    ) -> list[PerformancePIPCheckIn]:
+        return list(
+            self.db.scalars(
+                select(PerformancePIPCheckIn)
+                .where(
+                    PerformancePIPCheckIn.company_id == company_id,
+                    PerformancePIPCheckIn.pip_id == pip_id,
+                    PerformancePIPCheckIn.deleted_at.is_(None),
+                )
+                .order_by(PerformancePIPCheckIn.created_at.asc())
+            ).all()
+        )
