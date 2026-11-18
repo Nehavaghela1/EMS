@@ -546,17 +546,6 @@ def test_6_1_R11_notifications_sent_on_cycle_activation(
     )
 
 
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
-
-
 def test_6_1_R12_rate_limit_cycle_write_routes(
     client: TestClient, p1_setup: dict[str, Any], limits_on: None
 ):

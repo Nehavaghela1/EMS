@@ -19,7 +19,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
@@ -766,30 +765,28 @@ def test_f8_audit_rows_recorded(
     assert "file_name" not in link_audit.details
 
 
-def test_f8_upload_rate_limit_20_per_min(client: TestClient, files_setup: dict[str, Any]) -> None:
+def test_f8_upload_rate_limit_20_per_min(
+    client: TestClient, files_setup: dict[str, Any], limits_on
+) -> None:
     """F8: POST /api/v1/files/upload rate limited at 20/min. 21st call returns 429."""
     emp1 = files_setup["emp1_user"]
     emp_headers = _auth_headers(emp1)
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        statuses = []
-        for i in range(21):
-            r = client.post(
-                "/api/v1/files/upload",
-                files={"file": (f"f{i}.pdf", b"%PDF-1.4 sample", "application/pdf")},
-                headers=emp_headers,
-            )
-            statuses.append(r.status_code)
-        assert all(s == 201 for s in statuses[:20])
-        assert statuses[20] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    statuses = []
+    for i in range(21):
+        r = client.post(
+            "/api/v1/files/upload",
+            files={"file": (f"f{i}.pdf", b"%PDF-1.4 sample", "application/pdf")},
+            headers=emp_headers,
+        )
+        statuses.append(r.status_code)
+    assert all(s == 201 for s in statuses[:20])
+    assert statuses[20] == 429
 
 
-def test_f8_link_rate_limit_60_per_min(client: TestClient, files_setup: dict[str, Any]) -> None:
+def test_f8_link_rate_limit_60_per_min(
+    client: TestClient, files_setup: dict[str, Any], limits_on
+) -> None:
     """F8: GET /api/v1/files/{file_id}/url rate limited at 60/min. 61st call returns 429."""
     hr1 = files_setup["hr1"]
     r_up = client.post(
@@ -800,21 +797,17 @@ def test_f8_link_rate_limit_60_per_min(client: TestClient, files_setup: dict[str
     assert r_up.status_code == 201
     file_id = r_up.json()["file_object_id"]
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        statuses = []
-        for _ in range(61):
-            r = client.get(f"/api/v1/files/{file_id}/url", headers=_auth_headers(hr1))
-            statuses.append(r.status_code)
-        assert all(s == 200 for s in statuses[:60])
-        assert statuses[60] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    statuses = []
+    for _ in range(61):
+        r = client.get(f"/api/v1/files/{file_id}/url", headers=_auth_headers(hr1))
+        statuses.append(r.status_code)
+    assert all(s == 200 for s in statuses[:60])
+    assert statuses[60] == 429
 
 
-def test_f8_download_rate_limit_60_per_min(client: TestClient, files_setup: dict[str, Any]) -> None:
+def test_f8_download_rate_limit_60_per_min(
+    client: TestClient, files_setup: dict[str, Any], limits_on
+) -> None:
     """F8: GET /api/v1/files/download/{file_id} rate limited at 60/min. 61st call returns 429."""
     hr1 = files_setup["hr1"]
     r_up = client.post(
@@ -829,18 +822,12 @@ def test_f8_download_rate_limit_60_per_min(client: TestClient, files_setup: dict
     assert r_url.status_code == 200
     dl_url = r_url.json()["url"]
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        statuses = []
-        for _ in range(61):
-            r = client.get(dl_url)
-            statuses.append(r.status_code)
-        assert all(s == 200 for s in statuses[:60])
-        assert statuses[60] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    statuses = []
+    for _ in range(61):
+        r = client.get(dl_url)
+        statuses.append(r.status_code)
+    assert all(s == 200 for s in statuses[:60])
+    assert statuses[60] == 429
 
 
 # ── Fix 1 tests ──────────────────────────────────────────────────────────

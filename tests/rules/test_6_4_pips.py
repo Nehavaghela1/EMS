@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus, ResignationStatus
@@ -31,20 +30,6 @@ def _auth_headers(user: User) -> dict[str, str]:
         role=role_val,
     )
     return {"Authorization": f"Bearer {token}"}
-
-
-@pytest.fixture(autouse=True)
-def reset_rate_limiter():
-    """Reset rate limiter before each test."""
-    try:
-        limiter.reset()
-    except Exception:
-        pass
-    yield
-    try:
-        limiter.reset()
-    except Exception:
-        pass
 
 
 @pytest.fixture
@@ -391,7 +376,7 @@ def test_6_4_R1_create_pip_authority_and_scoping(client: TestClient, p3_setup: d
     assert r_mgr.status_code == 201
     data = r_mgr.json()
     assert data["employee_id"] == target_emp_id
-    assert data["status"] == "active"
+    assert data["status"] == "draft"
     assert data["title"] == "Performance Improvement Plan - Q3"
 
 
@@ -486,6 +471,13 @@ def test_6_4_R3_single_active_pip_invariant(client: TestClient, p3_setup: dict[s
     )
     assert r1.status_code == 201
 
+    # Activate first PIP so it becomes active
+    r_act = client.post(
+        f"/api/v1/performance/pips/{r1.json()['id']}/activate",
+        headers=hr_headers,
+    )
+    assert r_act.status_code == 200
+
     # Attempt to create second PIP while first is active -> 409
     r2 = client.post(
         "/api/v1/performance/pips",
@@ -531,6 +523,10 @@ def test_6_4_R4_pip_read_scoping_and_blindness(client: TestClient, p3_setup: dic
     )
     assert r_create.status_code == 201
     pip_id = r_create.json()["id"]
+
+    # Activate PIP so it can be viewed as active
+    r_act = client.post(f"/api/v1/performance/pips/{pip_id}/activate", headers=mgr_headers)
+    assert r_act.status_code == 200
 
     # 1. Employee views own active PIP -> 200
     r_own = client.get(f"/api/v1/performance/pips/active/{target_emp_id}", headers=emp_headers)
@@ -590,6 +586,10 @@ def test_6_4_R5_pip_evaluation_authority_and_state(client: TestClient, p3_setup:
         },
     )
     pip_id = r_create.json()["id"]
+
+    # Activate PIP before evaluating
+    r_act = client.post(f"/api/v1/performance/pips/{pip_id}/activate", headers=mgr_headers)
+    assert r_act.status_code == 200
 
     # 1. Employee tries to evaluate -> 403
     r_emp_eval = client.post(
@@ -661,6 +661,10 @@ def test_6_4_R6_failed_pip_triggers_atomic_separation(
     )
     assert r_create.status_code == 201
     pip_id = r_create.json()["id"]
+
+    # Activate PIP so it can be viewed as active
+    r_act = client.post(f"/api/v1/performance/pips/{pip_id}/activate", headers=mgr_headers)
+    assert r_act.status_code == 200
 
     # Evaluate PIP as failed
     r_fail = client.post(

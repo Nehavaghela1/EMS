@@ -418,7 +418,7 @@ def test_sec_blind_review_leak_prevention(client: TestClient, sec_setup: dict[st
 
 
 # ==============================================================================
-# 2. MUTATION TESTS: ARITHMETIC TAMPERING & SUM GATES
+# 2. TAMPERING TESTS: ARITHMETIC GATES & SUM CHECKS
 # ==============================================================================
 
 

@@ -187,10 +187,12 @@ class PerformanceSummary(TenantBase):
 
 
 class PIPStatus(str, enum.Enum):
+    draft = "draft"
     active = "active"
     passed = "passed"
     failed = "failed"
     cancelled = "cancelled"
+    extended = "extended"
 
 
 class PerformancePIP(TenantBase):
@@ -209,9 +211,28 @@ class PerformancePIP(TenantBase):
     milestones_kpis: Mapped[str | None] = mapped_column(Text, nullable=True)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="active")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft")
+    previous_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    extension_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     outcome_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     evaluated_by: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class PerformancePIPCheckIn(TenantBase):
+    """Performance Improvement Plan Check-in Notes. RLS: Yes (Spec 7.5)."""
+
+    __tablename__ = "performance_pip_checkins"
+
+    pip_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("performance_pips.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    note: Mapped[str] = mapped_column(String(2000), nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )

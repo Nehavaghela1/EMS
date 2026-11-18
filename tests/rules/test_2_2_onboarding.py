@@ -23,7 +23,6 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password, hash_token
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
@@ -1435,71 +1434,51 @@ def test_r09_audit_logging_create_and_resend(
 
 
 def test_r09_rate_limiting_create_and_resend(
-    client: TestClient, onboarding_company: dict[str, Any]
+    client: TestClient, onboarding_company: dict[str, Any], limits_on
 ) -> None:
     """The 31st create by one user in a minute gives 429 (first 30 succeed).
     The 11th resend-invite by one user in a minute gives 429 (first 10 succeed).
     """
     hr_headers = _auth_headers(onboarding_company["hr_admin"])
 
-    limiter.enabled = True
-    try:
-        # 1. Create rate limiting: 30/minute per user
-        limiter.reset()
-        create_responses = [
-            client.post(
-                "/api/v1/employees",
-                headers=hr_headers,
-                json={
-                    "first_name": f"RateEmp{i}",
-                    "email": f"rate{i}-{uuid.uuid4().hex[:6]}@example.com",
-                    "hire_date": "2025-01-01",
-                },
-            )
-            for i in range(35)
-        ]
-        create_codes = [r.status_code for r in create_responses]
-        assert create_codes[:30] == [201] * 30, (
-            f"Expected first 30 creates to succeed 201, got: {create_codes[:30]}"
-        )
-        assert all(c == 429 for c in create_codes[30:]), (
-            f"Expected 31st+ creates to return 429, got: {create_codes[30:]}"
-        )
-
-        # 2. Resend invite rate limiting: 10/minute per user
-        limiter.enabled = False
-        res_setup = client.post(
+    # 1. Create rate limiting: 30/minute per user
+    create_responses = [
+        client.post(
             "/api/v1/employees",
             headers=hr_headers,
             json={
-                "first_name": "ResendRateTarget",
-                "email": f"resendrate-{uuid.uuid4().hex[:6]}@example.com",
+                "first_name": f"RateEmp{i}",
+                "email": f"rate{i}-{uuid.uuid4().hex[:6]}@example.com",
                 "hire_date": "2025-01-01",
             },
         )
-        assert res_setup.status_code == 201
-        target_emp_id = res_setup.json()["id"]
+        for i in range(35)
+    ]
+    create_codes = [r.status_code for r in create_responses]
+    assert create_codes[:30] == [201] * 30, (
+        f"Expected first 30 creates to succeed 201, got: {create_codes[:30]}"
+    )
+    assert all(c == 429 for c in create_codes[30:]), (
+        f"Expected 31st+ creates to return 429, got: {create_codes[30:]}"
+    )
 
-        limiter.enabled = True
-        limiter.reset()
-        resend_responses = [
-            client.post(
-                f"/api/v1/employees/{target_emp_id}/resend-invite",
-                headers=hr_headers,
-            )
-            for _ in range(15)
-        ]
-        resend_codes = [r.status_code for r in resend_responses]
-        assert resend_codes[:10] == [200] * 10, (
-            f"Expected first 10 resend-invites to succeed 200, got: {resend_codes[:10]}"
-        )
-        assert all(c == 429 for c in resend_codes[10:]), (
-            f"Expected 11th+ resend-invites to return 429, got: {resend_codes[10:]}"
-        )
+    # 2. Resend invite rate limiting: 10/minute per user
+    target_emp_id = create_responses[0].json()["id"]
 
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+    resend_responses = [
+        client.post(
+            f"/api/v1/employees/{target_emp_id}/resend-invite",
+            headers=hr_headers,
+        )
+        for _ in range(15)
+    ]
+    resend_codes = [r.status_code for r in resend_responses]
+    assert resend_codes[:10] == [200] * 10, (
+        f"Expected first 10 resend-invites to succeed 200, got: {resend_codes[:10]}"
+    )
+    assert all(c == 429 for c in resend_codes[10:]), (
+        f"Expected 11th+ resend-invites to return 429, got: {resend_codes[10:]}"
+    )
 
 
 # ==============================================================================

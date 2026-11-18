@@ -1,9 +1,10 @@
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.time import utcnow
 from app.modules.projects.models import (
     Milestone,
     Project,
@@ -34,10 +35,10 @@ class ProjectRepository:
 
     # --- Projects ---
     def create_project(self, company_id: UUID, data: ProjectCreate) -> Project:
-        project_dict = data.dict(exclude={"company_id"})
+        project_dict = data.model_dump(exclude={"company_id"})
         project = Project(company_id=company_id, **project_dict)
         self.db.add(project)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(project)
         return project
 
@@ -73,17 +74,17 @@ class ProjectRepository:
         return query.all(), total
 
     def update_project(self, project: Project, data: ProjectUpdate) -> Project:
-        update_data = data.dict(exclude_unset=True)
+        update_data = data.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(project, key, value)
-        project.updated_at = datetime.utcnow()
-        self.db.commit()
+        project.updated_at = utcnow()
+        self.db.flush()
         self.db.refresh(project)
         return project
 
     def delete_project(self, project: Project) -> None:
         self.db.delete(project)
-        self.db.commit()
+        self.db.flush()
 
     # --- Members ---
     def add_member(
@@ -95,10 +96,10 @@ class ProjectRepository:
             employee_id=data.employee_id,
             role=data.role,
             hourly_rate=data.hourly_rate,
-            joined_at=data.joined_at or date.today(),
+            joined_at=data.joined_at or utcnow().date(),
         )
         self.db.add(member)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(member)
         return member
 
@@ -120,7 +121,7 @@ class ProjectRepository:
             effective_to=effective_to,
         )
         self.db.add(rate_record)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(rate_record)
         return rate_record
 
@@ -176,19 +177,19 @@ class ProjectRepository:
 
     def remove_member(self, member: ProjectMember) -> None:
         self.db.delete(member)
-        self.db.commit()
+        self.db.flush()
 
     # --- Tasks ---
     def create_task(
         self, company_id: UUID, project_id: UUID, created_by: UUID | None, data: TaskCreate
     ) -> Task:
         task = Task(
-            company_id=company_id, project_id=project_id, created_by=created_by, **data.dict()
+            company_id=company_id, project_id=project_id, created_by=created_by, **data.model_dump()
         )
         if data.status == "done":
-            task.completed_at = datetime.utcnow()
+            task.completed_at = utcnow()
         self.db.add(task)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(task)
         return task
 
@@ -235,22 +236,22 @@ class ProjectRepository:
         return query.order_by(Task.position.asc(), Task.created_at.desc()).all()
 
     def update_task(self, task: Task, data: TaskUpdate) -> Task:
-        update_data = data.dict(exclude_unset=True)
+        update_data = data.model_dump(exclude_unset=True)
         if "status" in update_data:
             if update_data["status"] == "done" and task.status != "done":
-                task.completed_at = datetime.utcnow()
+                task.completed_at = utcnow()
             elif update_data["status"] != "done" and task.status == "done":
                 task.completed_at = None
         for key, value in update_data.items():
             setattr(task, key, value)
-        task.updated_at = datetime.utcnow()
-        self.db.commit()
+        task.updated_at = utcnow()
+        self.db.flush()
         self.db.refresh(task)
         return task
 
     def delete_task(self, task: Task) -> None:
         self.db.delete(task)
-        self.db.commit()
+        self.db.flush()
 
     # --- Task Comments ---
     def add_comment(
@@ -258,7 +259,7 @@ class ProjectRepository:
     ) -> TaskComment:
         tc = TaskComment(company_id=company_id, task_id=task_id, user_id=user_id, comment=comment)
         self.db.add(tc)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(tc)
         return tc
 
@@ -289,23 +290,23 @@ class ProjectRepository:
     def update_comment(self, comment: TaskComment, new_text: str) -> TaskComment:
         comment.comment = new_text
         comment.is_edited = True
-        comment.updated_at = datetime.utcnow()
-        self.db.commit()
+        comment.updated_at = utcnow()
+        self.db.flush()
         self.db.refresh(comment)
         return comment
 
     def delete_comment(self, comment: TaskComment) -> None:
-        comment.deleted_at = datetime.utcnow()
-        self.db.commit()
+        comment.deleted_at = utcnow()
+        self.db.flush()
 
     # --- Time Entries ---
     def create_time_entry(
         self, company_id: UUID, employee_id: UUID, data: TimeEntryCreate
     ) -> TimeEntry:
-        entry_dict = data.dict(exclude={"employee_id"})
+        entry_dict = data.model_dump(exclude={"employee_id"})
         entry = TimeEntry(company_id=company_id, employee_id=employee_id, **entry_dict)
         self.db.add(entry)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(entry)
         return entry
 
@@ -375,11 +376,11 @@ class ProjectRepository:
         return query.order_by(TimeEntry.date.desc()).all()
 
     def update_time_entry(self, entry: TimeEntry, data: TimeEntryUpdate) -> TimeEntry:
-        update_data = data.dict(exclude_unset=True)
+        update_data = data.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(entry, key, value)
-        entry.updated_at = datetime.utcnow()
-        self.db.commit()
+        entry.updated_at = utcnow()
+        self.db.flush()
         self.db.refresh(entry)
         return entry
 
@@ -388,28 +389,28 @@ class ProjectRepository:
     ) -> TimeEntry:
         entry.status = status
         entry.approved_by = approved_by
-        entry.approved_at = datetime.utcnow()
-        entry.updated_at = datetime.utcnow()
+        entry.approved_at = utcnow()
+        entry.updated_at = utcnow()
         # Store rejection reason if the model column exists
         if rejection_reason is not None and hasattr(entry, "rejection_reason"):
             entry.rejection_reason = rejection_reason
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(entry)
         return entry
 
     def delete_time_entry(self, entry: TimeEntry) -> None:
         self.db.delete(entry)
-        self.db.commit()
+        self.db.flush()
 
     # --- Milestones ---
     def create_milestone(
         self, company_id: UUID, project_id: UUID, data: MilestoneCreate
     ) -> Milestone:
-        milestone = Milestone(company_id=company_id, project_id=project_id, **data.dict())
+        milestone = Milestone(company_id=company_id, project_id=project_id, **data.model_dump())
         if data.status == "completed" or data.completion_percentage == Decimal("100.00"):
-            milestone.completed_at = datetime.utcnow()
+            milestone.completed_at = utcnow()
         self.db.add(milestone)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(milestone)
         return milestone
 
@@ -428,10 +429,10 @@ class ProjectRepository:
         )
 
     def update_milestone(self, milestone: Milestone, data: MilestoneUpdate) -> Milestone:
-        update_data = data.dict(exclude_unset=True)
+        update_data = data.model_dump(exclude_unset=True)
         if "status" in update_data:
             if update_data["status"] == "completed" and milestone.status != "completed":
-                milestone.completed_at = datetime.utcnow()
+                milestone.completed_at = utcnow()
                 milestone.completion_percentage = Decimal("100.00")
             elif update_data["status"] != "completed" and milestone.status == "completed":
                 milestone.completed_at = None
@@ -441,12 +442,12 @@ class ProjectRepository:
                 and milestone.status != "completed"
             ):
                 milestone.status = "completed"
-                milestone.completed_at = datetime.utcnow()
+                milestone.completed_at = utcnow()
 
         for key, value in update_data.items():
             setattr(milestone, key, value)
-        milestone.updated_at = datetime.utcnow()
-        self.db.commit()
+        milestone.updated_at = utcnow()
+        self.db.flush()
         self.db.refresh(milestone)
         return milestone
 
@@ -456,7 +457,7 @@ class ProjectRepository:
             {"milestone_id": None}, synchronize_session=False
         )
         self.db.delete(milestone)
-        self.db.commit()
+        self.db.flush()
 
     # --- Project Documents ---
     def create_project_document(
@@ -477,7 +478,7 @@ class ProjectRepository:
             uploaded_by=uploaded_by,
         )
         self.db.add(doc)
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(doc)
         return doc
 
@@ -508,5 +509,5 @@ class ProjectRepository:
         )
 
     def delete_project_document(self, doc: ProjectDocument) -> None:
-        doc.deleted_at = datetime.utcnow()
-        self.db.commit()
+        doc.deleted_at = utcnow()
+        self.db.flush()

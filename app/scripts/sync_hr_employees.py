@@ -1,6 +1,6 @@
 import uuid
-from datetime import date
 
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.db.session import SessionLocal
 from app.modules.hr.models import Department, Employee, InvitationStatus
@@ -51,7 +51,7 @@ def sync_employees():
             position="HR Admin / Org Head",
             department_id=dept.id if dept else None,
             employment_type="full_time",
-            hire_date=date.today(),
+            hire_date=utcnow().date(),
             is_active=True,
             invitation_status=InvitationStatus.activated,
         )

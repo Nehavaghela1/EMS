@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import (
@@ -1398,7 +1397,7 @@ def test_r08_settlement_gates_snapshot_and_math(
 # Rule 9 Tests: AUDIT AND LIMITS & ROW LOCKS
 # =============================================================================
 def test_r09_audit_rows_details_and_failures(
-    client: TestClient, exit_setup: dict[str, Any], db: Session
+    client: TestClient, exit_setup: dict[str, Any], db: Session, limits_on
 ) -> None:
     """R9:
     - One audit row in same save for: resignation submitted, withdrawn, approved, rejected,
@@ -1508,21 +1507,16 @@ def test_r09_audit_rows_details_and_failures(
     emp.resignation_status = ResignationStatus.none
     db.commit()
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        term_codes = []
-        for _ in range(12):
-            r = client.post(
-                f"/api/v1/employees/{emp.id}/terminate",
-                headers=hr_headers,
-                json={"termination_date": str(today), "reason": "Term reason"},
-            )
-            term_codes.append(r.status_code)
-        assert all(c != 429 for c in term_codes[:10]), f"First 10 calls: {term_codes[:10]}"
-        assert all(c == 429 for c in term_codes[10:]), f"Calls 11+: {term_codes[10:]}"
-    finally:
-        limiter.reset()
+    term_codes = []
+    for _ in range(12):
+        r = client.post(
+            f"/api/v1/employees/{emp.id}/terminate",
+            headers=hr_headers,
+            json={"termination_date": str(today), "reason": "Term reason"},
+        )
+        term_codes.append(r.status_code)
+    assert all(c != 429 for c in term_codes[:10]), f"First 10 calls: {term_codes[:10]}"
+    assert all(c == 429 for c in term_codes[10:]), f"Calls 11+: {term_codes[10:]}"
 
 
 def test_r09_row_locks_sql_capture(

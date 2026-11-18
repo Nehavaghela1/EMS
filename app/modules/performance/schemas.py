@@ -200,6 +200,26 @@ class PIPEvaluateRequest(BaseModel):
     outcome_notes: str | None = None
 
 
+class PIPExtendRequest(BaseModel):
+    new_end_date: date
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class PIPCheckInCreateRequest(BaseModel):
+    note: str = Field(min_length=1, max_length=2000)
+
+
+class PIPCheckInResponse(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    pip_id: uuid.UUID
+    note: str
+    created_by: uuid.UUID
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class PerformancePIPResponse(BaseModel):
     id: uuid.UUID
     employee_id: uuid.UUID
@@ -212,6 +232,8 @@ class PerformancePIPResponse(BaseModel):
     milestones_kpis: str | None
     start_date: date
     end_date: date
+    previous_end_date: date | None = None
+    extension_reason: str | None = None
     status: str
     outcome_notes: str | None
     evaluated_at: datetime | None

@@ -16,7 +16,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import limiter
 from app.db.seed.pt_slabs import seed_pt_slabs
 from app.db.seed.statutory_rates import seed_statutory_rates
 from app.db.seed.tax_slabs import seed_tax_slabs
@@ -77,17 +76,6 @@ COMPANY_ROUTES = {
     ("PUT", f"{P}/employees/{{employee_id}}/bank-account"),
     ("GET", f"{P}/runs/{{id}}/payment-file"),
 }
-
-
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
 
 def _payroll_routes() -> set[tuple[str, str]]:

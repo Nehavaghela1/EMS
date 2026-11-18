@@ -8,7 +8,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import limiter
 from app.core.security import hash_password
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus, ResignationStatus
 from app.modules.identity.models import RefreshToken, User, UserRole
@@ -626,59 +625,54 @@ def test_f09_rate_limiting_all_routes(
     path_tmpl: str,
     headers_role: str,
     limit_cap: int,
+    limits_on,
 ) -> None:
     """F9: With limiter enabled, exceeding rate limit gives 429."""
-    limiter.enabled = True
-    limiter.reset()
-
     cid = exit_setup["company_a"].id
     today = date.today()
     hr_headers = _auth_headers(exit_setup["hr_user"])
 
-    try:
-        user, emp = _create_user_and_employee(
-            db,
-            cid,
-            UserRole.employee,
-            email=f"rl-{route_action}-{uuid.uuid4().hex[:6]}@example.com",
-        )
-        emp.hire_date = today - timedelta(days=60)
-        emp.resignation_status = ResignationStatus.approved
-        emp.last_working_date = today
-        db.commit()
+    user, emp = _create_user_and_employee(
+        db,
+        cid,
+        UserRole.employee,
+        email=f"rl-{route_action}-{uuid.uuid4().hex[:6]}@example.com",
+    )
+    emp.hire_date = today - timedelta(days=60)
+    emp.resignation_status = ResignationStatus.approved
+    emp.last_working_date = today
+    db.commit()
 
-        headers = _auth_headers(user) if headers_role == "emp" else hr_headers
-        url = path_tmpl.replace("{id}", str(emp.id))
+    headers = _auth_headers(user) if headers_role == "emp" else hr_headers
+    url = path_tmpl.replace("{id}", str(emp.id))
 
-        payload: dict[str, Any] = {}
-        if route_action == "submit_resignation":
-            payload = {
-                "resignation_date": str(today),
-                "last_working_date": str(today),
-                "reason": "RL test",
-            }
-        elif route_action == "approve_resignation":
-            payload = {"approved": True}
-        elif route_action == "update_fnf_clearance":
-            payload = {"it_clearance": True}
-        elif route_action == "notice_defaults":
-            payload = {"L1": 30, "L2": 30, "L3": 30}
+    payload: dict[str, Any] = {}
+    if route_action == "submit_resignation":
+        payload = {
+            "resignation_date": str(today),
+            "last_working_date": str(today),
+            "reason": "RL test",
+        }
+    elif route_action == "approve_resignation":
+        payload = {"approved": True}
+    elif route_action == "update_fnf_clearance":
+        payload = {"it_clearance": True}
+    elif route_action == "notice_defaults":
+        payload = {"L1": 30, "L2": 30, "L3": 30}
 
-        codes: list[int] = []
-        for _ in range(limit_cap + 1):
-            if method == "POST":
-                res = client.post(url, headers=headers, json=payload)
-            elif method == "PUT":
-                res = client.put(url, headers=headers, json=payload)
-            else:
-                res = client.get(url, headers=headers)
-            codes.append(res.status_code)
+    codes: list[int] = []
+    for _ in range(limit_cap + 1):
+        if method == "POST":
+            res = client.post(url, headers=headers, json=payload)
+        elif method == "PUT":
+            res = client.put(url, headers=headers, json=payload)
+        else:
+            res = client.get(url, headers=headers)
+        codes.append(res.status_code)
 
-        assert codes[-1] == 429, (
-            f"Expected 429 on call {limit_cap + 1} for {route_action}, got codes: {codes}"
-        )
-    finally:
-        limiter.reset()
+    assert codes[-1] == 429, (
+        f"Expected 429 on call {limit_cap + 1} for {route_action}, got codes: {codes}"
+    )
 
 
 def test_f10_reply_shapes_per_role(

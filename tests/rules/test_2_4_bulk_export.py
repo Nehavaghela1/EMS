@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.jobs import register_job
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import (
@@ -1036,79 +1035,60 @@ def test_r09_export_csv_headers_and_safety(
 
 @pytest.mark.parametrize("route", BULK_ROUTES)
 def test_r10_bulk_rate_limiting_5_per_min(
-    client: TestClient, bulk_company: dict[str, Any], route: str
+    client: TestClient, bulk_company: dict[str, Any], route: str, limits_on
 ) -> None:
     """R10: 6th bulk call in a minute gives 429."""
     hr_headers = _auth_headers(bulk_company["hr_admin"])
     emp1_id = str(bulk_company["emp1"].id)
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        status_codes = []
-        for _ in range(7):
-            r = client.post(route, headers=hr_headers, json={"employee_ids": [emp1_id]})
-            status_codes.append(r.status_code)
+    status_codes = []
+    for _ in range(7):
+        r = client.post(route, headers=hr_headers, json={"employee_ids": [emp1_id]})
+        status_codes.append(r.status_code)
 
-        assert all(c != 429 for c in status_codes[:5]), f"First 5 calls not 429: {status_codes[:5]}"
-        assert all(c == 429 for c in status_codes[5:]), f"Calls 6+ must be 429: {status_codes[5:]}"
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    assert all(c != 429 for c in status_codes[:5]), f"First 5 calls not 429: {status_codes[:5]}"
+    assert all(c == 429 for c in status_codes[5:]), f"Calls 6+ must be 429: {status_codes[5:]}"
 
 
 def test_r10_export_rate_limiting_5_per_hour(
-    client: TestClient, bulk_company: dict[str, Any]
+    client: TestClient, bulk_company: dict[str, Any], limits_on
 ) -> None:
     """R10: 6th export call in an hour gives 429."""
     hr_headers = _auth_headers(bulk_company["hr_admin"])
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        status_codes = []
-        for _ in range(7):
-            r = client.post("/api/v1/employees/export", headers=hr_headers, json={})
-            status_codes.append(r.status_code)
+    status_codes = []
+    for _ in range(7):
+        r = client.post("/api/v1/employees/export", headers=hr_headers, json={})
+        status_codes.append(r.status_code)
 
-        assert all(c != 429 for c in status_codes[:5])
-        assert all(c == 429 for c in status_codes[5:])
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    assert all(c != 429 for c in status_codes[:5])
+    assert all(c == 429 for c in status_codes[5:])
 
 
 def test_r10_single_deactivate_reactivate_rate_limit_30_per_min(
-    client: TestClient, bulk_company: dict[str, Any]
+    client: TestClient, bulk_company: dict[str, Any], limits_on
 ) -> None:
     """R10: 31st single deactivate and 31st single reactivate in a minute give 429."""
     hr_headers = _auth_headers(bulk_company["hr_admin"])
     emp1_id = str(bulk_company["emp1"].id)
 
-    limiter.enabled = True
-    try:
-        # 1. 31st single reactivate gives 429
-        limiter.reset()
-        status_codes_react = []
-        for _ in range(35):
-            r = client.post(f"/api/v1/employees/{emp1_id}/reactivate", headers=hr_headers)
-            status_codes_react.append(r.status_code)
+    # 1. 31st single reactivate gives 429
+    status_codes_react = []
+    for _ in range(35):
+        r = client.post(f"/api/v1/employees/{emp1_id}/reactivate", headers=hr_headers)
+        status_codes_react.append(r.status_code)
 
-        assert all(c != 429 for c in status_codes_react[:30])
-        assert all(c == 429 for c in status_codes_react[30:])
+    assert all(c != 429 for c in status_codes_react[:30])
+    assert all(c == 429 for c in status_codes_react[30:])
 
-        # 2. 31st single deactivate (DELETE) gives 429
-        limiter.reset()
-        status_codes_deact = []
-        for _ in range(35):
-            r = client.delete(f"/api/v1/employees/{emp1_id}", headers=hr_headers)
-            status_codes_deact.append(r.status_code)
+    # 2. 31st single deactivate (DELETE) gives 429
+    status_codes_deact = []
+    for _ in range(35):
+        r = client.delete(f"/api/v1/employees/{emp1_id}", headers=hr_headers)
+        status_codes_deact.append(r.status_code)
 
-        assert all(c != 429 for c in status_codes_deact[:30])
-        assert all(c == 429 for c in status_codes_deact[30:])
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    assert all(c != 429 for c in status_codes_deact[:30])
+    assert all(c == 429 for c in status_codes_deact[30:])
 
 
 def test_r10_export_and_download_audit_rows(

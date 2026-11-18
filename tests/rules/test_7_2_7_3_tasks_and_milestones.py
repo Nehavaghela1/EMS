@@ -10,7 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
@@ -609,28 +608,22 @@ def test_7_2_r9_audit_logging(client: TestClient, db: Session, p2_setup: dict):
         assert "password" not in str(log.details).lower()
 
 
-def test_7_2_r10_rate_limiting(client: TestClient, db: Session, p2_setup: dict):
+def test_7_2_r10_rate_limiting(client: TestClient, db: Session, p2_setup: dict, limits_on: None):
     """Rule 10: Write routes are rate limited, with a 429 test."""
     proj_id = _create_standard_project(client, p2_setup)
     pm_headers = _auth_headers(p2_setup["pm_u"])
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        hit_429 = False
-        for i in range(65):
-            r = client.post(
-                f"/api/v1/projects/{proj_id}/tasks",
-                json={"title": f"RL Task {i}", "priority": "low"},
-                headers=pm_headers,
-            )
-            if r.status_code == 429:
-                hit_429 = True
-                break
-        assert hit_429, "Rate limiter did not return 429 on excessive task POSTs"
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    hit_429 = False
+    for i in range(65):
+        r = client.post(
+            f"/api/v1/projects/{proj_id}/tasks",
+            json={"title": f"RL Task {i}", "priority": "low"},
+            headers=pm_headers,
+        )
+        if r.status_code == 429:
+            hit_429 = True
+            break
+    assert hit_429, "Rate limiter did not return 429 on excessive task POSTs"
 
 
 def test_7_2_r11_cross_company_404(client: TestClient, db: Session, p2_setup: dict):
@@ -875,7 +868,9 @@ def test_7_3_r5_cross_company_404(client: TestClient, db: Session, p2_setup: dic
     assert r_del.status_code == 404
 
 
-def test_7_3_r6_audit_logging_and_rate_limits(client: TestClient, db: Session, p2_setup: dict):
+def test_7_3_r6_audit_logging_and_rate_limits(
+    client: TestClient, db: Session, p2_setup: dict, limits_on: None
+):
     """Rule 6: Every create, edit and delete is audited (ids and field names only);
     writes are rate limited, with a 429 test.
     """
@@ -907,20 +902,14 @@ def test_7_3_r6_audit_logging_and_rate_limits(client: TestClient, db: Session, p
     assert any("milestone" in a.lower() for a in actions)
 
     # 2. Rate limit test
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        hit_429 = False
-        for i in range(65):
-            r = client.post(
-                f"/api/v1/projects/{proj_id}/milestones",
-                json={"title": f"RL MS {i}"},
-                headers=pm_headers,
-            )
-            if r.status_code == 429:
-                hit_429 = True
-                break
-        assert hit_429, "Rate limiter did not return 429 on excessive milestone POSTs"
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    hit_429 = False
+    for i in range(65):
+        r = client.post(
+            f"/api/v1/projects/{proj_id}/milestones",
+            json={"title": f"RL MS {i}"},
+            headers=pm_headers,
+        )
+        if r.status_code == 429:
+            hit_429 = True
+            break
+    assert hit_429, "Rate limiter did not return 429 on excessive milestone POSTs"

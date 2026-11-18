@@ -29,7 +29,6 @@ from sqlalchemy.orm import Session
 
 from alembic import command
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
@@ -86,17 +85,6 @@ PNG = "image/png"
 JPEG = "image/jpeg"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _numbers = itertools.count(1)
-
-
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
 
 # ---------------------------------------------------------------- helpers

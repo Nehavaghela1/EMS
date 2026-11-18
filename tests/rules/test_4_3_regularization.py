@@ -66,17 +66,6 @@ def upload_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return target
 
 
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
-
-
 def _day(days_ago: int) -> date:
     return utcnow().date() - timedelta(days=days_ago)
 

@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import ExportTooLargeError
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.platform.models import AuditLog
@@ -530,7 +529,7 @@ def test_j5_job_status_failure_error_message(
 
 
 def test_j7_job_status_rate_limit_60_per_min(
-    client: TestClient, test_setup: dict[str, Any]
+    client: TestClient, test_setup: dict[str, Any], limits_on
 ) -> None:
     """J7, A8: Status check rate limit 60/min. 61st call returns 429."""
     from app.core.jobs import register_job
@@ -546,19 +545,13 @@ def test_j7_job_status_rate_limit_60_per_min(
         mock_task.result = {"row_count": 1}
         mock_async.return_value = mock_task
 
-        limiter.enabled = True
-        try:
-            limiter.reset()
-            codes = []
-            for _ in range(61):
-                r = client.get(f"/api/v1/jobs/{job_id}", headers=hr_headers)
-                codes.append(r.status_code)
+        codes = []
+        for _ in range(61):
+            r = client.get(f"/api/v1/jobs/{job_id}", headers=hr_headers)
+            codes.append(r.status_code)
 
-            assert all(c == 200 for c in codes[:60]), f"First 60 calls failed: {codes[:60]}"
-            assert codes[60] == 429, f"61st call must be 429, got {codes[60]}"
-        finally:
-            limiter.reset()
-            limiter.enabled = False
+        assert all(c == 200 for c in codes[:60]), f"First 60 calls failed: {codes[:60]}"
+        assert codes[60] == 429, f"61st call must be 429, got {codes[60]}"
 
 
 # ── J7: Employee export download ownership ────────────────────────────────
@@ -738,7 +731,7 @@ def test_j7_attendance_export_download_ownership(
 
 
 def test_j7_attendance_export_download_rate_limit(
-    client: TestClient, test_setup: dict[str, Any], tmp_path, monkeypatch
+    client: TestClient, test_setup: dict[str, Any], tmp_path, monkeypatch, limits_on
 ) -> None:
     """J7, X1, X4: Attendance export download route rate limited at 10/min.
     The 11th request gives 429.
@@ -748,36 +741,30 @@ def test_j7_attendance_export_download_rate_limit(
     hr = test_setup["hr1"]
     hr_headers = _auth_headers(hr)
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
-        dl_file = tmp_path / "dl_att_rl.csv"
-        dl_file.write_text("a,b\n1,2\n")
+    monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
+    dl_file = tmp_path / "dl_att_rl.csv"
+    dl_file.write_text("a,b\n1,2\n")
 
-        job_id = str(uuid.uuid4())
-        register_job(job_id, test_setup["company1"].id, hr.id, "attendance_export")
+    job_id = str(uuid.uuid4())
+    register_job(job_id, test_setup["company1"].id, hr.id, "attendance_export")
 
-        codes_dl = []
-        with patch("app.modules.time_leave.router.celery_app.AsyncResult") as mock_async:
-            mock_task = MagicMock()
-            mock_task.state = "SUCCESS"
-            mock_task.result = {
-                "company_id": str(test_setup["company1"].id),
-                "requester_id": str(hr.id),
-                "file_path": str(dl_file),
-                "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-            }
-            mock_async.return_value = mock_task
+    codes_dl = []
+    with patch("app.modules.time_leave.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "SUCCESS"
+        mock_task.result = {
+            "company_id": str(test_setup["company1"].id),
+            "requester_id": str(hr.id),
+            "file_path": str(dl_file),
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        }
+        mock_async.return_value = mock_task
 
-            for _ in range(11):
-                r = client.get(f"/api/v1/attendance/export/{job_id}/download", headers=hr_headers)
-                codes_dl.append(r.status_code)
-        assert all(c == 200 for c in codes_dl[:10])
-        assert codes_dl[10] == 429
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+        for _ in range(11):
+            r = client.get(f"/api/v1/attendance/export/{job_id}/download", headers=hr_headers)
+            codes_dl.append(r.status_code)
+    assert all(c == 200 for c in codes_dl[:10])
+    assert codes_dl[10] == 429
 
 
 # ── J8: Cleanup of old export files ───────────────────────────────────────
@@ -1334,7 +1321,7 @@ def test_a7_d5_audit_export_download_route(
 
 
 def test_a8_rate_limits_audit_routes(
-    client: TestClient, test_setup: dict[str, Any], tmp_path, monkeypatch
+    client: TestClient, test_setup: dict[str, Any], tmp_path, monkeypatch, limits_on
 ) -> None:
     """A8: Audit list 30/min, export 5/min, export download 10/min.
     The call after the limit returns 429.
@@ -1344,55 +1331,46 @@ def test_a8_rate_limits_audit_routes(
     hr = test_setup["hr1"]
     hr_headers = _auth_headers(hr)
 
-    limiter.enabled = True
-    try:
-        # 1. Audit list: 30/min -> 31st gives 429
-        limiter.reset()
-        codes_list = []
-        for _ in range(31):
-            r = client.get("/api/v1/audit-logs", headers=hr_headers)
-            codes_list.append(r.status_code)
-        assert all(c == 200 for c in codes_list[:30])
-        assert codes_list[30] == 429
+    # 1. Audit list: 30/min -> 31st gives 429
+    codes_list = []
+    for _ in range(31):
+        r = client.get("/api/v1/audit-logs", headers=hr_headers)
+        codes_list.append(r.status_code)
+    assert all(c == 200 for c in codes_list[:30])
+    assert codes_list[30] == 429
 
-        # 2. Audit export: 5/min -> 6th gives 429
-        limiter.reset()
-        codes_export = []
-        with patch("app.workers.tasks.platform.export_audit_logs_csv_task.delay") as mock_del:
-            mock_del.return_value = MagicMock(id=str(uuid.uuid4()))
-            for _ in range(6):
-                r = client.post("/api/v1/audit-logs/export", headers=hr_headers, json={})
-                codes_export.append(r.status_code)
-        assert all(c == 202 for c in codes_export[:5])
-        assert codes_export[5] == 429
+    # 2. Audit export: 5/min -> 6th gives 429
+    codes_export = []
+    with patch("app.workers.tasks.platform.export_audit_logs_csv_task.delay") as mock_del:
+        mock_del.return_value = MagicMock(id=str(uuid.uuid4()))
+        for _ in range(6):
+            r = client.post("/api/v1/audit-logs/export", headers=hr_headers, json={})
+            codes_export.append(r.status_code)
+    assert all(c == 202 for c in codes_export[:5])
+    assert codes_export[5] == 429
 
-        # 3. Audit export download: 10/min -> 11th gives 429
-        limiter.reset()
-        monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
-        dl_file = tmp_path / "dl_rl.csv"
-        dl_file.write_text("a,b\n1,2\n")
+    # 3. Audit export download: 10/min -> 11th gives 429
+    monkeypatch.setattr(settings, "EXPORT_DIR", str(tmp_path))
+    dl_file = tmp_path / "dl_rl.csv"
+    dl_file.write_text("a,b\n1,2\n")
 
-        job_id = str(uuid.uuid4())
-        register_job(job_id, test_setup["company1"].id, hr.id, "audit_logs_export")
+    job_id = str(uuid.uuid4())
+    register_job(job_id, test_setup["company1"].id, hr.id, "audit_logs_export")
 
-        codes_dl = []
-        with patch("app.modules.platform.router.celery_app.AsyncResult") as mock_async:
-            mock_task = MagicMock()
-            mock_task.state = "SUCCESS"
-            mock_task.result = {
-                "company_id": str(test_setup["company1"].id),
-                "requester_id": str(hr.id),
-                "file_path": str(dl_file),
-                "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-            }
-            mock_async.return_value = mock_task
+    codes_dl = []
+    with patch("app.modules.platform.router.celery_app.AsyncResult") as mock_async:
+        mock_task = MagicMock()
+        mock_task.state = "SUCCESS"
+        mock_task.result = {
+            "company_id": str(test_setup["company1"].id),
+            "requester_id": str(hr.id),
+            "file_path": str(dl_file),
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        }
+        mock_async.return_value = mock_task
 
-            for _ in range(11):
-                r = client.get(f"/api/v1/audit-logs/export/{job_id}/download", headers=hr_headers)
-                codes_dl.append(r.status_code)
-        assert all(c == 200 for c in codes_dl[:10])
-        assert codes_dl[10] == 429
-
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+        for _ in range(11):
+            r = client.get(f"/api/v1/audit-logs/export/{job_id}/download", headers=hr_headers)
+            codes_dl.append(r.status_code)
+    assert all(c == 200 for c in codes_dl[:10])
+    assert codes_dl[10] == 429

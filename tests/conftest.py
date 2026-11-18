@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import io
 import os
 import subprocess
@@ -273,10 +274,14 @@ def client(db):
     limiter.reset()
     try:
         r = redis.Redis.from_url(settings.REDIS_URL)
+        r.ping()
         for key in r.scan_iter("pwreset*"):
             r.delete(key)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise RuntimeError(
+            f"Redis is unreachable at {settings.REDIS_URL}: {exc}. "
+            "Tests require a running Redis instance for rate limiting and background tasks."
+        ) from exc
 
     def _override_get_db():
         # Mirrors app.db.session.get_db's rollback-on-exception: this
@@ -295,6 +300,69 @@ def client(db):
     with TestClient(fastapi_app) as test_client:
         yield test_client
     fastapi_app.dependency_overrides.clear()
+
+
+@contextlib.contextmanager
+def rate_limits():
+    """Y1/Y2/Y3: Shared fixture/helper that a rate-limit test uses to enable limiting:
+    - Saves limiter.enabled and test prefix
+    - Fails loudly if Redis is unreachable
+    - Assigns an isolated per-test key prefix so tests never collide on rate buckets
+    - Resets before and after, restoring the original state in finally.
+    No test may set limiter.enabled directly any more.
+    """
+    import redis
+
+    from app.core.config import settings
+    from app.core.rate_limit import limiter
+
+    try:
+        r = redis.Redis.from_url(settings.REDIS_URL)
+        r.ping()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Rate limiting requires Redis at {settings.REDIS_URL}, but Redis is unreachable: {exc}"
+        ) from exc
+
+    orig_enabled = limiter.enabled
+    orig_prefix = getattr(limiter, "_key_prefix", "")
+    test_prefix = f"test_{uuid.uuid4().hex[:8]}"
+    limiter._key_prefix = test_prefix
+    limiter.enabled = True
+    limiter.reset()
+    try:
+        yield limiter
+    finally:
+        limiter.reset()
+        limiter.enabled = orig_enabled
+        limiter._key_prefix = orig_prefix
+
+
+@pytest.fixture
+def limits_on():
+    """Y1/Y2/Y3: Shared fixture to enable rate limiting in an isolated environment."""
+    with rate_limits() as lim:
+        yield lim
+
+
+@contextlib.contextmanager
+def rate_limits_off():
+    """Shared helper / context manager for tests requiring rate limiting explicitly disabled."""
+    from app.core.rate_limit import limiter
+
+    orig_enabled = limiter.enabled
+    limiter.enabled = False
+    try:
+        yield
+    finally:
+        limiter.enabled = orig_enabled
+
+
+@pytest.fixture
+def limits_off():
+    """Shared fixture for tests requiring rate limiting explicitly disabled."""
+    with rate_limits_off():
+        yield
 
 
 @dataclass

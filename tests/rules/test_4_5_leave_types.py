@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from alembic import command
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.identity.models import CompanySettings, LeaveYearType, UserRole
@@ -698,18 +697,10 @@ def test_R8_only_hr_level_seeds_and_other_company_is_404(
 
 
 def test_R8_seed_is_limited_to_30_per_minute(
-    client: TestClient, db: Session, company_a: TenantContext
+    client: TestClient, db: Session, company_a: TenantContext, limits_on
 ):
     emp, _ = _employee(client, db, company_a)
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        codes = [
-            _seed(client, company_a.hr_headers, emp["id"], 2031).status_code for _ in range(31)
-        ]
-    finally:
-        limiter.reset()
-        limiter.enabled = False
+    codes = [_seed(client, company_a.hr_headers, emp["id"], 2031).status_code for _ in range(31)]
     assert codes[:30] == [200] * 30 and codes[30] == 429, f"R8: seed limit wrong: {codes}"
 
 

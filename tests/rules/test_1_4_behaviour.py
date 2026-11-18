@@ -10,7 +10,6 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.otp import _otp_key
-from app.core.rate_limit import limiter
 from app.core.security import hash_password
 from app.core.time import utcnow
 from app.modules.hr.models import Employee, InvitationStatus
@@ -387,7 +386,9 @@ def test_J08_email_failure_preserves_uniform_reply(client, db, company_a, monkey
 # ── J09: Rate-limited requester can finish with latest code ────────────────────
 # Reaching a request throttling threshold must not lock the account or prevent the user
 # from successfully completing recovery with the code already in hand.
-def test_J09_rate_limited_requester_can_finish(client, db, company_a, email_outbox, monkeypatch):
+def test_J09_rate_limited_requester_can_finish(
+    client, db, company_a, email_outbox, monkeypatch, limits_on
+):
     from fastapi.testclient import TestClient
 
     from app.main import app as fastapi_app
@@ -400,58 +401,51 @@ def test_J09_rate_limited_requester_can_finish(client, db, company_a, email_outb
 
     monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["127.0.0.1/32"])
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-
-        # Simulate user sending 3 requests and receiving codes
-        latest_code = None
-        for i in range(3):
-            email_outbox.clear()
-            r = client.post(
-                "/api/v1/auth/forgot-password",
-                json={"email": user_email},
-                headers={"X-Forwarded-For": f"198.51.100.{20 + i}"},
-            )
-            assert r.status_code == 200
-            if email_outbox:
-                latest_code = (
-                    email_outbox[-1]["text_body"]
-                    .split("Your password reset code is ")[1]
-                    .split(".")[0]
-                    .strip()
-                )
-
-        assert latest_code is not None
-
-        # 4th request: per-account limit is exhausted; receives same reply, no new code
+    # Simulate user sending 3 requests and receiving codes
+    latest_code = None
+    for i in range(3):
         email_outbox.clear()
-        r4 = client.post(
+        r = client.post(
             "/api/v1/auth/forgot-password",
             json={"email": user_email},
-            headers={"X-Forwarded-For": "198.51.100.25"},
+            headers={"X-Forwarded-For": f"198.51.100.{20 + i}"},
         )
-        assert r4.status_code == 200
-        assert len(email_outbox) == 0
+        assert r.status_code == 200
+        if email_outbox:
+            latest_code = (
+                email_outbox[-1]["text_body"]
+                .split("Your password reset code is ")[1]
+                .split(".")[0]
+                .strip()
+            )
 
-        # With per-account limit exhausted, complete reset with the latest code already received
-        new_pw = "FinishedPass123!"
-        reset_res = client.post(
-            "/api/v1/auth/reset-password",
-            json={"email": user_email, "otp": latest_code, "new_password": new_pw},
-        )
-        assert reset_res.status_code == 204
+    assert latest_code is not None
 
-        # Sign in succeeds
-        assert (
-            client.post(
-                "/api/v1/auth/login", json={"email": user_email, "password": new_pw}
-            ).status_code
-            == 200
-        )
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+    # 4th request: per-account limit is exhausted; receives same reply, no new code
+    email_outbox.clear()
+    r4 = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": user_email},
+        headers={"X-Forwarded-For": "198.51.100.25"},
+    )
+    assert r4.status_code == 200
+    assert len(email_outbox) == 0
+
+    # With per-account limit exhausted, complete reset with the latest code already received
+    new_pw = "FinishedPass123!"
+    reset_res = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": user_email, "otp": latest_code, "new_password": new_pw},
+    )
+    assert reset_res.status_code == 204
+
+    # Sign in succeeds
+    assert (
+        client.post(
+            "/api/v1/auth/login", json={"email": user_email, "password": new_pw}
+        ).status_code
+        == 200
+    )
 
 
 # ── J10: Changing password invalidates active sessions requiring re-login ──────

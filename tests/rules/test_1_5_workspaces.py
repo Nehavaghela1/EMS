@@ -373,57 +373,49 @@ def test_W07_unauthenticated_or_expired_or_deactivated_caller_gives_401(client, 
 
 
 # ── W08: Rate limits: switch 20/minute per user, create 5/hour per user ────────
-def test_W08_rate_limits_on_switch_and_create(client, db, company_a):
+def test_W08_rate_limits_on_switch_and_create(client, db, company_a, limits_on):
     user, _ = _create_user_in_company(
         db, company_a.company_id, f"u-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.hr_admin
     )
     headers = _make_headers(user.id, company_a.company_id, user.role)
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-
-        # Switch rate limit: 20/minute per user -> 21st must be 429
-        for i in range(20):
-            res = client.post(
-                "/api/v1/auth/switch-workspace",
-                headers=headers,
-                json={"company_id": str(company_a.company_id)},
-            )
-            assert res.status_code == 200, f"switch #{i + 1} failed with {res.status_code}"
-
-        res_21 = client.post(
+    # Switch rate limit: 20/minute per user -> 21st must be 429
+    for i in range(20):
+        res = client.post(
             "/api/v1/auth/switch-workspace",
             headers=headers,
             json={"company_id": str(company_a.company_id)},
         )
-        assert res_21.status_code == 429
+        assert res.status_code == 200, f"switch #{i + 1} failed with {res.status_code}"
 
-        # Create workspace rate limit: 5/hour per user -> 6th must be 429
-        limiter.reset()
-        for j in range(5):
-            res_c = client.post(
-                "/api/v1/companies/workspaces",
-                headers=headers,
-                json={
-                    "company_name": f"Rate Co {j}",
-                    "company_email": f"rate-{j}-{uuid.uuid4().hex[:6]}@example.com",
-                },
-            )
-            assert res_c.status_code == 201, f"create #{j + 1} failed with {res_c.status_code}"
+    res_21 = client.post(
+        "/api/v1/auth/switch-workspace",
+        headers=headers,
+        json={"company_id": str(company_a.company_id)},
+    )
+    assert res_21.status_code == 429
 
-        res_c_6 = client.post(
+    # Create workspace rate limit: 5/hour per user -> 6th must be 429
+    for j in range(5):
+        res_c = client.post(
             "/api/v1/companies/workspaces",
             headers=headers,
             json={
-                "company_name": "Rate Co 6",
-                "company_email": f"rate-6-{uuid.uuid4().hex[:6]}@example.com",
+                "company_name": f"Rate Co {j}",
+                "company_email": f"rate-{j}-{uuid.uuid4().hex[:6]}@example.com",
             },
         )
-        assert res_c_6.status_code == 429
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+        assert res_c.status_code == 201, f"create #{j + 1} failed with {res_c.status_code}"
+
+    res_c_6 = client.post(
+        "/api/v1/companies/workspaces",
+        headers=headers,
+        json={
+            "company_name": "Rate Co 6",
+            "company_email": f"rate-6-{uuid.uuid4().hex[:6]}@example.com",
+        },
+    )
+    assert res_c_6.status_code == 429
 
 
 # ── W09: Refresh cookie attributes, refresh works for B, old works for A ──────
@@ -1057,7 +1049,7 @@ def test_W20_unactivated_employee_in_other_company_and_agreement(client, db):
 
 
 # ── W22: Rate limit is per user: two users same IP separate; same user 2 IPs share ─
-def test_W22_rate_limit_per_user_verified_token(client, db, company_a):
+def test_W22_rate_limit_per_user_verified_token(client, db, company_a, limits_on):
     u1, _ = _create_user_in_company(
         db, company_a.company_id, f"u1-{uuid.uuid4().hex[:6]}@example.com", role=UserRole.owner
     )
@@ -1068,37 +1060,30 @@ def test_W22_rate_limit_per_user_verified_token(client, db, company_a):
     h1 = _make_headers(u1.id, company_a.company_id, u1.role)
     h2 = _make_headers(u2.id, company_a.company_id, u2.role)
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-
-        # User 1 makes 20 calls from IP 1.2.3.4
-        for i in range(20):
-            res = client.post(
-                "/api/v1/auth/switch-workspace",
-                headers={**h1, "X-Forwarded-For": "1.2.3.4"},
-                json={"company_id": str(company_a.company_id)},
-            )
-            assert res.status_code == 200, f"u1 switch #{i + 1} failed"
-
-        # User 1's 21st call from a DIFFERENT IP (5.6.7.8) must be 429 (shared counter per user)
-        res_u1_diff_ip = client.post(
+    # User 1 makes 20 calls from IP 1.2.3.4
+    for i in range(20):
+        res = client.post(
             "/api/v1/auth/switch-workspace",
-            headers={**h1, "X-Forwarded-For": "5.6.7.8"},
+            headers={**h1, "X-Forwarded-For": "1.2.3.4"},
             json={"company_id": str(company_a.company_id)},
         )
-        assert res_u1_diff_ip.status_code == 429
+        assert res.status_code == 200, f"u1 switch #{i + 1} failed"
 
-        # User 2 on the SAME initial IP (1.2.3.4) gets their OWN separate 20 quota (not 429)
-        res_u2 = client.post(
-            "/api/v1/auth/switch-workspace",
-            headers={**h2, "X-Forwarded-For": "1.2.3.4"},
-            json={"company_id": str(company_a.company_id)},
-        )
-        assert res_u2.status_code == 200
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+    # User 1's 21st call from a DIFFERENT IP (5.6.7.8) must be 429 (shared counter per user)
+    res_u1_diff_ip = client.post(
+        "/api/v1/auth/switch-workspace",
+        headers={**h1, "X-Forwarded-For": "5.6.7.8"},
+        json={"company_id": str(company_a.company_id)},
+    )
+    assert res_u1_diff_ip.status_code == 429
+
+    # User 2 on the SAME initial IP (1.2.3.4) gets their OWN separate 20 quota (not 429)
+    res_u2 = client.post(
+        "/api/v1/auth/switch-workspace",
+        headers={**h2, "X-Forwarded-For": "1.2.3.4"},
+        json={"company_id": str(company_a.company_id)},
+    )
+    assert res_u2.status_code == 200
 
 
 # ── W23: Invalid currency and invalid subdomain give 422 ──────────────────────
@@ -1214,7 +1199,7 @@ def test_W24_near_simultaneous_creates_same_email_conflict_handling(client, db, 
 
 
 # ── W25: Exhaustive truth table for usable membership {user} x {company} x {employee} ──
-def test_W25_exhaustive_truth_table_memberships(client, db, company_a):
+def test_W25_exhaustive_truth_table_memberships(client, db, company_a, limits_off):
     from app.db.rls import bind_tenant_to_session
 
     caller, _ = _create_user_in_company(
@@ -1245,117 +1230,112 @@ def test_W25_exhaustive_truth_table_memberships(client, db, company_a):
         "email_not_activated",
     ]
 
-    limiter.enabled = False
-    try:
-        for u_active in user_actives:
-            for c_status, c_active in company_states:
-                for emp_state in employee_states:
-                    # Expected usable only when:
-                    # user is active AND company is active (status active & is_active=True)
-                    # AND employee is either "none" or "linked_activated"
-                    expected_usable = (
-                        u_active
-                        and c_active
-                        and (c_status == CompanyStatus.active)
-                        and (emp_state in ("none", "linked_activated"))
-                    )
+    for u_active in user_actives:
+        for c_status, c_active in company_states:
+            for emp_state in employee_states:
+                # Expected usable only when:
+                # user is active AND company is active (status active & is_active=True)
+                # AND employee is either "none" or "linked_activated"
+                expected_usable = (
+                    u_active
+                    and c_active
+                    and (c_status == CompanyStatus.active)
+                    and (emp_state in ("none", "linked_activated"))
+                )
 
-                    # Provision isolated company and user
-                    test_comp = _create_company(
-                        db,
-                        name=f"Co-{uuid.uuid4().hex[:6]}",
-                        status=c_status,
-                        is_active=c_active,
-                    )
-                    test_user = User(
-                        company_id=test_comp.id,
-                        email=caller.email,
-                        hashed_password=caller.hashed_password,
-                        role=UserRole.employee,
-                        is_active=u_active,
-                    )
-                    db.add(test_user)
-                    db.flush()
+                # Provision isolated company and user
+                test_comp = _create_company(
+                    db,
+                    name=f"Co-{uuid.uuid4().hex[:6]}",
+                    status=c_status,
+                    is_active=c_active,
+                )
+                test_user = User(
+                    company_id=test_comp.id,
+                    email=caller.email,
+                    hashed_password=caller.hashed_password,
+                    role=UserRole.employee,
+                    is_active=u_active,
+                )
+                db.add(test_user)
+                db.flush()
 
-                    bind_tenant_to_session(db, company_id=test_comp.id, is_platform_admin=True)
+                bind_tenant_to_session(db, company_id=test_comp.id, is_platform_admin=True)
 
-                    if emp_state == "linked_activated":
-                        db.add(
-                            Employee(
-                                company_id=test_comp.id,
-                                user_id=test_user.id,
-                                employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
-                                first_name="Test",
-                                email=caller.email,
-                                hire_date=date.today(),
-                                is_active=True,
-                                invitation_status=InvitationStatus.activated,
-                                employment_type=EmploymentType.full_time,
-                            )
+                if emp_state == "linked_activated":
+                    db.add(
+                        Employee(
+                            company_id=test_comp.id,
+                            user_id=test_user.id,
+                            employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
+                            first_name="Test",
+                            email=caller.email,
+                            hire_date=date.today(),
+                            is_active=True,
+                            invitation_status=InvitationStatus.activated,
+                            employment_type=EmploymentType.full_time,
                         )
-                    elif emp_state == "linked_not_activated":
-                        db.add(
-                            Employee(
-                                company_id=test_comp.id,
-                                user_id=test_user.id,
-                                employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
-                                first_name="Test",
-                                email=caller.email,
-                                hire_date=date.today(),
-                                is_active=True,
-                                invitation_status=InvitationStatus.sent,
-                                employment_type=EmploymentType.full_time,
-                            )
+                    )
+                elif emp_state == "linked_not_activated":
+                    db.add(
+                        Employee(
+                            company_id=test_comp.id,
+                            user_id=test_user.id,
+                            employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
+                            first_name="Test",
+                            email=caller.email,
+                            hire_date=date.today(),
+                            is_active=True,
+                            invitation_status=InvitationStatus.sent,
+                            employment_type=EmploymentType.full_time,
                         )
-                    elif emp_state == "email_not_activated":
-                        db.add(
-                            Employee(
-                                company_id=test_comp.id,
-                                user_id=None,
-                                employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
-                                first_name="Test",
-                                email=caller.email,
-                                hire_date=date.today(),
-                                is_active=True,
-                                invitation_status=InvitationStatus.sent,
-                                employment_type=EmploymentType.full_time,
-                            )
+                    )
+                elif emp_state == "email_not_activated":
+                    db.add(
+                        Employee(
+                            company_id=test_comp.id,
+                            user_id=None,
+                            employee_code=f"E-{uuid.uuid4().hex[:6].upper()}",
+                            first_name="Test",
+                            email=caller.email,
+                            hire_date=date.today(),
+                            is_active=True,
+                            invitation_status=InvitationStatus.sent,
+                            employment_type=EmploymentType.full_time,
                         )
-
-                    db.commit()
-
-                    # 1. GET /auth/workspaces
-                    resp_list = client.get("/api/v1/auth/workspaces", headers=headers)
-                    assert resp_list.status_code == 200
-                    listed_ids = [w["id"] for w in resp_list.json()]
-                    is_listed = str(test_comp.id) in listed_ids
-
-                    # 2. POST /auth/switch-workspace
-                    resp_sw = client.post(
-                        "/api/v1/auth/switch-workspace",
-                        headers=headers,
-                        json={"company_id": str(test_comp.id)},
                     )
-                    switch_ok = resp_sw.status_code == 200
-                    if not switch_ok:
-                        assert resp_sw.status_code == 404
 
-                    # Assert that "company appears in GET /auth/workspaces" ==
-                    # "POST /auth/switch-workspace returns 200"
-                    # and matches the expected truth table value
-                    ctx = (
-                        f"u_active={u_active}, c_status={c_status}, "
-                        f"c_active={c_active}, emp_state={emp_state}"
-                    )
-                    assert is_listed == switch_ok, (
-                        f"Disagreement between list ({is_listed}) and switch "
-                        f"({switch_ok}) for {ctx}"
-                    )
-                    assert is_listed == expected_usable, (
-                        f"Expected usable={expected_usable} but got is_listed={is_listed} for {ctx}"
-                    )
-    finally:
-        limiter.reset()
+                db.commit()
+
+                # 1. GET /auth/workspaces
+                resp_list = client.get("/api/v1/auth/workspaces", headers=headers)
+                assert resp_list.status_code == 200
+                listed_ids = [w["id"] for w in resp_list.json()]
+                is_listed = str(test_comp.id) in listed_ids
+
+                # 2. POST /auth/switch-workspace
+                resp_sw = client.post(
+                    "/api/v1/auth/switch-workspace",
+                    headers=headers,
+                    json={"company_id": str(test_comp.id)},
+                )
+                switch_ok = resp_sw.status_code == 200
+                if not switch_ok:
+                    assert resp_sw.status_code == 404
+
+                # Assert that "company appears in GET /auth/workspaces" ==
+                # "POST /auth/switch-workspace returns 200"
+                # and matches the expected truth table value
+                ctx = (
+                    f"u_active={u_active}, c_status={c_status}, "
+                    f"c_active={c_active}, emp_state={emp_state}"
+                )
+                assert is_listed == switch_ok, (
+                    f"Disagreement between list ({is_listed}) and switch ({switch_ok}) for {ctx}"
+                )
+                assert is_listed == expected_usable, (
+                    f"Expected usable={expected_usable} but got is_listed={is_listed} for {ctx}"
+                )
 
 
 # ── W26: db.info["tenant"] restored on success and on failure in create_workspace ──

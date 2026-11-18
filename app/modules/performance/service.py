@@ -21,6 +21,7 @@ from app.modules.performance.models import (
     PerformanceCycle,
     PerformanceGoal,
     PerformancePIP,
+    PerformancePIPCheckIn,
     PerformanceReview,
     PerformanceSummary,
     ReviewerRole,
@@ -43,12 +44,14 @@ from app.modules.performance.schemas import (
     PerformanceGoalResponse,
     PerformancePIPResponse,
     PerformanceReportResponse,
+    PIPCheckInCreateRequest,
     PIPCreateRequest,
     PIPEvaluateRequest,
+    PIPExtendRequest,
     SelfReviewRequest,
     SummaryFinalizeRequest,
 )
-from app.modules.platform.service import AuditService
+from app.modules.platform.service import AuditService, NotificationService
 
 
 class WeightageSumError(AppError):
@@ -66,6 +69,7 @@ class PerformanceService:
         self.pip_repo = PerformancePIPRepository(db)
         self.employee_repo = EmployeeRepository(db)
         self.audit = AuditService(db)
+        self.notifications = NotificationService(db)
 
     # 1. Cycles
     def create_cycle(
@@ -141,14 +145,12 @@ class PerformanceService:
             entity_id=cycle.id,
             details={"status": data.status.value},
         )
-        self.db.commit()
 
-        # Notification after commit on activation
+        # Notification on activation
         if data.status == CycleStatus.active:
             from sqlalchemy import select
 
             from app.modules.hr.models import Employee
-            from app.modules.platform.models import Notification
 
             employees = list(
                 self.db.scalars(
@@ -161,7 +163,7 @@ class PerformanceService:
             )
             for emp in employees:
                 if emp.user_id:
-                    notif = Notification(
+                    self.notifications.notify(
                         company_id=company_id,
                         user_id=emp.user_id,
                         type="performance_cycle_activated",
@@ -170,10 +172,11 @@ class PerformanceService:
                             f"Performance cycle '{cycle.name}' is now active. "
                             "Please set your goals."
                         ),
+                        entity_type="performance_cycle",
+                        entity_id=cycle.id,
                     )
-                    self.db.add(notif)
-            self.db.commit()
 
+        self.db.commit()
         return cycle
 
     def list_cycles(
@@ -258,28 +261,35 @@ class PerformanceService:
                 details={"title": goal.title, "weightage": str(goal.weightage)},
             )
 
-        self.db.commit()
-
-        # If someone else created/modified goals for the employee, notify the manager
+        # If someone else created/modified goals for the employee, notify the employee and manager
         if current_emp is None or current_emp.id != emp.id:
+            if emp.user_id:
+                self.notifications.notify(
+                    company_id=company_id,
+                    user_id=emp.user_id,
+                    type="employee_goals_updated",
+                    title="Employee Goals Updated",
+                    message=f"Goals for you were created by {actor.email}.",
+                    entity_type="employee",
+                    entity_id=emp.id,
+                )
             if emp.reporting_manager_id:
                 mgr = self.employee_repo.get_by_id(emp.reporting_manager_id, company_id)
                 if mgr and mgr.user_id:
-                    from app.modules.platform.models import Notification
-
-                    notif = Notification(
+                    self.notifications.notify(
                         company_id=company_id,
                         user_id=mgr.user_id,
                         type="employee_goals_updated",
                         title="Employee Goals Updated",
                         message=(
-                            f"Goals for employee {emp.first_name} {emp.last_name} "
+                            f"Goals for employee {emp.first_name} {emp.last_name or ''} "
                             f"were updated by {actor.email}."
                         ),
+                        entity_type="employee",
+                        entity_id=emp.id,
                     )
-                    self.db.add(notif)
-                    self.db.commit()
 
+        self.db.commit()
         return created
 
     def update_goal(
@@ -347,29 +357,37 @@ class PerformanceService:
             entity_id=goal.id,
             details={"title": updated.title, "status": updated.status.value},
         )
-        self.db.commit()
-
-        # If someone else updated the goal, notify manager
+        # If someone else updated the goal, notify employee and manager
         if not is_owner:
             target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
-            if target_emp and target_emp.reporting_manager_id:
-                mgr = self.employee_repo.get_by_id(target_emp.reporting_manager_id, company_id)
-                if mgr and mgr.user_id:
-                    from app.modules.platform.models import Notification
-
-                    notif = Notification(
+            if target_emp:
+                if target_emp.user_id:
+                    self.notifications.notify(
                         company_id=company_id,
-                        user_id=mgr.user_id,
+                        user_id=target_emp.user_id,
                         type="employee_goals_updated",
                         title="Employee Goals Updated",
-                        message=(
-                            f"Goals for employee {target_emp.first_name} {target_emp.last_name} "
-                            f"were updated by {actor.email}."
-                        ),
+                        message=f"Goals for you were updated by {actor.email}.",
+                        entity_type="employee",
+                        entity_id=target_emp.id,
                     )
-                    self.db.add(notif)
-                    self.db.commit()
+                if target_emp.reporting_manager_id:
+                    mgr = self.employee_repo.get_by_id(target_emp.reporting_manager_id, company_id)
+                    if mgr and mgr.user_id:
+                        self.notifications.notify(
+                            company_id=company_id,
+                            user_id=mgr.user_id,
+                            type="employee_goals_updated",
+                            title="Employee Goals Updated",
+                            message=(
+                                f"Goals for employee {target_emp.first_name} "
+                                f"{target_emp.last_name or ''} were updated by {actor.email}."
+                            ),
+                            entity_type="employee",
+                            entity_id=target_emp.id,
+                        )
 
+        self.db.commit()
         return updated
 
     def update_goal_progress(
@@ -485,6 +503,19 @@ class PerformanceService:
                     entity_id=existing.id,
                     details={"goal_id": str(goal.id)},
                 )
+                if emp.reporting_manager_id:
+                    mgr = self.employee_repo.get_by_id(emp.reporting_manager_id, company_id)
+                    if mgr and mgr.user_id:
+                        emp_full_name = f"{emp.first_name} {emp.last_name or ''}".strip()
+                        self.notifications.notify(
+                            company_id=company_id,
+                            user_id=mgr.user_id,
+                            type="self_review_submitted",
+                            title="Self-Review Submitted",
+                            message=f"Employee {emp_full_name} submitted a self-review.",
+                            entity_type="performance_review",
+                            entity_id=existing.id,
+                        )
                 self.db.commit()
                 return existing
             raise ConflictError("Self-review for this goal has already been submitted.")
@@ -515,17 +546,16 @@ class PerformanceService:
         if emp.reporting_manager_id:
             mgr = self.employee_repo.get_by_id(emp.reporting_manager_id, company_id)
             if mgr and mgr.user_id:
-                from app.modules.platform.models import Notification
-
                 emp_full_name = f"{emp.first_name} {emp.last_name or ''}".strip()
-                notif = Notification(
+                self.notifications.notify(
                     company_id=company_id,
                     user_id=mgr.user_id,
                     type="self_review_submitted",
                     title="Self-Review Submitted",
                     message=f"Employee {emp_full_name} submitted a self-review.",
+                    entity_type="performance_review",
+                    entity_id=review.id,
                 )
-                self.db.add(notif)
 
         self.db.commit()
         return review
@@ -592,6 +622,16 @@ class PerformanceService:
                     entity_id=existing.id,
                     details={"goal_id": str(goal.id)},
                 )
+                if target_emp and target_emp.user_id:
+                    self.notifications.notify(
+                        company_id=company_id,
+                        user_id=target_emp.user_id,
+                        type="manager_review_submitted",
+                        title="Manager Review Submitted",
+                        message="Your manager has submitted a review for your goal.",
+                        entity_type="performance_review",
+                        entity_id=existing.id,
+                    )
                 self.db.commit()
                 return existing
             raise ConflictError("Manager review for this goal has already been submitted.")
@@ -617,18 +657,16 @@ class PerformanceService:
         )
 
         # Notify employee
-        target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
         if target_emp and target_emp.user_id:
-            from app.modules.platform.models import Notification
-
-            notif = Notification(
+            self.notifications.notify(
                 company_id=company_id,
                 user_id=target_emp.user_id,
                 type="manager_review_submitted",
                 title="Manager Review Submitted",
                 message="Your manager has submitted a review for your goal.",
+                entity_type="performance_review",
+                entity_id=review.id,
             )
-            self.db.add(notif)
 
         self.db.commit()
         return review
@@ -943,9 +981,39 @@ class PerformanceService:
         )
 
     # 6. Performance Improvement Plans (PIP)
+    def _pip_to_response(
+        self, pip: PerformancePIP, company_id: uuid.UUID
+    ) -> PerformancePIPResponse:
+        emp = self.employee_repo.get_by_id_any_status(pip.employee_id, company_id)
+        mentor = (
+            self.employee_repo.get_by_id_any_status(pip.mentor_id, company_id)
+            if pip.mentor_id
+            else None
+        )
+        return PerformancePIPResponse(
+            id=pip.id,
+            employee_id=pip.employee_id,
+            employee_name=f"{emp.first_name} {emp.last_name or ''}".strip() if emp else None,
+            employee_code=emp.employee_code if emp else None,
+            mentor_id=pip.mentor_id,
+            mentor_name=f"{mentor.first_name} {mentor.last_name or ''}".strip() if mentor else None,
+            title=pip.title,
+            description=pip.description,
+            milestones_kpis=pip.milestones_kpis,
+            start_date=pip.start_date,
+            end_date=pip.end_date,
+            previous_end_date=pip.previous_end_date,
+            extension_reason=pip.extension_reason,
+            status=pip.status,
+            outcome_notes=pip.outcome_notes,
+            evaluated_at=pip.evaluated_at,
+            evaluated_by=pip.evaluated_by,
+            created_at=pip.created_at,
+        )
+
     def create_pip(
         self, company_id: uuid.UUID, data: PIPCreateRequest, actor: User
-    ) -> PerformancePIP:
+    ) -> PerformancePIPResponse:
         emp = self.employee_repo.get_by_id(data.employee_id, company_id)
         if emp is None:
             raise NotFoundError("Employee not found.")
@@ -956,6 +1024,7 @@ class PerformanceService:
         can_approve_for(self.db, actor, emp)
 
         # Validate mentor if provided: must exist in same company and be active
+        mentor = None
         if data.mentor_id is not None:
             mentor = self.employee_repo.get_by_id_any_status(data.mentor_id, company_id)
             if mentor is None:
@@ -963,8 +1032,8 @@ class PerformanceService:
             if not mentor.is_active:
                 raise ConflictError("Mentor employee is inactive.")
 
-        # Check if already has an active PIP
-        existing = self.pip_repo.get_active_pip_for_employee(company_id, data.employee_id)
+        # Check if already has an open PIP (draft, active, or extended)
+        existing = self.pip_repo.get_open_pip_for_employee(company_id, data.employee_id)
         if existing is not None:
             raise ConflictError(
                 "Employee already has an active Performance Improvement Plan (PIP)."
@@ -979,7 +1048,7 @@ class PerformanceService:
             milestones_kpis=data.milestones_kpis,
             start_date=data.start_date,
             end_date=data.end_date,
-            status="active",
+            status="draft",
         )
 
         self.audit.record(
@@ -990,42 +1059,122 @@ class PerformanceService:
             entity_id=pip.id,
             details={"employee_id": str(data.employee_id), "end_date": str(data.end_date)},
         )
+
+        # Notify employee and mentor
+        if emp.user_id:
+            self.notifications.notify(
+                company_id=company_id,
+                user_id=emp.user_id,
+                type="pip_created",
+                title="Performance Improvement Plan Initiated",
+                message=f"A Performance Improvement Plan '{pip.title}' has been initiated.",
+                entity_type="performance_pip",
+                entity_id=pip.id,
+            )
+        if mentor and mentor.user_id:
+            self.notifications.notify(
+                company_id=company_id,
+                user_id=mentor.user_id,
+                type="pip_created",
+                title="Assigned as PIP Mentor",
+                message=(
+                    f"You have been assigned as mentor for {emp.first_name}'s PIP '{pip.title}'."
+                ),
+                entity_type="performance_pip",
+                entity_id=pip.id,
+            )
+
         self.db.commit()
-        return pip
+        return self._pip_to_response(pip, company_id)
+
+    def activate_pip(
+        self, company_id: uuid.UUID, pip_id: uuid.UUID, actor: User
+    ) -> PerformancePIPResponse:
+        pip = self.pip_repo.get_by_id(pip_id, company_id)
+        if pip is None:
+            raise NotFoundError("PIP not found.")
+
+        emp = self.employee_repo.get_by_id_any_status(pip.employee_id, company_id)
+        from app.core.approval_authority import can_approve_for
+
+        if not emp or not can_approve_for(self.db, actor, emp):
+            raise ForbiddenError("Not authorized to activate this PIP.")
+
+        if pip.status != "draft":
+            raise ConflictError(f"Cannot activate PIP with status '{pip.status}'.")
+
+        existing = self.pip_repo.get_active_pip_for_employee(company_id, pip.employee_id)
+        if existing is not None and existing.id != pip.id:
+            raise ConflictError(
+                "Employee already has an active Performance Improvement Plan (PIP)."
+            )
+
+        self.pip_repo.update(pip, status="active")
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PIP_ACTIVATED",
+            entity_type="performance_pip",
+            entity_id=pip.id,
+            details={"employee_id": str(pip.employee_id)},
+        )
+        self.db.commit()
+        return self._pip_to_response(pip, company_id)
+
+    def extend_pip(
+        self,
+        company_id: uuid.UUID,
+        pip_id: uuid.UUID,
+        data: PIPExtendRequest,
+        actor: User,
+    ) -> PerformancePIPResponse:
+        pip = self.pip_repo.get_by_id(pip_id, company_id)
+        if pip is None:
+            raise NotFoundError("PIP not found.")
+
+        emp = self.employee_repo.get_by_id_any_status(pip.employee_id, company_id)
+        from app.core.approval_authority import can_approve_for
+
+        if not emp or not can_approve_for(self.db, actor, emp):
+            raise ForbiddenError("Not authorized to extend this PIP.")
+
+        if pip.status not in ("active", "extended"):
+            raise ConflictError(f"Cannot extend PIP with status '{pip.status}'.")
+
+        if not data.reason or not data.reason.strip():
+            raise ValidationError("Extension reason is required.")
+
+        if data.new_end_date <= pip.end_date:
+            raise ValidationError("New end date must be later than current end date.")
+
+        prev_end = pip.end_date
+        self.pip_repo.update(
+            pip,
+            status="extended",
+            previous_end_date=prev_end,
+            end_date=data.new_end_date,
+            extension_reason=data.reason.strip(),
+        )
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PIP_EXTENDED",
+            entity_type="performance_pip",
+            entity_id=pip.id,
+            details={
+                "previous_end_date": str(prev_end),
+                "new_end_date": str(data.new_end_date),
+                "reason": data.reason.strip(),
+            },
+        )
+        self.db.commit()
+        return self._pip_to_response(pip, company_id)
 
     def list_pips(
         self, company_id: uuid.UUID, employee_id: uuid.UUID | None = None, status: str | None = None
     ) -> list[PerformancePIPResponse]:
         pips = self.pip_repo.list_pips(company_id, employee_id, status)
-        res = []
-        for p in pips:
-            emp = self.employee_repo.get_by_id(p.employee_id, company_id)
-            mentor = self.employee_repo.get_by_id(p.mentor_id, company_id) if p.mentor_id else None
-            res.append(
-                PerformancePIPResponse(
-                    id=p.id,
-                    employee_id=p.employee_id,
-                    employee_name=f"{emp.first_name} {emp.last_name or ''}".strip()
-                    if emp
-                    else None,
-                    employee_code=emp.employee_code if emp else None,
-                    mentor_id=p.mentor_id,
-                    mentor_name=f"{mentor.first_name} {mentor.last_name or ''}".strip()
-                    if mentor
-                    else None,
-                    title=p.title,
-                    description=p.description,
-                    milestones_kpis=p.milestones_kpis,
-                    start_date=p.start_date,
-                    end_date=p.end_date,
-                    status=p.status,
-                    outcome_notes=p.outcome_notes,
-                    evaluated_at=p.evaluated_at,
-                    evaluated_by=p.evaluated_by,
-                    created_at=p.created_at,
-                )
-            )
-        return res
+        return [self._pip_to_response(p, company_id) for p in pips]
 
     def get_active_pip(
         self, company_id: uuid.UUID, employee_id: uuid.UUID
@@ -1033,26 +1182,7 @@ class PerformanceService:
         p = self.pip_repo.get_active_pip_for_employee(company_id, employee_id)
         if p is None:
             return None
-        emp = self.employee_repo.get_by_id(p.employee_id, company_id)
-        mentor = self.employee_repo.get_by_id(p.mentor_id, company_id) if p.mentor_id else None
-        return PerformancePIPResponse(
-            id=p.id,
-            employee_id=p.employee_id,
-            employee_name=f"{emp.first_name} {emp.last_name or ''}".strip() if emp else None,
-            employee_code=emp.employee_code if emp else None,
-            mentor_id=p.mentor_id,
-            mentor_name=f"{mentor.first_name} {mentor.last_name or ''}".strip() if mentor else None,
-            title=p.title,
-            description=p.description,
-            milestones_kpis=p.milestones_kpis,
-            start_date=p.start_date,
-            end_date=p.end_date,
-            status=p.status,
-            outcome_notes=p.outcome_notes,
-            evaluated_at=p.evaluated_at,
-            evaluated_by=p.evaluated_by,
-            created_at=p.created_at,
-        )
+        return self._pip_to_response(p, company_id)
 
     def evaluate_pip(
         self, company_id: uuid.UUID, pip_id: uuid.UUID, data: PIPEvaluateRequest, actor: User
@@ -1067,8 +1197,14 @@ class PerformanceService:
         if not emp or not can_approve_for(self.db, actor, emp):
             raise ForbiddenError("Not authorized to approve this request.")
 
+        if pip.status == "draft":
+            raise ConflictError("Draft PIP cannot be evaluated. It must be activated first.")
+
         if pip.status in ("passed", "failed", "cancelled"):
             raise ConflictError(f"PIP has already been evaluated (current status: {pip.status}).")
+
+        if pip.status not in ("active", "extended"):
+            raise ConflictError(f"Cannot evaluate PIP with status '{pip.status}'.")
 
         self.pip_repo.update(
             pip,
@@ -1102,7 +1238,90 @@ class PerformanceService:
             entity_id=pip.id,
             details={"outcome": data.outcome, "notes": data.outcome_notes},
         )
+
+        # Notify employee
+        if emp and emp.user_id:
+            self.notifications.notify(
+                company_id=company_id,
+                user_id=emp.user_id,
+                type="pip_evaluated",
+                title="Performance Improvement Plan Evaluated",
+                message=f"Your PIP '{pip.title}' has been evaluated: {data.outcome}.",
+                entity_type="performance_pip",
+                entity_id=pip.id,
+            )
+
         self.db.commit()
-        return self.get_active_pip(
-            company_id, pip.employee_id
-        ) or PerformancePIPResponse.model_validate(pip)
+        return self._pip_to_response(pip, company_id)
+
+    def add_pip_checkin(
+        self,
+        company_id: uuid.UUID,
+        pip_id: uuid.UUID,
+        data: PIPCheckInCreateRequest,
+        actor: User,
+    ) -> PerformancePIPCheckIn:
+        pip = self.pip_repo.get_by_id(pip_id, company_id)
+        if pip is None:
+            raise NotFoundError("PIP not found.")
+
+        emp = self.employee_repo.get_by_id_any_status(pip.employee_id, company_id)
+        if not emp:
+            raise NotFoundError("Employee not found.")
+
+        # Authority: Only the PIP's manager, the mentor, hr_admin and owner can add one
+        actor_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+        is_mentor = (
+            pip.mentor_id is not None and actor_emp is not None and actor_emp.id == pip.mentor_id
+        )
+
+        if not is_mentor:
+            from app.core.approval_authority import can_approve_for
+
+            can_approve_for(self.db, actor, emp)
+
+        if not data.note or not data.note.strip():
+            raise ValidationError("Check-in note cannot be empty.")
+        if len(data.note.strip()) > 2000:
+            raise ValidationError("Check-in note exceeds 2000 characters.")
+
+        checkin = self.pip_repo.create_checkin(
+            company_id=company_id,
+            pip_id=pip.id,
+            note=data.note.strip(),
+            created_by=actor.id,
+        )
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PIP_CHECKIN_ADDED",
+            entity_type="performance_pip_checkin",
+            entity_id=checkin.id,
+            details={"pip_id": str(pip.id)},
+        )
+        self.db.commit()
+        return checkin
+
+    def list_pip_checkins(
+        self, company_id: uuid.UUID, pip_id: uuid.UUID, actor: User
+    ) -> list[PerformancePIPCheckIn]:
+        pip = self.pip_repo.get_by_id(pip_id, company_id)
+        if pip is None:
+            raise NotFoundError("PIP not found.")
+
+        emp = self.employee_repo.get_by_id_any_status(pip.employee_id, company_id)
+        if not emp:
+            raise NotFoundError("Employee not found.")
+
+        actor_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+        is_own = actor_emp is not None and actor_emp.id == pip.employee_id
+        is_mentor = (
+            pip.mentor_id is not None and actor_emp is not None and actor_emp.id == pip.mentor_id
+        )
+
+        if not (is_own or is_mentor):
+            from app.core.approval_authority import can_approve_for
+
+            can_approve_for(self.db, actor, emp)
+
+        return self.pip_repo.list_checkins(company_id, pip.id)

@@ -48,17 +48,6 @@ from tests.rules.test_4_3_regularization import _purge_company, org  # noqa: F40
 LEAVES = "/api/v1/leaves"
 
 
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
-
-
 def _boundary_month(today: date) -> int:
     return (today.month + 5) % 12 + 1
 

@@ -9,7 +9,6 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.db.session import get_db
@@ -997,7 +996,7 @@ def test_r09_audit_rows_changed_fields_only_and_reactivation_audit(
 
 
 def test_r10_rate_limiting_put_and_toggle_active(
-    client: TestClient, profile_company: dict[str, Any]
+    client: TestClient, profile_company: dict[str, Any], limits_on
 ) -> None:
     """R10:
     PUT /employees/{id} and toggle-active are limited to 30/minute per user.
@@ -1005,39 +1004,30 @@ def test_r10_rate_limiting_put_and_toggle_active(
     hr_headers = _auth_headers(profile_company["hr_admin"])
     staff_emp = profile_company["emp_staff"]
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        put_responses = [
-            client.put(
-                f"/api/v1/employees/{staff_emp.id}",
-                headers=hr_headers,
-                json={"phone": f"+123456{i:04d}"},
-            )
-            for i in range(35)
-        ]
-        put_codes = [r.status_code for r in put_responses]
-        assert put_codes[:30] == [200] * 30, f"Expected 30 200s, got: {put_codes[:30]}"
-        assert all(c == 429 for c in put_codes[30:]), (
-            f"Expected 429 on 31st+, got: {put_codes[30:]}"
+    put_responses = [
+        client.put(
+            f"/api/v1/employees/{staff_emp.id}",
+            headers=hr_headers,
+            json={"phone": f"+123456{i:04d}"},
         )
+        for i in range(35)
+    ]
+    put_codes = [r.status_code for r in put_responses]
+    assert put_codes[:30] == [200] * 30, f"Expected 30 200s, got: {put_codes[:30]}"
+    assert all(c == 429 for c in put_codes[30:]), f"Expected 429 on 31st+, got: {put_codes[30:]}"
 
-        limiter.reset()
-        toggle_responses = [
-            client.post(
-                f"/api/v1/employees/{staff_emp.id}/toggle-active",
-                headers=hr_headers,
-            )
-            for _ in range(35)
-        ]
-        toggle_codes = [r.status_code for r in toggle_responses]
-        assert toggle_codes[:30] == [200] * 30, f"Expected 30 200s, got: {toggle_codes[:30]}"
-        assert all(c == 429 for c in toggle_codes[30:]), (
-            f"Expected 429 on 31st+, got: {toggle_codes[30:]}"
+    toggle_responses = [
+        client.post(
+            f"/api/v1/employees/{staff_emp.id}/toggle-active",
+            headers=hr_headers,
         )
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+        for _ in range(35)
+    ]
+    toggle_codes = [r.status_code for r in toggle_responses]
+    assert toggle_codes[:30] == [200] * 30, f"Expected 30 200s, got: {toggle_codes[:30]}"
+    assert all(c == 429 for c in toggle_codes[30:]), (
+        f"Expected 429 on 31st+, got: {toggle_codes[30:]}"
+    )
 
 
 def test_r10_isolation_and_editing_deactivated_employee(

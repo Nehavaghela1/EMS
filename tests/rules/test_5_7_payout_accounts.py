@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 from alembic import command
 from app.core.config import settings
 from app.core.encryption import decrypt_field
-from app.core.rate_limit import limiter
 from app.core.security import decode_access_token
 from app.db.rls import bind_tenant_to_session
 from app.modules.identity.models import User, UserRole
@@ -48,17 +47,6 @@ FULL = {
 }
 PAYOUT_FIELDS = ("payout_bank_name", "payout_account_number", "payout_ifsc_code", "payout_enabled")
 MIGRATION_REVISION = "685f8636a5ca"
-
-
-@pytest.fixture
-def limits_on():
-    limiter.enabled = True
-    limiter.reset()
-    try:
-        yield
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
 
 # ---------------------------------------------------------------- helpers

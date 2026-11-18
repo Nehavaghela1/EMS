@@ -14,7 +14,6 @@ from sqlalchemy import select
 import app.modules.identity.service as id_svc
 from app.core.config import settings
 from app.core.otp import _attempts_key, _hash, _otp_key
-from app.core.rate_limit import limiter
 from app.core.security import hash_password
 from app.core.time import utcnow
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
@@ -45,10 +44,7 @@ def _make_user_in_company(
 
 
 # ── T01: Same status and body; spy asserts identical execution steps ──────────
-def test_T01_forgot_password_uniform_response(client, db, company_a, monkeypatch):
-    limiter.enabled = False
-    limiter.reset()
-
+def test_T01_forgot_password_uniform_response(client, db, company_a, monkeypatch, limits_off):
     user_active, _ = _make_user_in_company(db, company_a.company_id, is_active=True)
     user_inactive, _ = _make_user_in_company(db, company_a.company_id, is_active=False)
 
@@ -128,30 +124,23 @@ def test_T01_forgot_password_uniform_response(client, db, company_a, monkeypatch
 
 
 # ── T02a: Per-IP limit 3/hour ─────────────────────────────────────────────────
-def test_T02a_rate_limits_per_ip(client):
-    limiter.enabled = True
-    try:
-        limiter.reset()
-
-        # Per-IP limit: 3/hour allowed; 4th request from same IP must be 429
-        resps_ip = [
-            client.post(
-                "/api/v1/auth/forgot-password",
-                json={"email": f"ip-probe-{i}-{uuid.uuid4().hex[:6]}@example.com"},
-            )
-            for i in range(4)
-        ]
-        assert resps_ip[0].status_code == 200
-        assert resps_ip[1].status_code == 200
-        assert resps_ip[2].status_code == 200
-        assert resps_ip[3].status_code == 429
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+def test_T02a_rate_limits_per_ip(client, limits_on):
+    # Per-IP limit: 3/hour allowed; 4th request from same IP must be 429
+    resps_ip = [
+        client.post(
+            "/api/v1/auth/forgot-password",
+            json={"email": f"ip-probe-{i}-{uuid.uuid4().hex[:6]}@example.com"},
+        )
+        for i in range(4)
+    ]
+    assert resps_ip[0].status_code == 200
+    assert resps_ip[1].status_code == 200
+    assert resps_ip[2].status_code == 200
+    assert resps_ip[3].status_code == 429
 
 
 # ── T02b: Per-ACCOUNT limit 3/hour reached from different client IPs ──────────
-def test_T02b_rate_limits_per_account(db, company_a, email_outbox, monkeypatch):
+def test_T02b_rate_limits_per_account(db, company_a, email_outbox, monkeypatch, limits_on):
     from fastapi.testclient import TestClient
 
     from app.core.otp import verify_otp_atomic
@@ -175,10 +164,7 @@ def test_T02b_rate_limits_per_account(db, company_a, email_outbox, monkeypatch):
     # Configure trusted proxies so varying the X-Forwarded-For header varies the client IP
     monkeypatch.setattr(settings, "TRUSTED_PROXIES", ["127.0.0.1/32"])
 
-    limiter.enabled = True
     try:
-        limiter.reset()
-
         # Step 1: Prove client IP really varies: send 3 requests for 3 DIFFERENT emails
         # from 3 different IPs and assert none gets 429 (proving the IP varies and IP rate
         # limit is not tripped).
@@ -231,8 +217,6 @@ def test_T02b_rate_limits_per_account(db, company_a, email_outbox, monkeypatch):
         assert user.locked_until is None
     finally:
         fastapi_app.dependency_overrides.clear()
-        limiter.enabled = False
-        limiter.reset()
 
 
 # ── T03: Code stored as hash in Redis, TTL, single-use, new request replaces old
@@ -763,29 +747,23 @@ def test_T11_length_limits_over_128_and_empty_login_password(client, db, company
 
 
 # ── T12: Change-password is limited to 5/minute; wrong current password counts ─
-def test_T12_change_password_rate_limited_to_5_per_minute(client, db, company_a):
+def test_T12_change_password_rate_limited_to_5_per_minute(client, db, company_a, limits_on):
     user, orig_pw = _make_user_in_company(db, company_a.company_id)
     login_res = client.post("/api/v1/auth/login", json={"email": user.email, "password": orig_pw})
     token = login_res.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-        resps = []
-        for i in range(6):
-            r = client.post(
-                "/api/v1/auth/change-password",
-                headers=headers,
-                json={"current_password": "WrongPassword123!", "new_password": f"NewPass{i}123!"},
-            )
-            resps.append(r)
+    resps = []
+    for i in range(6):
+        r = client.post(
+            "/api/v1/auth/change-password",
+            headers=headers,
+            json={"current_password": "WrongPassword123!", "new_password": f"NewPass{i}123!"},
+        )
+        resps.append(r)
 
-        assert resps[0].status_code in (400, 401)
-        assert resps[-1].status_code == 429
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+    assert resps[0].status_code in (400, 401)
+    assert resps[-1].status_code == 429
 
 
 # ── T13: New password equal to current password gives 422 ──────────────────────

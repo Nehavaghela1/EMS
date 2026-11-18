@@ -38,7 +38,6 @@ from tests.rules.test_5_4_payroll_runs import (  # noqa: F401
     _seed_statutory,
     _set_flags,
     _staff,
-    limits_on,
     world,
 )
 

@@ -1,5 +1,5 @@
-from datetime import date, datetime
-from decimal import Decimal
+from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
 
@@ -11,6 +11,7 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from app.core.time import utcnow
 from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import EmployeeSalary
 from app.modules.platform.service import AuditService, NotificationService
@@ -40,6 +41,17 @@ from app.modules.projects.schemas import (
     TimeEntryResponse,
     TimeEntryUpdate,
 )
+
+STANDARD_MONTHLY_HOURS = Decimal("176.00")
+
+
+def _save(db: Session, commit: bool = True) -> None:
+    """Commit, or only flush when the caller owns the transaction and
+    commits once itself, so a failing step leaves nothing behind."""
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
 
 class ProjectService:
@@ -120,7 +132,7 @@ class ProjectService:
             if actor_emp:
                 chosen_mgr_emp_id = actor_emp.id
 
-        project_dict = data.dict(exclude={"company_id"})
+        project_dict = data.model_dump(exclude={"company_id"})
         project_dict["manager_id"] = chosen_mgr_emp_id
         project = self.repo.create_project(target_company_id, ProjectCreate(**project_dict))
 
@@ -145,6 +157,7 @@ class ProjectService:
             entity_id=project.id,
             details={"fields": ["name", "code", "status", "budget", "manager_id"]},
         )
+        self.repo.db.commit()
         return self._to_project_response(project)
 
     def get_project(
@@ -330,7 +343,7 @@ class ProjectService:
             if existing:
                 raise ConflictError(f"Project with code '{data.code}' already exists.")
 
-        updated_fields = list(data.dict(exclude_unset=True).keys())
+        updated_fields = list(data.model_dump(exclude_unset=True).keys())
         updated = self.repo.update_project(project, data)
 
         # Rule 7: Audited
@@ -342,6 +355,7 @@ class ProjectService:
             entity_id=project.id,
             details={"fields": updated_fields},
         )
+        self.repo.db.commit()
         return self._to_project_response(updated)
 
     def delete_project(
@@ -369,6 +383,7 @@ class ProjectService:
             details={"fields": ["id", "code"]},
         )
         self.repo.delete_project(project)
+        self.repo.db.commit()
 
     # --- Project Summary Analytics ---
     def get_project_summary(
@@ -414,7 +429,7 @@ class ProjectService:
 
         total_tasks = len(tasks)
         completed_tasks = sum(1 for t in tasks if t.status == "done")
-        today = date.today()
+        today = utcnow().date()
         overdue_tasks = sum(
             1 for t in tasks if t.due_date and t.due_date < today and t.status != "done"
         )
@@ -439,6 +454,8 @@ class ProjectService:
         can_view_financials = is_hr_or_owner or is_pm or (actor is None)
         budget_spent = Decimal("0.00") if can_view_financials else None
         budget_remaining = None
+        no_salary_data = False
+        hours_without_salary_data = Decimal("0.00")
 
         if can_view_financials:
             if approved_billable_entries:
@@ -467,29 +484,25 @@ class ProjectService:
                                 if s.hourly_rate is not None and s.hourly_rate > 0:
                                     matching_rate = s.hourly_rate
                                 elif s.ctc and s.ctc > 0:
+                                    monthly_cost = s.ctc / Decimal("12")
                                     matching_rate = (
-                                        s.ctc / Decimal("12") / Decimal("160.00")
-                                    ).quantize(Decimal("0.01"))
+                                        monthly_cost / STANDARD_MONTHLY_HOURS
+                                    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                     if matching_rate is None:
-                        # Fallback to latest salary for this employee or default ₹500/hr
-                        emp_salaries = [s for s in salaries if s.employee_id == e.employee_id]
-                        if emp_salaries:
-                            latest_s = emp_salaries[-1]
-                            if latest_s.hourly_rate is not None and latest_s.hourly_rate > 0:
-                                matching_rate = latest_s.hourly_rate
-                            elif latest_s.ctc and latest_s.ctc > 0:
-                                matching_rate = (
-                                    latest_s.ctc / Decimal("12") / Decimal("160.00")
-                                ).quantize(Decimal("0.01"))
-                        if matching_rate is None:
-                            matching_rate = Decimal("500.00")
+                        no_salary_data = True
+                        hours_without_salary_data += Decimal(str(e.hours))
+                    else:
+                        entry_cost = (Decimal(str(e.hours)) * matching_rate).quantize(
+                            Decimal("0.01"), rounding=ROUND_HALF_UP
+                        )
+                        spent_accum += entry_cost
 
-                    spent_accum += Decimal(str(e.hours)) * matching_rate
-
-                budget_spent = spent_accum.quantize(Decimal("0.01"))
+                budget_spent = spent_accum.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
             if project.budget is not None and budget_spent is not None:
-                budget_remaining = (project.budget - budget_spent).quantize(Decimal("0.01"))
+                budget_remaining = (project.budget - budget_spent).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
 
         # Delivery Health progression:
         # Not Started -> In Progress -> On Schedule (or Needs Attention)
@@ -524,6 +537,10 @@ class ProjectService:
             delivery_health=delivery_health,
             approved_billable_hours=approved_billable_hours,
             approved_logged_hours=approved_logged_hours,
+            no_salary_data=no_salary_data,
+            hours_without_salary_data=hours_without_salary_data.quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            ),
         )
 
     # --- Project Members ---
@@ -567,7 +584,7 @@ class ProjectService:
 
         # Rule 4: If hourly billing rate is provided, save to effective-dated rate history
         if data.hourly_rate is not None and data.hourly_rate >= 0:
-            eff_from = data.effective_from or date.today()
+            eff_from = data.effective_from or utcnow().date()
             self.repo.add_member_rate(
                 company_id=p_cid,
                 project_id=project_id,
@@ -597,6 +614,7 @@ class ProjectService:
             entity_id=member.id,
             details={"fields": ["employee_id", "role"]},
         )
+        self.repo.db.commit()
 
         resp = ProjectMemberResponse.model_validate(member)
         emp_data = (
@@ -684,7 +702,6 @@ class ProjectService:
             raise NotFoundError("Project member not found.")
 
         member.hourly_rate = data.hourly_rate
-        self.repo.db.commit()
 
         # Save to effective-dated rate history
         self.repo.add_member_rate(
@@ -704,6 +721,7 @@ class ProjectService:
             entity_id=member.id,
             details={"fields": ["hourly_rate", "effective_from"]},
         )
+        self.repo.db.commit()
 
         resp = ProjectMemberResponse.model_validate(member)
         if not self._can_view_rates(project, actor):
@@ -765,6 +783,7 @@ class ProjectService:
             entity_id=member.id,
             details={"fields": ["employee_id"]},
         )
+        self.repo.db.commit()
 
     # --- Tasks ---
     def _enrich_task_response(self, task) -> TaskResponse:
@@ -831,6 +850,21 @@ class ProjectService:
 
         task = self.repo.create_task(project.company_id, project_id, actor_user.id, data)
 
+        if data.assigned_to:
+            from app.modules.hr.models import Employee
+
+            assignee_emp = self.repo.db.get(Employee, data.assigned_to)
+            if assignee_emp and assignee_emp.user_id:
+                self.notifications.notify(
+                    company_id=project.company_id,
+                    user_id=assignee_emp.user_id,
+                    type="task_assigned",
+                    title="Task Assigned",
+                    message=f"You have been assigned to task '{task.title}'.",
+                    entity_type="project_task",
+                    entity_id=task.id,
+                )
+
         # Audit (Rule 9)
         self.audit.record(
             company_id=project.company_id,
@@ -840,6 +874,7 @@ class ProjectService:
             entity_id=task.id,
             details={"fields": ["title", "priority", "status", "assigned_to", "due_date"]},
         )
+        self.repo.db.commit()
 
         return self._enrich_task_response(task)
 
@@ -966,7 +1001,7 @@ class ProjectService:
                     f"Cannot edit tasks in a project with status '{project.status}'."
                 )
 
-        update_dict = data.dict(exclude_unset=True)
+        update_dict = data.model_dump(exclude_unset=True)
 
         # Validation
         if "title" in update_dict:
@@ -1024,7 +1059,25 @@ class ProjectService:
                 if not (is_pm or is_hr_or_owner):
                     raise ForbiddenError("Only project manager or HR can reopen cancelled tasks.")
 
+        old_assigned_to = task.assigned_to
         updated = self.repo.update_task(task, data)
+
+        if "assigned_to" in update_dict and update_dict["assigned_to"] != old_assigned_to:
+            new_assignee_id = update_dict["assigned_to"]
+            if new_assignee_id:
+                from app.modules.hr.models import Employee
+
+                assignee_emp = self.repo.db.get(Employee, new_assignee_id)
+                if assignee_emp and assignee_emp.user_id:
+                    self.notifications.notify(
+                        company_id=project.company_id,
+                        user_id=assignee_emp.user_id,
+                        type="task_assigned",
+                        title="Task Assigned",
+                        message=f"You have been assigned to task '{task.title}'.",
+                        entity_type="project_task",
+                        entity_id=task.id,
+                    )
 
         # Audit (Rule 9)
         self.audit.record(
@@ -1035,6 +1088,7 @@ class ProjectService:
             entity_id=task.id,
             details={"fields": list(update_dict.keys())},
         )
+        self.repo.db.commit()
 
         return self._enrich_task_response(updated)
 
@@ -1068,9 +1122,8 @@ class ProjectService:
                 raise NotFoundError("Task not found.")
 
         task.position = position
-        task.updated_at = datetime.utcnow()
-        self.repo.db.commit()
-        self.repo.db.refresh(task)
+        task.updated_at = utcnow()
+        self.repo.db.flush()
 
         # Audit
         self.audit.record(
@@ -1081,6 +1134,8 @@ class ProjectService:
             entity_id=task.id,
             details={"fields": ["position"]},
         )
+        self.repo.db.commit()
+        self.repo.db.refresh(task)
 
         return self._enrich_task_response(task)
 
@@ -1127,6 +1182,7 @@ class ProjectService:
             entity_id=task.id,
             details={"fields": ["id"]},
         )
+        self.repo.db.commit()
 
     def _check_project_membership(
         self,
@@ -1203,6 +1259,7 @@ class ProjectService:
             entity_id=comment.id,
             details={"task_id": str(task_id)},
         )
+        self.repo.db.commit()
 
         return TaskCommentResponse.model_validate(comment)
 
@@ -1250,6 +1307,7 @@ class ProjectService:
             entity_id=updated.id,
             details={"task_id": str(task_id)},
         )
+        self.repo.db.commit()
 
         return TaskCommentResponse.model_validate(updated)
 
@@ -1292,6 +1350,7 @@ class ProjectService:
             entity_id=comment.id,
             details={"task_id": str(task_id)},
         )
+        self.repo.db.commit()
 
     def list_comments(
         self, company_id: UUID, task_id: UUID, actor_user: User | None = None
@@ -1340,7 +1399,7 @@ class ProjectService:
                 raise NotFoundError("Project not found or you are not a member of this project.")
 
         # Rule 3: Date validation (not in future, not older than 90 days)
-        today = date.today()
+        today = utcnow().date()
         if data.date > today:
             raise ValidationError("Time entry date cannot be in the future.")
         if (today - data.date).days > 90:
@@ -1412,6 +1471,28 @@ class ProjectService:
                 },
             )
 
+        # Notify approver (reporting manager)
+        if entry.status == "submitted":
+            from app.modules.hr.models import Employee
+
+            sub_emp = self.repo.db.get(Employee, employee_id)
+            if sub_emp and sub_emp.reporting_manager_id:
+                mgr = self.repo.db.get(Employee, sub_emp.reporting_manager_id)
+                if mgr and mgr.user_id:
+                    self.notifications.notify(
+                        company_id=company_id,
+                        user_id=mgr.user_id,
+                        type="time_entry_submitted",
+                        title="Time Entry Submitted",
+                        message=(
+                            f"{sub_emp.first_name} {sub_emp.last_name or ''}".strip()
+                            + f" submitted a time entry for {entry.date} ({entry.hours} hrs)."
+                        ),
+                        entity_type="time_entry",
+                        entity_id=entry.id,
+                    )
+
+        self.repo.db.commit()
         resp = TimeEntryResponse.model_validate(entry)
         from app.modules.hr.models import Employee
 
@@ -1502,7 +1583,7 @@ class ProjectService:
                 )
 
         target_date = data.date if data.date is not None else entry.date
-        today = date.today()
+        today = utcnow().date()
         if target_date > today:
             raise ValidationError("Time entry date cannot be in the future.")
         if (today - target_date).days > 90:
@@ -1533,7 +1614,29 @@ class ProjectService:
                 f"(Currently logged: {daily_total} hrs, attempting: {target_hours} hrs)"
             )
 
+        old_status = entry.status
         updated = self.repo.update_time_entry(entry, data)
+
+        # Notify approver if transitioned to submitted
+        if updated.status == "submitted" and old_status != "submitted":
+            from app.modules.hr.models import Employee
+
+            sub_emp = self.repo.db.get(Employee, entry.employee_id)
+            if sub_emp and sub_emp.reporting_manager_id:
+                mgr = self.repo.db.get(Employee, sub_emp.reporting_manager_id)
+                if mgr and mgr.user_id:
+                    self.notifications.notify(
+                        company_id=company_id,
+                        user_id=mgr.user_id,
+                        type="time_entry_submitted",
+                        title="Time Entry Submitted",
+                        message=(
+                            f"{sub_emp.first_name} {sub_emp.last_name or ''}".strip()
+                            + f" submitted a time entry for {updated.date} ({updated.hours} hrs)."
+                        ),
+                        entity_type="time_entry",
+                        entity_id=updated.id,
+                    )
 
         # Rule 9: Audit
         if actor:
@@ -1546,9 +1649,10 @@ class ProjectService:
                 details={
                     "project_id": str(entry.project_id),
                     "employee_id": str(entry.employee_id),
-                    "fields": list(data.dict(exclude_unset=True).keys()),
+                    "fields": list(data.model_dump(exclude_unset=True).keys()),
                 },
             )
+        self.repo.db.commit()
 
         return TimeEntryResponse.model_validate(updated)
 
@@ -1614,6 +1718,18 @@ class ProjectService:
             rejection_reason=clean_reason,
         )
 
+        # Rule 6: Notify employee of approval or rejection
+        if target_emp and target_emp.user_id:
+            self.notifications.notify(
+                company_id=company_id,
+                user_id=target_emp.user_id,
+                type=f"time_entry_{status}",
+                title=f"Time Entry {status.capitalize()}",
+                message=f"Your time entry for {entry.date} ({entry.hours} hrs) has been {status}.",
+                entity_type="time_entry",
+                entity_id=entry.id,
+            )
+
         # Rule 9: Audit
         self.audit.record(
             company_id=company_id,
@@ -1628,6 +1744,7 @@ class ProjectService:
                 + (["rejection_reason"] if status == "rejected" else []),
             },
         )
+        self.repo.db.commit()
 
         return TimeEntryResponse.model_validate(updated)
 
@@ -1679,6 +1796,7 @@ class ProjectService:
                     "fields": ["id"],
                 },
             )
+        self.repo.db.commit()
 
     # --- Milestones ---
     def create_milestone(
@@ -1735,6 +1853,7 @@ class ProjectService:
             entity_id=milestone.id,
             details={"fields": ["title", "due_date", "status"]},
         )
+        self.repo.db.commit()
 
         return MilestoneResponse.model_validate(milestone)
 
@@ -1804,7 +1923,7 @@ class ProjectService:
         if not (is_pm or is_hr_or_owner):
             raise ForbiddenError("Only project manager, HR, or owner can edit milestones.")
 
-        update_dict = data.dict(exclude_unset=True)
+        update_dict = data.model_dump(exclude_unset=True)
 
         if "title" in update_dict:
             if not update_dict["title"] or not str(update_dict["title"]).strip():
@@ -1844,6 +1963,7 @@ class ProjectService:
             entity_id=milestone.id,
             details={"fields": list(update_dict.keys())},
         )
+        self.repo.db.commit()
 
         return MilestoneResponse.model_validate(updated)
 
@@ -1896,6 +2016,7 @@ class ProjectService:
             entity_id=milestone.id,
             details={"fields": ["id"]},
         )
+        self.repo.db.commit()
 
     # --- Project Documents ---
     def add_document(
@@ -1929,6 +2050,7 @@ class ProjectService:
             entity_id=doc.id,
             details={"project_id": str(project_id), "file_id": str(doc.file_id)},
         )
+        self.repo.db.commit()
 
         return resp
 
@@ -1985,3 +2107,4 @@ class ProjectService:
             entity_id=doc.id,
             details={"project_id": str(project_id), "file_id": str(doc.file_id)},
         )
+        self.repo.db.commit()

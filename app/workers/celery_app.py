@@ -24,6 +24,7 @@ celery_app = Celery(
         "app.workers.tasks.identity",
         "app.workers.tasks.platform",
         "app.workers.tasks.hr",
+        "app.workers.tasks.projects",
     ],
 )
 
@@ -69,5 +70,9 @@ celery_app.conf.beat_schedule = {
     "cleanup-old-notifications-daily": {
         "task": "app.workers.tasks.platform.cleanup_old_notifications_task",
         "schedule": crontab(hour=2, minute=30),
+    },
+    "check-project-budget-alerts-daily": {
+        "task": "app.workers.tasks.projects.check_project_budget_alerts_task",
+        "schedule": crontab(hour=5, minute=0),
     },
 }

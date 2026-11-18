@@ -13,7 +13,6 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import (
@@ -30,6 +29,7 @@ from app.modules.identity.models import (
     UserRole,
 )
 from app.modules.platform.models import AuditLog, EmployeeDocument, FileObject
+from tests.conftest import rate_limits
 
 
 def _auth_headers(user: User) -> dict[str, str]:
@@ -967,10 +967,8 @@ def test_r09_rate_limiting_upload_delete_download(
     assert res_init.status_code == 201
     doc_id = res_init.json()["id"]
 
-    limiter.enabled = True
-    try:
+    with rate_limits():
         # 1. Upload 10/min -> 11th gives 429
-        limiter.reset()
         upload_codes = []
         for i in range(12):
             r = client.post(
@@ -987,7 +985,6 @@ def test_r09_rate_limiting_upload_delete_download(
         assert all(c == 429 for c in upload_codes[10:]), f"Calls 11+ upload: {upload_codes[10:]}"
 
         # 2. Download 30/min -> 31st gives 429
-        limiter.reset()
         download_codes = []
         for _ in range(35):
             r = client.get(f"/api/v1/documents/{emp1.id}/{doc_id}/download", headers=hr_headers)
@@ -997,7 +994,6 @@ def test_r09_rate_limiting_upload_delete_download(
         assert all(c == 429 for c in download_codes[30:])
 
         # 3. Delete 30/min -> 31st gives 429
-        limiter.reset()
         delete_codes = []
         for _ in range(35):
             r = client.delete(f"/api/v1/documents/{emp1.id}/{doc_id}", headers=hr_headers)
@@ -1005,9 +1001,6 @@ def test_r09_rate_limiting_upload_delete_download(
 
         assert all(c != 429 for c in delete_codes[:30])
         assert all(c == 429 for c in delete_codes[30:])
-    finally:
-        limiter.reset()
-        limiter.enabled = False
 
 
 # ==============================================================================

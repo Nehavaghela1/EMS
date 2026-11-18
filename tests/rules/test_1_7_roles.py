@@ -40,11 +40,11 @@ from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
 from app.modules.identity.models import Company, RefreshToken, User, UserRole
 from app.modules.platform.models import AuditLog
+from tests.conftest import rate_limits
 
 # --- Helpers & Fixtures ---
 
@@ -1224,10 +1224,7 @@ def test_R10_rate_limiting_and_clean_response(client: TestClient, company_setup)
     target = company_setup["employee"]
     url = f"/api/v1/users/{target.id}/role"
 
-    limiter.enabled = True
-    try:
-        limiter.reset()
-
+    with rate_limits():
         # Fire 30 requests
         for i in range(30):
             r = client.patch(url, headers=owner_headers, json={"role": "employee"})
@@ -1236,9 +1233,6 @@ def test_R10_rate_limiting_and_clean_response(client: TestClient, company_setup)
         # 31st request -> 429
         r_31 = client.patch(url, headers=owner_headers, json={"role": "employee"})
         assert r_31.status_code == 429
-    finally:
-        limiter.enabled = False
-        limiter.reset()
 
     # Response payload whitelist check
     res_clean = client.patch(url, headers=owner_headers, json={"role": "hr_admin"})

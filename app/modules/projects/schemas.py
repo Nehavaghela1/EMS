@@ -198,6 +198,7 @@ class TimeEntryCreate(BaseModel):
     hours: Decimal = Field(..., gt=0, le=24)
     description: str | None = None
     is_billable: bool = True
+    status: str = Field(default="draft", pattern="^(draft|submitted)$")
     is_overtime: bool = False
     overtime_multiplier: Decimal | None = None
 
@@ -342,3 +343,5 @@ class ProjectSummaryResponse(BaseModel):
     delivery_health: str = "Not Started"
     approved_billable_hours: Decimal = Decimal("0.00")
     approved_logged_hours: Decimal = Decimal("0.00")
+    no_salary_data: bool = False
+    hours_without_salary_data: Decimal = Decimal("0.00")

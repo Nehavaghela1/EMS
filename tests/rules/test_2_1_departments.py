@@ -26,7 +26,6 @@ from sqlalchemy.orm import Session
 from alembic import command
 from app.core.config import settings
 from app.core.pagination import page_params
-from app.core.rate_limit import limiter
 from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.db.session import get_db
@@ -946,6 +945,10 @@ def test_r05_department_head_auto_clear_on_pip_failed(
     assert res_pip.status_code == 201
     pip_id = res_pip.json()["id"]
 
+    # Activate PIP before evaluating
+    res_act = client.post(f"/api/v1/performance/pips/{pip_id}/activate", headers=hr_headers)
+    assert res_act.status_code == 200
+
     # Evaluate PIP with outcome failed -> deactivates employee and should clear department head!
     res_eval = client.post(
         f"/api/v1/performance/pips/{pip_id}/evaluate",
@@ -1344,75 +1347,65 @@ def test_r08_audit_rows_create_update_delete_and_noop(
 # ==============================================================================
 
 
-def test_r09_rate_limiting_write_routes(client: TestClient, dept_company) -> None:
+def test_r09_rate_limiting_write_routes(
+    client: TestClient, dept_company, db: Session, limits_on
+) -> None:
     """The 31st write (POST, PUT, DELETE) within a minute by the same user gets 429;
     first 30 succeed. GET is not limited.
     """
     hr_headers = _auth_headers(dept_company["hr_admin"])
+    cid = dept_company["hr_admin"].company_id
 
-    limiter.enabled = True
-    try:
-        # 1. POST rate limit
-        limiter.reset()
-        responses = [
-            client.post("/api/v1/departments", headers=hr_headers, json={"name": f"RateDept{i}"})
-            for i in range(35)
-        ]
-        codes = [r.status_code for r in responses]
-        assert codes[:30] == [201] * 30
-        assert all(c == 429 for c in codes[30:]), f"Expected 429 after 30 POSTs, got {codes[30:]}"
+    # 1. POST rate limit
+    responses = [
+        client.post("/api/v1/departments", headers=hr_headers, json={"name": f"RateDept{i}"})
+        for i in range(35)
+    ]
+    codes = [r.status_code for r in responses]
+    assert codes[:30] == [201] * 30
+    assert all(c == 429 for c in codes[30:]), f"Expected 429 after 30 POSTs, got {codes[30:]}"
 
-        # GET is not limited at that rate
-        res_get = client.get("/api/v1/departments", headers=hr_headers)
-        assert res_get.status_code == 200
+    # GET is not limited at that rate
+    res_get = client.get("/api/v1/departments", headers=hr_headers)
+    assert res_get.status_code == 200
 
-        # 2. PUT rate limit: 31st PUT gets 429, first 30 succeed
-        limiter.enabled = False
-        dept_res = client.post(
-            "/api/v1/departments", headers=hr_headers, json={"name": "PutRateDept"}
+    # 2. PUT rate limit: 31st PUT gets 429, first 30 succeed
+    p_dept = Department(id=uuid.uuid4(), company_id=cid, name=f"PutRateDept_{uuid.uuid4().hex[:6]}")
+    db.add(p_dept)
+    db.commit()
+    p_dept_id = str(p_dept.id)
+
+    put_responses = [
+        client.put(
+            f"/api/v1/departments/{p_dept_id}",
+            headers=hr_headers,
+            json={"description": f"desc {i}"},
         )
-        assert dept_res.status_code == 201
-        p_dept_id = dept_res.json()["id"]
+        for i in range(35)
+    ]
+    put_codes = [r.status_code for r in put_responses]
+    assert put_codes[:30] == [200] * 30
+    assert all(c == 429 for c in put_codes[30:]), (
+        f"Expected 429 after 30 PUTs, got {put_codes[30:]}"
+    )
 
-        limiter.enabled = True
-        limiter.reset()
-        put_responses = [
-            client.put(
-                f"/api/v1/departments/{p_dept_id}",
-                headers=hr_headers,
-                json={"description": f"desc {i}"},
-            )
-            for i in range(35)
-        ]
-        put_codes = [r.status_code for r in put_responses]
-        assert put_codes[:30] == [200] * 30
-        assert all(c == 429 for c in put_codes[30:]), (
-            f"Expected 429 after 30 PUTs, got {put_codes[30:]}"
-        )
+    # 3. DELETE rate limit: create 35 depts via DB, then test DELETE rate limit
+    del_ids = []
+    for i in range(35):
+        d_id = uuid.uuid4()
+        d = Department(id=d_id, company_id=cid, name=f"DelRateDept{i}_{uuid.uuid4().hex[:6]}")
+        db.add(d)
+        del_ids.append(str(d_id))
+    db.commit()
 
-        # 3. DELETE rate limit: create 35 depts with limiter disabled, then test DELETE rate limit
-        limiter.enabled = False
-        del_ids = []
-        for i in range(35):
-            r = client.post(
-                "/api/v1/departments", headers=hr_headers, json={"name": f"DelRateDept{i}"}
-            )
-            assert r.status_code == 201
-            del_ids.append(r.json()["id"])
-
-        limiter.enabled = True
-        limiter.reset()
-        del_responses = [
-            client.delete(f"/api/v1/departments/{did}", headers=hr_headers) for did in del_ids
-        ]
-        del_codes = [r.status_code for r in del_responses]
-        assert del_codes[:30] == [204] * 30
-        assert all(c == 429 for c in del_codes[30:]), (
-            f"Expected 429 after 30 DELETEs, got {del_codes[30:]}"
-        )
-    finally:
-        limiter.enabled = False
-        limiter.reset()
+    del_responses = [
+        client.delete(f"/api/v1/departments/{did}", headers=hr_headers) for did in del_ids
+    ]
+    del_codes = [r.status_code for r in del_responses]
+    assert del_codes[:30] == [204] * 30
+    assert all(c == 429 for c in del_codes[30:]), (
+        f"Expected 429 after 30 DELETEs, got {del_codes[30:]}"
+    )
 
 
 def test_r09_atomicity_audit_failure_rolls_back_department(
