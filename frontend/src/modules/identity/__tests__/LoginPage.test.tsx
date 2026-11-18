@@ -126,7 +126,12 @@ describe('Sub-feature 1.1: LoginPage', () => {
     const errorObj = makeAxiosError(400, {
       code: 'company_required',
       message: 'Multiple workspaces found. Specify your company code.',
-      details: { companies: ['CORP-A', 'CORP-B'] },
+      details: {
+        companies: [
+          { name: 'Corp A Inc', code: 'CORP-A' },
+          { name: 'Corp B Ltd', code: 'CORP-B' },
+        ],
+      },
     })
     mockLogin.mockRejectedValueOnce(errorObj)
     renderLoginPage()
@@ -141,8 +146,10 @@ describe('Sub-feature 1.1: LoginPage', () => {
       ).toBeInTheDocument()
     })
     expect(screen.getByLabelText(/select or enter the company code/i)).toBeInTheDocument()
-    expect(screen.getByText(/CORP-A/i)).toBeInTheDocument()
-    expect(screen.getByText(/CORP-B/i)).toBeInTheDocument()
+    expect(screen.getByText(/Corp A Inc/i)).toBeInTheDocument()
+    expect(screen.getByText('CORP-A')).toBeInTheDocument()
+    expect(screen.getByText(/Corp B Ltd/i)).toBeInTheDocument()
+    expect(screen.getByText('CORP-B')).toBeInTheDocument()
   })
 
   it('displays session expired alert if redirected due to expired session', () => {

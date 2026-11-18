@@ -12,7 +12,7 @@ export function CreateWorkspacePage() {
 
   const [formData, setFormData] = useState<CreateWorkspaceInput>({
     company_name: "",
-    country: "India",
+    country: "IN",
     subdomain: "",
     currency: "INR",
     timezone: "Asia/Kolkata",
@@ -107,11 +107,13 @@ export function CreateWorkspacePage() {
                     onChange={(e) => setFormData({ ...formData, country: e.target.value })}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                   >
-                    <option value="India">India</option>
-                    <option value="United States">United States</option>
-                    <option value="United Kingdom">United Kingdom</option>
-                    <option value="Singapore">Singapore</option>
-                    <option value="Australia">Australia</option>
+                    <option value="IN">India (IN)</option>
+                    <option value="US">United States (US)</option>
+                    <option value="GB">United Kingdom (GB)</option>
+                    <option value="SG">Singapore (SG)</option>
+                    <option value="AU">Australia (AU)</option>
+                    <option value="CA">Canada (CA)</option>
+                    <option value="AE">United Arab Emirates (AE)</option>
                   </select>
                 </div>
                 <div>

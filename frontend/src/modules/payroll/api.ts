@@ -301,13 +301,19 @@ export async function deletePayrollRun(id: string): Promise<void> {
 
 // 4. Payslips & Reimbursements
 export async function listMyPayslips(): Promise<PayrollItem[]> {
-  const res = await apiClient.get<PayrollItem[]>("/payroll/payslips/me");
-  return res.data;
+  const res = await apiClient.get<PayrollItem[] | { items: PayrollItem[] }>("/payroll/payslips/me");
+  if (Array.isArray(res.data)) {
+    return res.data;
+  }
+  return (res.data as { items?: PayrollItem[] })?.items || [];
 }
 
 export async function listEmployeePayslips(employeeId: string): Promise<PayrollItem[]> {
-  const res = await apiClient.get<PayrollItem[]>(`/payroll/payslips/${employeeId}`);
-  return res.data;
+  const res = await apiClient.get<PayrollItem[] | { items: PayrollItem[] }>(`/payroll/payslips/${employeeId}`);
+  if (Array.isArray(res.data)) {
+    return res.data;
+  }
+  return (res.data as { items?: PayrollItem[] })?.items || [];
 }
 
 export async function submitReimbursement(

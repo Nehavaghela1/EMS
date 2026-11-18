@@ -112,10 +112,10 @@ export function LoginPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: "8px", margin: "6px 0 10px 0" }}>
               {companies.map((c: any) => {
                 const name = typeof c === "string" ? c : c.name;
-                const code = typeof c === "string" ? null : c.code;
+                const code = typeof c === "string" ? c : c.code;
                 return (
                   <button
-                    key={name}
+                    key={code || name}
                     type="button"
                     onClick={() => {
                       if (code) setCompanyCode(code);

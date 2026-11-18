@@ -129,7 +129,7 @@ export function EmployeeProfilePage() {
   });
 
   const invite = resent ?? (location.state as InviteState | null)?.invite;
-  const isHr = user?.role === "hr_admin" || user?.role === "owner";
+  const isHr = user?.role === "hr_admin" || user?.role === "owner" || user?.role === "super_admin";
 
   async function handleResendInvite() {
     if (!id) return;
