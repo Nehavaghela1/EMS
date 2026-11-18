@@ -993,8 +993,6 @@ class CompanyService:
         company.owner_user_id = owner_user.id
         self.db.flush()
 
-        from datetime import date
-
         from app.modules.hr.models import InvitationStatus
         from app.modules.hr.repository import EmployeeRepository
 
@@ -1021,7 +1019,7 @@ class CompanyService:
             email=company.email,
             employee_code="ADMIN-001",
             position="Owner / Org Head",
-            hire_date=date.today(),
+            hire_date=utcnow().date(),
             is_active=True,
             invitation_status=InvitationStatus.activated,
             user_id=owner_user.id,
@@ -1281,8 +1279,6 @@ class CompanyService:
             company.owner_user_id = new_admin.id
             self.db.flush()
 
-            from datetime import date
-
             from app.modules.hr.models import InvitationStatus
             from app.modules.hr.repository import EmployeeRepository
 
@@ -1305,7 +1301,7 @@ class CompanyService:
                 email=current_user.email,
                 employee_code="ADMIN-001",
                 position="HR Admin / Org Head",
-                hire_date=date.today(),
+                hire_date=utcnow().date(),
                 is_active=True,
                 invitation_status=InvitationStatus.activated,
                 user_id=new_admin.id,

@@ -19,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.time import utcnow
 from app.db.base import Base
 
 
@@ -48,6 +49,12 @@ class Project(Base):
         PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True
     )
     client_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    budget_alert_80_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    budget_alert_100_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -87,7 +94,7 @@ class ProjectMember(Base):
         String(50), nullable=False, default="member"
     )  # manager, member
     hourly_rate: Mapped[Decimal | None] = mapped_column(SANumeric(12, 2), nullable=True)
-    joined_at: Mapped[date] = mapped_column(Date, default=date.today, nullable=False)
+    joined_at: Mapped[date] = mapped_column(Date, default=lambda: utcnow().date(), nullable=False)
     left_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 

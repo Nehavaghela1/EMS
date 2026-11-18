@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
 
@@ -11,6 +11,7 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from app.core.time import utcnow
 from app.modules.identity.models import User, UserRole
 from app.modules.payroll.models import EmployeeSalary
 from app.modules.platform.service import AuditService, NotificationService
@@ -40,6 +41,8 @@ from app.modules.projects.schemas import (
     TimeEntryResponse,
     TimeEntryUpdate,
 )
+
+STANDARD_MONTHLY_HOURS = Decimal("176.00")
 
 
 class ProjectService:
@@ -414,7 +417,7 @@ class ProjectService:
 
         total_tasks = len(tasks)
         completed_tasks = sum(1 for t in tasks if t.status == "done")
-        today = date.today()
+        today = utcnow().date()
         overdue_tasks = sum(
             1 for t in tasks if t.due_date and t.due_date < today and t.status != "done"
         )
@@ -439,6 +442,8 @@ class ProjectService:
         can_view_financials = is_hr_or_owner or is_pm or (actor is None)
         budget_spent = Decimal("0.00") if can_view_financials else None
         budget_remaining = None
+        no_salary_data = False
+        hours_without_salary_data = Decimal("0.00")
 
         if can_view_financials:
             if approved_billable_entries:
@@ -467,29 +472,79 @@ class ProjectService:
                                 if s.hourly_rate is not None and s.hourly_rate > 0:
                                     matching_rate = s.hourly_rate
                                 elif s.ctc and s.ctc > 0:
+                                    monthly_cost = s.ctc / Decimal("12")
                                     matching_rate = (
-                                        s.ctc / Decimal("12") / Decimal("160.00")
-                                    ).quantize(Decimal("0.01"))
+                                        monthly_cost / STANDARD_MONTHLY_HOURS
+                                    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                     if matching_rate is None:
-                        # Fallback to latest salary for this employee or default ₹500/hr
-                        emp_salaries = [s for s in salaries if s.employee_id == e.employee_id]
-                        if emp_salaries:
-                            latest_s = emp_salaries[-1]
-                            if latest_s.hourly_rate is not None and latest_s.hourly_rate > 0:
-                                matching_rate = latest_s.hourly_rate
-                            elif latest_s.ctc and latest_s.ctc > 0:
-                                matching_rate = (
-                                    latest_s.ctc / Decimal("12") / Decimal("160.00")
-                                ).quantize(Decimal("0.01"))
-                        if matching_rate is None:
-                            matching_rate = Decimal("500.00")
+                        no_salary_data = True
+                        hours_without_salary_data += Decimal(str(e.hours))
+                    else:
+                        entry_cost = (Decimal(str(e.hours)) * matching_rate).quantize(
+                            Decimal("0.01"), rounding=ROUND_HALF_UP
+                        )
+                        spent_accum += entry_cost
 
-                    spent_accum += Decimal(str(e.hours)) * matching_rate
-
-                budget_spent = spent_accum.quantize(Decimal("0.01"))
+                budget_spent = spent_accum.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
             if project.budget is not None and budget_spent is not None:
-                budget_remaining = (project.budget - budget_spent).quantize(Decimal("0.01"))
+                budget_remaining = (project.budget - budget_spent).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+
+                # Budget threshold alerts (C3): 80% and 100%
+                if project.budget > Decimal("0.00"):
+                    ratio = budget_spent / project.budget
+                    recipients: set[UUID] = set()
+                    from app.modules.hr.models import Employee
+
+                    if project.manager_id:
+                        pm_emp = self.repo.db.get(Employee, project.manager_id)
+                        if pm_emp and pm_emp.user_id:
+                            recipients.add(pm_emp.user_id)
+                    hr_admins = (
+                        self.repo.db.query(User)
+                        .filter(
+                            User.company_id == p_cid,
+                            User.role == UserRole.hr_admin,
+                            User.is_active.is_(True),
+                        )
+                        .all()
+                    )
+                    for hr in hr_admins:
+                        recipients.add(hr.id)
+
+                    should_commit_alerts = False
+                    if ratio >= Decimal("0.80") and not project.budget_alert_80_sent_at:
+                        for uid in recipients:
+                            self.notifications.notify(
+                                company_id=p_cid,
+                                user_id=uid,
+                                type="budget_threshold_alert",
+                                title="Budget Alert: 80% Reached",
+                                message=f"Project '{project.name}' has reached 80% of its budget.",
+                                entity_type="project",
+                                entity_id=project.id,
+                            )
+                        project.budget_alert_80_sent_at = utcnow()
+                        should_commit_alerts = True
+
+                    if ratio >= Decimal("1.00") and not project.budget_alert_100_sent_at:
+                        for uid in recipients:
+                            self.notifications.notify(
+                                company_id=p_cid,
+                                user_id=uid,
+                                type="budget_threshold_alert",
+                                title="Budget Alert: 100% Reached",
+                                message=f"Project '{project.name}' has reached 100% of its budget.",
+                                entity_type="project",
+                                entity_id=project.id,
+                            )
+                        project.budget_alert_100_sent_at = utcnow()
+                        should_commit_alerts = True
+
+                    if should_commit_alerts:
+                        self.repo.db.commit()
 
         # Delivery Health progression:
         # Not Started -> In Progress -> On Schedule (or Needs Attention)
@@ -524,6 +579,10 @@ class ProjectService:
             delivery_health=delivery_health,
             approved_billable_hours=approved_billable_hours,
             approved_logged_hours=approved_logged_hours,
+            no_salary_data=no_salary_data,
+            hours_without_salary_data=hours_without_salary_data.quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            ),
         )
 
     # --- Project Members ---
@@ -567,7 +626,7 @@ class ProjectService:
 
         # Rule 4: If hourly billing rate is provided, save to effective-dated rate history
         if data.hourly_rate is not None and data.hourly_rate >= 0:
-            eff_from = data.effective_from or date.today()
+            eff_from = data.effective_from or utcnow().date()
             self.repo.add_member_rate(
                 company_id=p_cid,
                 project_id=project_id,
@@ -831,6 +890,22 @@ class ProjectService:
 
         task = self.repo.create_task(project.company_id, project_id, actor_user.id, data)
 
+        if data.assigned_to:
+            from app.modules.hr.models import Employee
+
+            assignee_emp = self.repo.db.get(Employee, data.assigned_to)
+            if assignee_emp and assignee_emp.user_id:
+                self.notifications.notify(
+                    company_id=project.company_id,
+                    user_id=assignee_emp.user_id,
+                    type="task_assigned",
+                    title="Task Assigned",
+                    message=f"You have been assigned to task '{task.title}'.",
+                    entity_type="project_task",
+                    entity_id=task.id,
+                )
+                self.repo.db.commit()
+
         # Audit (Rule 9)
         self.audit.record(
             company_id=project.company_id,
@@ -1024,7 +1099,26 @@ class ProjectService:
                 if not (is_pm or is_hr_or_owner):
                     raise ForbiddenError("Only project manager or HR can reopen cancelled tasks.")
 
+        old_assigned_to = task.assigned_to
         updated = self.repo.update_task(task, data)
+
+        if "assigned_to" in update_dict and update_dict["assigned_to"] != old_assigned_to:
+            new_assignee_id = update_dict["assigned_to"]
+            if new_assignee_id:
+                from app.modules.hr.models import Employee
+
+                assignee_emp = self.repo.db.get(Employee, new_assignee_id)
+                if assignee_emp and assignee_emp.user_id:
+                    self.notifications.notify(
+                        company_id=project.company_id,
+                        user_id=assignee_emp.user_id,
+                        type="task_assigned",
+                        title="Task Assigned",
+                        message=f"You have been assigned to task '{task.title}'.",
+                        entity_type="project_task",
+                        entity_id=task.id,
+                    )
+                    self.repo.db.commit()
 
         # Audit (Rule 9)
         self.audit.record(
@@ -1340,7 +1434,7 @@ class ProjectService:
                 raise NotFoundError("Project not found or you are not a member of this project.")
 
         # Rule 3: Date validation (not in future, not older than 90 days)
-        today = date.today()
+        today = utcnow().date()
         if data.date > today:
             raise ValidationError("Time entry date cannot be in the future.")
         if (today - data.date).days > 90:
@@ -1411,6 +1505,28 @@ class ProjectService:
                     "fields": ["project_id", "employee_id", "date", "hours", "task_id"],
                 },
             )
+
+        # Notify approver (reporting manager)
+        if entry.status == "submitted":
+            from app.modules.hr.models import Employee
+
+            sub_emp = self.repo.db.get(Employee, employee_id)
+            if sub_emp and sub_emp.reporting_manager_id:
+                mgr = self.repo.db.get(Employee, sub_emp.reporting_manager_id)
+                if mgr and mgr.user_id:
+                    self.notifications.notify(
+                        company_id=company_id,
+                        user_id=mgr.user_id,
+                        type="time_entry_submitted",
+                        title="Time Entry Submitted",
+                        message=(
+                            f"{sub_emp.first_name} {sub_emp.last_name or ''}".strip()
+                            + f" submitted a time entry for {entry.date} ({entry.hours} hrs)."
+                        ),
+                        entity_type="time_entry",
+                        entity_id=entry.id,
+                    )
+                    self.repo.db.commit()
 
         resp = TimeEntryResponse.model_validate(entry)
         from app.modules.hr.models import Employee
@@ -1502,7 +1618,7 @@ class ProjectService:
                 )
 
         target_date = data.date if data.date is not None else entry.date
-        today = date.today()
+        today = utcnow().date()
         if target_date > today:
             raise ValidationError("Time entry date cannot be in the future.")
         if (today - target_date).days > 90:
@@ -1533,7 +1649,30 @@ class ProjectService:
                 f"(Currently logged: {daily_total} hrs, attempting: {target_hours} hrs)"
             )
 
+        old_status = entry.status
         updated = self.repo.update_time_entry(entry, data)
+
+        # Notify approver if transitioned to submitted
+        if updated.status == "submitted" and old_status != "submitted":
+            from app.modules.hr.models import Employee
+
+            sub_emp = self.repo.db.get(Employee, entry.employee_id)
+            if sub_emp and sub_emp.reporting_manager_id:
+                mgr = self.repo.db.get(Employee, sub_emp.reporting_manager_id)
+                if mgr and mgr.user_id:
+                    self.notifications.notify(
+                        company_id=company_id,
+                        user_id=mgr.user_id,
+                        type="time_entry_submitted",
+                        title="Time Entry Submitted",
+                        message=(
+                            f"{sub_emp.first_name} {sub_emp.last_name or ''}".strip()
+                            + f" submitted a time entry for {updated.date} ({updated.hours} hrs)."
+                        ),
+                        entity_type="time_entry",
+                        entity_id=updated.id,
+                    )
+                    self.repo.db.commit()
 
         # Rule 9: Audit
         if actor:
@@ -1613,6 +1752,19 @@ class ProjectService:
             approver_user_id,
             rejection_reason=clean_reason,
         )
+
+        # Rule 6: Notify employee of approval or rejection
+        if target_emp and target_emp.user_id:
+            self.notifications.notify(
+                company_id=company_id,
+                user_id=target_emp.user_id,
+                type=f"time_entry_{status}",
+                title=f"Time Entry {status.capitalize()}",
+                message=f"Your time entry for {entry.date} ({entry.hours} hrs) has been {status}.",
+                entity_type="time_entry",
+                entity_id=entry.id,
+            )
+            self.repo.db.commit()
 
         # Rule 9: Audit
         self.audit.record(

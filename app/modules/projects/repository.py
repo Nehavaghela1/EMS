@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.time import utcnow
 from app.modules.projects.models import (
     Milestone,
     Project,
@@ -95,7 +96,7 @@ class ProjectRepository:
             employee_id=data.employee_id,
             role=data.role,
             hourly_rate=data.hourly_rate,
-            joined_at=data.joined_at or date.today(),
+            joined_at=data.joined_at or utcnow().date(),
         )
         self.db.add(member)
         self.db.commit()

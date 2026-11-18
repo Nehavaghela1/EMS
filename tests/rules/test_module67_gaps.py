@@ -812,6 +812,7 @@ def test_c2_time_entry_submitted_and_approved_rejected_notifications(
             "date": work_date,
             "hours": "4.00",
             "description": "Submitted work",
+            "status": "submitted",
         },
         headers=emp_h,
     )
