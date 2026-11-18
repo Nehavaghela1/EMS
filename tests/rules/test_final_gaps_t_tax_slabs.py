@@ -1,24 +1,25 @@
 """Red-first tests for Part T (Tax slabs cannot change mid-year).
 
 T1. TaxSlab bracketed by financial_year + regime with effective_to.
-T2. Approving 5.9 draft for existing FY adds new set and closes old set (effective_to = start - 1 day).
+T2. Approving 5.9 draft adds new set and closes old set (effective_to = start - 1 day).
 T3. TaxSlabRepository.list_in_force selects only active slabs on on_date (bounded by effective_to).
 T4. Mid-year revision must start after current set start date and outside ended periods.
 T5. Different financial year gets its own open bracket set without affecting other financial years.
 """
 
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal
-import uuid
+
 import pytest
 from sqlalchemy.orm import Session
 
-from app.core.time import utcnow
 from app.core.exceptions import ConflictError
-from app.modules.identity.models import User, UserRole, Company, CompanyStatus
-from app.modules.payroll.models import TaxSlab, TaxRegime
-from app.modules.payroll.schemas import TaxSlabBracketInput, TaxSlabPostRequest
+from app.core.time import utcnow
+from app.modules.identity.models import Company, CompanyStatus, User, UserRole
+from app.modules.payroll.models import TaxRegime
 from app.modules.payroll.repository import TaxSlabRepository
+from app.modules.payroll.schemas import TaxSlabBracketInput, TaxSlabPostRequest
 from app.modules.payroll.service import TaxSlabService
 
 
@@ -59,15 +60,18 @@ def _tax_req(fy: str, start: date, max_inc: Decimal) -> TaxSlabPostRequest:
         source_title="Tax Rates Notification",
         verified_on=utcnow().date(),
         brackets=[
-            TaxSlabBracketInput(min_income=Decimal("0.00"), max_income=max_inc, rate_percent=Decimal("0.00")),
-            TaxSlabBracketInput(min_income=max_inc + Decimal("0.01"), max_income=None, rate_percent=Decimal("5.00")),
+            TaxSlabBracketInput(
+                min_income=Decimal("0.00"), max_income=max_inc, rate_percent=Decimal("0.00")
+            ),
+            TaxSlabBracketInput(
+                min_income=max_inc + Decimal("0.01"), max_income=None, rate_percent=Decimal("5.00")
+            ),
         ],
     )
 
 
 def test_T1_T2_tax_slabs_can_be_closed_and_revised_mid_year(db: Session, tax_sa: User):
     service = TaxSlabService(db)
-    repo = TaxSlabRepository(db)
 
     # Initial bracket set for 2031-2032 starting 2031-04-01
     fy = "2031-2032"
@@ -89,7 +93,9 @@ def test_T1_T2_tax_slabs_can_be_closed_and_revised_mid_year(db: Session, tax_sa:
     # Check that set1 rows now have effective_to == 2031-09-30
     for s in set1:
         db.refresh(s)
-        assert s.effective_to == start2 - timedelta(days=1), f"T2: old row effective_to was not closed: {s.effective_to}"
+        assert s.effective_to == start2 - timedelta(days=1), (
+            f"T2: old row effective_to was not closed: {s.effective_to}"
+        )
 
 
 def test_T3_list_in_force_respects_effective_to_upper_bound(db: Session, tax_sa: User):

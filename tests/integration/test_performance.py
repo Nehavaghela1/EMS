@@ -1,10 +1,10 @@
 import uuid
-from datetime import date
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import User, UserRole
@@ -33,7 +33,7 @@ def _create_employee_with_user(
         last_name="Test",
         email=user.email,
         employment_type=EmploymentType.full_time,
-        hire_date=date.today(),
+        hire_date=utcnow().date(),
         is_active=True,
         invitation_status=InvitationStatus.activated,
     )

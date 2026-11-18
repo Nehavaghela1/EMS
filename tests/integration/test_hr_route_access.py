@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -45,8 +45,8 @@ def test_employee_submits_resignation_for_own_record_allowed(
         f"/api/v1/employees/{emp1['id']}/resignation",
         headers=emp1_headers,
         json={
-            "resignation_date": str(date.today()),
-            "last_working_date": str(date.today() + timedelta(days=30)),
+            "resignation_date": str(utcnow().date()),
+            "last_working_date": str(utcnow().date() + timedelta(days=30)),
             "reason": "Personal reasons",
         },
     )
@@ -69,8 +69,8 @@ def test_employee_submits_resignation_for_colleague_forbidden(
         f"/api/v1/employees/{emp2['id']}/resignation",
         headers=emp1_headers,
         json={
-            "resignation_date": str(date.today()),
-            "last_working_date": str(date.today() + timedelta(days=30)),
+            "resignation_date": str(utcnow().date()),
+            "last_working_date": str(utcnow().date() + timedelta(days=30)),
             "reason": "Impersonation attempt",
         },
     )
@@ -89,8 +89,8 @@ def test_hr_admin_submits_resignation_for_any_employee_in_own_company_allowed(
         f"/api/v1/employees/{emp1['id']}/resignation",
         headers=company_a.hr_headers,
         json={
-            "resignation_date": str(date.today()),
-            "last_working_date": str(date.today() + timedelta(days=30)),
+            "resignation_date": str(utcnow().date()),
+            "last_working_date": str(utcnow().date() + timedelta(days=30)),
             "reason": "Submitted by HR",
         },
     )

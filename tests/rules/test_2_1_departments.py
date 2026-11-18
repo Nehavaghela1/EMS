@@ -27,6 +27,7 @@ from alembic import command
 from app.core.config import settings
 from app.core.pagination import page_params
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.db.session import get_db
 from app.main import app as fastapi_app
@@ -816,7 +817,7 @@ def test_r05_department_head_auto_clear_on_termination(
     term_res = client.post(
         f"/api/v1/employees/{emp_mgr.id}/terminate",
         headers=hr_headers,
-        json={"termination_date": str(date.today()), "reason": "Restructuring"},
+        json={"termination_date": str(utcnow().date()), "reason": "Restructuring"},
     )
     assert term_res.status_code == 200
 
@@ -863,8 +864,8 @@ def test_r05_department_head_auto_clear_on_fnf_settlement(
         f"/api/v1/employees/{emp_staff.id}/resignation",
         headers=hr_headers,
         json={
-            "resignation_date": str(date.today()),
-            "last_working_date": str(date.today()),
+            "resignation_date": str(utcnow().date()),
+            "last_working_date": str(utcnow().date()),
             "reason": "Moving on",
         },
     )
@@ -938,8 +939,8 @@ def test_r05_department_head_auto_clear_on_pip_failed(
         json={
             "employee_id": str(emp_staff.id),
             "title": "Performance PIP",
-            "start_date": str(date.today()),
-            "end_date": str(date.today()),
+            "start_date": str(utcnow().date()),
+            "end_date": str(utcnow().date()),
         },
     )
     assert res_pip.status_code == 201

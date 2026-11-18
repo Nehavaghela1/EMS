@@ -1,21 +1,21 @@
 """Part S tests: Honour company working-days basis and full-day-hours settings.
 
 Tests:
-1. Three companies, one per basis (calendar_days, working_days, fixed_30), same employee, same salary,
-   same single-day absence in the same month, asserting three different deduction amounts exact to the paisa.
+1. Three companies, one per basis (calendar_days, working_days, fixed_30), same employee,
+   same salary, same single-day absence in the same month, asserting three different deduction
+   amounts exact to the paisa.
 2. Company with no settings row behaves as calendar_days.
-3. S2: project hourly cost = that month's working days from S1 x company's full_day_hours, with 22 x 8 = 176 fallback.
+3. S2: project hourly cost = that month's working days from S1 x company's full_day_hours,
+   with 22 x 8 = 176 fallback.
 """
 
-from calendar import monthrange
-from datetime import date, timedelta
-from decimal import Decimal
 import uuid
-import pytest
-from fastapi.testclient import TestClient
+from calendar import monthrange
+from datetime import date
+from decimal import Decimal
+
 from sqlalchemy.orm import Session
 
-from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType
 from app.modules.identity.models import (
@@ -29,8 +29,6 @@ from app.modules.identity.models import (
 from app.modules.payroll.models import (
     CalculationType,
     EmployeeSalary,
-    PayrollRun,
-    PayrollRunStatus,
     SalaryComponent,
     SalaryComponentType,
     SalaryStructure,

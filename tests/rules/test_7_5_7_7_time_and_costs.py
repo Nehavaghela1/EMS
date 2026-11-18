@@ -257,7 +257,7 @@ def test_7_5_r1_membership_scoping_and_roles(client: TestClient, p3_setup: dict)
     non-members get 404; Super Admin gets 403.
     """
     proj_id, task_id = _create_project_with_members(client, p3_setup)
-    today_str = date.today().isoformat()
+    today_str = utcnow().date().isoformat()
 
     # 1. Emp1 (member) logs time -> 201
     r_emp1 = client.post(
@@ -344,7 +344,7 @@ def test_7_5_r2_task_scoping_for_regular_employees(client: TestClient, p3_setup:
     (or general project time without a task); PM/HR/Owner can log against any task.
     """
     proj_id, task1_id = _create_project_with_members(client, p3_setup)
-    today_str = date.today().isoformat()
+    today_str = utcnow().date().isoformat()
 
     # Add emp2 as member
     client.post(
@@ -409,7 +409,7 @@ def test_7_5_r3_input_validation(client: TestClient, p3_setup: dict):
     not older than 90 days; description trimmed (1–500 chars); bad input returns 422.
     """
     proj_id, task_id = _create_project_with_members(client, p3_setup)
-    today = date.today()
+    today = utcnow().date()
     hdr = _auth_headers(p3_setup["emp1_u"])
 
     # 1. Hours <= 0 -> 422
@@ -504,7 +504,7 @@ def test_7_5_r4_daily_24h_cap_and_rejected_exclusion(client: TestClient, p3_setu
     for any calendar date (422/conflict). Rejected entries do NOT count toward the 24-hour cap.
     """
     proj_id, task_id = _create_project_with_members(client, p3_setup)
-    today_str = (date.today() - timedelta(days=2)).isoformat()
+    today_str = (utcnow().date() - timedelta(days=2)).isoformat()
     emp_hdr = _auth_headers(p3_setup["emp1_u"])
     pm_hdr = _auth_headers(p3_setup["pm_u"])
 
@@ -578,7 +578,7 @@ def test_7_5_r5_approval_hierarchy_and_self_approval_block(client: TestClient, p
     approve their own timesheet (returns 403); rejecting requires a non-empty reason.
     """
     proj_id, task_id = _create_project_with_members(client, p3_setup)
-    today_str = (date.today() - timedelta(days=3)).isoformat()
+    today_str = (utcnow().date() - timedelta(days=3)).isoformat()
     emp1_hdr = _auth_headers(p3_setup["emp1_u"])
     pm_hdr = _auth_headers(p3_setup["pm_u"])
     other_mgr_hdr = _auth_headers(p3_setup["other_mgr_u"])
@@ -631,7 +631,7 @@ def test_7_5_r5_approval_hierarchy_and_self_approval_block(client: TestClient, p
 def test_7_5_r6_approved_immutability(client: TestClient, p3_setup: dict):
     """Rule 6: Once approved, time entries are immutable (PUT or DELETE returns 409 Conflict)."""
     proj_id, task_id = _create_project_with_members(client, p3_setup)
-    today_str = (date.today() - timedelta(days=4)).isoformat()
+    today_str = (utcnow().date() - timedelta(days=4)).isoformat()
     emp1_hdr = _auth_headers(p3_setup["emp1_u"])
     pm_hdr = _auth_headers(p3_setup["pm_u"])
 
@@ -675,7 +675,7 @@ def test_7_5_r7_parent_project_status_lock(client: TestClient, p3_setup: dict):
     or archived (returns 409 Conflict).
     """
     proj_id, task_id = _create_project_with_members(client, p3_setup)
-    today_str = (date.today() - timedelta(days=5)).isoformat()
+    today_str = (utcnow().date() - timedelta(days=5)).isoformat()
     emp1_hdr = _auth_headers(p3_setup["emp1_u"])
     hr_hdr = _auth_headers(p3_setup["hr_u"])
 
@@ -730,7 +730,7 @@ def test_7_5_r7_parent_project_status_lock(client: TestClient, p3_setup: dict):
 def test_7_5_r8_cross_tenant_isolation(client: TestClient, p3_setup: dict):
     """Rule 8: Time entries belonging to another company return 404 Not Found."""
     proj_id, task_id = _create_project_with_members(client, p3_setup)
-    today_str = (date.today() - timedelta(days=6)).isoformat()
+    today_str = (utcnow().date() - timedelta(days=6)).isoformat()
     emp1_hdr = _auth_headers(p3_setup["emp1_u"])
     b_owner_hdr = _auth_headers(p3_setup["b_owner_u"])
 
@@ -767,7 +767,7 @@ def test_7_5_r9_audit_logging(client: TestClient, db: Session, p3_setup: dict):
     (field names and IDs only, never sensitive values).
     """
     proj_id, task_id = _create_project_with_members(client, p3_setup)
-    today_str = (date.today() - timedelta(days=7)).isoformat()
+    today_str = (utcnow().date() - timedelta(days=7)).isoformat()
     emp1_hdr = _auth_headers(p3_setup["emp1_u"])
     pm_hdr = _auth_headers(p3_setup["pm_u"])
 
@@ -814,7 +814,7 @@ def test_7_5_r9_audit_logging(client: TestClient, db: Session, p3_setup: dict):
 def test_7_5_r10_rate_limiting_and_paging(client: TestClient, p3_setup: dict, limits_on: None):
     """Rule 10: Write routes are rate limited (with 429 verified); lists are paged."""
     proj_id, task_id = _create_project_with_members(client, p3_setup)
-    today_str = (date.today() - timedelta(days=8)).isoformat()
+    today_str = (utcnow().date() - timedelta(days=8)).isoformat()
     emp1_hdr = _auth_headers(p3_setup["emp1_u"])
 
     # 1. Paging check on GET /api/v1/projects/time-entries

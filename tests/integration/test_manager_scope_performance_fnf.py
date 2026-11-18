@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.modules.hr.models import Employee
 from app.modules.identity.models import User, UserRole
 from tests.conftest import TenantContext
@@ -117,9 +118,9 @@ def test_fnf_clearance_manager_scoping(client: TestClient, db: Session, company_
     emp_headers = _link_user_to_employee(db, company_a.company_id, emp["id"], UserRole.employee)
 
     # Resignation
-    from datetime import date, timedelta
+    from datetime import timedelta
 
-    today = date.today()
+    today = utcnow().date()
     res_post = client.post(
         f"/api/v1/employees/{emp['id']}/resignation",
         headers=emp_headers,

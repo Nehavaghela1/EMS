@@ -11,7 +11,7 @@ client supplies that a service must re-scope rather than trust.
 """
 
 import uuid
-from datetime import date, timedelta
+from datetime import timedelta
 
 from app.core.security import create_access_token, hash_password
 from app.core.time import utcnow
@@ -156,7 +156,7 @@ def test_shift_assignment_rejects_an_employee_id_from_another_company(client, co
         headers=company_a.hr_headers,
         json={
             "employee_id": other_company_employee["id"],
-            "effective_from": date.today().isoformat(),
+            "effective_from": utcnow().date().isoformat(),
         },
     )
     # Employee lookup is scoped by company_id (get_by_id), so a foreign id
