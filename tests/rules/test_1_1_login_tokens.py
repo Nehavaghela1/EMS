@@ -395,7 +395,13 @@ def test_S05_same_email_multiple_companies_requires_company_code(client, db, com
     body = resp.json()
     assert body["error"]["code"] == "company_required"
     assert "access_token" not in body
-    assert len(body["error"]["details"]["companies"]) >= 2
+    companies_list = body["error"]["details"]["companies"]
+    assert len(companies_list) >= 2
+    # N1: each entry must be an object with both name and code
+    for entry in companies_list:
+        assert isinstance(entry, dict)
+        assert "name" in entry and isinstance(entry["name"], str)
+        assert "code" in entry and isinstance(entry["code"], str)
 
     # Query company A's code
     comp_a = db.query(Company).filter(Company.id == company_a.company_id).first()
@@ -405,6 +411,87 @@ def test_S05_same_email_multiple_companies_requires_company_code(client, db, com
     resp_with_code = _login(client, shared_email, shared_password, company_code=comp_a.code)
     assert resp_with_code.status_code == 200
     assert "access_token" in resp_with_code.json()
+
+
+def test_N4_login_disambiguation_duplicate_name_code_scoping_and_leak_prevention(client, db):
+    """N4. Two companies with the same name and the same user email in both:
+    - login without code returns 409 with two entries each carrying distinct code and same name
+    - resubmitting with one code logs into exactly that company
+    - resubmitting with NAME fails as a wrong credential
+    - resubmitting with unknown code fails with generic invalid credentials leaking nothing
+    """
+    dup_name = f"Duplicate Corp {uuid.uuid4().hex[:6]}"
+    code_1 = f"DC1-{uuid.uuid4().hex[:4]}".upper()
+    code_2 = f"DC2-{uuid.uuid4().hex[:4]}".upper()
+    c1 = Company(
+        id=uuid.uuid4(),
+        name=dup_name,
+        code=code_1,
+        email=f"info-{uuid.uuid4().hex[:6]}@dc1.test",
+        subdomain=f"sub1-{uuid.uuid4().hex[:6]}",
+        status=CompanyStatus.active,
+    )
+    c2 = Company(
+        id=uuid.uuid4(),
+        name=dup_name,
+        code=code_2,
+        email=f"info-{uuid.uuid4().hex[:6]}@dc2.test",
+        subdomain=f"sub2-{uuid.uuid4().hex[:6]}",
+        status=CompanyStatus.active,
+    )
+    db.add_all([c1, c2])
+    db.flush()
+
+    shared_email = f"user-{uuid.uuid4().hex[:8]}@example.com"
+    shared_password = "SecurePassword123!"
+
+    u1 = User(
+        company_id=c1.id,
+        email=shared_email,
+        hashed_password=hash_password(shared_password),
+        role=UserRole.employee,
+        is_active=True,
+    )
+    u2 = User(
+        company_id=c2.id,
+        email=shared_email,
+        hashed_password=hash_password(shared_password),
+        role=UserRole.employee,
+        is_active=True,
+    )
+    db.add_all([u1, u2])
+    db.commit()
+
+    # 1. Login without code -> 409 with two entries having distinct codes and duplicate name
+    r_no_code = _login(client, shared_email, shared_password)
+    assert r_no_code.status_code == 409
+    body = r_no_code.json()
+    assert body["error"]["code"] == "company_required"
+    companies = body["error"]["details"]["companies"]
+    assert len(companies) == 2
+    codes = {entry["code"] for entry in companies}
+    names = {entry["name"] for entry in companies}
+    assert codes == {code_1, code_2}
+    assert names == {dup_name}
+
+    # 2. Resubmitting with one code logs into exactly that company
+    r_code_1 = _login(client, shared_email, shared_password, company_code=code_1)
+    assert r_code_1.status_code == 200
+    token_1 = r_code_1.json()["access_token"]
+    me_1 = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token_1}"})
+    assert me_1.status_code == 200
+    assert me_1.json()["company_id"] == str(c1.id)
+
+    # 3. Resubmitting with NAME now fails as wrong credential (never matches company name)
+    r_name = _login(client, shared_email, shared_password, company_code=dup_name)
+    assert r_name.status_code == 401
+    assert r_name.json()["error"]["code"] == "unauthorized"
+
+    # 4. Unknown code gives same generic 401 failure leaking nothing
+    r_unknown = _login(client, shared_email, shared_password, company_code="NONEXISTENT")
+    assert r_unknown.status_code == 401
+    assert r_unknown.json()["error"]["code"] == "unauthorized"
+    assert r_unknown.json()["error"]["message"] == "Invalid email or password."
 
 
 def test_S06_role_change_in_db_reflected_immediately(client, db, company_a):

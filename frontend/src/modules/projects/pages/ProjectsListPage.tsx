@@ -57,7 +57,7 @@ export function ProjectsListPage() {
         filterStatus === "all" ? undefined : filterStatus,
         isSuperAdmin ? (selectedCompanyId === "all" ? undefined : selectedCompanyId) : undefined
       );
-      setProjects(data);
+      setProjects(Array.isArray(data) ? data : (data as any)?.items || []);
     } catch (err: any) {
       notify(err?.response?.data?.error?.message || err?.message || "Failed to load projects", "error");
     } finally {

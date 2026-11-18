@@ -699,3 +699,108 @@ def test_6_4_R6_failed_pip_triggers_atomic_separation(
     )
     assert audit is not None
     assert audit.details.get("outcome") == "failed"
+
+
+# ==============================================================================
+# L2: Rate limit tests (one 429 test per route for all 5 PIP write routes)
+# ==============================================================================
+
+
+def test_6_4_R7_rate_limit_post_pips(client: TestClient, p3_setup: dict[str, Any], limits_on: None):
+    """POST /pips rate limit test (30/minute)."""
+    mgr_headers = _auth_headers(p3_setup["mgr_user_a"])
+    target_emp_id = str(p3_setup["emp_a"].id)
+    hit_429 = False
+    for i in range(40):
+        res = client.post(
+            "/api/v1/performance/pips",
+            headers=mgr_headers,
+            json={
+                "employee_id": target_emp_id,
+                "title": f"PIP {i}",
+                "start_date": str(date.today()),
+                "end_date": str(date.today() + timedelta(days=30)),
+            },
+        )
+        if res.status_code == 429:
+            hit_429 = True
+            break
+    assert hit_429, "POST /api/v1/performance/pips must trigger 429 when exceeding rate limit"
+
+
+def test_6_4_R8_rate_limit_post_pips_activate(
+    client: TestClient, p3_setup: dict[str, Any], limits_on: None
+):
+    """POST /pips/{pip_id}/activate rate limit test (30/minute)."""
+    mgr_headers = _auth_headers(p3_setup["mgr_user_a"])
+    fake_pip_id = str(uuid.uuid4())
+    hit_429 = False
+    for _ in range(40):
+        res = client.post(
+            f"/api/v1/performance/pips/{fake_pip_id}/activate",
+            headers=mgr_headers,
+        )
+        if res.status_code == 429:
+            hit_429 = True
+            break
+    assert hit_429, "POST /pips/{pip_id}/activate must trigger 429 when exceeding rate limit"
+
+
+def test_6_4_R9_rate_limit_post_pips_extend(
+    client: TestClient, p3_setup: dict[str, Any], limits_on: None
+):
+    """POST /pips/{pip_id}/extend rate limit test (30/minute)."""
+    mgr_headers = _auth_headers(p3_setup["mgr_user_a"])
+    fake_pip_id = str(uuid.uuid4())
+    hit_429 = False
+    for _ in range(40):
+        res = client.post(
+            f"/api/v1/performance/pips/{fake_pip_id}/extend",
+            headers=mgr_headers,
+            json={
+                "new_end_date": str(date.today() + timedelta(days=60)),
+                "reason": "More time needed",
+            },
+        )
+        if res.status_code == 429:
+            hit_429 = True
+            break
+    assert hit_429, "POST /pips/{pip_id}/extend must trigger 429 when exceeding rate limit"
+
+
+def test_6_4_R10_rate_limit_post_pips_checkins(
+    client: TestClient, p3_setup: dict[str, Any], limits_on: None
+):
+    """POST /pips/{pip_id}/check-ins rate limit test (30/minute)."""
+    mgr_headers = _auth_headers(p3_setup["mgr_user_a"])
+    fake_pip_id = str(uuid.uuid4())
+    hit_429 = False
+    for i in range(40):
+        res = client.post(
+            f"/api/v1/performance/pips/{fake_pip_id}/check-ins",
+            headers=mgr_headers,
+            json={"note": f"Check-in {i}"},
+        )
+        if res.status_code == 429:
+            hit_429 = True
+            break
+    assert hit_429, "POST /pips/{pip_id}/check-ins must trigger 429 when exceeding rate limit"
+
+
+def test_6_4_R11_rate_limit_post_pips_evaluate(
+    client: TestClient, p3_setup: dict[str, Any], limits_on: None
+):
+    """POST /pips/{pip_id}/evaluate rate limit test (30/minute)."""
+    mgr_headers = _auth_headers(p3_setup["mgr_user_a"])
+    fake_pip_id = str(uuid.uuid4())
+    hit_429 = False
+    for _ in range(40):
+        res = client.post(
+            f"/api/v1/performance/pips/{fake_pip_id}/evaluate",
+            headers=mgr_headers,
+            json={"outcome": "passed", "outcome_notes": "Passed well"},
+        )
+        if res.status_code == 429:
+            hit_429 = True
+            break
+    assert hit_429, "POST /pips/{pip_id}/evaluate must trigger 429 when exceeding rate limit"

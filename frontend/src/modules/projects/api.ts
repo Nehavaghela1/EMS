@@ -11,8 +11,11 @@ export async function fetchProjects(status?: string, companyId?: string): Promis
   if (status && status !== "all") params.append("status", status);
   if (companyId && companyId !== "all") params.append("company_id", companyId);
   const query = params.toString() ? `?${params.toString()}` : "";
-  const res = await apiClient.get<Project[]>(`/projects${query}`);
-  return res.data;
+  const res = await apiClient.get<Project[] | { items: Project[] }>(`/projects${query}`);
+  if (Array.isArray(res.data)) {
+    return res.data;
+  }
+  return (res.data as { items?: Project[] })?.items || [];
 }
 
 export async function createProject(payload: ProjectCreatePayload): Promise<Project> {

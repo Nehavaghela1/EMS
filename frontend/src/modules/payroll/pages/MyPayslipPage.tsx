@@ -50,9 +50,10 @@ export function MyPayslipPage() {
     setLoading(true);
     try {
       const data = await listMyPayslips();
-      setPayslips(data);
-      if (data.length > 0) {
-        setSelectedPayslip(data[0]);
+      const list = Array.isArray(data) ? data : (data as any)?.items || [];
+      setPayslips(list);
+      if (list.length > 0) {
+        setSelectedPayslip(list[0]);
       }
     } catch {
       notify("Failed to load payslips", "error");

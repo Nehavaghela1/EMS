@@ -494,42 +494,20 @@ class PerformanceService:
                     status="submitted",
                     submitted_at=utcnow(),
                 )
-                self.goal_repo.update(goal, self_rating=data.rating, self_comments=data.comments)
-                self.audit.record(
-                    company_id=company_id,
-                    actor=actor,
-                    action="PERFORMANCE_REVIEW_SELF_SUBMITTED",
-                    entity_type="performance_review",
-                    entity_id=existing.id,
-                    details={"goal_id": str(goal.id)},
-                )
-                if emp.reporting_manager_id:
-                    mgr = self.employee_repo.get_by_id(emp.reporting_manager_id, company_id)
-                    if mgr and mgr.user_id:
-                        emp_full_name = f"{emp.first_name} {emp.last_name or ''}".strip()
-                        self.notifications.notify(
-                            company_id=company_id,
-                            user_id=mgr.user_id,
-                            type="self_review_submitted",
-                            title="Self-Review Submitted",
-                            message=f"Employee {emp_full_name} submitted a self-review.",
-                            entity_type="performance_review",
-                            entity_id=existing.id,
-                        )
-                self.db.commit()
-                return existing
-            raise ConflictError("Self-review for this goal has already been submitted.")
-
-        review = self.review_repo.create(
-            company_id=company_id,
-            goal_id=goal.id,
-            reviewer_id=actor.id,
-            reviewer_role=ReviewerRole.self,
-            rating=data.rating,
-            comments=data.comments,
-            status="submitted",
-            submitted_at=utcnow(),
-        )
+                review = existing
+            else:
+                raise ConflictError("Self-review for this goal has already been submitted.")
+        else:
+            review = self.review_repo.create(
+                company_id=company_id,
+                goal_id=goal.id,
+                reviewer_id=actor.id,
+                reviewer_role=ReviewerRole.self,
+                rating=data.rating,
+                comments=data.comments,
+                status="submitted",
+                submitted_at=utcnow(),
+            )
 
         self.goal_repo.update(goal, self_rating=data.rating, self_comments=data.comments)
 
@@ -614,38 +592,20 @@ class PerformanceService:
                     status="submitted",
                     submitted_at=utcnow(),
                 )
-                self.audit.record(
-                    company_id=company_id,
-                    actor=actor,
-                    action="PERFORMANCE_REVIEW_MANAGER_SUBMITTED",
-                    entity_type="performance_review",
-                    entity_id=existing.id,
-                    details={"goal_id": str(goal.id)},
-                )
-                if target_emp and target_emp.user_id:
-                    self.notifications.notify(
-                        company_id=company_id,
-                        user_id=target_emp.user_id,
-                        type="manager_review_submitted",
-                        title="Manager Review Submitted",
-                        message="Your manager has submitted a review for your goal.",
-                        entity_type="performance_review",
-                        entity_id=existing.id,
-                    )
-                self.db.commit()
-                return existing
-            raise ConflictError("Manager review for this goal has already been submitted.")
-
-        review = self.review_repo.create(
-            company_id=company_id,
-            goal_id=goal.id,
-            reviewer_id=actor.id,
-            reviewer_role=ReviewerRole.manager,
-            rating=data.rating,
-            comments=data.comments,
-            status="submitted",
-            submitted_at=utcnow(),
-        )
+                review = existing
+            else:
+                raise ConflictError("Manager review for this goal has already been submitted.")
+        else:
+            review = self.review_repo.create(
+                company_id=company_id,
+                goal_id=goal.id,
+                reviewer_id=actor.id,
+                reviewer_role=ReviewerRole.manager,
+                rating=data.rating,
+                comments=data.comments,
+                status="submitted",
+                submitted_at=utcnow(),
+            )
 
         self.audit.record(
             company_id=company_id,

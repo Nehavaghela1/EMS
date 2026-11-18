@@ -18,6 +18,7 @@ from app.core.security import create_access_token, hash_password
 from app.db.rls import bind_tenant_to_session
 from app.modules.hr.models import Employee, EmploymentType, InvitationStatus
 from app.modules.identity.models import Company, CompanyStatus, User, UserRole
+from app.modules.performance.models import PerformanceReview, ReviewerRole
 from app.modules.platform.models import AuditLog, Notification
 
 
@@ -571,6 +572,78 @@ def test_6_3_R10_notifications_post_commit_manager_and_employee(
     assert emp_notif is not None, "Employee must be notified on manager review submit"
 
 
+def test_O3_notification_failure_aborts_review_submission(
+    client: TestClient,
+    p2_setup: dict[str, Any],
+    setup_active_cycle_with_goals: dict[str, Any],
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """O3: Force notification write to fail in submit_self_review and submit_manager_review
+    and assert the review is NOT saved (atomic single commit).
+    """
+    safe_client = TestClient(client.app, raise_server_exceptions=False)
+    emp_headers = _auth_headers(p2_setup["emp_user_a"])
+    mgr_headers = _auth_headers(p2_setup["mgr_user_a"])
+    g1 = setup_active_cycle_with_goals["goal_1_id"]
+
+    def _failing_notify(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("Notification broker failure")
+
+    # 1. Test submit_self_review atomicity: notification failure rolls back review
+    with monkeypatch.context() as m:
+        m.setattr("app.modules.performance.service.NotificationService.notify", _failing_notify)
+        resp_self = safe_client.post(
+            f"/api/v1/performance/goals/{g1}/self-review",
+            json={"rating": 4.0, "comments": "Self review text"},
+            headers=emp_headers,
+        )
+        assert resp_self.status_code == 500
+
+    # Verify self-review was NOT saved in database
+    bind_tenant_to_session(db, company_id=p2_setup["cid_a"], is_platform_admin=True)
+    db.expire_all()
+    self_rev = (
+        db.query(PerformanceReview)
+        .filter(
+            PerformanceReview.goal_id == uuid.UUID(g1),
+            PerformanceReview.reviewer_role == ReviewerRole.self,
+        )
+        .first()
+    )
+    assert self_rev is None, "Self-review must NOT be saved when notification fails"
+
+    # Now let self-review succeed normally so manager review prerequisite is met
+    resp_self_ok = safe_client.post(
+        f"/api/v1/performance/goals/{g1}/self-review",
+        json={"rating": 4.0, "comments": "Self review ok"},
+        headers=emp_headers,
+    )
+    assert resp_self_ok.status_code == 200
+
+    # 2. Test submit_manager_review atomicity: notification failure rolls back manager review
+    with monkeypatch.context() as m:
+        m.setattr("app.modules.performance.service.NotificationService.notify", _failing_notify)
+        resp_mgr = safe_client.post(
+            f"/api/v1/performance/goals/{g1}/manager-review",
+            json={"rating": 4.5, "comments": "Manager review text"},
+            headers=mgr_headers,
+        )
+        assert resp_mgr.status_code == 500
+
+    # Verify manager review was NOT saved in database
+    db.expire_all()
+    mgr_rev = (
+        db.query(PerformanceReview)
+        .filter(
+            PerformanceReview.goal_id == uuid.UUID(g1),
+            PerformanceReview.reviewer_role == ReviewerRole.manager,
+        )
+        .first()
+    )
+    assert mgr_rev is None, "Manager review must NOT be saved when notification fails"
+
+
 def test_6_3_R11_rate_limit_review_write_routes(
     client: TestClient,
     p2_setup: dict[str, Any],
@@ -775,3 +848,26 @@ def test_6_5_R8_read_routes_rate_limited(
             hit_429 = True
             break
     assert hit_429, "Rate limit must trigger 429 on summary read routes"
+
+
+def test_6_5_R9_rate_limit_post_summary_finalize(
+    client: TestClient,
+    p2_setup: dict[str, Any],
+    limits_on: None,
+):
+    """L1 / L2: POST /summary/{employee_id} write route rate limit test (30/minute)."""
+    hr_headers = _auth_headers(p2_setup["hr_a"])
+    emp_id = str(p2_setup["emp_a"].id)
+    hit_429 = False
+    for i in range(40):
+        res = client.post(
+            f"/api/v1/performance/summary/{emp_id}",
+            headers=hr_headers,
+            json={"cycle_id": str(uuid.uuid4()), "overall_comments": f"Final comment {i}"},
+        )
+        if res.status_code == 429:
+            hit_429 = True
+            break
+    assert hit_429, (
+        "POST /api/v1/performance/summary/{employee_id} must trigger 429 when exceeding rate limit"
+    )

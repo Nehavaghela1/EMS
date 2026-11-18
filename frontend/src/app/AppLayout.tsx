@@ -1126,7 +1126,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 type="button"
                 id="btn-top-people"
                 onClick={() => setPeopleMenuOpen((p) => !p)}
-                title="Coworkers & Organization Members (Zoho People)"
+                title="Coworkers & Organization Members"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -1313,13 +1313,13 @@ export function AppLayout({ children }: { children: ReactNode }) {
               </svg>
             </button>
 
-            {/* Zoho 9-Dots / Apps Launcher Icon */}
+            {/* 9-Dots / Apps Launcher Icon */}
             <div ref={appsMenuRef} style={{ position: "relative" }}>
               <button
                 type="button"
                 id="btn-top-apps"
                 onClick={() => setAppsMenuOpen((prev) => !prev)}
-                title="Zoho Apps Suite"
+                title="Apps Suite"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -1355,7 +1355,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 </svg>
               </button>
 
-              {/* Zoho Apps Suite Popover Grid */}
+              {/* Apps Suite Popover Grid */}
               {appsMenuOpen && (
                 <div
                   style={{
@@ -1376,15 +1376,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
                     <div>
                       <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "#0f172a" }}>
-                        Zoho People Apps Suite
+                        Apps Suite
                       </div>
                       <div style={{ fontSize: "0.72rem", color: "#64748b" }}>
                         All workspace productivity modules
                       </div>
                     </div>
-                    <span style={{ fontSize: "0.68rem", fontWeight: 700, color: "#2563eb", background: "#eff6ff", padding: "2px 6px", borderRadius: "4px" }}>
-                      PRO
-                    </span>
                   </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
