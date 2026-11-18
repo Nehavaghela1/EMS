@@ -1222,3 +1222,158 @@ def test_d4_extended_pip_can_fail_with_atomic_termination(
     assert emp_db is not None
     assert emp_db.is_active is False or emp_db.resignation_status is not None
     assert emp_db.separation_type == "pip_failed"
+
+
+# ---------------------------------------------------------------------------
+# PART Z4: Two-step rollback tests
+# ---------------------------------------------------------------------------
+
+
+def test_z4_create_project_rollback_when_add_member_fails(
+    db: Session, gap_setup: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
+    """Z4 Action 1: create project then auto-add manager as member.
+    Force the second step (add_member) to raise and assert NOTHING from the
+    first step (project row) remains in the database.
+    """
+    from app.modules.projects.models import Project
+    from app.modules.projects.schemas import ProjectCreate
+    from app.modules.projects.service import ProjectService
+
+    cid = gap_setup["cid"]
+    pm_u = gap_setup["pm_u"]
+    pm_e = gap_setup["pm_e"]
+    service = ProjectService(db)
+
+    # Force second step to raise
+    def fail_add_member(*args, **kwargs):
+        raise RuntimeError("Simulated failure in add_member")
+
+    monkeypatch.setattr(service.repo, "add_member", fail_add_member)
+
+    code = f"Z4P{uuid.uuid4().hex[:4].upper()}"
+    proj_in = ProjectCreate(
+        name=f"Z4_Proj_{uuid.uuid4().hex[:6]}",
+        code=code,
+        budget=Decimal("50000.00"),
+        manager_id=pm_e.id,
+    )
+
+    with pytest.raises(RuntimeError, match="Simulated failure in add_member"):
+        service.create_project(cid, proj_in, actor=pm_u)
+
+    db.rollback()
+
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
+    proj = db.query(Project).filter(Project.company_id == cid, Project.code == code).first()
+    assert proj is None, "Project from first step must NOT be in the database after rollback"
+
+
+def test_z4_remove_member_rollback_when_repo_remove_fails(
+    client: TestClient, db: Session, gap_setup: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
+    """Z4 Action 2: remove member then unassign their open tasks.
+    Force the second step (remove_member in repo) to raise and assert
+    NOTHING from the first step (task unassignment) remains in the database.
+    """
+    from app.modules.projects.models import ProjectMember, Task
+    from app.modules.projects.service import ProjectService
+
+    proj_id_str, task_id_str = _create_project_and_task(client, gap_setup)
+    proj_id = uuid.UUID(proj_id_str)
+    task_id = uuid.UUID(task_id_str)
+    emp_id = gap_setup["emp_e"].id
+    cid = gap_setup["cid"]
+    hr_u = gap_setup["hr_u"]
+
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
+    task_before = db.get(Task, task_id)
+    assert task_before.assigned_to == emp_id
+
+    service = ProjectService(db)
+
+    # Force second step to raise
+    def fail_remove_member(*args, **kwargs):
+        raise RuntimeError("Simulated failure in remove_member")
+
+    monkeypatch.setattr(service.repo, "remove_member", fail_remove_member)
+
+    with pytest.raises(RuntimeError, match="Simulated failure in remove_member"):
+        service.remove_member(cid, proj_id, emp_id, actor=hr_u)
+
+    db.rollback()
+
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
+    task_after = db.get(Task, task_id)
+    assert task_after.assigned_to == emp_id, "Open task must still be assigned to member"
+    member = (
+        db.query(ProjectMember)
+        .filter(
+            ProjectMember.project_id == proj_id,
+            ProjectMember.employee_id == emp_id,
+        )
+        .first()
+    )
+    assert member is not None, "Member must still exist in the database"
+
+
+def test_z4_approve_time_entry_rollback_when_audit_fails(
+    client: TestClient, db: Session, gap_setup: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+):
+    """Z4 Action 3: approve a time entry.
+    Force the second step (audit record) to raise and assert
+    NOTHING from the first step (status change to approved) remains in the database.
+    """
+    from app.modules.projects.models import TimeEntry
+    from app.modules.projects.service import ProjectService
+
+    proj_id, task_id = _create_project_and_task(client, gap_setup)
+    emp_h = _auth_headers(gap_setup["emp_u"])
+
+    # Submit a time entry
+    today = utcnow().date()
+    r_sub = client.post(
+        "/api/v1/projects/time-entries",
+        json={
+            "project_id": str(proj_id),
+            "task_id": str(task_id),
+            "date": today.isoformat(),
+            "hours": "4.00",
+            "description": "Working on task 1",
+            "billable": True,
+            "status": "submitted",
+        },
+        headers=emp_h,
+    )
+    assert r_sub.status_code == 201
+    entry_id = uuid.UUID(r_sub.json()["id"])
+    cid = gap_setup["cid"]
+    pm_u = gap_setup["pm_u"]
+
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
+    entry_before = db.get(TimeEntry, entry_id)
+    assert entry_before.status == "submitted"
+
+    service = ProjectService(db)
+
+    # Force second step (audit) to raise
+    def fail_audit(*args, **kwargs):
+        raise RuntimeError("Simulated failure in audit.record")
+
+    monkeypatch.setattr(service.audit, "record", fail_audit)
+
+    with pytest.raises(RuntimeError, match="Simulated failure in audit.record"):
+        service.approve_reject_time_entry(
+            company_id=cid,
+            entry_id=entry_id,
+            status="approved",
+            approver_user_id=pm_u.id,
+            actor=pm_u,
+        )
+
+    db.rollback()
+
+    bind_tenant_to_session(db, company_id=cid, is_platform_admin=True)
+    entry_after = db.get(TimeEntry, entry_id)
+    assert entry_after.status == "submitted", "Time entry must remain submitted after rollback"
+    assert entry_after.approved_at is None

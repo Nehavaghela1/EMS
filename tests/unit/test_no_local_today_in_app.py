@@ -1,12 +1,12 @@
 from pathlib import Path
 
 
-def test_no_local_date_today_in_app_modules():
-    """B2 guard test: Ensure app/modules/ uses the UTC date helper (utcnow().date())
-    and never local date.today().
+def test_no_local_date_today_or_utcnow_in_app():
+    """B2 & Z3 guard test: Ensure app/ uses the UTC helpers (utcnow().date() and utcnow())
+    and never local date.today() or deprecated datetime.utcnow().
     """
-    root = Path(__file__).resolve().parents[2] / "app" / "modules"
-    assert root.exists() and root.is_dir(), f"Modules directory not found: {root}"
+    root = Path(__file__).resolve().parents[2] / "app"
+    assert root.exists() and root.is_dir(), f"App directory not found: {root}"
 
     violations: list[str] = []
     this_file = Path(__file__).resolve()
@@ -20,13 +20,14 @@ def test_no_local_date_today_in_app_modules():
             continue
 
         for line_no, line in enumerate(content.splitlines(), start=1):
-            # Fail if date.today() appears in code
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
+            rel = py_file.relative_to(root.parent)
             if "date.today()" in line:
-                violations.append(f"{py_file.relative_to(root.parent.parent)}:{line_no}: {line}")
+                violations.append(f"{rel}:{line_no}: forbidden date.today() -> {line}")
+            if "datetime.utcnow()" in line:
+                violations.append(f"{rel}:{line_no}: forbidden datetime.utcnow() -> {line}")
 
-    assert not violations, "Found forbidden local date.today() in app/modules/:\n" + "\n".join(
-        violations
-    )
+    msg = "Found forbidden date.today() or datetime.utcnow() in app/:\n" + "\n".join(violations)
+    assert not violations, msg
