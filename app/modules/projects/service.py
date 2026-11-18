@@ -508,9 +508,9 @@ class ProjectService:
                                 elif s.ctc and s.ctc > 0:
                                     monthly_cost = s.ctc / Decimal("12")
                                     standard_hours = self.get_standard_monthly_hours(p_cid, e.date)
-                                    matching_rate = (
-                                        monthly_cost / standard_hours
-                                    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                                    matching_rate = (monthly_cost / standard_hours).quantize(
+                                        Decimal("0.01"), rounding=ROUND_HALF_UP
+                                    )
                     if matching_rate is None:
                         no_salary_data = True
                         hours_without_salary_data += Decimal(str(e.hours))

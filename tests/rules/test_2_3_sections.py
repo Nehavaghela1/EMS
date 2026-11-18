@@ -3,8 +3,6 @@ import uuid
 from datetime import date, timedelta
 from typing import Any
 
-from app.core.time import utcnow
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
