@@ -33,8 +33,8 @@ from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.models import Employee, EmploymentType, ResignationStatus
 from app.modules.hr.repository import EmployeeRepository
-from app.modules.identity.models import User, UserRole
-from app.modules.identity.repository import CompanyRepository, UserRepository
+from app.modules.identity.models import PayrollWorkingDaysBasis, User, UserRole
+from app.modules.identity.repository import CompanyRepository, CompanySettingsRepository, UserRepository
 from app.modules.payroll.models import (
     CalculationType,
     EmployeeBankAccount,
@@ -1337,6 +1337,7 @@ class PayrollRunService:
         self.project_repo = ProjectRepository(db)
         self.payment_repo = PayrollRunPaymentRepository(db)
         self.bank_repo = EmployeeBankAccountRepository(db)
+        self.settings_repo = CompanySettingsRepository(db)
         self.notification_service = NotificationService(db)
         self.audit = AuditService(db)
 
@@ -1634,14 +1635,29 @@ class PayrollRunService:
 
             component_specs = self._component_specs(structure)
 
-            # ── Attendance: pay is prorated over the calendar days of the month ───────
-            working_days = Decimal(str(last_day))
+            # ── Attendance: prorated over working days, calendar days, or fixed 30 per company settings ───
+            settings = self.settings_repo.get_by_company(company_id)
+            emp_working_dates = self.leave_service.working_dates(
+                company_id, emp.department_id, month_start, month_end
+            )
+            basis = (
+                settings.payroll_working_days_basis
+                if settings is not None
+                else PayrollWorkingDaysBasis.calendar_days
+            )
+            if basis == PayrollWorkingDaysBasis.calendar_days:
+                working_days = Decimal(str(last_day))
+            elif basis == PayrollWorkingDaysBasis.working_days:
+                working_days = Decimal(str(len(emp_working_dates)))
+            elif basis == PayrollWorkingDaysBasis.fixed_30:
+                working_days = Decimal("30.0")
+            else:
+                raise ValueError(f"Unsupported payroll working days basis: {basis}")
+
             summary = summarise_attendance(
                 month_start=month_start,
                 month_end=month_end,
-                working_dates=self.leave_service.working_dates(
-                    company_id, emp.department_id, month_start, month_end
-                ),
+                working_dates=emp_working_dates,
                 joined_on=emp.hire_date,
                 last_working_date=self._approved_last_working_date(emp),
                 attendance=self.attendance_repo.status_by_date(
@@ -1717,15 +1733,19 @@ class PayrollRunService:
             # The engine applies the LOP ratio (paid_days/working_days) to scale
             # earned_gross down. Statutory deductions (EPF, ESI, PT) are then
             # computed on earned_gross — not full gross — satisfying Indian law.
-            segments = self._salary_segments(
-                company_id,
-                month_salaries,
-                component_specs,
-                month_start,
-                month_end,
-                summary.lop_by_date,
+            segments = (
+                self._salary_segments(
+                    company_id,
+                    month_salaries,
+                    component_specs,
+                    month_start,
+                    month_end,
+                    summary.lop_by_date,
+                )
+                if len(month_salaries) > 1
+                else None
             )
-            if segments is None:
+            if segments is None and len(month_salaries) > 1:
                 skipped.append({"employee_id": str(emp.id), "reason": "no_structure"})
                 continue
 

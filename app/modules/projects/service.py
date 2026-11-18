@@ -59,6 +59,28 @@ class ProjectService:
         self.repo = ProjectRepository(db)
         self.audit = AuditService(db)
         self.notifications = NotificationService(db)
+        from app.modules.identity.repository import CompanySettingsRepository
+        from app.modules.time_leave.service import LeaveService
+
+        self.settings_repo = CompanySettingsRepository(db)
+        self.leave_service = LeaveService(db)
+
+    def get_standard_monthly_hours(self, company_id: UUID, on_date: date) -> Decimal:
+        """Dynamic standard monthly hours = that month's working days x full_day_hours.
+        Fallback to 22 x 8 = 176.00 if no settings row."""
+        from calendar import monthrange
+
+        settings = self.settings_repo.get_by_company(company_id)
+        if settings is None:
+            return STANDARD_MONTHLY_HOURS
+
+        _, last_day = monthrange(on_date.year, on_date.month)
+        m_start = date(on_date.year, on_date.month, 1)
+        m_end = date(on_date.year, on_date.month, last_day)
+        w_dates = self.leave_service.working_dates(company_id, None, m_start, m_end)
+        w_days = Decimal(str(len(w_dates)))
+        full_hours = Decimal(str(settings.full_day_hours))
+        return (w_days * full_hours).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     def _to_project_response(self, project) -> ProjectResponse:
         resp = ProjectResponse.model_validate(project)
@@ -485,8 +507,9 @@ class ProjectService:
                                     matching_rate = s.hourly_rate
                                 elif s.ctc and s.ctc > 0:
                                     monthly_cost = s.ctc / Decimal("12")
+                                    standard_hours = self.get_standard_monthly_hours(p_cid, e.date)
                                     matching_rate = (
-                                        monthly_cost / STANDARD_MONTHLY_HOURS
+                                        monthly_cost / standard_hours
                                     ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                     if matching_rate is None:
                         no_salary_data = True
