@@ -348,7 +348,9 @@ def list_pt_slabs(
 
 
 @pt_slabs_router.put("", response_model=list[PtSlabResponse])
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def put_pt_slabs(
+    request: Request,
     data: PtSlabPutRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.super_admin)),
@@ -377,7 +379,9 @@ def list_tax_slabs(
 
 
 @tax_slabs_router.post("", response_model=list[TaxSlabResponse], status_code=201)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def post_tax_slabs(
+    request: Request,
     data: TaxSlabPostRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.super_admin)),

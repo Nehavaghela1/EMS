@@ -2,7 +2,7 @@ import logging
 import uuid
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -34,7 +34,11 @@ from app.core.time import utcnow
 from app.modules.hr.models import Employee, EmploymentType, ResignationStatus
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import PayrollWorkingDaysBasis, User, UserRole
-from app.modules.identity.repository import CompanyRepository, CompanySettingsRepository, UserRepository
+from app.modules.identity.repository import (
+    CompanyRepository,
+    CompanySettingsRepository,
+    UserRepository,
+)
 from app.modules.payroll.models import (
     CalculationType,
     EmployeeBankAccount,
@@ -1635,7 +1639,7 @@ class PayrollRunService:
 
             component_specs = self._component_specs(structure)
 
-            # ── Attendance: prorated over working days, calendar days, or fixed 30 per company settings ───
+            # ── Attendance: prorated over working days, calendar days, or fixed 30 ────
             settings = self.settings_repo.get_by_company(company_id)
             emp_working_dates = self.leave_service.working_dates(
                 company_id, emp.department_id, month_start, month_end
@@ -2012,7 +2016,6 @@ class PayrollRunService:
             )
 
     def approve_run(self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User) -> PayrollRun:
-        from sqlalchemy import update
 
         run = self.repo.get_by_id_for_update(run_id, company_id)
         if run is None:
@@ -2092,7 +2095,13 @@ class PayrollRunService:
         item_map = {item.id: item for item in items}
 
         today_utc = utcnow().date()
-        approved_date = run.approved_at.date() if run.approved_at else today_utc
+        if run.approved_at:
+            if run.approved_at.tzinfo is not None:
+                approved_date = run.approved_at.astimezone(UTC).date()
+            else:
+                approved_date = run.approved_at.date()
+        else:
+            approved_date = today_utc
         updated_item_ids: list[str] = []
         paid_employees: list[uuid.UUID] = []
 
@@ -2103,7 +2112,7 @@ class PayrollRunService:
 
             if item.payment_status == "paid":
                 raise ConflictError(
-                    f"Payroll item {item.id} has already been marked as paid and cannot be modified."
+                    f"Payroll item {item.id} has already been paid and cannot be modified."
                 )
 
             if p.status == "paid":
@@ -2145,11 +2154,7 @@ class PayrollRunService:
                     )
                 ).all()
             )
-            emp_users = {
-                emp.id: emp.user_id
-                for emp in emp_rows
-                if emp.user_id is not None
-            }
+            emp_users = {emp.id: emp.user_id for emp in emp_rows if emp.user_id is not None}
         for emp_id in paid_employees:
             u_id = emp_users.get(emp_id)
             if u_id:
@@ -2197,7 +2202,6 @@ class PayrollRunService:
         # run but never finalised. Since approve_run hasn't been called yet,
         # their status is still APPROVED (not PAID). Clear the run reference so
         # they roll forward into the next pay cycle automatically.
-        from sqlalchemy import update
 
         self.db.execute(
             update(Reimbursement)

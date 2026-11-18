@@ -102,6 +102,7 @@ def refresh_token(
 
 
 @router.post("/logout", status_code=204)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def logout(
     request: Request,
     response: Response,
@@ -114,7 +115,9 @@ def logout(
 
 
 @router.post("/logout-all", status_code=204)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def logout_all(
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -335,7 +338,9 @@ def get_my_company(
 
 
 @companies_router.put("/me", response_model=CompanyResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def update_my_company(
+    request: Request,
     data: CompanyProfileUpdateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin)),
@@ -461,7 +466,9 @@ def get_company_detail(
 
 
 @companies_router.put("/{company_id}", response_model=CompanyResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def update_company(
+    request: Request,
     company_id: uuid.UUID,
     data: AdminCompanyUpdateRequest,
     db: Session = Depends(get_tenant_db),
@@ -471,7 +478,9 @@ def update_company(
 
 
 @companies_router.post("/{company_id}/approve", response_model=CompanyApproveResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def approve_company(
+    request: Request,
     company_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     admin: User = Depends(require_role(UserRole.super_admin)),
@@ -484,7 +493,9 @@ def approve_company(
 
 
 @companies_router.post("/{company_id}/reject", response_model=CompanyResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def reject_company(
+    request: Request,
     company_id: uuid.UUID,
     data: CompanyRejectRequest,
     db: Session = Depends(get_tenant_db),
@@ -494,7 +505,9 @@ def reject_company(
 
 
 @companies_router.post("/{company_id}/deactivate")
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def deactivate_company(
+    request: Request,
     company_id: uuid.UUID,
     data: CompanyDeactivateRequest,
     current_user: User = Depends(require_role(UserRole.owner, UserRole.super_admin)),
@@ -509,7 +522,9 @@ def deactivate_company(
 
 
 @companies_router.post("/{company_id}/reactivate", response_model=CompanyResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
 def reactivate_company(
+    request: Request,
     company_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     admin: User = Depends(require_role(UserRole.super_admin)),
