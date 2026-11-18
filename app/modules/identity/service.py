@@ -117,7 +117,7 @@ class CompanyRequiredError(ConflictError):
 
     code = "company_required"
 
-    def __init__(self, companies: list[str]) -> None:
+    def __init__(self, companies: list[dict[str, str]]) -> None:
         super().__init__(
             "This email is registered at more than one company.",
             details={"companies": companies},
@@ -357,8 +357,10 @@ class AuthService:
         if len(matched) > 1:
             # Same email AND same password at two companies. Only someone who
             # already proved the password reaches this branch, so the company
-            # names leak nothing.
-            raise CompanyRequiredError(companies=[u.company.name for u in matched])
+            # names and codes leak nothing.
+            raise CompanyRequiredError(
+                companies=[{"name": u.company.name, "code": u.company.code} for u in matched]
+            )
 
         user = matched[0]
 
