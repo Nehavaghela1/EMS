@@ -323,7 +323,9 @@ def list_performance_summaries(
 
 
 @performance_router.post("/summary/{employee_id}", response_model=PerformanceSummaryResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def finalize_performance_summary(
+    request: Request,
     employee_id: uuid.UUID,
     data: SummaryFinalizeRequest,
     db: Session = Depends(get_tenant_db),
@@ -338,7 +340,9 @@ def finalize_performance_summary(
 
 
 @performance_router.post("/pips", response_model=PerformancePIPResponse, status_code=201)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def initiate_pip(
+    request: Request,
     data: PIPCreateRequest,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
@@ -348,7 +352,9 @@ def initiate_pip(
 
 
 @performance_router.post("/pips/{pip_id}/activate", response_model=PerformancePIPResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def activate_pip(
+    request: Request,
     pip_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
@@ -358,7 +364,9 @@ def activate_pip(
 
 
 @performance_router.post("/pips/{pip_id}/extend", response_model=PerformancePIPResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def extend_pip(
+    request: Request,
     pip_id: uuid.UUID,
     data: PIPExtendRequest,
     db: Session = Depends(get_tenant_db),
@@ -371,7 +379,9 @@ def extend_pip(
 @performance_router.post(
     "/pips/{pip_id}/check-ins", response_model=PIPCheckInResponse, status_code=201
 )
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def add_pip_checkin(
+    request: Request,
     pip_id: uuid.UUID,
     data: PIPCheckInCreateRequest,
     db: Session = Depends(get_tenant_db),
@@ -434,7 +444,9 @@ def get_active_pip(
 
 
 @performance_router.post("/pips/{pip_id}/evaluate", response_model=PerformancePIPResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def evaluate_pip(
+    request: Request,
     pip_id: uuid.UUID,
     data: PIPEvaluateRequest,
     db: Session = Depends(get_tenant_db),
