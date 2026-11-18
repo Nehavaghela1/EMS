@@ -31,6 +31,7 @@ from app.modules.payroll.schemas import (
     EmployeeSalaryResponse,
     PaymentExclusion,
     PayrollItemResponse,
+    PayrollPaymentRecordRequest,
     PayrollRunCreateRequest,
     PayrollRunDetailResponse,
     PayrollRunResponse,
@@ -569,6 +570,20 @@ def approve_payroll_run(
 ):
     service = PayrollRunService(db)
     run = service.approve_run(user.company_id, id, user)
+    return PayrollRunResponse.model_validate(run)
+
+
+@payroll_runs_router.post("/{id}/payments", response_model=PayrollRunResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def record_payroll_payments(
+    request: Request,
+    id: uuid.UUID,
+    data: PayrollPaymentRecordRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
+):
+    service = PayrollRunService(db)
+    run = service.record_payments(user.company_id, id, data, user)
     return PayrollRunResponse.model_validate(run)
 
 

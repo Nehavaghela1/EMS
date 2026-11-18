@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -83,6 +84,7 @@ from app.modules.payroll.repository import (
 from app.modules.payroll.schemas import (
     BankAccountRequest,
     BankAccountResponse,
+    PayrollPaymentRecordRequest,
     PayrollRunCreateRequest,
     PtSlabPutRequest,
     ReimbursementCreateRequest,
@@ -1335,6 +1337,7 @@ class PayrollRunService:
         self.project_repo = ProjectRepository(db)
         self.payment_repo = PayrollRunPaymentRepository(db)
         self.bank_repo = EmployeeBankAccountRepository(db)
+        self.notification_service = NotificationService(db)
         self.audit = AuditService(db)
 
     def create_run(
@@ -2041,6 +2044,116 @@ class PayrollRunService:
                 "year": run.year,
                 "status": run.status.value,
                 "total_employees": run.total_employees,
+            },
+        )
+        self.db.commit()
+        return run
+
+    def record_payments(
+        self,
+        company_id: uuid.UUID,
+        run_id: uuid.UUID,
+        data: PayrollPaymentRecordRequest,
+        actor: User,
+    ) -> PayrollRun:
+        """Mark items in an approved run as paid or failed (5.10).
+        If all items are paid, run status transitions to 'paid'."""
+        run = self.repo.get_by_id_for_update(run_id, company_id)
+        if run is None:
+            raise NotFoundError("Payroll run not found.")
+
+        if run.status not in (PayrollRunStatus.approved, PayrollRunStatus.paid):
+            raise ConflictError(
+                f"Cannot record payments for a run with status '{run.status.value}'. "
+                "Only an approved run can have payments recorded."
+            )
+
+        items = self.item_repo.list_by_run_id_for_update(run.id, company_id)
+        item_map = {item.id: item for item in items}
+
+        today_utc = utcnow().date()
+        approved_date = run.approved_at.date() if run.approved_at else today_utc
+        updated_item_ids: list[str] = []
+        paid_employees: list[uuid.UUID] = []
+
+        for p in data.payments:
+            if p.item_id not in item_map:
+                raise NotFoundError(f"Payroll item {p.item_id} not found in this run.")
+            item = item_map[p.item_id]
+
+            if item.payment_status == "paid":
+                raise ConflictError(
+                    f"Payroll item {item.id} has already been marked as paid and cannot be modified."
+                )
+
+            if p.status == "paid":
+                paid_on = p.paid_on or today_utc
+                if paid_on > today_utc:
+                    raise ValidationError(
+                        "Payment date cannot be in the future.",
+                        details={"field": "paid_on"},
+                    )
+                if paid_on < approved_date:
+                    raise ValidationError(
+                        "Payment date cannot be before the payroll run approval date.",
+                        details={"field": "paid_on"},
+                    )
+                item.payment_status = "paid"
+                item.paid_on = paid_on
+                item.bank_reference = p.bank_reference
+                paid_employees.append(item.employee_id)
+            else:
+                item.payment_status = "failed"
+                item.paid_on = None
+                item.bank_reference = p.bank_reference
+
+            updated_item_ids.append(str(item.id))
+
+        # Check if all items in the run are paid
+        if all(it.payment_status == "paid" for it in items):
+            run.status = PayrollRunStatus.paid
+            self.repo.update(run, status=PayrollRunStatus.paid)
+
+        # Notify employees who were marked paid (after commit or during transaction via notify)
+        emp_users: dict[uuid.UUID, uuid.UUID] = {}
+        if paid_employees:
+            emp_rows = list(
+                self.db.scalars(
+                    select(Employee).where(
+                        Employee.company_id == company_id,
+                        Employee.id.in_(paid_employees),
+                    )
+                ).all()
+            )
+            emp_users = {
+                emp.id: emp.user_id
+                for emp in emp_rows
+                if emp.user_id is not None
+            }
+        for emp_id in paid_employees:
+            u_id = emp_users.get(emp_id)
+            if u_id:
+                self.notification_service.notify(
+                    company_id=company_id,
+                    user_id=u_id,
+                    type="PAYROLL_PAID",
+                    title="Salary Disbursed",
+                    message=f"Your salary for {run.month}/{run.year} has been marked as paid.",
+                    action_url="/payroll/payslips/me",
+                    entity_type="payroll_run",
+                    entity_id=run.id,
+                )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PAYROLL_PAYMENT_RECORDED",
+            entity_type="payroll_run",
+            entity_id=run.id,
+            details={
+                "run_id": str(run.id),
+                "item_ids": updated_item_ids,
+                "fields_changed": ["payment_status", "paid_on", "bank_reference"],
             },
         )
         self.db.commit()

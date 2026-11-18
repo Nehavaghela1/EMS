@@ -526,11 +526,35 @@ class PayrollItemResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PayrollItemDetailResponse(PayrollItemResponse):
+    payment_status: str = "pending"
+    paid_on: date | None = None
+    bank_reference: str | None = None
+
+
 class PaymentExclusion(BaseModel):
     """An employee left out of a run's payment file, and why. Never a bank detail or an amount."""
 
     employee_id: uuid.UUID
     reason: str
+
+
+class PayrollPaymentItemInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: uuid.UUID
+    status: Literal["paid", "failed"]
+    paid_on: date | None = None
+    bank_reference: Annotated[
+        str | None,
+        StringConstraints(max_length=64, pattern=r"^[A-Za-z0-9_\-\.\/\s]+$"),
+    ] = None
+
+
+class PayrollPaymentRecordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    payments: list[PayrollPaymentItemInput]
 
 
 class PayrollRunDetailResponse(BaseModel):

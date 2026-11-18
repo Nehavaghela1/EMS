@@ -677,6 +677,21 @@ class PayrollItemRepository:
             ).all()
         )
 
+    def list_by_run_id_for_update(
+        self, run_id: uuid.UUID, company_id: uuid.UUID
+    ) -> list[PayrollItem]:
+        return list(
+            self.db.scalars(
+                select(PayrollItem)
+                .where(
+                    PayrollItem.payroll_run_id == run_id,
+                    PayrollItem.company_id == company_id,
+                    PayrollItem.deleted_at.is_(None),
+                )
+                .with_for_update()
+            ).all()
+        )
+
     def list_by_employee_id(
         self, company_id: uuid.UUID, employee_id: uuid.UUID
     ) -> list[PayrollItem]:
