@@ -327,9 +327,7 @@ class DashboardService:
             return cached
 
         today = utcnow().date()
-        if user.role == UserRole.super_admin:
-            data = self._super_admin_data()
-        elif user.role in (UserRole.hr_admin, UserRole.owner):
+        if user.role in (UserRole.hr_admin, UserRole.owner):
             data = self._hr_admin_data(company_id, today)
         elif user.role == UserRole.manager:
             data = self._manager_data(company_id, user, today)
@@ -351,14 +349,6 @@ class DashboardService:
         role/user combination cached under this company, not just the
         caller's own."""
         delete_by_prefix(f"dashboard:{company_id}:")
-
-    def _super_admin_data(self) -> dict[str, Any]:
-        counts = self.repo.company_counts_by_status()
-        return {
-            "company_counts_by_status": counts,
-            "pending_approvals": counts.get("pending", 0),
-            "platform_user_count": self.repo.platform_user_count(),
-        }
 
     def _hr_admin_data(self, company_id: uuid.UUID, today: date) -> dict[str, Any]:
         return {

@@ -6,7 +6,12 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.dependencies import get_current_user, get_tenant_db, require_role
+from app.core.dependencies import (
+    get_current_user,
+    get_tenant_db,
+    require_company_role,
+    require_platform_role,
+)
 from app.core.otp import check_and_increment_account_limit
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
@@ -16,6 +21,7 @@ from app.modules.identity.models import CompanyStatus, User, UserRole
 from app.modules.identity.schemas import (
     ActivateAccountRequest,
     ActivationPreviewResponse,
+    AdminCompanyDeactivateRequest,
     AdminCompanyUpdateRequest,
     AdminUserResponse,
     ChangePasswordRequest,
@@ -293,7 +299,7 @@ def create_workspace(
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
-    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.owner, UserRole.hr_admin)),
 ):
     company, token_response, raw_refresh = CompanyService(db).create_workspace(
         user, data, device_info=request.headers.get("user-agent")
@@ -314,7 +320,7 @@ def list_companies(
     sort: str | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    _admin: User = Depends(require_role(UserRole.super_admin)),
+    _admin: User = Depends(require_platform_role()),
 ):
     items, total, pages = CompanyService(db).list_companies(
         status=status, q=q, country=country, sort=sort, page_params=params
@@ -332,7 +338,7 @@ def list_companies(
 @companies_router.get("/me", response_model=CompanyResponse)
 def get_my_company(
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     return CompanyService(db).get_my_company(user.company_id)
 
@@ -343,9 +349,24 @@ def update_my_company(
     request: Request,
     data: CompanyProfileUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     return CompanyService(db).update_my_company(user.company_id, data)
+
+
+@companies_router.post("/me/deactivate")
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
+def deactivate_my_company(
+    request: Request,
+    data: CompanyDeactivateRequest,
+    current_user: User = Depends(require_company_role(UserRole.owner)),
+    db: Session = Depends(get_tenant_db),
+):
+    return CompanyService(db).deactivate_my_company(
+        actor=current_user,
+        reason=data.reason,
+        password=data.password,
+    )
 
 
 @companies_router.get("/notice-period-defaults", response_model=NoticePeriodDefaults)
@@ -353,7 +374,7 @@ def update_my_company(
 def get_notice_period_defaults(
     request: Request,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(*HR_LEVEL_ROLES)),
+    user: User = Depends(require_company_role(*HR_LEVEL_ROLES)),
 ):
     return CompanyService(db).get_notice_period_defaults(user.company_id)
 
@@ -364,7 +385,7 @@ def update_notice_period_defaults(
     request: Request,
     data: NoticePeriodDefaults,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     return CompanyService(db).update_notice_period_defaults(
         user.company_id, data.model_dump(), actor=user
@@ -376,7 +397,7 @@ def update_notice_period_defaults(
 def list_locations(
     is_active: bool | None = None,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     return LocationService(db).list_locations(user.company_id, is_active=is_active)
 
@@ -387,7 +408,7 @@ def create_location(
     request: Request,
     data: CompanyLocationCreate,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.owner, UserRole.hr_admin)),
 ):
     return LocationService(db).create_location(user.company_id, data, actor=user)
 
@@ -399,7 +420,7 @@ def update_location(
     location_id: uuid.UUID,
     data: CompanyLocationUpdate,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.owner, UserRole.hr_admin)),
 ):
     return LocationService(db).update_location(user.company_id, location_id, data, actor=user)
 
@@ -415,7 +436,7 @@ def deactivate_location(
     request: Request,
     location_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.owner, UserRole.hr_admin)),
 ):
     return LocationService(db).deactivate_location(user.company_id, location_id, actor=user)
 
@@ -431,7 +452,7 @@ def reactivate_location(
     request: Request,
     location_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.owner, UserRole.hr_admin)),
 ):
     return LocationService(db).reactivate_location(user.company_id, location_id, actor=user)
 
@@ -444,7 +465,7 @@ def set_head_office(
     request: Request,
     location_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.owner, UserRole.hr_admin)),
 ):
     return LocationService(db).set_head_office(user.company_id, location_id, actor=user)
 
@@ -453,7 +474,7 @@ def set_head_office(
 def get_company_detail(
     company_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    _admin: User = Depends(require_role(UserRole.super_admin)),
+    _admin: User = Depends(require_platform_role()),
 ):
     company, counts = CompanyService(db).get_company_detail(company_id)
     base_data = CompanyResponse.model_validate(company).model_dump()
@@ -472,7 +493,7 @@ def update_company(
     company_id: uuid.UUID,
     data: AdminCompanyUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    _admin: User = Depends(require_role(UserRole.super_admin)),
+    _admin: User = Depends(require_platform_role()),
 ):
     return CompanyService(db).update_company_by_admin(company_id, data)
 
@@ -483,7 +504,7 @@ def approve_company(
     request: Request,
     company_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    admin: User = Depends(require_role(UserRole.super_admin)),
+    admin: User = Depends(require_platform_role()),
 ):
     company, hr_admin_email = CompanyService(db).approve_company(company_id, admin.id)
     return CompanyApproveResponse(
@@ -499,7 +520,7 @@ def reject_company(
     company_id: uuid.UUID,
     data: CompanyRejectRequest,
     db: Session = Depends(get_tenant_db),
-    admin: User = Depends(require_role(UserRole.super_admin)),
+    admin: User = Depends(require_platform_role()),
 ):
     return CompanyService(db).reject_company(company_id, data.reason, admin_user=admin)
 
@@ -509,15 +530,14 @@ def reject_company(
 def deactivate_company(
     request: Request,
     company_id: uuid.UUID,
-    data: CompanyDeactivateRequest,
-    current_user: User = Depends(require_role(UserRole.owner, UserRole.super_admin)),
+    data: AdminCompanyDeactivateRequest,
+    current_user: User = Depends(require_platform_role()),
     db: Session = Depends(get_tenant_db),
 ):
-    return CompanyService(db).deactivate_company(
+    return CompanyService(db).deactivate_company_by_admin(
         company_id=company_id,
         reason=data.reason,
         actor=current_user,
-        password=data.password,
     )
 
 
@@ -527,7 +547,7 @@ def reactivate_company(
     request: Request,
     company_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    admin: User = Depends(require_role(UserRole.super_admin)),
+    admin: User = Depends(require_platform_role()),
 ):
     company = CompanyService(db).reactivate_company(company_id=company_id, actor=admin)
     return CompanyResponse.model_validate(company)
@@ -543,7 +563,7 @@ def update_user_role(
     user_id: uuid.UUID,
     data: UserRoleUpdateRequest,
     request: Request,
-    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+    current_user: User = Depends(require_company_role(UserRole.owner, UserRole.hr_admin)),
     db: Session = Depends(get_tenant_db),
 ):
     return RoleChangeService(db).change_role(
@@ -555,7 +575,7 @@ def update_user_role(
 
 @users_router.get("/administrators", response_model=list[AdminUserResponse])
 def list_administrators(
-    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+    current_user: User = Depends(require_company_role(UserRole.owner, UserRole.hr_admin)),
     db: Session = Depends(get_tenant_db),
 ):
     """Return all users in the tenant who hold an administrative role (owner or hr_admin).

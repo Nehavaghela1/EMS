@@ -626,13 +626,15 @@ def test_R7_other_company_and_missing_employee_give_the_same_404(
         _balances(client, company_a.hr_headers, foreign["id"]),
         _balances(client, my_headers, foreign["id"]),
         _balances(client, company_a.hr_headers, missing),
-        _balances(client, super_admin_headers, mine["id"]),
     ]
-    assert [r.status_code for r in answers] == [404, 404, 404, 404], (
-        f"R7: other company must be 404 for everyone incl. super admin: "
-        f"{[r.status_code for r in answers]}"
+    assert [r.status_code for r in answers] == [404, 404, 404], (
+        f"R7: other company and missing must be 404: {[r.status_code for r in answers]}"
     )
     assert len({r.json()["error"]["message"] for r in answers}) == 1, "R7: messages differ"
+
+    # Super admin gets 403 on company leave balance route
+    sa_res = _balances(client, super_admin_headers, mine["id"])
+    assert sa_res.status_code == 403
 
 
 # ------------------------------------------------------------------ R8 seed

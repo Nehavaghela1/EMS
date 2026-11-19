@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
 
 from app.core.config import settings
-from app.core.dependencies import get_current_user, get_tenant_db, require_role
+from app.core.dependencies import get_tenant_db, require_company_role
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.jobs import authorize_export_job
 from app.core.pagination import Page, PageParams, page_params
@@ -123,7 +123,7 @@ def check_in(
     request: Request,
     body: CheckInRequest | None = None,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     record = AttendanceService(db).check_in(user.company_id, user, body)
     return _to_attendance_response(record, db)
@@ -134,7 +134,7 @@ def check_in(
 def check_out(
     request: Request,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     record = AttendanceService(db).check_out(user.company_id, user)
     return _to_attendance_response(record, db)
@@ -146,7 +146,7 @@ def export_attendance(
     request: Request,
     data: AttendanceExportRequest,
     db=Depends(get_tenant_db),
-    _user: User = Depends(require_role(UserRole.hr_admin)),
+    _user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     job_id = AttendanceService(db).queue_export(_user.company_id, data, user_id=_user.id)
     return JobQueuedResponse(job_id=job_id)
@@ -158,7 +158,7 @@ def download_attendance_export(
     job_id: str,
     request: Request,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     authorize_export_job(job_id, user, not_found_message="Export not found.")
 
@@ -218,7 +218,7 @@ def get_attendance_calendar(
     year: int = Query(ge=2000, le=2100),
     employee_id: uuid.UUID | None = None,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     """Normalized month-grid matrix of attendance, holidays, and leaves."""
     return AttendanceService(db).get_calendar(
@@ -241,14 +241,9 @@ def list_attendance(
     department_id: uuid.UUID | None = None,
     params: PageParams = Depends(page_params),
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     target_company_id = user.company_id
-    if user.role == UserRole.super_admin and employee_id is not None:
-        target_emp = db.query(Employee).filter(Employee.id == employee_id).first()
-        if target_emp:
-            target_company_id = target_emp.company_id
-
     items, total, pages = AttendanceService(db).list_attendance(
         target_company_id,
         user,
@@ -275,7 +270,7 @@ def get_attendance(
     attendance_id: uuid.UUID,
     request: Request,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     record = AttendanceService(db).get_attendance(user.company_id, attendance_id, user)
     return _to_attendance_response(record, db)
@@ -288,7 +283,7 @@ def regularize_attendance(
     attendance_id: uuid.UUID,
     data: AttendanceRegularizeRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     record = AttendanceService(db).regularize(user.company_id, attendance_id, data, user)
     return _to_attendance_response(record, db)
@@ -302,7 +297,7 @@ def get_attendance_regularization(
     request: Request,
     attendance_id: uuid.UUID,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     return AttendanceService(db).get_regularization_for_attendance(
         user.company_id, attendance_id, user
@@ -322,7 +317,7 @@ async def request_regularization(
     attendance_id: uuid.UUID,
     request: Request,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     """JSON body, or multipart form with an optional `attachment` file (pdf, png, jpg, jpeg).
     The file is checked and stored under a server-made name; the client never sets a link."""
@@ -370,7 +365,7 @@ def download_regularization_attachment(
     request: Request,
     filename: str,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     """The only way to read an attachment: requester, their approvers and HR-level users."""
     path = AttendanceService(db).resolve_regularization_attachment(
@@ -388,7 +383,7 @@ def approve_regularization(
     regularization_id: uuid.UUID,
     data: AttendanceRegularizationApprove,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     record = AttendanceService(db).approve_regularization(
         user.company_id, regularization_id, data, user
@@ -402,7 +397,7 @@ def delete_attendance(
     request: Request,
     attendance_id: uuid.UUID,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     AttendanceService(db).delete_attendance(user.company_id, attendance_id, user)
 
@@ -413,7 +408,7 @@ def list_shifts(
     request: Request,
     params: PageParams = Depends(page_params),
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     items, total, pages = ShiftService(db).list_shifts(user.company_id, params)
     return Page(
@@ -432,7 +427,7 @@ def create_shift(
     request: Request,
     data: ShiftCreateRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     shift = ShiftService(db).create_shift(user.company_id, data, actor=user)
     return _to_shift_response(shift)
@@ -445,7 +440,7 @@ def update_shift_assignment(
     request: Request,
     data: ShiftAssignmentUpdateRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     assignment = ShiftService(db).update_assignment(
         user.company_id, assignment_id, data, actor=user
@@ -460,7 +455,7 @@ def update_shift(
     request: Request,
     data: ShiftUpdateRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     shift = ShiftService(db).update_shift(user.company_id, shift_id, data, actor=user)
     return _to_shift_response(shift)
@@ -472,7 +467,7 @@ def delete_shift(
     shift_id: uuid.UUID,
     request: Request,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     ShiftService(db).delete_shift(user.company_id, shift_id, actor=user)
 
@@ -484,7 +479,7 @@ def assign_shift(
     request: Request,
     data: ShiftAssignRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     assignment = ShiftService(db).assign_shift(user.company_id, shift_id, data, actor=user)
     return _to_employee_shift_response(assignment)
@@ -496,7 +491,7 @@ def get_assigned_shift(
     employee_id: uuid.UUID,
     request: Request,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     result = ShiftService(db).get_assigned_shift(user.company_id, employee_id, actor=user)
     if not result:
@@ -522,7 +517,7 @@ def list_holidays(
     request: Request,
     year: int | None = Query(default=None, ge=2000, le=2100),
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     target_year = year if year is not None else utcnow().date().year
     holidays = HolidayService(db).list_holidays(user.company_id, target_year)
@@ -535,7 +530,7 @@ def create_holiday(
     request: Request,
     data: HolidayCreateRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     holiday = HolidayService(db).create_holiday(user.company_id, data, user)
     return _to_holiday_response(holiday)
@@ -547,7 +542,7 @@ def delete_holiday(
     request: Request,
     holiday_id: uuid.UUID,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     HolidayService(db).delete_holiday(user.company_id, holiday_id, user)
 
@@ -556,7 +551,7 @@ def delete_holiday(
 @limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_supported_holiday_regions(
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ) -> dict:
     """Returns all supported countries and regional states/territories
     for statutory holiday import.
@@ -571,7 +566,7 @@ def preview_regional_holidays(
     country: str = "IN",
     state: str = "Gujarat",
     year: int = Query(default=2026, ge=2000, le=2100),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ) -> list[dict]:
     """Preview of the statutory public holiday list for a country, state and
     year, to look at before importing. The lists come from the project's own
@@ -596,7 +591,7 @@ def import_regional_holidays(
     request: Request,
     data: HolidayImportRegionalRequest | None = None,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     req_data = data or HolidayImportRegionalRequest()
     imported_count, all_holidays = HolidayService(db).import_regional_holidays(
@@ -629,7 +624,7 @@ def _to_leave_type_response(leave_type: LeaveType) -> LeaveTypeResponse:
 def list_leave_types(
     include_inactive: bool = False,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     leave_types = LeaveTypeService(db).list_leave_types(user.company_id, user, include_inactive)
     return [_to_leave_type_response(lt) for lt in leave_types]
@@ -641,7 +636,7 @@ def create_leave_type(
     request: Request,
     data: LeaveTypeCreateRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     leave_type = LeaveTypeService(db).create_leave_type(user.company_id, data, user)
     return _to_leave_type_response(leave_type)
@@ -654,7 +649,7 @@ def update_leave_type(
     leave_type_id: uuid.UUID,
     data: LeaveTypeUpdateRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     leave_type = LeaveTypeService(db).update_leave_type(user.company_id, leave_type_id, data, user)
     return _to_leave_type_response(leave_type)
@@ -678,7 +673,7 @@ def list_leaves(
     date_to: date | None = None,
     params: PageParams = Depends(page_params),
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     items, total, pages = LeaveService(db).list_leaves(
         user.company_id,
@@ -706,7 +701,7 @@ def apply_leave(
     request: Request,
     data: LeaveApplyRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     leave = LeaveService(db).apply_leave(user.company_id, data, user)
     return _to_leave_response(leave)
@@ -719,7 +714,7 @@ def get_leave_balance(
     employee_id: uuid.UUID,
     year: int | None = Query(default=None, ge=2000, le=2100),
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     balances = LeaveService(db).get_balance(user.company_id, employee_id, year, user)
     return [
@@ -743,7 +738,7 @@ def get_leave(
     request: Request,
     leave_id: uuid.UUID,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     leave = LeaveService(db).get_leave(user.company_id, leave_id, user)
     return _to_leave_response(leave)
@@ -756,7 +751,7 @@ def decide_leave(
     leave_id: uuid.UUID,
     data: LeaveDecisionRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     """Who may decide is the service's approval authority (reporting chain, HR admin,
     owner); anyone else gets the same refusal."""
@@ -770,7 +765,7 @@ def cancel_leave(
     request: Request,
     leave_id: uuid.UUID,
     db=Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     return _to_leave_response(LeaveService(db).cancel_leave(user.company_id, leave_id, user))
 
@@ -781,7 +776,7 @@ def seed_leave_balances(
     request: Request,
     data: LeaveSeedRequest,
     db=Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     """HR only. Seeds leave balance rows for every active leave type for the given
     employee and year (default: the current leave year). Safe to call multiple

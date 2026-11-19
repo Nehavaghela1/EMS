@@ -10,10 +10,14 @@ from app.main import app
 from app.modules.identity.models import UserRole
 from tests.conftest import _make_tenant, _make_user_headers
 from tests.security.route_policy import (
+    AUTH_ROUTES,
     AUTHENTICATED,
+    PLATFORM_ROUTES,
     POLICY,
     PUBLIC,
     PUBLIC_ROUTES,
+    REFERENCE_READ_ROUTES,
+    extract_guards_from_route,
     extract_roles_from_route,
 )
 
@@ -172,14 +176,11 @@ def test_wrong_role_returns_403(client: TestClient, discovered_routes, role_test
             continue
 
         allowed_roles_tuple: tuple[UserRole, ...] = policy
-        # In require_role:
-        # 1. hr_admin automatically expands to include owner.
-        # 2. super_admin is always permitted by require_role.
+        # In require_company_role:
+        # hr_admin automatically expands to include owner.
         effective_allowed = list(allowed_roles_tuple)
         if UserRole.hr_admin in allowed_roles_tuple and UserRole.owner not in effective_allowed:
             effective_allowed.append(UserRole.owner)
-        if UserRole.super_admin not in effective_allowed:
-            effective_allowed.append(UserRole.super_admin)
 
         disallowed_roles = [r for r in UserRole if r not in effective_allowed]
         resolved_path = re.sub(r"\{[^}]+\}", dummy_uuid, p)
@@ -195,4 +196,67 @@ def test_wrong_role_returns_403(client: TestClient, discovered_routes, role_test
 
     assert not failures, f"Role access failures encountered ({len(failures)}):\n" + "\n".join(
         failures
+    )
+
+
+def test_route_policy_central_guards(discovered_routes):
+    """
+    C1: Make it impossible to add a leaky route later.
+    Extend route policy verification so the suite FAILS if any route:
+    - uses neither require_company_role nor require_platform_role
+      (unless public/auth/reference read);
+    - or is a COMPANY route that lists super_admin;
+    - or is a PLATFORM route that lists any other role.
+    """
+    failures = []
+
+    for m, p, r in discovered_routes:
+        key = (m, p)
+        if key in PUBLIC_ROUTES or key in AUTH_ROUTES:
+            continue
+        if key in REFERENCE_READ_ROUTES:
+            # A5: Statutory rate reads stay readable by hr_admin and super_admin
+            continue
+
+        guards = extract_guards_from_route(r)
+        policy = POLICY.get(key)
+        is_platform = key in PLATFORM_ROUTES or p.startswith("/api/v1/platform/stats")
+
+        # 1. Route must use exactly one central guard
+        if "require_company_role" not in guards and "require_platform_role" not in guards:
+            failures.append(
+                f"{m} {p}: uses neither require_company_role nor require_platform_role "
+                f"(guards: {guards})"
+            )
+            continue
+        if "require_company_role" in guards and "require_platform_role" in guards:
+            failures.append(f"{m} {p}: mixes both require_company_role and require_platform_role")
+            continue
+
+        if is_platform:
+            # 2. PLATFORM route checks
+            if "require_platform_role" not in guards:
+                failures.append(
+                    f"PLATFORM route {m} {p} does not use require_platform_role (guards: {guards})"
+                )
+            if isinstance(policy, tuple):
+                non_sa = [role for role in policy if role != UserRole.super_admin]
+                if non_sa:
+                    failures.append(
+                        f"PLATFORM route {m} {p} lists roles other than super_admin: {non_sa}"
+                    )
+            elif policy != AUTHENTICATED:
+                failures.append(f"PLATFORM route {m} {p} unexpected policy: {policy}")
+        else:
+            # 3. COMPANY route checks
+            if "require_company_role" not in guards:
+                failures.append(
+                    f"COMPANY route {m} {p} does not use require_company_role (guards: {guards})"
+                )
+            if isinstance(policy, tuple):
+                if UserRole.super_admin in policy:
+                    failures.append(f"COMPANY route {m} {p} lists super_admin in policy: {policy}")
+
+    assert not failures, (
+        f"Route policy guard enforcement failures ({len(failures)}):\n" + "\n".join(failures)
     )

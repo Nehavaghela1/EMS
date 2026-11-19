@@ -739,7 +739,7 @@ def test_T11_length_limits_over_128_and_empty_login_password(client, db, company
     owner_headers = {"Authorization": f"Bearer {owner_token}"}
 
     resp_deact_long = client.post(
-        f"/api/v1/companies/{company_a.company_id}/deactivate",
+        "/api/v1/companies/me/deactivate",
         headers=owner_headers,
         json={"reason": "Testing limits", "password": overlong},
     )

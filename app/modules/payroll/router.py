@@ -10,6 +10,7 @@ from app.core.dependencies import (
     get_company_user,
     get_tenant_db,
     require_company_role,
+    require_platform_role,
     require_role,
 )
 from app.core.pagination import Page, PageParams, page_params
@@ -303,7 +304,7 @@ def add_statutory_rate(
     request: Request,
     data: StatutoryRateCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     rate = StatutoryRateService(db).add_rate(data, user)
     return StatutoryRateResponse.model_validate(rate)
@@ -353,7 +354,7 @@ def put_pt_slabs(
     request: Request,
     data: PtSlabPutRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     slabs = PtSlabService(db).add_slab_set(data, user)
     return [_to_pt_slab_response(s) for s in slabs]
@@ -384,7 +385,7 @@ def post_tax_slabs(
     request: Request,
     data: TaxSlabPostRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     slabs = TaxSlabService(db).add_bracket_set(data, user)
     return [_to_tax_slab_response(s) for s in slabs]

@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import (
-    get_current_user,
     get_tenant_db,
-    require_role,
+    require_company_role,
+    require_platform_role,
 )
 from app.core.exceptions import (
     ConflictError,
@@ -122,7 +122,7 @@ def _safe_result(result: Any) -> dict[str, Any] | None:
 def get_job_status(
     job_id: str,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ) -> JobStatusResponse:
     authorize_export_job(job_id, user, not_found_message="Job not found.")
 
@@ -161,7 +161,7 @@ def get_job_status(
 @dashboard_router.get("/dashboard", response_model=DashboardResponse)
 def get_dashboard(
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     payload = DashboardService(db).get_dashboard(user.company_id, user)
     return DashboardResponse(**payload)
@@ -182,7 +182,7 @@ def list_audit_logs(
     date_to: date | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     if date_from and date_to and date_from > date_to:
         raise ValidationError("date_from cannot be after date_to.")
@@ -212,7 +212,7 @@ def export_audit_logs(
     request: Request,
     data: AuditLogExportRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     job_id = AuditService(db).queue_export(
         user.company_id,
@@ -232,7 +232,7 @@ def download_audit_logs_export(
     job_id: str,
     request: Request,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     authorize_export_job(job_id, user, not_found_message="Export not found.")
 
@@ -295,7 +295,7 @@ def list_notifications(
     unread_only: bool = False,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     items, total, pages, unread_count = NotificationService(db).list_notifications(
         user.company_id, user.id, unread_only=unread_only, page_params=params
@@ -316,7 +316,7 @@ def list_notifications(
 def mark_all_notifications_read(
     request: Request,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     count = NotificationService(db).mark_all_read(user.company_id, user.id)
     return MarkAllReadResponse(marked_read=count)
@@ -328,7 +328,7 @@ def mark_notification_read(
     notification_id: uuid.UUID,
     request: Request,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     notification = NotificationService(db).mark_read(user.company_id, user.id, notification_id)
     return _to_notification_response(notification)
@@ -343,7 +343,7 @@ announcements_router = APIRouter(prefix="/announcements", tags=["Announcements"]
 def list_announcements(
     request: Request,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     return AnnouncementService(db).list_active(user.company_id, user)
 
@@ -354,7 +354,7 @@ def create_announcement(
     request: Request,
     data: AnnouncementCreate,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
     return AnnouncementService(db).create(user.company_id, user, data)
 
@@ -365,7 +365,7 @@ def delete_announcement(
     announcement_id: uuid.UUID,
     request: Request,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
     AnnouncementService(db).delete(user.company_id, announcement_id, user)
 
@@ -380,7 +380,7 @@ async def upload_file(
     request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     from app.core.upload_validation import read_upload_file_capped
 
@@ -408,7 +408,7 @@ def get_file_signed_url(
     file_id: uuid.UUID,
     request: Request,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     return FileService(db).generate_signed_url(user.company_id, file_id, user=user)
 
@@ -489,7 +489,7 @@ documents_router = APIRouter(prefix="/documents", tags=["Employee Documents"])
 def list_employee_documents(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     return EmployeeDocumentService(db).list_documents(user.company_id, employee_id, user)
 
@@ -503,7 +503,7 @@ def upload_employee_document(
     document_type: str = Form(...),
     name: str = Form(...),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     # 1. Access check
     is_hr_level = user.role in HR_LEVEL_ROLES
@@ -654,7 +654,7 @@ def download_employee_document(
     employee_id: uuid.UUID,
     document_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     # Access check (same as viewing)
     is_hr_level = user.role in HR_LEVEL_ROLES
@@ -728,7 +728,7 @@ def delete_employee_document(
     employee_id: uuid.UUID,
     document_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(*HR_LEVEL_ROLES)),
+    user: User = Depends(require_company_role(*HR_LEVEL_ROLES)),
 ):
     target_emp = EmployeeRepository(db).get_by_id_any_status(employee_id, user.company_id)
     if target_emp is None:
@@ -762,7 +762,7 @@ regions_router = APIRouter(prefix="/regions", tags=["Regions"])
 
 @regions_router.get("", response_model=list[RegionResponse])
 @limiter.limit("60/minute", key_func=get_user_or_ip_key)
-def list_regions(request: Request, user: User = Depends(get_current_user)):
+def list_regions(request: Request, user: User = Depends(require_company_role())):
     return RegionService.list_regions()
 
 
@@ -779,7 +779,7 @@ def payroll_stats(
     from_month: str = Query(..., alias="from", pattern=_MONTH_PATTERN),
     to_month: str = Query(..., alias="to", pattern=_MONTH_PATTERN),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     return PayrollStatsService(db).stats(from_month, to_month)
 
@@ -795,7 +795,7 @@ def list_rate_sources(
     request: Request,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     items, total, pages = RateSourceService(db).list_sources(params)
     return Page(
@@ -814,7 +814,7 @@ def create_rate_source(
     request: Request,
     data: RateSourceCreate,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     return RateSourceResponse.model_validate(RateSourceService(db).create(data, user))
 
@@ -826,7 +826,7 @@ def update_rate_source(
     source_id: uuid.UUID,
     data: RateSourceUpdate,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     return RateSourceResponse.model_validate(RateSourceService(db).update(source_id, data, user))
 
@@ -838,7 +838,7 @@ def list_rate_drafts(
     status: RateDraftStatus | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     items, total, pages = RateDraftService(db).list_drafts(params, status)
     return Page(
@@ -857,7 +857,7 @@ def create_rate_draft(
     request: Request,
     data: RateDraftCreate,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     return RateDraftService(db).create(data, user)
 
@@ -868,7 +868,7 @@ def get_rate_draft(
     request: Request,
     draft_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     return RateDraftService(db).detail(draft_id)
 
@@ -880,7 +880,7 @@ def update_rate_draft(
     draft_id: uuid.UUID,
     data: RateDraftUpdate,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     return RateDraftService(db).update(draft_id, data, user)
 
@@ -892,7 +892,7 @@ def verify_rate_draft(
     draft_id: uuid.UUID,
     data: RateDraftVerify,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     return RateDraftService(db).verify(draft_id, data, user)
 
@@ -904,7 +904,7 @@ def approve_rate_draft(
     draft_id: uuid.UUID,
     data: RateDraftApprove,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     return RateDraftService(db).approve(draft_id, user)
 
@@ -916,7 +916,7 @@ def reject_rate_draft(
     draft_id: uuid.UUID,
     data: RateDraftReject,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.super_admin)),
+    user: User = Depends(require_platform_role()),
 ):
     return RateDraftService(db).reject(draft_id, data, user)
 
@@ -931,6 +931,6 @@ def global_search(
     request: Request,
     q: str = Query(..., min_length=2, max_length=100),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     return GlobalSearchService(db).search(user.company_id, user, q)

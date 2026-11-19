@@ -397,7 +397,6 @@ def test_B5_the_route_policy_lists_every_new_route_with_an_explicit_decision() -
 def test_B6_other_personal_data_outside_payroll_is_not_changed_here(
     client: TestClient, super_admin_headers: dict[str, str]
 ) -> None:
-    # Profile and documents are other modules; a super admin can still reach them today and
-    # that is listed as an open item, not changed by this package.
+    # With super admin established as a platform role, company data routes return 403.
     resp = client.get("/api/v1/employees", headers=super_admin_headers)
-    assert resp.status_code == 200, f"B6: the employee directory is unchanged: {resp.status_code}"
+    assert resp.status_code == 403

@@ -192,7 +192,7 @@ class ProjectService:
             raise NotFoundError("Project not found.")
 
         # Rule 2: members and project manager read; HR and owner read all; non-member gets 404
-        if actor and actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+        if actor and actor.role not in (UserRole.hr_admin, UserRole.owner):
             actor_emp = (
                 self.repo.db.query(Employee)
                 .filter(Employee.user_id == actor.id, Employee.company_id == project.company_id)
@@ -229,7 +229,7 @@ class ProjectService:
             query = query.filter(Project.status == status)
 
         # Scoping: Plain employees / non-HR see only projects where they are member or manager
-        if actor and actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+        if actor and actor.role not in (UserRole.hr_admin, UserRole.owner):
             actor_emp = (
                 self.repo.db.query(Employee)
                 .filter(Employee.user_id == actor.id, Employee.company_id == company_id)
@@ -296,11 +296,7 @@ class ProjectService:
                     if mem and mem.role == "manager":
                         is_pm = True
 
-        can_edit = (
-            actor is None
-            or actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
-            or is_pm
-        )
+        can_edit = actor is None or actor.role in (UserRole.hr_admin, UserRole.owner) or is_pm
         if not can_edit:
             raise ForbiddenError("Only project manager, HR and owner can edit the project.")
 
@@ -310,7 +306,6 @@ class ProjectService:
                 if actor and actor.role not in (
                     UserRole.hr_admin,
                     UserRole.owner,
-                    UserRole.super_admin,
                 ):
                     raise ForbiddenError("Only HR and owner can unarchive a project.")
             else:
@@ -411,11 +406,6 @@ class ProjectService:
     def get_project_summary(
         self, company_id: UUID | None, project_id: UUID, actor: User | None = None
     ) -> ProjectSummaryResponse:
-        if actor and actor.role == UserRole.super_admin:
-            raise ForbiddenError(
-                "Super Admin cannot access tenant project summary or financial data."
-            )
-
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
@@ -829,8 +819,8 @@ class ProjectService:
         actor_user: User,
         data: TaskCreate,
     ) -> TaskResponse:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to access project tasks.")
 
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
@@ -902,8 +892,8 @@ class ProjectService:
         return self._enrich_task_response(task)
 
     def get_task(self, company_id: UUID | None, task_id: UUID, actor_user: User) -> TaskResponse:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to access project tasks.")
 
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
@@ -933,8 +923,8 @@ class ProjectService:
         status: str | None = None,
         assigned_to: UUID | None = None,
     ) -> list[TaskResponse]:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to access project tasks.")
 
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
@@ -972,8 +962,8 @@ class ProjectService:
         actor_user: User,
         data: TaskUpdate,
     ) -> TaskResponse:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to access project tasks.")
 
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
@@ -1122,8 +1112,8 @@ class ProjectService:
         actor_user: User,
         position: int,
     ) -> TaskResponse:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to access project tasks.")
 
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
@@ -1163,8 +1153,8 @@ class ProjectService:
         return self._enrich_task_response(task)
 
     def delete_task(self, company_id: UUID | None, task_id: UUID, actor_user: User) -> None:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot access tenant project tasks.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to access project tasks.")
 
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
@@ -1221,9 +1211,6 @@ class ProjectService:
         - Non-members get 404 (NotFoundError).
         Returns (project, employee_or_none, is_pm).
         """
-        if actor_user.role == UserRole.super_admin:
-            raise ForbiddenError("Super Admin cannot access tenant project resources.")
-
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
             raise NotFoundError("Project not found.")
@@ -1254,9 +1241,6 @@ class ProjectService:
         self, company_id: UUID, task_id: UUID, actor_user: User, data: TaskCommentCreate
     ) -> TaskCommentResponse:
         import html
-
-        if actor_user.role == UserRole.super_admin:
-            raise ForbiddenError("Super Admin cannot add comments.")
 
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
@@ -1295,9 +1279,6 @@ class ProjectService:
         data: TaskCommentUpdate,
     ) -> TaskCommentResponse:
         import html
-
-        if actor_user.role == UserRole.super_admin:
-            raise ForbiddenError("Super Admin cannot edit comments.")
 
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
@@ -1341,9 +1322,6 @@ class ProjectService:
         comment_id: UUID,
         actor_user: User,
     ) -> None:
-        if actor_user.role == UserRole.super_admin:
-            raise ForbiddenError("Super Admin cannot delete comments.")
-
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
             raise NotFoundError("Task not found.")
@@ -1378,9 +1356,6 @@ class ProjectService:
     def list_comments(
         self, company_id: UUID, task_id: UUID, actor_user: User | None = None
     ) -> list[TaskCommentResponse]:
-        if actor_user and actor_user.role == UserRole.super_admin:
-            raise ForbiddenError("Super Admin cannot view comments.")
-
         task = self.repo.get_task_by_id(company_id, task_id)
         if not task:
             raise NotFoundError("Task not found.")
@@ -1400,11 +1375,8 @@ class ProjectService:
         is_admin_or_manager: bool = False,
         actor: User | None = None,
     ) -> TimeEntryResponse:
-        if actor and actor.role == UserRole.super_admin:
-            raise ForbiddenError("Super Admin cannot log time on tenant projects.")
-
         if company_id is None:
-            raise ForbiddenError("Super Admin cannot log time on tenant projects.")
+            raise ForbiddenError("Company context is required to log time.")
 
         project = self.repo.get_project_by_id(company_id, data.project_id)
         if not project:
@@ -1541,9 +1513,6 @@ class ProjectService:
         end_date: date | None = None,
         actor: User | None = None,
     ) -> list[TimeEntryResponse]:
-        if actor and actor.role == UserRole.super_admin:
-            raise ForbiddenError("Super Admin cannot access tenant time entries.")
-
         if company_id is None:
             return []
 
@@ -1574,9 +1543,6 @@ class ProjectService:
         data: TimeEntryUpdate,
         actor: User | None = None,
     ) -> TimeEntryResponse:
-        if actor and actor.role == UserRole.super_admin:
-            raise ForbiddenError("Super Admin cannot modify tenant time entries.")
-
         if company_id is None:
             raise NotFoundError("Time entry not found.")
 
@@ -1688,9 +1654,6 @@ class ProjectService:
         actor: User,
         rejection_reason: str | None = None,
     ) -> TimeEntryResponse:
-        if actor.role == UserRole.super_admin:
-            raise ForbiddenError("Super Admin cannot approve or reject tenant time entries.")
-
         if company_id is None:
             raise NotFoundError("Time entry not found.")
 
@@ -1778,9 +1741,6 @@ class ProjectService:
         user_employee_id: UUID | None = None,
         actor: User | None = None,
     ) -> None:
-        if actor and actor.role == UserRole.super_admin:
-            raise ForbiddenError("Super Admin cannot delete tenant time entries.")
-
         if company_id is None:
             raise NotFoundError("Time entry not found.")
 
@@ -1829,8 +1789,8 @@ class ProjectService:
         actor_user: User,
         data: MilestoneCreate,
     ) -> MilestoneResponse:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot access tenant project milestones.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to access project milestones.")
 
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
@@ -1883,8 +1843,8 @@ class ProjectService:
     def list_milestones(
         self, company_id: UUID | None, project_id: UUID, actor_user: User
     ) -> list[MilestoneResponse]:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot access tenant project milestones.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to access project milestones.")
 
         project = self.repo.get_project_by_id(company_id, project_id)
         if not project:
@@ -1911,8 +1871,8 @@ class ProjectService:
         actor_user: User,
         data: MilestoneUpdate,
     ) -> MilestoneResponse:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot access tenant project milestones.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to access project milestones.")
 
         milestone = self.repo.get_milestone_by_id(company_id, milestone_id)
         if not milestone:
@@ -1993,8 +1953,8 @@ class ProjectService:
     def delete_milestone(
         self, company_id: UUID | None, milestone_id: UUID, actor_user: User
     ) -> None:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot access tenant project milestones.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to access project milestones.")
 
         milestone = self.repo.get_milestone_by_id(company_id, milestone_id)
         if not milestone:
@@ -2049,8 +2009,8 @@ class ProjectService:
         data: ProjectDocumentCreate,
         actor_user: User,
     ) -> ProjectDocumentResponse:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot upload project documents.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to upload project documents.")
 
         project, _, _ = self._check_project_membership(company_id, project_id, actor_user)
 
@@ -2080,8 +2040,8 @@ class ProjectService:
     def list_documents(
         self, company_id: UUID | None, project_id: UUID, actor_user: User
     ) -> list[ProjectDocumentResponse]:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot list project documents.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to list project documents.")
 
         project, _, _ = self._check_project_membership(company_id, project_id, actor_user)
 
@@ -2100,8 +2060,8 @@ class ProjectService:
     def delete_document(
         self, company_id: UUID | None, project_id: UUID, document_id: UUID, actor_user: User
     ) -> None:
-        if actor_user.role == UserRole.super_admin or company_id is None:
-            raise ForbiddenError("Super Admin cannot delete project documents.")
+        if company_id is None:
+            raise ForbiddenError("Company context is required to delete project documents.")
 
         project, _, is_pm = self._check_project_membership(company_id, project_id, actor_user)
 

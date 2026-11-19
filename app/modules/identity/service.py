@@ -863,6 +863,7 @@ class CompanyService:
         self.department_repo = DepartmentRepository(db)
         self.leave_type_repo = LeaveTypeRepository(db)
         self.industry_preset_repo = IndustryPresetRepository(db)
+        self.token_repo = RefreshTokenRepository(db)
 
     def register_company(self, data: CompanyRegisterRequest) -> Company:
         """Route 12: company self-registration with status = pending."""
@@ -1088,25 +1089,48 @@ class CompanyService:
         )
         return company
 
-    def deactivate_company(
+    def deactivate_my_company(
+        self,
+        actor: User,
+        reason: str,
+        password: str,
+    ) -> dict[str, str]:
+        if not verify_password(password, actor.hashed_password):
+            raise InvalidCredentialsError()
+
+        if not actor.company_id:
+            raise NotFoundError("Company not found.")
+
+        company = self.company_repo.get_by_id(actor.company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+
+        self.company_repo.update(company, is_active=False, deactivation_reason=reason)
+
+        active_tokens = self.token_repo.get_active_by_user(actor.id)
+        for token in active_tokens:
+            self.token_repo.revoke(token)
+
+        AuditService(self.db).record(
+            company_id=company.id,
+            actor=actor,
+            action="COMPANY_DEACTIVATED",
+            entity_type="company",
+            entity_id=company.id,
+            details={"company_name": company.name, "reason": reason},
+        )
+
+        self.db.commit()
+        return {"message": "Company workspace has been deactivated."}
+
+    def deactivate_company_by_admin(
         self,
         company_id: uuid.UUID,
         reason: str,
         actor: User,
-        password: str,
     ) -> dict[str, str]:
-        if actor.role not in [UserRole.owner, UserRole.super_admin]:
-            raise ForbiddenError(
-                "Only the Workspace Owner (CEO) can deactivate this company workspace."
-            )
-
-        if not verify_password(password, actor.hashed_password):
-            raise ForbiddenError("Invalid password.")
-
         company = self.company_repo.get_by_id(company_id)
         if company is None:
-            raise NotFoundError("Company not found.")
-        if actor.role != UserRole.super_admin and actor.company_id != company.id:
             raise NotFoundError("Company not found.")
 
         self.company_repo.update(company, is_active=False, deactivation_reason=reason)
@@ -1122,6 +1146,19 @@ class CompanyService:
 
         self.db.commit()
         return {"message": "Company workspace has been deactivated."}
+
+    def deactivate_company(
+        self,
+        company_id: uuid.UUID,
+        reason: str,
+        actor: User,
+        password: str | None = None,
+    ) -> dict[str, str]:
+        if actor.role == UserRole.super_admin:
+            return self.deactivate_company_by_admin(
+                company_id=company_id, reason=reason, actor=actor
+            )
+        return self.deactivate_my_company(actor=actor, reason=reason, password=password or "")
 
     def reactivate_company(self, company_id: uuid.UUID, actor: User) -> Company:
         company = self.company_repo.get_by_id(company_id)
@@ -1710,21 +1747,7 @@ class RoleChangeService:
         company_id = actor.company_id
         target_role = UserRole(data.role)
 
-        # 1. Super admin caller gets 403
-        if actor.role == UserRole.super_admin:
-            sec_logger.warning(
-                "Role change denied",
-                extra={
-                    "event": "role_change_denied",
-                    "reason": "super_admin",
-                    "actor_id": str(actor.id),
-                    "target_id": str(target_user_id),
-                    "company_id": str(company_id) if company_id else "",
-                },
-            )
-            raise ForbiddenError("Super administrators cannot modify tenant roles.")
-
-        # 2. Self-change gets 403 + security log
+        # Self-change gets 403 + security log
         if target_user_id == actor.id:
             sec_logger.warning(
                 "Role change denied",

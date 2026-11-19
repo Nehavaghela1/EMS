@@ -242,7 +242,7 @@ def test_j1_super_admin_cross_company_isolation(
     sa1 = test_setup["sa1"]
     sa2 = test_setup["sa2"]
 
-    # 1. Job status: sa1 (same company) -> 200, sa2 (other company) -> 404
+    # 1. Job status: super admin is forbidden from company jobs -> 403
     with patch("app.modules.platform.router.celery_app.AsyncResult") as mock_async:
         mock_task = MagicMock()
         mock_task.state = "SUCCESS"
@@ -250,12 +250,12 @@ def test_j1_super_admin_cross_company_isolation(
         mock_async.return_value = mock_task
 
         res_sa1 = client.get(f"/api/v1/jobs/{job_id}", headers=_auth_headers(sa1))
-        assert res_sa1.status_code == 200
+        assert res_sa1.status_code == 403
 
         res_sa2 = client.get(f"/api/v1/jobs/{job_id}", headers=_auth_headers(sa2))
-        assert res_sa2.status_code == 404
+        assert res_sa2.status_code == 403
 
-    # 2. Employee export download: sa1 -> 200, sa2 -> 404
+    # 2. Employee export download: super admin is forbidden -> 403
     job_emp = str(uuid.uuid4())
     register_job(job_emp, cid1, mgr1.id, "employee_export")
     with patch("app.modules.hr.router.celery_app.AsyncResult") as mock_async:
@@ -272,14 +272,14 @@ def test_j1_super_admin_cross_company_isolation(
         res_emp1 = client.get(
             f"/api/v1/employees/export/{job_emp}/download", headers=_auth_headers(sa1)
         )
-        assert res_emp1.status_code == 200
+        assert res_emp1.status_code == 403
 
         res_emp2 = client.get(
             f"/api/v1/employees/export/{job_emp}/download", headers=_auth_headers(sa2)
         )
-        assert res_emp2.status_code == 404
+        assert res_emp2.status_code == 403
 
-    # 3. Audit export download: sa1 -> 200, sa2 -> 404
+    # 3. Audit export download: super admin is forbidden -> 403
     job_audit = str(uuid.uuid4())
     register_job(job_audit, cid1, mgr1.id, "audit_logs_export")
     with patch("app.modules.platform.router.celery_app.AsyncResult") as mock_async:
@@ -296,14 +296,14 @@ def test_j1_super_admin_cross_company_isolation(
         res_aud1 = client.get(
             f"/api/v1/audit-logs/export/{job_audit}/download", headers=_auth_headers(sa1)
         )
-        assert res_aud1.status_code == 200
+        assert res_aud1.status_code == 403
 
         res_aud2 = client.get(
             f"/api/v1/audit-logs/export/{job_audit}/download", headers=_auth_headers(sa2)
         )
-        assert res_aud2.status_code == 404
+        assert res_aud2.status_code == 403
 
-    # 4. Attendance export download: sa1 -> 200, sa2 -> 404
+    # 4. Attendance export download: super admin is forbidden -> 403
     job_att = str(uuid.uuid4())
     register_job(job_att, cid1, mgr1.id, "attendance_export")
     with patch("app.modules.time_leave.router.celery_app.AsyncResult") as mock_async:
@@ -320,12 +320,12 @@ def test_j1_super_admin_cross_company_isolation(
         res_att1 = client.get(
             f"/api/v1/attendance/export/{job_att}/download", headers=_auth_headers(sa1)
         )
-        assert res_att1.status_code == 200
+        assert res_att1.status_code == 403
 
         res_att2 = client.get(
             f"/api/v1/attendance/export/{job_att}/download", headers=_auth_headers(sa2)
         )
-        assert res_att2.status_code == 404
+        assert res_att2.status_code == 403
 
 
 def test_j6_non_uuid_validation_across_routes(

@@ -518,7 +518,7 @@ def test_R4_other_company_cannot_decide(client, db, org, company_b: TenantContex
 
 def test_R4_nobody_approves_their_own_request_except_an_owner(client, db, org) -> None:
     ctx = org["ctx"]
-    for who, days_ago in (("emp", 3), ("boss", 4), ("hr2", 5), ("sadmin", 6)):
+    for who, days_ago in (("emp", 3), ("boss", 4), ("hr2", 5)):
         rec = _record(db, ctx, org[who]["id"], days_ago=days_ago)
         made = _request(client, org[who]["h"], rec, days_ago=days_ago)
         assert made.status_code == 201 and made.json()["status"] == "pending", (
@@ -528,6 +528,10 @@ def test_R4_nobody_approves_their_own_request_except_an_owner(client, db, org) -
         assert own.status_code == 403, f"R4: {who} must not approve their own request: {own.text}"
         if who != "emp":  # a plain employee is refused by role before any self check
             assert "your own" in own.json()["error"]["message"].lower()
+
+    # Super admin is a platform role and gets 403 on company attendance routes
+    sa_rec = _record(db, ctx, org["sadmin"]["id"], days_ago=6)
+    assert _request(client, org["sadmin"]["h"], sa_rec, days_ago=6).status_code == 403
 
 
 def test_R4_an_owners_own_request_is_approved_at_once_and_audited(client, db, org) -> None:

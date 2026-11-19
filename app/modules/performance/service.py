@@ -210,7 +210,7 @@ class PerformanceService:
         # Scoping permission check
         # Employee sets own; manager sets for people in reporting chain; HR any; others 403
         current_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
-        is_hr = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        is_hr = actor.role in (UserRole.hr_admin, UserRole.owner)
         if not is_hr:
             if current_emp is None:
                 raise ForbiddenError("You do not have permission to set goals.")
@@ -319,7 +319,7 @@ class PerformanceService:
 
         emp = self.employee_repo.get_by_user_id(company_id, actor.id)
         is_owner = emp and goal.employee_id == emp.id
-        is_hr = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        is_hr = actor.role in (UserRole.hr_admin, UserRole.owner)
 
         if not (is_owner or is_hr):
             raise ForbiddenError("You do not have permission to update this performance goal.")
@@ -410,7 +410,7 @@ class PerformanceService:
 
         emp = self.employee_repo.get_by_user_id(company_id, actor.id)
         is_owner = emp and goal.employee_id == emp.id
-        is_hr = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        is_hr = actor.role in (UserRole.hr_admin, UserRole.owner)
 
         if not (is_owner or is_hr):
             raise ForbiddenError("Employees can only update progress on their own goals.")
@@ -564,7 +564,7 @@ class PerformanceService:
         if not target_emp:
             raise NotFoundError("Employee profile not found.")
 
-        if actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+        if actor.role in (UserRole.hr_admin, UserRole.owner):
             # Check if actor is also the reporting manager
             mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
             if target_emp.reporting_manager_id is not None:
@@ -638,7 +638,7 @@ class PerformanceService:
         reason: str,
         actor: User,
     ) -> PerformanceReview:
-        if actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+        if actor.role not in (UserRole.hr_admin, UserRole.owner):
             raise ForbiddenError("Only HR administrators and company owners can reopen reviews.")
 
         if not reason or not reason.strip():
@@ -678,7 +678,7 @@ class PerformanceService:
             raise NotFoundError("Performance review not found.")
 
         # Scoping: HR, owner, reviewer, or the reviewed employee
-        if actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+        if actor.role not in (UserRole.hr_admin, UserRole.owner):
             goal = self.goal_repo.get_by_id(review.goal_id, company_id)
             emp = self.employee_repo.get_by_user_id(company_id, actor.id)
             is_reviewer = review.reviewer_id == actor.id
@@ -720,7 +720,7 @@ class PerformanceService:
         # Scoping permission check
         if actor is not None:
             current_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
-            is_hr_or_owner = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+            is_hr_or_owner = actor.role in (UserRole.hr_admin, UserRole.owner)
             if not is_hr_or_owner:
                 if current_emp is None:
                     raise ForbiddenError("Not authorized to view performance summary.")
@@ -827,7 +827,6 @@ class PerformanceService:
         if actor.role not in (
             UserRole.hr_admin,
             UserRole.owner,
-            UserRole.super_admin,
             UserRole.manager,
         ):
             raise ForbiddenError("Not authorized to list performance summaries.")

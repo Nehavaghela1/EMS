@@ -536,16 +536,7 @@ class EmployeeSalaryService:
         target_company_id = company_id
         # The employee row is locked first: two assignments for one employee queue up here, so
         # the second one sees the first one's row when it looks for overlaps.
-        if actor.role == UserRole.super_admin:
-            found = self.employee_repo.get_by_id_any_status(employee_id, None)
-            if found is None:
-                raise NotFoundError("Employee not found.")
-            target_company_id = found.company_id
-            employee = self.employee_repo.get_by_id_for_update(
-                employee_id, target_company_id, allow_inactive=True
-            )
-        else:
-            employee = self.employee_repo.get_by_id_for_update(employee_id, target_company_id)
+        employee = self.employee_repo.get_by_id_for_update(employee_id, target_company_id)
         if employee is None:
             raise NotFoundError("Employee not found.")
 
@@ -684,14 +675,9 @@ class EmployeeSalaryService:
     def _employee_visible_to(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, current_user: User
     ) -> tuple[Employee, uuid.UUID]:
-        """Own salary, or owner / HR admin for anyone in the company, or super admin. A
+        """Own salary, or owner / HR admin for anyone in the company. A
         manager gets no access, not even to a direct report. Another company's employee and a
         missing one are the same 404."""
-        if current_user.role == UserRole.super_admin:
-            employee = self.employee_repo.get_by_id_any_status(employee_id, None)
-            if employee is None:
-                raise NotFoundError("Employee not found.")
-            return employee, employee.company_id
         employee = self.employee_repo.get_by_id_any_status(employee_id, company_id)
         if employee is None:
             raise NotFoundError("Employee not found.")
@@ -2030,7 +2016,7 @@ class PayrollRunService:
             )
         # Maker-checker: the person who created the run does not approve it (an owner may,
         # so a company with one HR person and an owner still works).
-        if run.run_by == actor.id and actor.role not in (UserRole.owner, UserRole.super_admin):
+        if run.run_by == actor.id and actor.role != UserRole.owner:
             raise ForbiddenError(CANNOT_APPROVE_OWN_RUN)
 
         self.repo.update(
@@ -2266,10 +2252,6 @@ class PayslipService:
     ) -> tuple[list[PayrollItem], int, int]:
         company_id = actor.company_id
         employee = self.employee_repo.get_by_id(employee_id, company_id)
-        if employee is None and actor.role == UserRole.super_admin:
-            employee = self.item_repo.find_employee_any_company(employee_id)
-            if employee is not None:
-                company_id = employee.company_id
         if employee is None:
             raise NotFoundError("Employee not found.")
 

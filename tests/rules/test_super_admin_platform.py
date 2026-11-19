@@ -6,31 +6,27 @@ Covers:
 - PART B: platform stats live numbers (B1 - B7)
 """
 
-import json
-import re
 import uuid
+from datetime import date
 from decimal import Decimal
-from datetime import date, datetime, timezone
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.time import utcnow
 from app.db.rls import bind_tenant_to_session
-from app.main import app
-from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.hr.models import Employee, EmploymentType
+from app.modules.identity.models import Company, CompanyStatus, User, UserRole
 from app.modules.payroll.models import (
     PayrollRun,
     PayrollRunStatus,
 )
-from app.modules.time_leave.models import Attendance, AttendanceStatus, Leave, LeaveStatus, LeaveType
-from app.modules.projects.models import Project, TimeEntry
 from app.modules.platform.models import AuditLog
-from tests.conftest import TenantContext, _make_tenant, _make_user_headers
-from tests.security.test_route_access_matrix import _discover_app_routes, extract_roles_from_route
-from tests.security.route_policy import POLICY, PUBLIC, PUBLIC_ROUTES
-
+from app.modules.projects.models import Project, TimeEntry
+from app.modules.time_leave.models import Attendance, AttendanceStatus
+from tests.conftest import TenantContext
 
 # ---------------------------------------------------------------------------
 # C2: One test per module asserting super admin gets 403 on COMPANY routes
@@ -42,7 +38,7 @@ def test_C2_super_admin_forbidden_hr_employee_list(
 ):
     resp = client.get("/api/v1/employees", headers=super_admin_headers)
     assert resp.status_code == 403
-    assert resp.json()["detail"] == "You do not have permission to perform this action."
+    assert resp.json()["error"]["message"] == "You do not have permission to perform this action."
 
 
 def test_C2_super_admin_forbidden_attendance(
@@ -50,15 +46,15 @@ def test_C2_super_admin_forbidden_attendance(
 ):
     resp = client.get("/api/v1/attendance", headers=super_admin_headers)
     assert resp.status_code == 403
-    assert resp.json()["detail"] == "You do not have permission to perform this action."
+    assert resp.json()["error"]["message"] == "You do not have permission to perform this action."
 
 
 def test_C2_super_admin_forbidden_leave_request(
     client: TestClient, super_admin_headers: dict[str, str], company_a: TenantContext
 ):
-    resp = client.get("/api/v1/leave/requests", headers=super_admin_headers)
+    resp = client.get("/api/v1/leaves", headers=super_admin_headers)
     assert resp.status_code == 403
-    assert resp.json()["detail"] == "You do not have permission to perform this action."
+    assert resp.json()["error"]["message"] == "You do not have permission to perform this action."
 
 
 def test_C2_super_admin_forbidden_payroll_run(
@@ -66,15 +62,15 @@ def test_C2_super_admin_forbidden_payroll_run(
 ):
     resp = client.get("/api/v1/payroll/runs", headers=super_admin_headers)
     assert resp.status_code == 403
-    assert resp.json()["detail"] == "You do not have permission to perform this action."
+    assert resp.json()["error"]["message"] == "You do not have permission to perform this action."
 
 
 def test_C2_super_admin_forbidden_performance_goals(
     client: TestClient, super_admin_headers: dict[str, str], company_a: TenantContext
 ):
-    resp = client.get("/api/v1/performance/goals", headers=super_admin_headers)
+    resp = client.get(f"/api/v1/performance/goals/{uuid.uuid4()}", headers=super_admin_headers)
     assert resp.status_code == 403
-    assert resp.json()["detail"] == "You do not have permission to perform this action."
+    assert resp.json()["error"]["message"] == "You do not have permission to perform this action."
 
 
 def test_C2_super_admin_forbidden_project_detail(
@@ -82,7 +78,7 @@ def test_C2_super_admin_forbidden_project_detail(
 ):
     resp = client.get(f"/api/v1/projects/{uuid.uuid4()}", headers=super_admin_headers)
     assert resp.status_code == 403
-    assert resp.json()["detail"] == "You do not have permission to perform this action."
+    assert resp.json()["error"]["message"] == "You do not have permission to perform this action."
 
 
 def test_C2_super_admin_forbidden_announcement_create(
@@ -94,7 +90,7 @@ def test_C2_super_admin_forbidden_announcement_create(
         json={"title": "Test", "content": "Forbidden", "target_audience": "all"},
     )
     assert resp.status_code == 403
-    assert resp.json()["detail"] == "You do not have permission to perform this action."
+    assert resp.json()["error"]["message"] == "You do not have permission to perform this action."
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +120,9 @@ def test_C3_platform_routes_admit_super_admin_and_forbid_others(
 
     # HR admin should be forbidden (403)
     resp_hr = client.request(method, url, headers=company_a.hr_headers)
-    assert resp_hr.status_code == 403, f"HR admin was not forbidden on {method} {url}: {resp_hr.status_code}"
+    assert resp_hr.status_code == 403, (
+        f"HR admin was not forbidden on {method} {url}: {resp_hr.status_code}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +377,9 @@ def test_B2_B7_stats_companies_paging_search(
     client: TestClient, super_admin_headers: dict[str, str], stats_scenario: dict[str, Any]
 ):
     alpha = stats_scenario["alpha"]
-    resp = client.get(f"/api/v1/platform/stats/companies?search={alpha.code}", headers=super_admin_headers)
+    resp = client.get(
+        f"/api/v1/platform/stats/companies?search={alpha.code}", headers=super_admin_headers
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["items"]) == 1
@@ -399,7 +399,9 @@ def test_B2_B7_stats_activity(
     client: TestClient, super_admin_headers: dict[str, str], stats_scenario: dict[str, Any]
 ):
     alpha = stats_scenario["alpha"]
-    resp = client.get(f"/api/v1/platform/stats/activity?company_id={alpha.id}", headers=super_admin_headers)
+    resp = client.get(
+        f"/api/v1/platform/stats/activity?company_id={alpha.id}", headers=super_admin_headers
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["items"]) >= 1
@@ -425,7 +427,9 @@ def test_B2_B7_empty_company_returns_zeros_not_error(
     client: TestClient, super_admin_headers: dict[str, str], stats_scenario: dict[str, Any]
 ):
     gamma = stats_scenario["gamma"]
-    resp = client.get(f"/api/v1/platform/stats/activity?company_id={gamma.id}", headers=super_admin_headers)
+    resp = client.get(
+        f"/api/v1/platform/stats/activity?company_id={gamma.id}", headers=super_admin_headers
+    )
     assert resp.status_code == 200
     data = resp.json()
     row = [r for r in data["items"] if r["company_id"] == str(gamma.id)][0]
@@ -435,7 +439,10 @@ def test_B2_B7_empty_company_returns_zeros_not_error(
 
 
 def test_B5_stats_reads_are_audited(
-    client: TestClient, db: Session, super_admin_headers: dict[str, str], stats_scenario: dict[str, Any]
+    client: TestClient,
+    db: Session,
+    super_admin_headers: dict[str, str],
+    stats_scenario: dict[str, Any],
 ):
     resp = client.get("/api/v1/platform/stats/overview", headers=super_admin_headers)
     assert resp.status_code == 200
@@ -453,5 +460,8 @@ def test_B5_stats_reads_are_audited(
 def test_B6_stats_rate_limit(
     client: TestClient, super_admin_headers: dict[str, str], limits_on: None
 ):
-    codes = [client.get("/api/v1/platform/stats/overview", headers=super_admin_headers).status_code for _ in range(61)]
+    codes = [
+        client.get("/api/v1/platform/stats/overview", headers=super_admin_headers).status_code
+        for _ in range(61)
+    ]
     assert codes[:60] == [200] * 60 and codes[60] == 429

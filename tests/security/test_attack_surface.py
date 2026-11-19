@@ -303,7 +303,7 @@ def test_super_admin_bypasses_job_company_scoping(client, company_a, super_admin
     )
     try:
         resp = client.get(f"/api/v1/jobs/{job_id}", headers=super_admin_headers)
-        assert resp.status_code == 404
+        assert resp.status_code == 403
     finally:
         celery_app.backend.forget(job_id)
 
