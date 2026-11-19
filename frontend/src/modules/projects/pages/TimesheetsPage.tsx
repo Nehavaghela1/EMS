@@ -1153,12 +1153,12 @@ export function TimesheetsPage() {
       {/* Reject Reason Modal */}
       {rejectTarget && (
         <div className="modal-backdrop" onClick={() => { setRejectTarget(null); setRejectReason(""); }}>
-          <div className="modal card" style={{ maxWidth: "460px" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3 style={{ margin: 0 }}>Reject Time Entry</h3>
               <button type="button" className="modal-close-btn" onClick={() => { setRejectTarget(null); setRejectReason(""); }}>✕</button>
             </div>
-            <div className="stack gap-3 mt-2">
+            <div className="modal-body stack gap-3">
               <div className="p-3 bg-muted rounded border" style={{ fontSize: "0.875rem" }}>
                 <div><span className="text-muted text-xs">Employee</span></div>
                 <strong>{rejectTarget.employee_name || "Team Member"}</strong>
@@ -1180,10 +1180,10 @@ export function TimesheetsPage() {
                 />
               </div>
             </div>
-            <div className="row-end mt-4" style={{ gap: "8px" }}>
+            <div className="modal-footer" style={{ gap: "8px" }}>
               <button
                 type="button"
-                className="btn"
+                className="btn btn-ghost"
                 onClick={() => { setRejectTarget(null); setRejectReason(""); }}
                 disabled={rejectBusy}
               >
@@ -1198,6 +1198,8 @@ export function TimesheetsPage() {
                   setRejectBusy(true);
                   try {
                     await handleApproveReject(rejectTarget.id, "rejected", rejectReason.trim());
+                    setRejectTarget(null);
+                    setRejectReason("");
                   } finally {
                     setRejectBusy(false);
                   }

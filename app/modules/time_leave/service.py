@@ -2286,6 +2286,20 @@ class LeaveService:
                 "previous_status": previous_status.value,
             },
         )
+        if employee is not None:
+            if employee.user_id is not None:
+                self.notify.notify(
+                    company_id=company_id,
+                    user_id=employee.user_id,
+                    type="leave_cancelled",
+                    title="Leave cancelled",
+                    message=f"Your leave from {leave.start_date} to {leave.end_date} has been cancelled.",
+                    entity_type="leave",
+                    entity_id=leave.id,
+                )
+            self._send_leave_decision_email(
+                employee, leave, status="cancelled", rejection_reason=None
+            )
         self.db.commit()
         if previous_status == LeaveStatus.approved:
             DashboardService.invalidate_company_dashboards(company_id)
