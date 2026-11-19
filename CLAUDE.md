@@ -167,7 +167,8 @@ Modules: `identity · hr · time_leave · performance · payroll · projects · 
 
 ## Conventions that already exist (reuse them)
 
-- Roles: `require_role(...)` (adds owner when hr_admin is allowed). `HR_LEVEL_ROLES` = hr_admin, owner, super_admin.
+- Roles: Super admin is a platform role, refused on every company route by `require_company_role(...)`. Platform routes use `require_platform_role()`. The route-policy security test (`tests/security/test_route_access_matrix.py`) strictly enforces both: the suite fails if any route uses neither guard, if a company route lists super admin, or if a platform route lists any other role. `HR_LEVEL_ROLES` = `(UserRole.hr_admin, UserRole.owner)`. Platform statistics surface operates under `/platform/stats`: `GET /platform/stats/overview`, `GET /platform/stats/companies`, `GET /platform/stats/payroll`, `GET /platform/stats/activity`, `GET /platform/stats/platform-health`.
+- Support Access: Owner-granted, time-limited support access is the NEXT branch. Nothing in this branch grants super admin company access by any route.
 - Rate limits: `@limiter.limit("N/minute", key_func=get_user_or_ip_key)` with `request: Request`. Every limited route has a 429 test.
 - Errors: `ValidationError` 422, `ForbiddenError` 403, `NotFoundError` 404, `ConflictError` 409, `PayloadTooLargeError` 413.
 - Audit: `AuditService.record(company_id, actor, action, entity_type, entity_id, details)` in the same commit as the change.
@@ -223,6 +224,7 @@ Manager chain valid, Status flow correct, Audit logged, Tests, CI green; use N/A
 
 ## Frontend to fix later (running list, backend-first)
 
+- Super admin sidebar: the AppLayout.tsx sidebar still shows super admin the Pay Runs, Payroll Setup, My Payslips, Reimbursements, Performance Cycles, Team Reviews, Projects and Timesheets entries, which now all return 403; super admin should see the platform stats screens instead.
 - Module 1/2: forgot/reset password company code, country editing, roles screen, head office active toggle, 2.3 profile section screens, 2.5 employee documents screens (upload broken, list/download routes new), 2.6 screens (withdraw button, clearance queue, limited view, "exit scheduled" status, reason/notes/remark fields, notice defaults screen, employee FnF view after exit), real-Celery export check, `EmployeeListPage` reads `result.file_name` (job result is now only `row_count`/`expires_at`; unverified), hand-typed vs generated API types.
 - Module 3: announcement create form with department choice and poster delete button; search results screen (the Ctrl+K modal does not call `/search`; `url` may be null); notification `action_url` may be null; audit logs page and export/download buttons; job progress/failure messages; project document upload errors for wrong type (422) and size (413) and the allowed-types list; phone apostrophe in CSV.
 
