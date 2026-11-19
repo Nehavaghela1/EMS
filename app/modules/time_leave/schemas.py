@@ -389,6 +389,7 @@ class LeaveApplyRequest(BaseModel):
     start_date: date
     end_date: date
     is_half_day: bool = False
+    half_day_session: Literal["first_half", "second_half"] | None = None
     reason: _ReasonStr
 
 
@@ -407,6 +408,7 @@ class LeaveResponse(BaseModel):
     end_date: date
     total_days: Decimal
     is_half_day: bool
+    half_day_session: str | None = None
     reason: str
     status: LeaveStatus
     approved_by: uuid.UUID | None

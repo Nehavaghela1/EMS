@@ -1,17 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
 import { usePagination } from "../../../shared/hooks/usePagination";
 import { useDebounce } from "../../../shared/hooks/useDebounce";
 import { useToast } from "../../../app/toast-context";
-import { useAuth } from "../../../app/auth-context";
 import { useHasRole } from "../../../shared/hooks/useRole";
 import { parseApiError } from "../../../shared/api/errors";
 import {
   listDepartments,
   listEmployees,
-  updateEmployee,
   bulkDeactivateEmployees,
   bulkReactivateEmployees,
   bulkResendInviteEmployees,
@@ -22,14 +20,11 @@ import {
   type BulkActionResponse,
 } from "../api";
 import { listCompanies, updateUserRole } from "../../identity/api";
-import { getPositionsForDepartment, toTitleCase } from "../constants/departmentPositions";
 
 export function EmployeeListPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { user } = useAuth();
   const isSuperAdmin = useHasRole("super_admin");
-  const isOwner = user?.role === "owner";
   const canCreate = useHasRole("hr_admin", "super_admin");
   const { page, limit, setPage } = usePagination();
   const [q, setQ] = useState(searchParams.get("q") || "");
@@ -81,47 +76,9 @@ export function EmployeeListPage() {
     placeholderData: (prev) => prev,
   });
 
-  const [quickEditEmp, setQuickEditEmp] = useState<Employee | null>(null);
-  const [quickPositionValue, setQuickPositionValue] = useState("");
-  const [quickSaving, setQuickSaving] = useState(false);
-  const [quickError, setQuickError] = useState<string | null>(null);
-  const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
   const { notify } = useToast();
 
   const queryClient = useQueryClient();
-
-  // Open quick edit modal — pre-fill with current position
-  function handleOpenQuickEdit(emp: Employee) {
-    setQuickEditEmp(emp);
-    setQuickError(null);
-    setQuickPositionValue(emp.position ?? "");
-  }
-
-
-
-  async function handleSaveQuickPosition() {
-    if (!quickEditEmp) return;
-    if (!quickPositionValue.trim()) {
-      setQuickError("Please enter a designation title.");
-      return;
-    }
-
-    const finalPos = toTitleCase(quickPositionValue.trim());
-
-    setQuickSaving(true);
-    setQuickError(null);
-    try {
-      await updateEmployee(quickEditEmp.id, {
-        position: finalPos || undefined,
-      });
-      await queryClient.invalidateQueries({ queryKey: ["employees"] });
-      setQuickEditEmp(null);
-    } catch (err) {
-      setQuickError(parseApiError(err).message);
-    } finally {
-      setQuickSaving(false);
-    }
-  }
 
   async function handleRoleChange() {
     if (!roleConfirm?.emp.user_id) {
@@ -172,6 +129,25 @@ export function EmployeeListPage() {
   const [viewDropdownOpen, setViewDropdownOpen] = useState(false);
   const [viewSearchQuery, setViewSearchQuery] = useState("");
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+
+  const viewDropdownRef = useRef<HTMLDivElement>(null);
+  const headerMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close popups on click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (viewDropdownRef.current && !viewDropdownRef.current.contains(event.target as Node)) {
+        setViewDropdownOpen(false);
+      }
+      if (headerMenuRef.current && !headerMenuRef.current.contains(event.target as Node)) {
+        setHeaderMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   // Bulk actions breakdown modal state
   const [bulkResults, setBulkResults] = useState<{
@@ -462,19 +438,6 @@ export function EmployeeListPage() {
 
               <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.78rem", color: "#64748b" }}>
                 <span>{e.position || "Staff"}</span>
-                {canCreate && (
-                  <button
-                    className="btn btn-ghost btn-xs"
-                    style={{ padding: "0 2px", fontSize: "0.7rem", color: "#94a3b8" }}
-                    title="Quick edit designation"
-                    onClick={(evt) => {
-                      evt.stopPropagation();
-                      handleOpenQuickEdit(e);
-                    }}
-                  >
-                    ✎
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -518,92 +481,6 @@ export function EmployeeListPage() {
         </span>
       ),
     },
-    {
-      key: "actions",
-      label: "",
-      render: (e) => (
-        <div style={{ position: "relative", textAlign: "right" }}>
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost"
-            style={{ padding: "0.2rem 0.5rem", color: "#64748b" }}
-            onClick={(evt) => {
-              evt.stopPropagation();
-              setActionMenuOpen(actionMenuOpen === e.id ? null : e.id);
-            }}
-          >
-            •••
-          </button>
-          {actionMenuOpen === e.id && (
-            <div
-              style={{
-                position: "absolute",
-                right: 0,
-                top: "100%",
-                background: "#ffffff",
-                border: "1px solid var(--color-border, #e2e8f0)",
-                borderRadius: "8px",
-                boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
-                zIndex: 50,
-                minWidth: "190px",
-                padding: "6px 0",
-                textAlign: "left",
-              }}
-              onClick={(evt) => evt.stopPropagation()}
-            >
-              <button
-                type="button"
-                style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                onClick={(evt) => { evt.stopPropagation(); navigate(`/employees/${e.id}`); }}
-              >
-                <span>👤</span> <span>View Profile</span>
-              </button>
-              {canCreate && (
-                <button
-                  type="button"
-                  style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                  onClick={(evt) => { evt.stopPropagation(); navigate(`/employees/${e.id}/edit`); }}
-                >
-                  <span>✎</span> <span>Edit Details</span>
-                </button>
-              )}
-              {canCreate && (
-                <button
-                  type="button"
-                  style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                  onClick={(evt) => { evt.stopPropagation(); handleOpenQuickEdit(e); setActionMenuOpen(null); }}
-                >
-                  <span>🏷️</span> <span>Edit Designation</span>
-                </button>
-              )}
-              {isOwner && e.user_id && e.user_id !== user?.id && (
-                <>
-                  <div style={{ height: "1px", background: "#e2e8f0", margin: "4px 0" }} />
-                  {e.system_role !== "hr_admin" && e.system_role !== "owner" && (
-                    <button
-                      type="button"
-                      style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#6366f1", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                      onClick={(evt) => { evt.stopPropagation(); setRoleConfirm({ emp: e, action: "promote" }); setActionMenuOpen(null); }}
-                    >
-                      <span>👑</span> <span>Make HR Admin</span>
-                    </button>
-                  )}
-                  {e.system_role === "hr_admin" && (
-                    <button
-                      type="button"
-                      style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#dc2626", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                      onClick={(evt) => { evt.stopPropagation(); setRoleConfirm({ emp: e, action: "demote" }); setActionMenuOpen(null); }}
-                    >
-                      <span>⬇️</span> <span>Demote to Employee</span>
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      ),
-    },
   ];
 
   return (
@@ -612,7 +489,7 @@ export function EmployeeListPage() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px", flexWrap: "wrap", gap: "12px", position: "relative" }}>
         
         {/* Left: Zoho Custom View Dropdown */}
-        <div style={{ position: "relative" }}>
+        <div ref={viewDropdownRef} style={{ position: "relative" }}>
           <button
             type="button"
             onClick={() => setViewDropdownOpen(!viewDropdownOpen)}
@@ -790,7 +667,7 @@ export function EmployeeListPage() {
           )}
 
           {/* Zoho 3-Dot More Action Menu Button & Popover */}
-          <div style={{ position: "relative" }}>
+          <div ref={headerMenuRef} style={{ position: "relative" }}>
             <button
               type="button"
               className="btn btn-outline"
@@ -1224,90 +1101,6 @@ export function EmployeeListPage() {
         onRowClick={(e) => navigate(`/employees/${e.id}`)}
         onRowDoubleClick={(e) => navigate(`/employees/${e.id}`)}
       />
-
-      {/* Quick Edit Position Modal — single creatable combobox, no two-tier friction */}
-      {quickEditEmp && (
-        <div className="modal-backdrop" onClick={() => setQuickEditEmp(null)}>
-          <div className="modal stack" onClick={(evt) => evt.stopPropagation()} style={{ maxWidth: "440px" }}>
-            <div className="modal-header">
-              <h3>Edit Designation — {quickEditEmp.first_name} {quickEditEmp.last_name || ""}</h3>
-              <button type="button" className="modal-close-btn" onClick={() => setQuickEditEmp(null)}>✕</button>
-            </div>
-
-            <p style={{ fontSize: "0.78rem", color: "#64748b", margin: "0 0 14px", padding: "0 2px" }}>
-              Type a job title or pick from the smart suggestions below. This does not affect system access or security roles.
-            </p>
-
-            {quickError && <div className="alert alert-error">{quickError}</div>}
-
-            <div className="field">
-              <div className="row-between align-center mb-1">
-                <label style={{ margin: 0, fontWeight: 600 }}>Designation / Position</label>
-                {quickEditEmp.department_id && (
-                  <span className="text-xs text-muted">
-                    Dept: <strong>{departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name || "General"}</strong>
-                  </span>
-                )}
-              </div>
-
-              {/* Standard visible select dropdown */}
-              <select
-                id="quick-position-select"
-                value={
-                  getPositionsForDepartment(
-                    departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name
-                  ).includes(quickPositionValue)
-                    ? quickPositionValue
-                    : "__custom__"
-                }
-                onChange={(e) => {
-                  if (e.target.value !== "__custom__") {
-                    setQuickPositionValue(e.target.value);
-                  }
-                }}
-                style={{ width: "100%", marginBottom: "8px", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-              >
-                <option value="__custom__">-- Choose a standard designation or type custom below --</option>
-                {getPositionsForDepartment(
-                  departmentsQuery.data?.items.find((d) => d.id === quickEditEmp.department_id)?.name
-                ).map((pos) => (
-                  <option key={pos} value={pos}>
-                    {pos}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                id="quick-position-input"
-                type="text"
-                value={quickPositionValue}
-                onChange={(e) => setQuickPositionValue(e.target.value)}
-                onBlur={() => setQuickPositionValue(toTitleCase(quickPositionValue))}
-                placeholder="Or type a custom job title here…"
-                autoComplete="off"
-                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
-              />
-              <span className="field-hint" style={{ fontSize: "0.74rem", marginTop: "6px", display: "block", color: "#64748b" }}>
-                Select from the dropdown above, or type any custom designation in the box.
-              </span>
-            </div>
-
-            <div className="row-end mt-4">
-              <button type="button" className="btn" onClick={() => setQuickEditEmp(null)} disabled={quickSaving}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleSaveQuickPosition}
-                disabled={quickSaving || !quickPositionValue.trim()}
-              >
-                {quickSaving ? "Saving…" : "Save Designation"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Security Role Confirmation Modal — owner-only */}
       {roleConfirm && (

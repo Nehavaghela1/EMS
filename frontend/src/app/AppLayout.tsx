@@ -39,7 +39,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "dashboard",
     label: "Dashboard",
     to: "/dashboard",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>
@@ -50,7 +50,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "employees",
     label: "Employees",
     to: "/employees",
-    roles: ["hr_admin", "manager", "super_admin", "owner"],
+    roles: ["hr_admin", "manager", "owner"],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
@@ -60,12 +60,12 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "time_attendance",
     label: "Leave & Attendance",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     children: [
-      { to: "/attendance", label: "Attendance", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/leaves", label: "Leave Requests", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/shifts", label: "Shift Schedule", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/holidays", label: "Holidays", roles: ["hr_admin", "super_admin", "owner"] },
+      { to: "/attendance", label: "Attendance", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/leaves", label: "Leave Requests", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/shifts", label: "Shift Schedule", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/holidays", label: "Holidays", roles: ["hr_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -76,12 +76,12 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "payroll",
     label: "Payroll",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     children: [
-      { to: "/payroll/run", label: "Pay Runs", roles: ["hr_admin", "super_admin", "owner"] },
-      { to: "/payroll/setup", label: "Payroll Setup", roles: ["hr_admin", "super_admin", "owner"] },
-      { to: "/payroll/payslip", label: "My Payslips", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/payroll/reimbursements", label: "Reimbursements", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/payroll/run", label: "Pay Runs", roles: ["hr_admin", "owner"] },
+      { to: "/payroll/setup", label: "Payroll Setup", roles: ["hr_admin", "owner"] },
+      { to: "/payroll/payslip", label: "My Payslips", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/payroll/reimbursements", label: "Reimbursements", roles: ["employee", "manager", "hr_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -92,11 +92,11 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "performance",
     label: "Performance",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     children: [
-      { to: "/performance", label: "Cycles & Review", roles: ["hr_admin", "super_admin", "owner"] },
-      { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/performance/reviews", label: "Team Reviews", roles: ["manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/performance", label: "Cycles & Review", roles: ["hr_admin", "owner"] },
+      { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/performance/reviews", label: "Team Reviews", roles: ["manager", "hr_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -107,10 +107,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "projects",
     label: "Projects & Timesheet",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     children: [
-      { to: "/projects", label: "Projects", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/timesheets", label: "Timesheets", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/projects", label: "Projects", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/timesheets", label: "Timesheets", roles: ["employee", "manager", "hr_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -122,7 +122,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "settings",
     label: "Settings",
     to: "/settings",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -292,7 +292,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const dashboardQuery = useQuery({
     queryKey: ["dashboard"],
     queryFn: fetchDashboard,
-    enabled: ["owner", "hr_admin", "super_admin"].includes(role),
+    enabled: ["owner", "hr_admin"].includes(role),
     staleTime: 60_000,
   });
   const pendingLeaves: number =

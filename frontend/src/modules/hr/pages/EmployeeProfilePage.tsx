@@ -18,17 +18,22 @@ import {
   getFnFSettlement,
   updateFnFClearance,
   updateUserRole,
+  listDepartments,
   type Employee,
 } from "../api";
+import { getMyCompany } from "../../identity/api";
+import { getPositionsForDepartment, getPositionsForIndustry, toTitleCase } from "../constants/departmentPositions";
 import { ManagerCombobox } from "../components/ManagerCombobox";
 import {
   listEmployeePayslips,
   listStructures,
+  getStructure,
   assignEmployeeSalary,
   getStatutoryConfig,
   updateStatutoryConfig,
   type PayrollItem,
   type SalaryStructureListItem,
+  type SalaryStructure,
   type StatutoryConfig,
 } from "../../payroll/api";
 import {
@@ -100,6 +105,7 @@ export function EmployeeProfilePage() {
   const [leaveStartDate, setLeaveStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [leaveEndDate, setLeaveEndDate] = useState(new Date().toISOString().slice(0, 10));
   const [leaveIsHalfDay, setLeaveIsHalfDay] = useState(false);
+  const [leaveHalfDaySession, setLeaveHalfDaySession] = useState<"first_half" | "second_half">("first_half");
   const [leaveReason, setLeaveReason] = useState("");
   const [leaveSubmitting, setLeaveSubmitting] = useState(false);
 
@@ -126,6 +132,16 @@ export function EmployeeProfilePage() {
     queryKey: ["leave-types"],
     queryFn: listLeaveTypes,
     enabled: showLeaveModal,
+  });
+
+  const companyQuery = useQuery({
+    queryKey: ["company", "me"],
+    queryFn: getMyCompany,
+  });
+
+  const departmentsQuery = useQuery({
+    queryKey: ["departments", "all-for-profile"],
+    queryFn: () => listDepartments({ page: 1, limit: 100 }),
   });
 
   const invite = resent ?? (location.state as InviteState | null)?.invite;
@@ -2024,17 +2040,17 @@ export function EmployeeProfilePage() {
                   </select>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: leaveIsHalfDay ? "1fr" : "1fr 1fr", gap: "12px" }}>
                   <div>
                     <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
-                      From Date <span style={{ color: "#ef4444" }}>*</span>
+                      {leaveIsHalfDay ? "Leave Date" : "From Date"} <span style={{ color: "#ef4444" }}>*</span>
                     </label>
                     <input
                       type="date"
                       value={leaveStartDate}
                       onChange={(ev) => {
                         setLeaveStartDate(ev.target.value);
-                        if (!leaveEndDate || leaveEndDate < ev.target.value) {
+                        if (leaveIsHalfDay || !leaveEndDate || leaveEndDate < ev.target.value) {
                           setLeaveEndDate(ev.target.value);
                         }
                       }}
@@ -2042,28 +2058,62 @@ export function EmployeeProfilePage() {
                     />
                   </div>
 
-                  <div>
-                    <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
-                      To Date <span style={{ color: "#ef4444" }}>*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={leaveEndDate}
-                      onChange={(ev) => setLeaveEndDate(ev.target.value)}
-                      style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
-                    />
-                  </div>
+                  {!leaveIsHalfDay && (
+                    <div>
+                      <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                        To Date <span style={{ color: "#ef4444" }}>*</span>
+                      </label>
+                      <input
+                        type="date"
+                        value={leaveEndDate}
+                        onChange={(ev) => setLeaveEndDate(ev.target.value)}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                      />
+                    </div>
+                  )}
                 </div>
 
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={leaveIsHalfDay}
-                    onChange={(ev) => setLeaveIsHalfDay(ev.target.checked)}
-                    style={{ accentColor: "#2563eb" }}
-                  />
-                  <span>Half Day Leave</span>
-                </label>
+                <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.84rem", color: "#334155", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={leaveIsHalfDay}
+                      onChange={(ev) => {
+                        const checked = ev.target.checked;
+                        setLeaveIsHalfDay(checked);
+                        if (checked && leaveStartDate) {
+                          setLeaveEndDate(leaveStartDate);
+                        }
+                      }}
+                      style={{ accentColor: "#2563eb" }}
+                    />
+                    <span style={{ fontWeight: 600 }}>Half Day Leave (single date)</span>
+                  </label>
+
+                  {leaveIsHalfDay && (
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: "10px", background: "#f8fafc", padding: "4px 10px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                      <span style={{ fontSize: "0.8rem", color: "#64748b" }}>Session:</span>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "0.8rem", cursor: "pointer" }}>
+                        <input
+                          type="radio"
+                          name="profileHalfDaySession"
+                          checked={leaveHalfDaySession === "first_half"}
+                          onChange={() => setLeaveHalfDaySession("first_half")}
+                        />
+                        <span>1st Half</span>
+                      </label>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "0.8rem", cursor: "pointer" }}>
+                        <input
+                          type="radio"
+                          name="profileHalfDaySession"
+                          checked={leaveHalfDaySession === "second_half"}
+                          onChange={() => setLeaveHalfDaySession("second_half")}
+                        />
+                        <span>2nd Half</span>
+                      </label>
+                    </div>
+                  )}
+                </div>
 
                 <div>
                   <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
@@ -2111,8 +2161,9 @@ export function EmployeeProfilePage() {
                         employee_id: e.id,
                         leave_type_id: leaveTypeId,
                         start_date: leaveStartDate,
-                        end_date: leaveEndDate,
+                        end_date: leaveIsHalfDay ? leaveStartDate : leaveEndDate,
                         is_half_day: leaveIsHalfDay,
+                        half_day_session: leaveIsHalfDay ? leaveHalfDaySession : undefined,
                         reason: leaveReason.trim(),
                       });
                       notify("Leave request submitted successfully.");
@@ -2397,16 +2448,78 @@ export function EmployeeProfilePage() {
                   {isHr && (
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                       <div>
-                        <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
-                          Designation
-                        </label>
-                        <input
-                          type="text"
-                          value={basicForm.position}
-                          onChange={(ev) => setBasicForm({ ...basicForm, position: ev.target.value })}
-                          placeholder="e.g. Software Engineer"
-                          style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
-                        />
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                          <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", margin: 0 }}>
+                            Designation
+                          </label>
+                          {companyQuery.data?.industry && (
+                            <span style={{ fontSize: "0.72rem", color: "#64748b" }}>
+                              {companyQuery.data.industry}
+                            </span>
+                          )}
+                        </div>
+                        {(() => {
+                          const deptName = departmentsQuery.data?.items.find((d) => d.id === e.department_id)?.name;
+                          const deptPositions = getPositionsForDepartment(deptName);
+                          const industryPositions = getPositionsForIndustry(companyQuery.data?.industry);
+                          const allPositions = Array.from(new Set([...deptPositions, ...industryPositions]));
+                          const isStandard = allPositions.includes(basicForm.position);
+
+                          return (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                              <select
+                                value={isStandard ? basicForm.position : basicForm.position ? "__custom__" : ""}
+                                onChange={(ev) => {
+                                  if (ev.target.value !== "__custom__") {
+                                    setBasicForm({ ...basicForm, position: ev.target.value });
+                                  }
+                                }}
+                                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                              >
+                                <option value="">— Select Designation —</option>
+                                {deptName && (
+                                  <optgroup label={`Department: ${deptName}`}>
+                                    {deptPositions.map((pos) => (
+                                      <option key={pos} value={pos}>
+                                        {pos}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                                {companyQuery.data?.industry && (
+                                  <optgroup label={`Industry: ${companyQuery.data.industry}`}>
+                                    {industryPositions
+                                      .filter((pos) => !deptPositions.includes(pos))
+                                      .map((pos) => (
+                                        <option key={pos} value={pos}>
+                                          {pos}
+                                        </option>
+                                      ))}
+                                  </optgroup>
+                                )}
+                                {!deptName && !companyQuery.data?.industry && (
+                                  allPositions.map((pos) => (
+                                    <option key={pos} value={pos}>
+                                      {pos}
+                                    </option>
+                                  ))
+                                )}
+                                <option value="__custom__">Custom / Other...</option>
+                              </select>
+
+                              {(!isStandard || !allPositions.includes(basicForm.position)) && (
+                                <input
+                                  type="text"
+                                  value={basicForm.position}
+                                  onChange={(ev) => setBasicForm({ ...basicForm, position: ev.target.value })}
+                                  onBlur={() => setBasicForm({ ...basicForm, position: toTitleCase(basicForm.position) })}
+                                  placeholder="Type custom designation title"
+                                  style={{ width: "100%", padding: "7px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                                />
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       <div>
@@ -4203,6 +4316,7 @@ interface EmployeeSalaryData {
 
 function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string; companyId?: string | null; isHr: boolean }) {
   const { notify } = useToast();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -4211,6 +4325,7 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
   const [assignEffectiveFrom, setAssignEffectiveFrom] = useState(
     new Date().toISOString().split("T")[0]
   );
+  const [revisionReason, setRevisionReason] = useState("");
   const [saving, setSaving] = useState(false);
 
   const salaryQuery = useQuery<EmployeeSalaryData | null>({
@@ -4233,10 +4348,21 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
     enabled: isHr && showAssignModal,
   });
 
+  const structureDetailQuery = useQuery<SalaryStructure | null>({
+    queryKey: ["salary-structure-detail", selectedStructId],
+    queryFn: () => (selectedStructId ? getStructure(selectedStructId) : null),
+    enabled: !!selectedStructId && showAssignModal,
+  });
+
   async function handleAssignSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedStructId) {
       notify("Please select a salary structure", "error");
+      return;
+    }
+    // If revising an existing salary, reason is mandatory
+    if (sal && !revisionReason.trim()) {
+      notify("A reason is required when revising an existing salary.", "error");
       return;
     }
     setSaving(true);
@@ -4245,9 +4371,11 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
         structure_id: selectedStructId,
         ctc: assignCtc,
         effective_from: assignEffectiveFrom,
+        revision_reason: revisionReason.trim() || undefined,
       });
       notify("Salary assigned successfully", "success");
       setShowAssignModal(false);
+      setRevisionReason("");
       await queryClient.invalidateQueries({ queryKey: ["employee_salary", employeeId] });
     } catch (err) {
       notify(parseApiError(err).message, "error");
@@ -4454,10 +4582,28 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
             <form onSubmit={handleAssignSubmit} style={{ padding: "1.75rem", overflowY: "auto", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
               {/* Template selection */}
               <div className="field">
-                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>Salary Templates</label>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", margin: 0 }}>Salary Templates *</label>
+                  <button
+                    type="button"
+                    className="btn btn-xs btn-ghost"
+                    onClick={() => {
+                      navigate(`/payroll/setup?new=true&returnTo=/employees/${employeeId}`);
+                    }}
+                    style={{ color: "var(--color-primary, #2563eb)", fontSize: "0.75rem", fontWeight: 600, padding: 0 }}
+                  >
+                    + Create New Structure
+                  </button>
+                </div>
                 <select
                   value={selectedStructId}
-                  onChange={(e) => setSelectedStructId(e.target.value)}
+                  onChange={(e) => {
+                    if (e.target.value === "__create_new__") {
+                      navigate(`/payroll/setup?new=true&returnTo=/employees/${employeeId}`);
+                    } else {
+                      setSelectedStructId(e.target.value);
+                    }
+                  }}
                   required
                   style={{ borderRadius: "6px", height: "38px" }}
                 >
@@ -4467,7 +4613,13 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
                       {s.name} ({s.country} • {s.level || "All Levels"})
                     </option>
                   ))}
+                  <option value="__create_new__">+ Setup / Create New Salary Structure →</option>
                 </select>
+                {structuresQuery.data?.items.length === 0 && (
+                  <span className="field-hint" style={{ color: "#b45309", fontSize: "0.75rem" }}>
+                    💡 No salary structure found for your company. Select "+ Setup / Create New" to configure one now.
+                  </span>
+                )}
               </div>
 
               {/* Revision Type Radio Selection */}
@@ -4503,16 +4655,93 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
                 </div>
               </div>
 
-              {/* Zoho Salary Components Calculation Table */}
+              {/* Dynamic Salary Components Calculation Table */}
               {(() => {
                 const annual = parseFloat(assignCtc) || 0;
                 const monthly = annual / 12;
-                const basicAnnual = annual * 0.5;
-                const basicMonthly = basicAnnual / 12;
-                const hraAnnual = basicAnnual * 0.5;
-                const hraMonthly = hraAnnual / 12;
-                const fixedAllowanceAnnual = annual - basicAnnual - hraAnnual;
-                const fixedAllowanceMonthly = fixedAllowanceAnnual / 12;
+
+                const structComponents = structureDetailQuery.data?.components;
+                type RowCalc = {
+                  code: string;
+                  name: string;
+                  calcTypeLabel: string;
+                  monthlyAmount: number;
+                  annualAmount: number;
+                };
+
+                let rows: RowCalc[] = [];
+
+                if (structComponents && structComponents.length > 0) {
+                  // Dynamic breakdown based on selected template structure
+                  const sorted = [...structComponents].sort((a, b) => a.display_order - b.display_order);
+                  const basicComp = sorted.find((c) => c.code === "BASIC");
+                  const basicVal = basicComp && basicComp.calculation_type === "percentage" && basicComp.percentage_of === "ctc"
+                    ? Number(basicComp.value) || 0
+                    : 0;
+                  const basicAnnualAmount = (annual * basicVal) / 100;
+
+                  let totalAssignedAnnual = 0;
+                  const balanceComponents: typeof sorted = [];
+
+                  sorted.forEach((comp) => {
+                    if (comp.calculation_type === "percentage") {
+                      const pct = Number(comp.value) || 0;
+                      let compAnnual = 0;
+                      let label = `${pct.toFixed(2)} %`;
+                      if (comp.percentage_of === "ctc") {
+                        compAnnual = (annual * pct) / 100;
+                        label += " of CTC";
+                      } else if (comp.percentage_of === "basic") {
+                        compAnnual = (basicAnnualAmount * pct) / 100;
+                        label += " of Basic";
+                      }
+                      totalAssignedAnnual += compAnnual;
+                      rows.push({
+                        code: comp.code,
+                        name: comp.name,
+                        calcTypeLabel: label,
+                        monthlyAmount: compAnnual / 12,
+                        annualAmount: compAnnual,
+                      });
+                    } else if (comp.calculation_type === "fixed") {
+                      const fixedM = Number(comp.value) || 0;
+                      const compAnnual = fixedM * 12;
+                      totalAssignedAnnual += compAnnual;
+                      rows.push({
+                        code: comp.code,
+                        name: comp.name,
+                        calcTypeLabel: `Fixed ₹${Math.round(fixedM).toLocaleString("en-IN")}/mo`,
+                        monthlyAmount: fixedM,
+                        annualAmount: compAnnual,
+                      });
+                    } else if (comp.calculation_type === "balance") {
+                      balanceComponents.push(comp);
+                    }
+                  });
+
+                  // Allocate remainder to balance component(s)
+                  const remainingAnnual = Math.max(0, annual - totalAssignedAnnual);
+                  balanceComponents.forEach((bComp) => {
+                    const compAnnual = remainingAnnual / balanceComponents.length;
+                    rows.push({
+                      code: bComp.code,
+                      name: bComp.name,
+                      calcTypeLabel: "Fixed amount (Balance of CTC)",
+                      monthlyAmount: compAnnual / 12,
+                      annualAmount: compAnnual,
+                    });
+                  });
+                } else {
+                  // Fallback standard 50-50 calculation
+                  const basicAnnual = annual * 0.5;
+                  const hraAnnual = basicAnnual * 0.5;
+                  const fixedAnnual = annual - basicAnnual - hraAnnual;
+                  rows = [
+                    { code: "BASIC", name: "Basic", calcTypeLabel: "50.00 % of CTC", monthlyAmount: basicAnnual / 12, annualAmount: basicAnnual },
+                    { code: "HRA", name: "House Rent Allowance", calcTypeLabel: "50.00 % of Basic", monthlyAmount: hraAnnual / 12, annualAmount: hraAnnual },
+                    { code: "SPECIAL", name: "Fixed Allowance", calcTypeLabel: "Fixed amount (Balance)", monthlyAmount: fixedAnnual / 12, annualAmount: fixedAnnual },
+                  ];
+                }
 
                 return (
                   <div>
@@ -4526,36 +4755,18 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
                         </tr>
                       </thead>
                       <tbody>
-                        <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                          <td style={{ padding: "10px 12px", fontWeight: 600, color: "#0f172a" }}>Basic</td>
-                          <td style={{ padding: "10px 12px", color: "#64748b" }}>50.00 % of CTC</td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
-                            ₹{Math.round(basicMonthly).toLocaleString("en-IN")}
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
-                            ₹{Math.round(basicAnnual).toLocaleString("en-IN")}
-                          </td>
-                        </tr>
-                        <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                          <td style={{ padding: "10px 12px", fontWeight: 600, color: "#0f172a" }}>House Rent Allowance</td>
-                          <td style={{ padding: "10px 12px", color: "#64748b" }}>50.00 % of Basic</td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
-                            ₹{Math.round(hraMonthly).toLocaleString("en-IN")}
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
-                            ₹{Math.round(hraAnnual).toLocaleString("en-IN")}
-                          </td>
-                        </tr>
-                        <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                          <td style={{ padding: "10px 12px", fontWeight: 600, color: "#0f172a" }}>Fixed Allowance</td>
-                          <td style={{ padding: "10px 12px", color: "#64748b" }}>Fixed amount (Balance)</td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
-                            ₹{Math.round(fixedAllowanceMonthly).toLocaleString("en-IN")}
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
-                            ₹{Math.round(fixedAllowanceAnnual).toLocaleString("en-IN")}
-                          </td>
-                        </tr>
+                        {rows.map((row) => (
+                          <tr key={row.code} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                            <td style={{ padding: "10px 12px", fontWeight: 600, color: "#0f172a" }}>{row.name}</td>
+                            <td style={{ padding: "10px 12px", color: "#64748b" }}>{row.calcTypeLabel}</td>
+                            <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
+                              ₹{Math.round(row.monthlyAmount).toLocaleString("en-IN")}
+                            </td>
+                            <td style={{ padding: "10px 12px", textAlign: "right", color: "#0f172a" }}>
+                              ₹{Math.round(row.annualAmount).toLocaleString("en-IN")}
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
 
@@ -4570,6 +4781,26 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
                   </div>
                 );
               })()}
+
+              {/* Revision Reason (Mandatory when revising an existing salary, optional on initial) */}
+              <div className="field">
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                  Revision Reason {sal ? <span style={{ color: "#dc2626" }}>*</span> : <span className="text-muted">(Optional)</span>}
+                </label>
+                <input
+                  type="text"
+                  value={revisionReason}
+                  onChange={(e) => setRevisionReason(e.target.value)}
+                  placeholder={sal ? "e.g. Annual Performance Appraisal, Promotion, Market Correction" : "e.g. Initial Compensation Offer"}
+                  required={Boolean(sal)}
+                  style={{ height: "38px", borderRadius: "6px" }}
+                />
+                {sal && (
+                  <span className="field-hint" style={{ fontSize: "0.75rem", color: "#64748b" }}>
+                    A reason is required when revising an existing employee's salary.
+                  </span>
+                )}
+              </div>
 
               {/* Payout Preferences */}
               <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "4px" }}>
@@ -4607,7 +4838,7 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
                   type="submit"
                   className="btn btn-primary"
                   disabled={saving}
-                  style={{ background: "#2563eb", borderColor: "#2563eb", padding: "8px 20px", fontWeight: 600 }}
+                  style={{ padding: "8px 20px", fontWeight: 600 }}
                 >
                   {saving ? "Saving…" : "Save"}
                 </button>

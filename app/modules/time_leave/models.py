@@ -227,6 +227,7 @@ class Leave(TenantBase):
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
     total_days: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False)
     is_half_day: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    half_day_session: Mapped[str | None] = mapped_column(String(20), nullable=True)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[LeaveStatus] = mapped_column(
         Enum(LeaveStatus, name="leave_status"), nullable=False, default=LeaveStatus.pending

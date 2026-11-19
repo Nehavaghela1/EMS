@@ -1,4 +1,5 @@
 import { apiClient } from "../../app/api-client";
+import type { Page } from "../../shared/api/pagination";
 
 /** Mirrors app/modules/platform/service.py's four `_*_data` methods
  * exactly (Spec 11.10) — one field set per role. Fields the backend
@@ -236,3 +237,55 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
   const { data } = await apiClient.get<JobStatusResponse>(`/jobs/${jobId}`);
   return data;
 }
+
+// ── Platform Stats APIs (Super Admin) ─────────────────────────────────────────
+
+export interface CompanyStatsItem {
+  company_id: string;
+  name: string;
+  code: string;
+  status: string;
+  created_at: string;
+  headcount: number;
+  active_user_count: number;
+  joiners_this_month: number;
+  leavers_this_month: number;
+  last_payroll_run_date?: string | null;
+  most_recent_login?: string | null;
+}
+
+export async function listPlatformCompanyStats(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  status?: string;
+  sort_by?: string;
+  sort_dir?: string;
+}): Promise<Page<CompanyStatsItem>> {
+  const { data } = await apiClient.get<Page<CompanyStatsItem>>("/platform/stats/companies", {
+    params: {
+      page: params?.page ?? 1,
+      limit: params?.limit ?? 15,
+      search: params?.search || undefined,
+      status: params?.status && params.status !== "all" ? params.status : undefined,
+      sort_by: params?.sort_by ?? "name",
+      sort_dir: params?.sort_dir ?? "asc",
+    },
+  });
+  return data;
+}
+
+export interface PlatformOverviewStats {
+  companies_by_status: Record<string, number>;
+  companies_created_this_month: number;
+  total_users: number;
+  total_employees: number;
+  total_net_paid_this_month: string;
+  total_net_paid_last_month: string;
+}
+
+export async function fetchPlatformOverviewStats(): Promise<PlatformOverviewStats> {
+  const { data } = await apiClient.get<PlatformOverviewStats>("/platform/stats/overview");
+  return data;
+}
+

@@ -1,12 +1,16 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { DataTable, type DataTableColumn } from "../../../shared/components/DataTable";
 import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import { usePagination } from "../../../shared/hooks/usePagination";
 import { parseApiError } from "../../../shared/api/errors";
-import { fetchDashboard } from "../../platform/api";
+import {
+  fetchDashboard,
+  fetchPlatformOverviewStats,
+  listPlatformCompanyStats,
+  type CompanyStatsItem,
+} from "../../platform/api";
 import {
   approveCompany,
   listPendingCompanies,
@@ -22,14 +26,21 @@ import {
 import { formatDate } from "../../../shared/utils/date";
 
 export function AdminDashboardPage() {
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"all" | "pending">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const statsQuery = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
   const { page, limit, setPage } = usePagination();
   const queryClient = useQueryClient();
+
+  const statsQuery = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard, retry: false });
+  const overviewStatsQuery = useQuery({ queryKey: ["platform", "stats", "overview"], queryFn: fetchPlatformOverviewStats, retry: false });
+  const companyStatsQuery = useQuery({
+    queryKey: ["platform", "stats", "companies", { page, limit, status: statusFilter, search: searchQuery }],
+    queryFn: () => listPlatformCompanyStats({ page, limit, status: statusFilter, search: searchQuery }),
+    enabled: activeTab === "all",
+    placeholderData: (prev) => prev,
+  });
 
   // Pending companies query
   const pendingQuery = useQuery({
@@ -66,6 +77,7 @@ export function AdminDashboardPage() {
   async function refreshCompanies() {
     await queryClient.invalidateQueries({ queryKey: ["companies"] });
     await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    await queryClient.invalidateQueries({ queryKey: ["platform", "stats"] });
   }
 
   async function openEditModal(company: CompanyResponse) {
@@ -161,9 +173,9 @@ export function AdminDashboardPage() {
           style={{ cursor: "pointer", color: "var(--color-primary, #2563eb)", fontWeight: 700 }}
           onClick={(e) => {
             e.stopPropagation();
-            navigate(`/employees?companyId=${c.id}`);
+            openEditModal(c);
           }}
-          title="Click to view employees of this company"
+          title="Click to view company details"
         >
           {c.name}
         </span>
@@ -176,6 +188,19 @@ export function AdminDashboardPage() {
     },
     { key: "email", label: "Email", render: (c) => c.email },
     { key: "industry", label: "Industry", render: (c) => c.industry ?? "—" },
+    {
+      key: "headcount",
+      label: "Active Workforce",
+      render: (c) => {
+        const statsRow = companyStatsQuery.data?.items?.find((s: CompanyStatsItem) => s.company_id === c.id);
+        const count = statsRow ? statsRow.headcount : "—";
+        return (
+          <span style={{ fontWeight: 600, color: "#334155" }} title="Total active employees in company">
+            👥 {count}
+          </span>
+        );
+      },
+    },
     {
       key: "status",
       label: "Status",
@@ -191,18 +216,18 @@ export function AdminDashboardPage() {
     { key: "created_at", label: "Registered", render: (c) => formatDate(c.created_at) },
     {
       key: "actions",
-      label: "Employees",
+      label: "Actions",
       render: (c) => (
         <div className="row" style={{ gap: "var(--space-2)" }}>
           <button
             className="btn btn-sm btn-outline"
             onClick={(e) => {
               e.stopPropagation();
-              navigate(`/employees?companyId=${c.id}`);
+              openEditModal(c);
             }}
-            title="View workforce directory of this company"
+            title="View company details and totals"
           >
-            👥 View Employees
+            📋 Details
           </button>
           {c.status === "pending" && (
             <>
@@ -256,12 +281,15 @@ export function AdminDashboardPage() {
   ];
 
   const stats = statsQuery.data?.role === "super_admin" ? statsQuery.data.data : null;
+  const overview = overviewStatsQuery.data;
+  const totalEmployeesCount = overview?.total_employees ?? stats?.platform_user_count ?? 0;
+  const pendingApprovalsCount = stats?.pending_approvals ?? (overview?.companies_by_status?.pending ?? 0);
 
   return (
     <div>
       <PageHeader title="Platform Admin & Company Management" breadcrumb="Super Admin" />
 
-      {stats && (
+      {(stats || overview) && (
         <div className="stat-grid mb-6">
           <div
             className="card"
@@ -269,20 +297,25 @@ export function AdminDashboardPage() {
             onClick={() => setActiveTab("pending")}
           >
             <div className="stat-label">Pending approvals</div>
-            <div className="stat-value">{stats.pending_approvals}</div>
+            <div className="stat-value">{pendingApprovalsCount}</div>
             <div className="text-xs text-muted mt-1">Click to view pending requests</div>
           </div>
           <div
             className="card"
-            style={{ cursor: "pointer" }}
-            onClick={() => navigate("/employees")}
-            title="View Platform Directory"
+            title="Total active workforce across all companies"
           >
-            <div className="stat-label">Platform users</div>
-            <div className="stat-value">{stats.platform_user_count}</div>
-            <div className="text-xs text-muted mt-1">Click to view all platform users / employees</div>
+            <div className="stat-label">Total Active Workforce</div>
+            <div className="stat-value">{totalEmployeesCount}</div>
+            <div className="text-xs text-muted mt-1">Total active employees across platform</div>
           </div>
-          {Object.entries(stats.company_counts_by_status).map(([status, count]) => (
+          {overview?.total_users != null && (
+            <div className="card" title="Total registered user logins across platform">
+              <div className="stat-label">Platform user accounts</div>
+              <div className="stat-value">{overview.total_users}</div>
+              <div className="text-xs text-muted mt-1">Total user credentials created</div>
+            </div>
+          )}
+          {Object.entries(overview?.companies_by_status || stats?.company_counts_by_status || {}).map(([status, count]) => (
             <div
               className="card"
               key={status}
@@ -404,7 +437,6 @@ export function AdminDashboardPage() {
             emptyMessage="No companies found matching the criteria."
             rowKey={(c) => c.id}
             onRowClick={(c) => openEditModal(c)}
-            onRowDoubleClick={(c) => navigate(`/employees?companyId=${c.id}`)}
           />
         </>
       )}
@@ -533,8 +565,12 @@ export function AdminDashboardPage() {
                           <strong style={{ fontFamily: "monospace", fontSize: "13px" }}>{companyDetail.code}</strong>
                         </div>
                         <div>
+                          <span className="text-xs text-muted block">Active Workforce</span>
+                          <span style={{ fontWeight: 600 }}>👥 {companyDetail.counts?.employees ?? 0}</span>
+                        </div>
+                        <div>
                           <span className="text-xs text-muted block">Total Users</span>
-                          <span style={{ fontWeight: 600 }}>👥 {companyDetail.counts?.users ?? 0}</span>
+                          <span style={{ fontWeight: 600 }}>👤 {companyDetail.counts?.users ?? 0}</span>
                         </div>
                         <div>
                           <span className="text-xs text-muted block">Departments</span>

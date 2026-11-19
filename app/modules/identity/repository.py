@@ -62,7 +62,7 @@ class CompanyRepository:
     def list_companies(
         self,
         *,
-        status: CompanyStatus | None,
+        status: str | None,
         q: str | None,
         country: str | None,
         sort: str | None,
@@ -70,7 +70,10 @@ class CompanyRepository:
     ) -> tuple[list[Company], int, int]:
         stmt = select(Company)
         if status is not None:
-            stmt = stmt.where(Company.status == status)
+            if status == "deactivated":
+                stmt = stmt.where(Company.is_active.is_(False))
+            else:
+                stmt = stmt.where(Company.status == status)
         if country is not None:
             stmt = stmt.where(Company.country == country)
         if q:

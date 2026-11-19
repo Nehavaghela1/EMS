@@ -342,6 +342,7 @@ export interface Leave {
   end_date: string;
   total_days: string;
   is_half_day: boolean;
+  half_day_session?: "first_half" | "second_half" | null;
   reason: string;
   status: LeaveStatus;
   approved_by: string | null;
@@ -371,6 +372,7 @@ export interface ApplyLeaveInput {
   start_date: string;
   end_date: string;
   is_half_day?: boolean;
+  half_day_session?: "first_half" | "second_half" | null;
   reason: string;
 }
 

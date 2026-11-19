@@ -959,11 +959,14 @@ class AttendanceService:
             # Priority 1: Approved / Pending Leave
             if leave is not None:
                 if leave.status == LeaveStatus.approved:
-                    status = "on_leave"
-                    badge = lt_map.get(leave.leave_type_id, "On Leave")
+                    status = "half_day" if leave.is_half_day else "on_leave"
+                    session_str = f" ({'1st Half' if leave.half_day_session == 'first_half' else '2nd Half'})" if leave.half_day_session else ""
+                    base_name = lt_map.get(leave.leave_type_id, "Leave")
+                    badge = f"Half Day ({base_name}){session_str}" if leave.is_half_day else base_name
                 else:
                     status = "pending_leave"
-                    badge = f"Pending ({lt_map.get(leave.leave_type_id, 'Leave')})"
+                    session_str = f" ({'1st Half' if leave.half_day_session == 'first_half' else '2nd Half'})" if leave.half_day_session else ""
+                    badge = f"Pending ({lt_map.get(leave.leave_type_id, 'Leave')}{session_str})"
                 work_hours = att.hours_worked if att else None
                 check_in_val = att.check_in if att else None
                 check_out_val = att.check_out if att else None
@@ -1048,8 +1051,8 @@ class AttendanceService:
                 holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
-            # Priority 6: Future Work Days
-            elif is_future:
+            # Priority 6: Prior to Joining Date or Future Work Days
+            elif (emp and emp.hire_date and d < emp.hire_date) or is_future:
                 status = "no_record"
                 work_hours = None
                 check_in_val = None
@@ -1837,6 +1840,7 @@ class LeaveService:
                 "A half day leave can only be for a single date.",
                 details={"field": "is_half_day"},
             )
+        half_day_session = data.half_day_session if data.is_half_day else None
         settings_row = self.settings_repo.get_by_company(company_id)
         if self._leave_year(settings_row, data.start_date) != self._leave_year(
             settings_row, data.end_date
@@ -1916,6 +1920,7 @@ class LeaveService:
             end_date=data.end_date,
             total_days=total_days,
             is_half_day=data.is_half_day,
+            half_day_session=half_day_session,
             reason=data.reason,
             status=LeaveStatus.pending,
         )

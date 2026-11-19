@@ -536,6 +536,7 @@ function ApplyLeaveForm({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [isHalfDay, setIsHalfDay] = useState(false);
+  const [halfDaySession, setHalfDaySession] = useState<"first_half" | "second_half">("first_half");
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -593,14 +594,16 @@ function ApplyLeaveForm({
         employee_id: effectiveEmployeeId,
         leave_type_id: leaveTypeId,
         start_date: startDate,
-        end_date: endDate,
+        end_date: isHalfDay ? startDate : endDate,
         is_half_day: isHalfDay,
+        half_day_session: isHalfDay ? halfDaySession : undefined,
         reason: reason.trim(),
       });
       notify("Leave application submitted.");
       setStartDate("");
       setEndDate("");
       setIsHalfDay(false);
+      setHalfDaySession("first_half");
       setReason("");
       if (targetType === "other") {
         setEmployeeId("");
@@ -716,25 +719,71 @@ function ApplyLeaveForm({
           <input
             type="date"
             value={startDate}
-            onChange={(e) => handleStartDateChange(e.target.value)}
+            onChange={(e) => {
+              handleStartDateChange(e.target.value);
+              if (isHalfDay) {
+                setEndDate(e.target.value);
+              }
+            }}
             required
           />
         </div>
-        <div className="field">
-          <label>End date *</label>
-          <input
-            type="date"
-            value={endDate}
-            min={startDate || undefined}
-            onChange={(e) => setEndDate(e.target.value)}
-            required
-          />
-        </div>
+        {!isHalfDay && (
+          <div className="field">
+            <label>End date *</label>
+            <input
+              type="date"
+              value={endDate}
+              min={startDate || undefined}
+              onChange={(e) => setEndDate(e.target.value)}
+              required
+            />
+          </div>
+        )}
       </div>
-      <label className="row text-sm">
-        <input type="checkbox" checked={isHalfDay} onChange={(e) => setIsHalfDay(e.target.checked)} />
-        Half day
-      </label>
+
+      <div style={{ display: "flex", alignItems: "center", gap: "1.5rem", flexWrap: "wrap", margin: "4px 0" }}>
+        <label className="row text-sm" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <input
+            type="checkbox"
+            checked={isHalfDay}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setIsHalfDay(checked);
+              if (checked && startDate) {
+                setEndDate(startDate);
+              }
+            }}
+          />
+          <span style={{ fontWeight: 600 }}>Half day (single date)</span>
+        </label>
+
+        {isHalfDay && (
+          <div style={{ display: "inline-flex", alignItems: "center", gap: "12px", background: "#f8fafc", padding: "4px 12px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+            <span style={{ fontSize: "0.85rem", color: "#64748b", fontWeight: 500 }}>Session:</span>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "0.85rem", cursor: "pointer" }}>
+              <input
+                type="radio"
+                name="halfDaySession"
+                value="first_half"
+                checked={halfDaySession === "first_half"}
+                onChange={() => setHalfDaySession("first_half")}
+              />
+              <span>First Half (Morning)</span>
+            </label>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "0.85rem", cursor: "pointer" }}>
+              <input
+                type="radio"
+                name="halfDaySession"
+                value="second_half"
+                checked={halfDaySession === "second_half"}
+                onChange={() => setHalfDaySession("second_half")}
+              />
+              <span>Second Half (Afternoon)</span>
+            </label>
+          </div>
+        )}
+      </div>
       <div className="field">
         <label>Reason *</label>
         <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} required />
