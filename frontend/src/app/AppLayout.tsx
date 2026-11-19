@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth, type UserRole } from "./auth-context";
 import { useTimer } from "./timer-context";
-import { getUserWorkspaces, switchWorkspace } from "../modules/identity/api";
+import { getUserWorkspaces, switchWorkspace, getMyCompany } from "../modules/identity/api";
 import { fetchDashboard } from "../modules/platform/api";
 import { NotificationBell } from "../shared/components/NotificationBell";
 
@@ -170,15 +170,25 @@ export function AppLayout({ children }: { children: ReactNode }) {
     enabled: !!user,
   });
 
+  const companyQuery = useQuery({
+    queryKey: ["company", "me"],
+    queryFn: () => getMyCompany(),
+    enabled: !!user && user.role !== "super_admin",
+  });
+
   const activeCompanyName =
     workspacesQuery.data?.find((c) => c.id === selectedWorkspace)?.name ||
+    companyQuery.data?.name ||
     user?.company_name ||
     "EMS Workspace";
 
   const activeCompanyCode =
     workspacesQuery.data?.find((c) => c.id === selectedWorkspace)?.code ||
+    companyQuery.data?.code ||
     user?.company_code ||
     "";
+
+  const activeCompanyLogo = companyQuery.data?.logo_url || null;
 
   // ── Profile pill dropdown (top-bar) ─────────────────────────────────────
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -394,7 +404,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
                       width: "34px",
                       height: "34px",
                       borderRadius: "8px",
-                      background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                      background: activeCompanyLogo ? "#ffffff" : "var(--color-primary, #2563eb)",
+                      border: activeCompanyLogo ? "1px solid rgba(255,255,255,0.2)" : "none",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -403,9 +414,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
                       color: "#fff",
                       flexShrink: 0,
                       boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                      overflow: "hidden",
+                      padding: activeCompanyLogo ? "2px" : "0",
                     }}
                   >
-                    {activeCompanyName.charAt(0).toUpperCase()}
+                    {activeCompanyLogo ? (
+                      <img
+                        src={activeCompanyLogo}
+                        alt={activeCompanyName}
+                        style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                      />
+                    ) : (
+                      activeCompanyName.charAt(0).toUpperCase()
+                    )}
                   </div>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div
@@ -653,7 +674,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   width: "34px",
                   height: "34px",
                   borderRadius: "8px",
-                  background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                  background: activeCompanyLogo ? "#ffffff" : "var(--color-primary, #2563eb)",
+                  border: activeCompanyLogo ? "1px solid rgba(255,255,255,0.2)" : "none",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -662,9 +684,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   color: "#fff",
                   flexShrink: 0,
                   boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                  overflow: "hidden",
+                  padding: activeCompanyLogo ? "2px" : "0",
                 }}
               >
-                {activeCompanyName.charAt(0).toUpperCase()}
+                {activeCompanyLogo ? (
+                  <img
+                    src={activeCompanyLogo}
+                    alt={activeCompanyName}
+                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                  />
+                ) : (
+                  activeCompanyName.charAt(0).toUpperCase()
+                )}
               </div>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div
@@ -755,11 +787,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
           {visibleSections.map((sec) => {
             const hasChildren = Boolean(sec.children && sec.children.length > 0);
             const isOpen = Boolean(openSections[sec.id]);
-            const isChildActive = sec.children?.some((c) =>
-              c.to === "/dashboard"
-                ? location.pathname === "/dashboard"
-                : location.pathname.startsWith(c.to)
-            );
+            const isChildActive = sec.children?.some((c) => {
+              if (c.to === "/dashboard") return location.pathname === "/dashboard";
+              if (c.to === "/performance") return location.pathname === "/performance";
+              return location.pathname.startsWith(c.to);
+            });
             const isSelfActive = sec.to ? location.pathname === sec.to : false;
             const isSectionActive = Boolean(isSelfActive || isChildActive);
 
@@ -776,7 +808,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                     padding: "0.48rem 0.75rem",
                     borderRadius: "6px",
                     color: isSelfActive ? "#ffffff" : "#94a3b8",
-                    background: isSelfActive ? "#2563eb" : "transparent",
+                    background: isSelfActive ? "var(--color-primary, #2563eb)" : "transparent",
                     textDecoration: "none",
                     fontSize: "0.84rem",
                     fontWeight: isSelfActive ? 600 : 500,
@@ -849,7 +881,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
                     }}
                   >
                     {sec.children.map((child) => {
-                      const isActive = location.pathname.startsWith(child.to);
+                      const isActive =
+                        child.to === "/performance"
+                          ? location.pathname === "/performance"
+                          : location.pathname.startsWith(child.to);
                       return (
                         <NavLink
                           key={child.to}
@@ -860,7 +895,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                             borderRadius: "5px",
                             fontSize: "0.8rem",
                             color: isActive ? "#ffffff" : "#94a3b8",
-                            background: isActive ? "rgba(37, 99, 235, 0.4)" : "transparent",
+                            background: isActive ? "var(--color-primary, #2563eb)" : "transparent",
                             textDecoration: "none",
                             fontWeight: isActive ? 600 : 400,
                             transition: "background 0.15s ease",

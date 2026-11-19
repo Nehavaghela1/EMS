@@ -716,9 +716,9 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
     <div className="card stack mb-6">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h3 style={{ margin: 0 }}>Company Branding & Payslip Document Layout</h3>
+          <h3 style={{ margin: 0 }}>Company Branding & Theme Customization</h3>
           <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
-            Customize your company logo, payslip display width, and primary theme colors.
+            Customize your company logo, top workspace branding, payslip layout, and primary theme colors.
           </p>
         </div>
         <button
@@ -733,7 +733,7 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
 
       <div className="grid grid-2 gap-6 mt-2">
         <div className="field">
-          <label>Company Logo for Payslips & Reports</label>
+          <label>Company Brand Logo (Workspace & Payslips)</label>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             <div
               style={{
@@ -800,7 +800,7 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
                   </button>
                 )}
               </div>
-              <div className="text-muted text-xs mt-1">Accepts PNG, JPG, or SVG. Shows on all generated payslip PDFs.</div>
+              <div className="text-muted text-xs mt-1">Accepts PNG, JPG, or SVG. Displays in top navigation header and on payslip PDFs.</div>
             </div>
           </div>
 
@@ -820,7 +820,7 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
                 step="5"
                 value={logoWidth}
                 onChange={(e) => setLogoWidth(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "#2563eb", cursor: "pointer" }}
+                style={{ width: "100%", accentColor: "var(--color-primary, #2563eb)", cursor: "pointer" }}
               />
             </div>
           )}
