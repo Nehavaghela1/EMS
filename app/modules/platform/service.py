@@ -70,9 +70,14 @@ from app.modules.platform.repository import (
 )
 from app.modules.platform.schemas import (
     AnnouncementCreate,
+    CompanyActivityStats,
+    CompanyMonthlyPayrollStats,
+    CompanyStatsItem,
     EmployeeDocumentResponse,
     GlobalSearchResponse,
     PayrollMonthStats,
+    PlatformHealthStats,
+    PlatformStatsOverview,
     RateDraftCreate,
     RateDraftCurrent,
     RateDraftDetail,
@@ -1497,3 +1502,103 @@ class GlobalSearchService:
         raw_results = self.repo.search_all(company_id, user, trimmed)
         items = [SearchResultItem(**r) for r in raw_results]
         return GlobalSearchResponse(query=trimmed, total_results=len(items), results=items)
+
+
+class PlatformStatsService:
+    """Live cross-company platform statistics surface (PART B).
+    Computed on read (no caching), paged, every endpoint audited.
+    Strictly zero individual personal fields."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        from app.modules.platform.repository import PlatformStatsRepository
+
+        self.repo = PlatformStatsRepository(db)
+        self.audit = AuditService(db)
+
+    def _audit_read(self, actor: User, endpoint_name: str, filters: dict[str, Any]) -> None:
+        self.audit.record(
+            company_id=None,
+            actor=actor,
+            action=f"platform.stats.{endpoint_name}",
+            entity_type="platform_stats",
+            entity_id=None,
+            details={"endpoint": f"/platform/stats/{endpoint_name}", "filters": filters},
+        )
+        self.db.commit()
+
+    def get_overview(self, actor: User) -> PlatformStatsOverview:
+        data = self.repo.get_overview()
+        self._audit_read(actor, "overview", {})
+        return PlatformStatsOverview(**data)
+
+    def list_companies(
+        self,
+        actor: User,
+        page_params: PageParams,
+        search: str | None = None,
+        status_filter: str | None = None,
+        sort_by: str = "name",
+        sort_dir: str = "asc",
+    ) -> tuple[list[CompanyStatsItem], int, int]:
+        filters = {
+            "search": search,
+            "status": status_filter,
+            "sort_by": sort_by,
+            "sort_dir": sort_dir,
+        }
+        raw_items, total, pages = self.repo.list_companies_stats(
+            page_params,
+            search=search,
+            status_filter=status_filter,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+        )
+        items = [CompanyStatsItem(**r) for r in raw_items]
+        self._audit_read(actor, "companies", filters)
+        return items, total, pages
+
+    def list_payroll(
+        self,
+        actor: User,
+        page_params: PageParams,
+        company_id: uuid.UUID | None = None,
+        from_month: str | None = None,
+        to_month: str | None = None,
+    ) -> tuple[list[CompanyMonthlyPayrollStats], int, int]:
+        filters = {
+            "company_id": str(company_id) if company_id else None,
+            "from_month": from_month,
+            "to_month": to_month,
+        }
+        raw_items, total, pages = self.repo.list_payroll_stats(
+            page_params,
+            company_id=company_id,
+            from_month=from_month,
+            to_month=to_month,
+        )
+        items = [CompanyMonthlyPayrollStats(**r) for r in raw_items]
+        self._audit_read(actor, "payroll", filters)
+        return items, total, pages
+
+    def list_activity(
+        self,
+        actor: User,
+        page_params: PageParams,
+        company_id: uuid.UUID | None = None,
+    ) -> tuple[list[CompanyActivityStats], int, int]:
+        filters = {
+            "company_id": str(company_id) if company_id else None,
+        }
+        raw_items, total, pages = self.repo.list_activity_stats(
+            page_params,
+            company_id=company_id,
+        )
+        items = [CompanyActivityStats(**r) for r in raw_items]
+        self._audit_read(actor, "activity", filters)
+        return items, total, pages
+
+    def get_platform_health(self, actor: User) -> PlatformHealthStats:
+        data = self.repo.get_platform_health()
+        self._audit_read(actor, "platform-health", {})
+        return PlatformHealthStats(**data)

@@ -39,6 +39,9 @@ from app.modules.platform.schemas import (
     AnnouncementResponse,
     AuditLogExportRequest,
     AuditLogResponse,
+    CompanyActivityStats,
+    CompanyMonthlyPayrollStats,
+    CompanyStatsItem,
     DashboardResponse,
     EmployeeDocumentResponse,
     FileUploadResponse,
@@ -49,6 +52,8 @@ from app.modules.platform.schemas import (
     NotificationListResponse,
     NotificationResponse,
     PayrollMonthStats,
+    PlatformHealthStats,
+    PlatformStatsOverview,
     RateDraftApprove,
     RateDraftCreate,
     RateDraftDetail,
@@ -73,6 +78,7 @@ from app.modules.platform.service import (
     IndustryPresetService,
     NotificationService,
     PayrollStatsService,
+    PlatformStatsService,
     RateDraftService,
     RateSourceService,
     RegionService,
@@ -782,6 +788,111 @@ def payroll_stats(
     user: User = Depends(require_platform_role()),
 ):
     return PayrollStatsService(db).stats(from_month, to_month)
+
+
+# ── Platform statistics surface, super admin only (PART B) ──────
+
+
+@platform_router.get("/stats/overview", response_model=PlatformStatsOverview)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_stats_overview(
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_platform_role()),
+):
+    return PlatformStatsService(db).get_overview(user)
+
+
+@platform_router.get("/stats/companies", response_model=Page[CompanyStatsItem])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def list_stats_companies(
+    request: Request,
+    search: str | None = Query(default=None, max_length=100),
+    status: str | None = Query(default=None, max_length=50),
+    sort_by: str = Query(default="name", pattern="^(name|code|created_at|headcount)$"),
+    sort_dir: str = Query(default="asc", pattern="^(asc|desc)$"),
+    params: PageParams = Depends(page_params),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_platform_role()),
+):
+    items, total, pages = PlatformStatsService(db).list_companies(
+        user,
+        params,
+        search=search,
+        status_filter=status,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+    return Page(
+        items=items,
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
+    )
+
+
+@platform_router.get("/stats/payroll", response_model=Page[CompanyMonthlyPayrollStats])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def list_stats_payroll(
+    request: Request,
+    company_id: uuid.UUID | None = None,
+    from_month: str | None = Query(default=None, alias="from", pattern=_MONTH_PATTERN),
+    to_month: str | None = Query(default=None, alias="to", pattern=_MONTH_PATTERN),
+    params: PageParams = Depends(page_params),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_platform_role()),
+):
+    items, total, pages = PlatformStatsService(db).list_payroll(
+        user,
+        params,
+        company_id=company_id,
+        from_month=from_month,
+        to_month=to_month,
+    )
+    return Page(
+        items=items,
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
+    )
+
+
+@platform_router.get("/stats/activity", response_model=Page[CompanyActivityStats])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def list_stats_activity(
+    request: Request,
+    company_id: uuid.UUID | None = None,
+    params: PageParams = Depends(page_params),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_platform_role()),
+):
+    items, total, pages = PlatformStatsService(db).list_activity(
+        user,
+        params,
+        company_id=company_id,
+    )
+    return Page(
+        items=items,
+        page=params.page,
+        limit=params.limit,
+        total=total,
+        pages=pages,
+        has_next=params.page < pages,
+    )
+
+
+@platform_router.get("/stats/platform-health", response_model=PlatformHealthStats)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_stats_platform_health(
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_platform_role()),
+):
+    return PlatformStatsService(db).get_platform_health(user)
 
 
 # ── Platform rate updates, super admin only (5.9) ───────────────

@@ -54,6 +54,11 @@ PLATFORM_ROUTES: set[tuple[str, str]] = {
     ("POST", "/api/v1/payroll/statutory-rates"),
     ("PUT", "/api/v1/payroll/pt-slabs"),
     ("POST", "/api/v1/payroll/tax-slabs"),
+    ("GET", "/api/v1/platform/stats/activity"),
+    ("GET", "/api/v1/platform/stats/companies"),
+    ("GET", "/api/v1/platform/stats/overview"),
+    ("GET", "/api/v1/platform/stats/payroll"),
+    ("GET", "/api/v1/platform/stats/platform-health"),
 }
 
 REFERENCE_READ_ROUTES: set[tuple[str, str]] = {
@@ -271,6 +276,11 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/regions"): AUTHENTICATED,
     # 5.8: anonymous per-month payroll totals across companies, for the platform only.
     ("GET", "/api/v1/platform/payroll-stats"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/stats/activity"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/stats/companies"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/stats/overview"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/stats/payroll"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/stats/platform-health"): ROLES(UserRole.super_admin),
     # 5.9: platform rate updates. Every route is super_admin only: sources the daily check
     # reads, and drafts that are filled in, verified and approved (only approval changes rates).
     ("GET", "/api/v1/platform/rate-sources"): ROLES(UserRole.super_admin),
