@@ -10,7 +10,7 @@ from tests.conftest import TenantContext
 
 
 def _create_user_and_headers(
-    db: Session, company_id: uuid.UUID, role: UserRole = UserRole.super_admin
+    db: Session, company_id: uuid.UUID, role: UserRole = UserRole.hr_admin
 ) -> tuple[User, dict[str, str]]:
     bind_tenant_to_session(db, company_id=company_id, is_platform_admin=False)
     user = User(
@@ -28,7 +28,7 @@ def _create_user_and_headers(
 
 
 def test_announcements_lifecycle(client: TestClient, db: Session, company_a: TenantContext):
-    user, headers = _create_user_and_headers(db, company_a.company_id, UserRole.super_admin)
+    user, headers = _create_user_and_headers(db, company_a.company_id, UserRole.hr_admin)
 
     # 1. Create Announcement
     res = client.post(
@@ -57,7 +57,7 @@ def test_announcements_lifecycle(client: TestClient, db: Session, company_a: Ten
 def test_file_upload_signed_url_and_documents(
     client: TestClient, db: Session, company_a: TenantContext
 ):
-    user, headers = _create_user_and_headers(db, company_a.company_id, UserRole.super_admin)
+    user, headers = _create_user_and_headers(db, company_a.company_id, UserRole.hr_admin)
 
     # 1. Upload File
     files = {"file": ("test_doc.pdf", b"%PDF-1.4 test content", "application/pdf")}
@@ -78,7 +78,7 @@ def test_file_upload_signed_url_and_documents(
 
 
 def test_global_tenant_search(client: TestClient, db: Session, company_a: TenantContext):
-    user, headers = _create_user_and_headers(db, company_a.company_id, UserRole.super_admin)
+    user, headers = _create_user_and_headers(db, company_a.company_id, UserRole.hr_admin)
 
     # Search for admin user email or title
     res_search = client.get("/api/v1/search?q=plat", headers=headers)

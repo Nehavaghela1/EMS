@@ -32,6 +32,67 @@ PUBLIC_ROUTES: set[tuple[str, str]] = {
     ("GET", "/health"),
 }
 
+PLATFORM_ROUTES: set[tuple[str, str]] = {
+    ("GET", "/api/v1/companies"),
+    ("GET", "/api/v1/companies/{company_id}"),
+    ("PUT", "/api/v1/companies/{company_id}"),
+    ("POST", "/api/v1/companies/{company_id}/approve"),
+    ("POST", "/api/v1/companies/{company_id}/deactivate"),
+    ("POST", "/api/v1/companies/{company_id}/reactivate"),
+    ("POST", "/api/v1/companies/{company_id}/reject"),
+    ("GET", "/api/v1/platform/payroll-stats"),
+    ("GET", "/api/v1/platform/rate-sources"),
+    ("POST", "/api/v1/platform/rate-sources"),
+    ("PATCH", "/api/v1/platform/rate-sources/{source_id}"),
+    ("GET", "/api/v1/platform/rate-drafts"),
+    ("POST", "/api/v1/platform/rate-drafts"),
+    ("GET", "/api/v1/platform/rate-drafts/{draft_id}"),
+    ("PUT", "/api/v1/platform/rate-drafts/{draft_id}"),
+    ("POST", "/api/v1/platform/rate-drafts/{draft_id}/verify"),
+    ("POST", "/api/v1/platform/rate-drafts/{draft_id}/approve"),
+    ("POST", "/api/v1/platform/rate-drafts/{draft_id}/reject"),
+    ("POST", "/api/v1/payroll/statutory-rates"),
+    ("PUT", "/api/v1/payroll/pt-slabs"),
+    ("POST", "/api/v1/payroll/tax-slabs"),
+    ("GET", "/api/v1/platform/stats/activity"),
+    ("GET", "/api/v1/platform/stats/companies"),
+    ("GET", "/api/v1/platform/stats/overview"),
+    ("GET", "/api/v1/platform/stats/payroll"),
+    ("GET", "/api/v1/platform/stats/platform-health"),
+}
+
+REFERENCE_READ_ROUTES: set[tuple[str, str]] = {
+    ("GET", "/api/v1/payroll/statutory-rates"),
+    ("GET", "/api/v1/payroll/pt-slabs"),
+    ("GET", "/api/v1/payroll/tax-slabs"),
+}
+
+AUTH_ROUTES: set[tuple[str, str]] = {
+    ("GET", "/api/v1/auth/me"),
+    ("POST", "/api/v1/auth/logout"),
+    ("POST", "/api/v1/auth/logout-all"),
+    ("POST", "/api/v1/auth/change-password"),
+    ("GET", "/api/v1/auth/workspaces"),
+    ("POST", "/api/v1/auth/switch-workspace"),
+}
+
+
+def extract_guards_from_route(route: Any) -> set[str]:
+    """Extracts guard names ('require_company_role', 'require_platform_role')
+    from route dependencies."""
+
+    def _recurse(dependant: Any) -> list[str]:
+        guards: list[str] = []
+        if dependant.call:
+            guard = getattr(dependant.call, "_guard", None)
+            if guard:
+                guards.append(guard)
+        for sub_dep in dependant.dependencies:
+            guards.extend(_recurse(sub_dep))
+        return guards
+
+    return set(_recurse(route.dependant))
+
 
 def extract_roles_from_route(route: Any) -> tuple[UserRole, ...] | None:
     """Extracts the tuple of UserRole passed to require_role(...) via closure inspection."""
@@ -39,7 +100,11 @@ def extract_roles_from_route(route: Any) -> tuple[UserRole, ...] | None:
     def _recurse(dependant: Any) -> list[UserRole]:
         extracted: list[UserRole] = []
         if dependant.call:
-            if hasattr(dependant.call, "__closure__") and dependant.call.__closure__:
+            if hasattr(dependant.call, "_allowed_roles"):
+                val = dependant.call._allowed_roles
+                if val:
+                    extracted.extend(val)
+            elif hasattr(dependant.call, "__closure__") and dependant.call.__closure__:
                 for cell in dependant.call.__closure__:
                     val = cell.cell_contents
                     if isinstance(val, (list, tuple, set)):
@@ -63,11 +128,9 @@ def extract_roles_from_route(route: Any) -> tuple[UserRole, ...] | None:
 
 POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/announcements"): AUTHENTICATED,
-    ("POST", "/api/v1/announcements"): ROLES(
-        UserRole.super_admin, UserRole.hr_admin, UserRole.manager
-    ),
+    ("POST", "/api/v1/announcements"): ROLES(UserRole.hr_admin, UserRole.manager),
     ("DELETE", "/api/v1/announcements/{announcement_id}"): ROLES(
-        UserRole.super_admin, UserRole.hr_admin, UserRole.manager
+        UserRole.hr_admin, UserRole.manager
     ),
     ("GET", "/api/v1/attendance"): AUTHENTICATED,
     ("GET", "/api/v1/attendance/calendar"): AUTHENTICATED,
@@ -113,20 +176,15 @@ POLICY: dict[tuple[str, str], Any] = {
     ),
     ("GET", "/api/v1/companies/me"): AUTHENTICATED,
     ("PUT", "/api/v1/companies/me"): ROLES(UserRole.hr_admin),
-    ("GET", "/api/v1/companies/notice-period-defaults"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
-    ),
-    ("PUT", "/api/v1/companies/notice-period-defaults"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
-    ),
+    ("POST", "/api/v1/companies/me/deactivate"): ROLES(UserRole.owner),
+    ("GET", "/api/v1/companies/notice-period-defaults"): ROLES(UserRole.hr_admin, UserRole.owner),
+    ("PUT", "/api/v1/companies/notice-period-defaults"): ROLES(UserRole.hr_admin, UserRole.owner),
     ("POST", "/api/v1/companies/register"): PUBLIC,
     ("POST", "/api/v1/companies/workspaces"): ROLES(UserRole.owner, UserRole.hr_admin),
     ("GET", "/api/v1/companies/{company_id}"): ROLES(UserRole.super_admin),
     ("PUT", "/api/v1/companies/{company_id}"): ROLES(UserRole.super_admin),
     ("POST", "/api/v1/companies/{company_id}/approve"): ROLES(UserRole.super_admin),
-    ("POST", "/api/v1/companies/{company_id}/deactivate"): ROLES(
-        UserRole.owner, UserRole.super_admin
-    ),
+    ("POST", "/api/v1/companies/{company_id}/deactivate"): ROLES(UserRole.super_admin),
     ("POST", "/api/v1/companies/{company_id}/reactivate"): ROLES(UserRole.super_admin),
     ("POST", "/api/v1/companies/{company_id}/reject"): ROLES(UserRole.super_admin),
     ("GET", "/api/v1/dashboard"): AUTHENTICATED,
@@ -139,41 +197,29 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/documents/{employee_id}"): AUTHENTICATED,
     ("GET", "/api/v1/documents/{employee_id}/{document_id}/download"): AUTHENTICATED,
     ("DELETE", "/api/v1/documents/{employee_id}/{document_id}"): ROLES(
-        UserRole.super_admin, UserRole.hr_admin, UserRole.owner
+        UserRole.hr_admin, UserRole.owner
     ),
-    ("GET", "/api/v1/employees"): ROLES(UserRole.hr_admin, UserRole.manager, UserRole.super_admin),
-    ("POST", "/api/v1/employees"): ROLES(UserRole.hr_admin, UserRole.super_admin),
+    ("GET", "/api/v1/employees"): ROLES(UserRole.hr_admin, UserRole.manager),
+    ("POST", "/api/v1/employees"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/employees/clearance-queue"): ROLES(
-        UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin
+        UserRole.hr_admin, UserRole.manager, UserRole.owner
     ),
-    ("GET", "/api/v1/employees/managers/search"): ROLES(
-        UserRole.hr_admin, UserRole.manager, UserRole.super_admin
-    ),
+    ("GET", "/api/v1/employees/managers/search"): ROLES(UserRole.hr_admin, UserRole.manager),
     ("GET", "/api/v1/employees/me"): AUTHENTICATED,
-    ("GET", "/api/v1/employees/resignations"): ROLES(
-        UserRole.hr_admin, UserRole.manager, UserRole.super_admin
-    ),
-    ("POST", "/api/v1/employees/bulk/deactivate"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
-    ),
-    ("POST", "/api/v1/employees/bulk/reactivate"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
-    ),
-    ("POST", "/api/v1/employees/bulk/resend-invite"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
-    ),
+    ("GET", "/api/v1/employees/resignations"): ROLES(UserRole.hr_admin, UserRole.manager),
+    ("POST", "/api/v1/employees/bulk/deactivate"): ROLES(UserRole.hr_admin, UserRole.owner),
+    ("POST", "/api/v1/employees/bulk/reactivate"): ROLES(UserRole.hr_admin, UserRole.owner),
+    ("POST", "/api/v1/employees/bulk/resend-invite"): ROLES(UserRole.hr_admin, UserRole.owner),
     ("POST", "/api/v1/employees/export"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin
+        UserRole.hr_admin, UserRole.owner, UserRole.manager
     ),
     ("GET", "/api/v1/employees/export/{job_id}/download"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin
+        UserRole.hr_admin, UserRole.owner, UserRole.manager
     ),
     ("POST", "/api/v1/employees/{employee_id}/reactivate"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
+        UserRole.hr_admin, UserRole.owner
     ),
-    ("DELETE", "/api/v1/employees/{employee_id}"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
-    ),
+    ("DELETE", "/api/v1/employees/{employee_id}"): ROLES(UserRole.hr_admin, UserRole.owner),
     ("GET", "/api/v1/employees/{employee_id}"): AUTHENTICATED,
     ("PUT", "/api/v1/employees/{employee_id}"): AUTHENTICATED,
     ("GET", "/api/v1/employees/{employee_id}/{section}"): AUTHENTICATED,
@@ -186,21 +232,19 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/employees/{employee_id}/experience/{entry_id}/unverify"): AUTHENTICATED,
     ("GET", "/api/v1/employees/{employee_id}/fnf"): AUTHENTICATED,
     ("PUT", "/api/v1/employees/{employee_id}/fnf/clearance"): ROLES(
-        UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin
+        UserRole.hr_admin, UserRole.manager, UserRole.owner
     ),
     ("POST", "/api/v1/employees/{employee_id}/resend-invite"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
+        UserRole.hr_admin, UserRole.owner
     ),
     ("POST", "/api/v1/employees/{employee_id}/resignation"): AUTHENTICATED,
     ("POST", "/api/v1/employees/{employee_id}/resignation/withdraw"): AUTHENTICATED,
     ("PUT", "/api/v1/employees/{employee_id}/resignation/approve"): ROLES(
-        UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin
+        UserRole.hr_admin, UserRole.manager, UserRole.owner
     ),
-    ("POST", "/api/v1/employees/{employee_id}/terminate"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
-    ),
+    ("POST", "/api/v1/employees/{employee_id}/terminate"): ROLES(UserRole.hr_admin, UserRole.owner),
     ("POST", "/api/v1/employees/{employee_id}/toggle-active"): ROLES(
-        UserRole.hr_admin, UserRole.owner, UserRole.super_admin
+        UserRole.hr_admin, UserRole.owner
     ),
     ("GET", "/api/v1/files/download/{file_id}"): PUBLIC,
     ("POST", "/api/v1/files/upload"): AUTHENTICATED,
@@ -232,6 +276,11 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/regions"): AUTHENTICATED,
     # 5.8: anonymous per-month payroll totals across companies, for the platform only.
     ("GET", "/api/v1/platform/payroll-stats"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/stats/activity"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/stats/companies"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/stats/overview"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/stats/payroll"): ROLES(UserRole.super_admin),
+    ("GET", "/api/v1/platform/stats/platform-health"): ROLES(UserRole.super_admin),
     # 5.9: platform rate updates. Every route is super_admin only: sources the daily check
     # reads, and drafts that are filled in, verified and approved (only approval changes rates).
     ("GET", "/api/v1/platform/rate-sources"): ROLES(UserRole.super_admin),
@@ -294,7 +343,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/api/v1/performance/cycles/{id}"): ROLES(UserRole.hr_admin, UserRole.owner),
     ("POST", "/api/v1/performance/goals"): AUTHENTICATED,
     ("GET", "/api/v1/performance/goals/{employee_id}"): ROLES(
-        UserRole.super_admin, UserRole.hr_admin, UserRole.manager, UserRole.employee
+        UserRole.hr_admin, UserRole.manager, UserRole.employee
     ),
     ("POST", "/api/v1/performance/goals/{goal_id}/manager-review"): ROLES(
         UserRole.hr_admin, UserRole.manager
@@ -307,20 +356,18 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/api/v1/performance/goals/{id}/progress"): AUTHENTICATED,
     ("GET", "/api/v1/performance/goals/{id}/history"): AUTHENTICATED,
     ("GET", "/api/v1/performance/pips"): AUTHENTICATED,
-    ("POST", "/api/v1/performance/pips"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin, UserRole.manager
-    ),
+    ("POST", "/api/v1/performance/pips"): ROLES(UserRole.hr_admin, UserRole.manager),
     ("GET", "/api/v1/performance/pips/active/{employee_id}"): AUTHENTICATED,
     ("POST", "/api/v1/performance/pips/{pip_id}/activate"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin, UserRole.manager
+        UserRole.hr_admin, UserRole.manager
     ),
     ("POST", "/api/v1/performance/pips/{pip_id}/extend"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin, UserRole.manager
+        UserRole.hr_admin, UserRole.manager
     ),
     ("GET", "/api/v1/performance/pips/{pip_id}/check-ins"): AUTHENTICATED,
     ("POST", "/api/v1/performance/pips/{pip_id}/check-ins"): AUTHENTICATED,
     ("POST", "/api/v1/performance/pips/{pip_id}/evaluate"): ROLES(
-        UserRole.hr_admin, UserRole.super_admin, UserRole.manager
+        UserRole.hr_admin, UserRole.manager
     ),
     ("GET", "/api/v1/performance/report"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/performance/summary/{employee_id}"): ROLES(
@@ -345,7 +392,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("DELETE", "/api/v1/projects/time-entries/{entry_id}"): AUTHENTICATED,
     ("PUT", "/api/v1/projects/time-entries/{entry_id}"): AUTHENTICATED,
     ("POST", "/api/v1/projects/time-entries/{entry_id}/approve"): ROLES(
-        UserRole.super_admin, UserRole.hr_admin, UserRole.manager
+        UserRole.hr_admin, UserRole.manager
     ),
     ("DELETE", "/api/v1/projects/{project_id}"): ROLES(UserRole.owner, UserRole.hr_admin),
     ("GET", "/api/v1/projects/{project_id}"): AUTHENTICATED,

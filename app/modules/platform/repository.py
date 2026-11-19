@@ -30,8 +30,10 @@ from app.modules.platform.models import (
     RateReminderLog,
     RateSource,
 )
+from app.modules.projects.models import Project, TimeEntry
 from app.modules.time_leave.models import (
     Attendance,
+    AttendanceRegularizationRequest,
     AttendanceStatus,
     Leave,
     LeaveBalance,
@@ -1046,3 +1048,499 @@ class SearchRepository:
             )
 
         return results
+
+
+class PlatformStatsRepository:
+    """Platform statistics across all companies (B2, B4).
+    Reads under FORCE RLS with is_platform_admin=True session context.
+    Aggregates only: zero per-employee rows, zero confidential amounts."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_overview(self) -> dict[str, Any]:
+        now = utcnow()
+        month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
+        cur_year, cur_month = now.year, now.month
+        prev_month = 12 if cur_month == 1 else cur_month - 1
+        prev_year = cur_year - 1 if cur_month == 1 else cur_year
+
+        # 1. companies_by_status
+        status_rows = self.db.execute(
+            select(Company.status, func.count(Company.id))
+            .where(Company.deleted_at.is_(None))
+            .group_by(Company.status)
+        ).all()
+        companies_by_status = {"active": 0, "pending": 0, "deactivated": 0}
+        for s, count in status_rows:
+            key = s.value if hasattr(s, "value") else str(s)
+            companies_by_status[key] = count
+
+        # 2. companies_created_this_month
+        created_count = (
+            self.db.scalar(
+                select(func.count(Company.id)).where(
+                    Company.deleted_at.is_(None), Company.created_at >= month_start
+                )
+            )
+            or 0
+        )
+
+        # 3. total_users
+        total_users = (
+            self.db.scalar(
+                select(func.count(User.id)).where(
+                    User.deleted_at.is_(None), User.role != UserRole.super_admin
+                )
+            )
+            or 0
+        )
+
+        # 4. total_employees
+        total_employees = (
+            self.db.scalar(select(func.count(Employee.id)).where(Employee.deleted_at.is_(None)))
+            or 0
+        )
+
+        # 5. total_net_paid_this_month
+        net_paid_cur = self.db.scalar(
+            select(func.coalesce(func.sum(PayrollRun.total_net), Decimal("0.00"))).where(
+                PayrollRun.deleted_at.is_(None),
+                PayrollRun.status.in_((PayrollRunStatus.approved, PayrollRunStatus.paid)),
+                PayrollRun.year == cur_year,
+                PayrollRun.month == cur_month,
+            )
+        ) or Decimal("0.00")
+
+        # 6. total_net_paid_last_month
+        net_paid_prev = self.db.scalar(
+            select(func.coalesce(func.sum(PayrollRun.total_net), Decimal("0.00"))).where(
+                PayrollRun.deleted_at.is_(None),
+                PayrollRun.status.in_((PayrollRunStatus.approved, PayrollRunStatus.paid)),
+                PayrollRun.year == prev_year,
+                PayrollRun.month == prev_month,
+            )
+        ) or Decimal("0.00")
+
+        return {
+            "companies_by_status": companies_by_status,
+            "companies_created_this_month": created_count,
+            "total_users": total_users,
+            "total_employees": total_employees,
+            "total_net_paid_this_month": net_paid_cur,
+            "total_net_paid_last_month": net_paid_prev,
+        }
+
+    def list_companies_stats(
+        self,
+        page_params: PageParams,
+        search: str | None = None,
+        status_filter: str | None = None,
+        sort_by: str = "name",
+        sort_dir: str = "asc",
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        now = utcnow()
+        month_start_date = date(now.year, now.month, 1)
+
+        stmt = select(Company).where(Company.deleted_at.is_(None))
+        if search:
+            search_pat = f"%{search.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    Company.name.ilike(search_pat),
+                    Company.code.ilike(search_pat),
+                )
+            )
+        if status_filter:
+            stmt = stmt.where(Company.status == status_filter)
+
+        # Ordering
+        sort_col = getattr(Company, sort_by, Company.name)
+        if sort_dir == "desc":
+            stmt = stmt.order_by(sort_col.desc())
+        else:
+            stmt = stmt.order_by(sort_col.asc())
+
+        # Count total
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = self.db.scalar(count_stmt) or 0
+        pages = (total + page_params.limit - 1) // page_params.limit if total > 0 else 0
+
+        # Paginate
+        offset = (page_params.page - 1) * page_params.limit
+        companies = list(self.db.scalars(stmt.offset(offset).limit(page_params.limit)))
+        if not companies:
+            return [], total, pages
+
+        cids = [c.id for c in companies]
+
+        # Bulk queries for these companies:
+        # Headcount (active employees)
+        headcount_rows = self.db.execute(
+            select(Employee.company_id, func.count(Employee.id))
+            .where(
+                Employee.company_id.in_(cids),
+                Employee.deleted_at.is_(None),
+                Employee.is_active.is_(True),
+            )
+            .group_by(Employee.company_id)
+        ).all()
+        headcounts = {cid: cnt for cid, cnt in headcount_rows}
+
+        # Active user count
+        active_user_rows = self.db.execute(
+            select(User.company_id, func.count(User.id))
+            .where(
+                User.company_id.in_(cids),
+                User.deleted_at.is_(None),
+                User.is_active.is_(True),
+            )
+            .group_by(User.company_id)
+        ).all()
+        active_users = {cid: cnt for cid, cnt in active_user_rows}
+
+        # Joiners this month
+        joiner_rows = self.db.execute(
+            select(Employee.company_id, func.count(Employee.id))
+            .where(
+                Employee.company_id.in_(cids),
+                Employee.deleted_at.is_(None),
+                Employee.hire_date >= month_start_date,
+            )
+            .group_by(Employee.company_id)
+        ).all()
+        joiners = {cid: cnt for cid, cnt in joiner_rows}
+
+        # Leavers this month
+        leaver_rows = self.db.execute(
+            select(Employee.company_id, func.count(Employee.id))
+            .where(
+                Employee.company_id.in_(cids),
+                Employee.is_active.is_(False),
+                Employee.updated_at >= datetime(now.year, now.month, 1, tzinfo=UTC),
+            )
+            .group_by(Employee.company_id)
+        ).all()
+        leavers = {cid: cnt for cid, cnt in leaver_rows}
+
+        # Last payroll run date
+        last_run_rows = self.db.execute(
+            select(PayrollRun.company_id, func.max(PayrollRun.created_at))
+            .where(
+                PayrollRun.company_id.in_(cids),
+                PayrollRun.deleted_at.is_(None),
+                PayrollRun.status.in_((PayrollRunStatus.approved, PayrollRunStatus.paid)),
+            )
+            .group_by(PayrollRun.company_id)
+        ).all()
+        last_runs = {cid: dt.date() if dt else None for cid, dt in last_run_rows}
+
+        # Most recent login across company users
+        login_rows = self.db.execute(
+            select(User.company_id, func.max(User.last_login_at))
+            .where(User.company_id.in_(cids), User.deleted_at.is_(None))
+            .group_by(User.company_id)
+        ).all()
+        logins = {cid: dt for cid, dt in login_rows}
+
+        items = []
+        for c in companies:
+            status_str = c.status.value if hasattr(c.status, "value") else str(c.status)
+            items.append(
+                {
+                    "company_id": c.id,
+                    "name": c.name,
+                    "code": c.code,
+                    "status": status_str,
+                    "created_at": c.created_at,
+                    "headcount": headcounts.get(c.id, 0),
+                    "active_user_count": active_users.get(c.id, 0),
+                    "joiners_this_month": joiners.get(c.id, 0),
+                    "leavers_this_month": leavers.get(c.id, 0),
+                    "last_payroll_run_date": last_runs.get(c.id),
+                    "most_recent_login": logins.get(c.id),
+                }
+            )
+
+        return items, total, pages
+
+    def list_payroll_stats(
+        self,
+        page_params: PageParams,
+        company_id: uuid.UUID | None = None,
+        from_month: str | None = None,
+        to_month: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        now = utcnow()
+        if not to_month:
+            to_month = f"{now.year:04d}-{now.month:02d}"
+        if not from_month:
+            to_y, to_m = int(to_month.split("-")[0]), int(to_month.split("-")[1])
+            start_m = to_y * 12 + to_m - 11
+            from_y, from_m = (start_m - 1) // 12, ((start_m - 1) % 12) + 1
+            from_month = f"{from_y:04d}-{from_m:02d}"
+
+        from_y, from_m = int(from_month.split("-")[0]), int(from_month.split("-")[1])
+        to_y, to_m = int(to_month.split("-")[0]), int(to_month.split("-")[1])
+        first_key = from_y * 12 + from_m
+        last_key = to_y * 12 + to_m
+
+        month_key = PayrollRun.year * 12 + PayrollRun.month
+        base_stmt = select(
+            PayrollRun.company_id,
+            PayrollRun.year,
+            PayrollRun.month,
+            PayrollRun.status,
+            func.count(PayrollRun.id).label("run_count"),
+            func.coalesce(func.sum(PayrollRun.total_employees), 0).label("emp_count"),
+            func.coalesce(func.sum(PayrollRun.total_net), Decimal("0.00")).label("net_sum"),
+            func.coalesce(func.sum(PayrollRun.total_employer_cost), Decimal("0.00")).label(
+                "cost_sum"
+            ),
+        ).where(
+            PayrollRun.deleted_at.is_(None),
+            month_key >= first_key,
+            month_key <= last_key,
+        )
+        if company_id:
+            base_stmt = base_stmt.where(PayrollRun.company_id == company_id)
+
+        base_stmt = base_stmt.group_by(
+            PayrollRun.company_id,
+            PayrollRun.year,
+            PayrollRun.month,
+            PayrollRun.status,
+        )
+
+        rows = self.db.execute(base_stmt).all()
+        grouped: dict[tuple[uuid.UUID, int, int], dict[str, Any]] = {}
+        for r in rows:
+            key = (r.company_id, r.year, r.month)
+            if key not in grouped:
+                grouped[key] = {
+                    "company_id": r.company_id,
+                    "year": r.year,
+                    "month": r.month,
+                    "runs_by_status": {},
+                    "total_employees_in_run": 0,
+                    "total_net_paid": Decimal("0.00"),
+                    "total_employer_cost": Decimal("0.00"),
+                    "total_statutory_contributions": Decimal("0.00"),
+                }
+            status_val = r.status.value if hasattr(r.status, "value") else str(r.status)
+            grouped[key]["runs_by_status"][status_val] = r.run_count
+            if status_val in ("approved", "paid"):
+                grouped[key]["total_employees_in_run"] += int(r.emp_count)
+                grouped[key]["total_net_paid"] += Decimal(str(r.net_sum))
+                grouped[key]["total_employer_cost"] += Decimal(str(r.cost_sum))
+                stat = Decimal(str(r.cost_sum)) - Decimal(str(r.net_sum))
+                grouped[key]["total_statutory_contributions"] += max(Decimal("0.00"), stat)
+
+        all_cids = {k[0] for k in grouped.keys()}
+        if company_id:
+            all_cids.add(company_id)
+        companies_map: dict[uuid.UUID, tuple[str, str]] = {}
+        if all_cids:
+            c_rows = self.db.execute(
+                select(Company.id, Company.name, Company.code).where(Company.id.in_(all_cids))
+            ).all()
+            companies_map = {c.id: (c.name, c.code) for c in c_rows}
+
+        flat_list = []
+        for (cid, _y, _m), data in sorted(
+            grouped.items(), key=lambda x: (x[0][1], x[0][2], str(x[0][0])), reverse=True
+        ):
+            name, code = companies_map.get(cid, ("Unknown", "UNK"))
+            data["company_name"] = name
+            data["company_code"] = code
+            flat_list.append(data)
+
+        total = len(flat_list)
+        pages = (total + page_params.limit - 1) // page_params.limit if total > 0 else 0
+        offset = (page_params.page - 1) * page_params.limit
+        paged_items = flat_list[offset : offset + page_params.limit]
+        return paged_items, total, pages
+
+    def list_activity_stats(
+        self,
+        page_params: PageParams,
+        company_id: uuid.UUID | None = None,
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        now = utcnow()
+        cur_year, cur_month = now.year, now.month
+        month_start_date = date(cur_year, cur_month, 1)
+        month_start_dt = datetime(cur_year, cur_month, 1, tzinfo=UTC)
+
+        stmt = select(Company).where(Company.deleted_at.is_(None))
+        if company_id:
+            stmt = stmt.where(Company.id == company_id)
+        stmt = stmt.order_by(Company.name.asc())
+
+        total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        pages = (total + page_params.limit - 1) // page_params.limit if total > 0 else 0
+        offset = (page_params.page - 1) * page_params.limit
+        companies = list(self.db.scalars(stmt.offset(offset).limit(page_params.limit)))
+
+        if not companies:
+            return [], total, pages
+
+        cids = [c.id for c in companies]
+
+        # 1. Punch count
+        punch_rows = self.db.execute(
+            select(Attendance.company_id, func.count(Attendance.id))
+            .where(
+                Attendance.company_id.in_(cids),
+                Attendance.deleted_at.is_(None),
+                Attendance.date >= month_start_date,
+            )
+            .group_by(Attendance.company_id)
+        ).all()
+        punch_map = {cid: cnt for cid, cnt in punch_rows}
+
+        # 2. Leave requests by status
+        leave_rows = self.db.execute(
+            select(Leave.company_id, Leave.status, func.count(Leave.id))
+            .where(
+                Leave.company_id.in_(cids),
+                Leave.deleted_at.is_(None),
+                Leave.created_at >= month_start_dt,
+            )
+            .group_by(Leave.company_id, Leave.status)
+        ).all()
+        leave_status_map: dict[uuid.UUID, dict[str, int]] = {}
+        pending_approvals_map: dict[uuid.UUID, int] = {}
+        for cid, st, cnt in leave_rows:
+            st_val = st.value if hasattr(st, "value") else str(st)
+            if cid not in leave_status_map:
+                leave_status_map[cid] = {}
+            leave_status_map[cid][st_val] = cnt
+            if st_val == "pending":
+                pending_approvals_map[cid] = cnt
+
+        # 3. Pending regularizations
+        reg_rows = self.db.execute(
+            select(
+                AttendanceRegularizationRequest.company_id,
+                func.count(AttendanceRegularizationRequest.id),
+            )
+            .where(
+                AttendanceRegularizationRequest.company_id.in_(cids),
+                AttendanceRegularizationRequest.deleted_at.is_(None),
+                AttendanceRegularizationRequest.status == "pending",
+            )
+            .group_by(AttendanceRegularizationRequest.company_id)
+        ).all()
+        reg_map = {cid: cnt for cid, cnt in reg_rows}
+
+        # 4. Active projects
+        proj_rows = self.db.execute(
+            select(Project.company_id, func.count(Project.id))
+            .where(
+                Project.company_id.in_(cids),
+                Project.status == "active",
+            )
+            .group_by(Project.company_id)
+        ).all()
+        proj_map = {cid: cnt for cid, cnt in proj_rows}
+
+        # 5. Approved hours logged
+        hours_rows = self.db.execute(
+            select(
+                TimeEntry.company_id,
+                func.coalesce(func.sum(TimeEntry.hours), Decimal("0.00")),
+            )
+            .where(
+                TimeEntry.company_id.in_(cids),
+                TimeEntry.status == "approved",
+                TimeEntry.date >= month_start_date,
+            )
+            .group_by(TimeEntry.company_id)
+        ).all()
+        hours_map = {cid: Decimal(str(hrs)) for cid, hrs in hours_rows}
+
+        items = []
+        for c in companies:
+            items.append(
+                {
+                    "company_id": c.id,
+                    "company_name": c.name,
+                    "company_code": c.code,
+                    "punch_count": punch_map.get(c.id, 0),
+                    "leave_requests_by_status": leave_status_map.get(c.id, {}),
+                    "pending_approvals": pending_approvals_map.get(c.id, 0),
+                    "pending_regularizations": reg_map.get(c.id, 0),
+                    "active_projects": proj_map.get(c.id, 0),
+                    "approved_hours_logged": hours_map.get(c.id, Decimal("0.00")),
+                }
+            )
+
+        return items, total, pages
+
+    def get_platform_health(self) -> dict[str, Any]:
+        from app.core.cache import _redis_client
+        from app.workers.celery_app import celery_app
+
+        # 1. Background jobs
+        jobs_by_status = {"queued": 0, "started": 0, "success": 0, "failure": 0}
+        try:
+            job_keys = list(_redis_client.scan_iter(match="job:*"))
+            for k in job_keys:
+                job_id = k.split("job:", 1)[-1]
+                res = celery_app.AsyncResult(job_id)
+                st = (res.state or "queued").lower()
+                if st == "success":
+                    jobs_by_status["success"] += 1
+                elif st == "failure":
+                    jobs_by_status["failure"] += 1
+                elif st in ("started", "running"):
+                    jobs_by_status["started"] += 1
+                else:
+                    jobs_by_status["queued"] += 1
+        except Exception:
+            pass
+
+        failures_24h = jobs_by_status["failure"]
+
+        # 2. Rate drafts awaiting verification (status == "pending")
+        drafts_awaiting = (
+            self.db.scalar(
+                select(func.count(RateChangeDraft.id)).where(RateChangeDraft.status == "pending")
+            )
+            or 0
+        )
+
+        # 3. Next scheduled rate check dates
+        sources = list(
+            self.db.scalars(
+                select(RateSource)
+                .where(RateSource.active.is_(True))
+                .order_by(RateSource.next_check_on.asc())
+            )
+        )
+        next_checks = {s.title: s.next_check_on.isoformat() for s in sources}
+
+        # 4. Storage bytes by company
+        storage_rows = self.db.execute(
+            select(FileObject.company_id, func.coalesce(func.sum(FileObject.file_size), 0))
+            .where(FileObject.deleted_at.is_(None))
+            .group_by(FileObject.company_id)
+        ).all()
+        storage_map = {str(cid): int(sz) for cid, sz in storage_rows}
+
+        # 5. Notification backlog (unread notifications)
+        notification_backlog = (
+            self.db.scalar(
+                select(func.count(Notification.id)).where(Notification.is_read.is_(False))
+            )
+            or 0
+        )
+
+        return {
+            "jobs_by_status": jobs_by_status,
+            "job_failures_last_24h": failures_24h,
+            "rate_drafts_awaiting_verification": drafts_awaiting,
+            "next_scheduled_rate_checks": next_checks,
+            "storage_bytes_by_company": storage_map,
+            "notification_backlog": notification_backlog,
+        }

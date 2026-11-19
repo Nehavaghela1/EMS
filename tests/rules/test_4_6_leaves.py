@@ -207,7 +207,7 @@ def test_R1_an_employee_cannot_apply_for_someone_else(client, world) -> None:
 
 def test_R1_hr_level_applies_for_anyone_in_the_company(client, world) -> None:
     lt = world["lt"]["id"]
-    for who, offset in (("hr2", 1), ("owner", 2), ("sadmin", 3)):
+    for who, offset in (("hr2", 1), ("owner", 2)):
         resp = _apply(
             client,
             world[who]["h"],
@@ -217,6 +217,15 @@ def test_R1_hr_level_applies_for_anyone_in_the_company(client, world) -> None:
             employee_id=world["colleague"]["id"],
         )
         assert resp.status_code == 201, f"R1: {who} must apply for anyone: {resp.text}"
+    sa_resp = _apply(
+        client,
+        world["sadmin"]["h"],
+        lt,
+        _monday(3),
+        _monday(3),
+        employee_id=world["colleague"]["id"],
+    )
+    assert sa_resp.status_code == 403
     resp = _apply(
         client,
         world["ctx"].hr_headers,
@@ -665,7 +674,7 @@ def test_R6_other_company_gets_the_same_404_as_a_missing_leave(
 
 def test_R6_nobody_approves_their_own_leave_except_an_owner(client, world) -> None:
     lt = world["lt"]["id"]
-    for offset, who in enumerate(("emp", "boss", "hr2", "sadmin"), start=1):
+    for offset, who in enumerate(("emp", "boss", "hr2"), start=1):
         leave = _apply(client, world[who]["h"], lt, _monday(offset), _monday(offset))
         assert leave.status_code == 201 and leave.json()["status"] == "pending", (
             f"R6: {who}'s own leave must wait for a decision: {leave.text}"
@@ -836,7 +845,7 @@ def test_R9_only_an_owners_own_leave_is_auto_approved_otherwise(client, world) -
     lt = world["lt"]["id"]
     own = _apply(client, world["owner"]["h"], lt, _monday(), _monday())
     assert own.json()["status"] == "approved", "R9: owner's own leave is approved at once"
-    for offset, who in enumerate(("hr2", "sadmin"), start=2):
+    for offset, who in enumerate(("hr2",), start=2):
         resp = _apply(client, world[who]["h"], lt, _monday(offset), _monday(offset))
         assert resp.json()["status"] == "pending", f"R9: {who}'s own leave must stay pending"
     for_other = _apply(
@@ -935,8 +944,8 @@ def test_R10_a_super_admin_does_not_see_another_companys_leaves(
 ) -> None:
     mine = _apply(client, world["emp"]["h"], world["lt"]["id"], _monday(), _monday()).json()
     resp = client.get(f"{LEAVES}?employee_id={world['emp']['id']}", headers=super_admin_headers)
-    assert resp.status_code == 200 and resp.json()["items"] == [], "R10: no cross-company bypass"
-    assert client.get(f"{LEAVES}/{mine['id']}", headers=super_admin_headers).status_code == 404
+    assert resp.status_code == 403, "R10: super admin blocked from company leaves"
+    assert client.get(f"{LEAVES}/{mine['id']}", headers=super_admin_headers).status_code == 403
 
 
 def test_R10_apply_decide_and_cancel_are_limited_to_10_per_minute(client, world, limits_on) -> None:

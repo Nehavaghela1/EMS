@@ -4,8 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user, get_tenant_db, require_role
-from app.core.exceptions import AppError, ForbiddenError, NotFoundError
+from app.core.dependencies import get_tenant_db, require_company_role
+from app.core.exceptions import AppError, NotFoundError
 from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.core.roles import HR_OR_MANAGER_ROLES
 from app.modules.identity.models import User, UserRole
@@ -47,10 +47,10 @@ def create_project(
     request: Request,
     data: ProjectCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)),
+    current_user: User = Depends(
+        require_company_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)
+    ),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
     return service.create_project(current_user.company_id, data, actor=current_user)
 
@@ -63,10 +63,8 @@ def list_projects(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot view company project data.")
     service = ProjectService(db)
     return service.list_projects(
         company_id=current_user.company_id,
@@ -86,12 +84,9 @@ def create_time_entry(
     request: Request,
     data: TimeEntryCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     from app.modules.hr.models import Employee
-
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot manage company projects directly.")
 
     cid = current_user.company_id
     service = ProjectService(db)
@@ -112,7 +107,7 @@ def create_time_entry(
         emp_id = target_emp.id
     else:
         query = db.query(Employee).filter(Employee.user_id == current_user.id)
-        if current_user.role != UserRole.super_admin and current_user.company_id:
+        if current_user.company_id:
             query = query.filter(Employee.company_id == project.company_id)
         emp = query.first()
         if not emp:
@@ -144,10 +139,8 @@ def list_time_entries(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot view company project data.")
     service = ProjectService(db)
     target_employee_id = employee_id
     if current_user.role == UserRole.employee:
@@ -173,10 +166,8 @@ def update_time_entry(
     entry_id: UUID,
     data: TimeEntryUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot modify company project data.")
     service = ProjectService(db)
     user_emp_id = None
     if current_user.role == UserRole.employee:
@@ -197,12 +188,8 @@ def approve_time_entry(
     status_action: str = Query("approved", pattern="^(approved|rejected)$"),
     rejection_reason: str | None = Query(None),
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager)
-    ),
+    current_user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot approve or reject time entries.")
     service = ProjectService(db)
     return service.approve_reject_time_entry(
         current_user.company_id,
@@ -220,10 +207,8 @@ def delete_time_entry(
     request: Request,
     entry_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot delete company project data.")
     service = ProjectService(db)
     user_emp_id = None
     if current_user.role == UserRole.employee:
@@ -243,7 +228,7 @@ def delete_time_entry(
 def get_task(
     task_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -257,7 +242,7 @@ def update_task(
     task_id: UUID,
     data: TaskUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -271,7 +256,7 @@ def reorder_task(
     task_id: UUID,
     data: TaskReorder,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -284,7 +269,7 @@ def delete_task(
     request: Request,
     task_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -302,7 +287,7 @@ def add_task_comment(
     task_id: UUID,
     data: TaskCommentCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -320,7 +305,7 @@ def update_task_comment(
     comment_id: UUID,
     data: TaskCommentUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -337,7 +322,7 @@ def delete_task_comment(
     task_id: UUID,
     comment_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -348,7 +333,7 @@ def delete_task_comment(
 def list_task_comments(
     task_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -365,7 +350,7 @@ def update_milestone(
     milestone_id: UUID,
     data: MilestoneUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -378,7 +363,7 @@ def delete_milestone(
     request: Request,
     milestone_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -392,10 +377,8 @@ def delete_milestone(
 def get_project(
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot view company project data.")
     service = ProjectService(db)
     return service.get_project(current_user.company_id, project_id, actor=current_user)
 
@@ -407,10 +390,10 @@ def update_project(
     project_id: UUID,
     data: ProjectUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)),
+    current_user: User = Depends(
+        require_company_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)
+    ),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
     return service.update_project(current_user.company_id, project_id, data, actor=current_user)
 
@@ -421,10 +404,8 @@ def delete_project(
     request: Request,
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin)),
+    current_user: User = Depends(require_company_role(UserRole.owner, UserRole.hr_admin)),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
     service.delete_project(current_user.company_id, project_id, actor=current_user)
 
@@ -435,10 +416,8 @@ def get_project_summary(
     request: Request,
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot view company project data.")
     service = ProjectService(db)
     return service.get_project_summary(current_user.company_id, project_id, actor=current_user)
 
@@ -457,10 +436,10 @@ def add_project_member(
     project_id: UUID,
     data: ProjectMemberCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)),
+    current_user: User = Depends(
+        require_company_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)
+    ),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
     return service.add_member(current_user.company_id, project_id, data, actor=current_user)
 
@@ -469,10 +448,8 @@ def add_project_member(
 def list_project_members(
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot view company project data.")
     service = ProjectService(db)
     return service.list_members(current_user.company_id, project_id, actor=current_user)
 
@@ -488,10 +465,10 @@ def update_project_member_rate(
     employee_id: UUID,
     data: MemberRateUpdate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)),
+    current_user: User = Depends(
+        require_company_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)
+    ),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
     return service.update_member_rate(
         current_user.company_id, project_id, employee_id, data, actor=current_user
@@ -505,10 +482,10 @@ def remove_project_member(
     project_id: UUID,
     employee_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(require_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)),
+    current_user: User = Depends(
+        require_company_role(UserRole.owner, UserRole.hr_admin, UserRole.manager)
+    ),
 ):
-    if current_user.role == UserRole.super_admin:
-        raise ForbiddenError("Super admin cannot manage company projects directly.")
     service = ProjectService(db)
     service.remove_member(current_user.company_id, project_id, employee_id, actor=current_user)
 
@@ -525,7 +502,7 @@ def create_task(
     project_id: UUID,
     data: TaskCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -538,7 +515,7 @@ def list_tasks(
     status: str | None = Query(None, pattern="^(todo|in_progress|review|done|cancelled)$"),
     assigned_to: UUID | None = Query(None),
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -559,7 +536,7 @@ def create_milestone(
     project_id: UUID,
     data: MilestoneCreate,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -570,7 +547,7 @@ def create_milestone(
 def list_milestones(
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
     cid = current_user.company_id
@@ -590,10 +567,10 @@ async def add_project_document(
     project_id: UUID,
     request: Request,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    cid = current_user.company_id
 
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" in content_type:
@@ -648,10 +625,10 @@ async def add_project_document(
 def list_project_documents(
     project_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    cid = current_user.company_id
     return service.list_documents(cid, project_id, current_user)
 
 
@@ -662,10 +639,10 @@ def delete_project_document(
     project_id: UUID,
     document_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     service = ProjectService(db)
-    cid = None if current_user.role == UserRole.super_admin else current_user.company_id
+    cid = current_user.company_id
     service.delete_document(cid, project_id, document_id, current_user)
 
 
@@ -674,16 +651,13 @@ def download_project_document(
     project_id: UUID,
     document_id: UUID,
     db: Session = Depends(get_tenant_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_company_role()),
 ):
     import os
 
     from fastapi.responses import FileResponse
 
     from app.modules.platform.models import FileObject
-
-    if current_user.role == UserRole.super_admin or current_user.company_id is None:
-        raise ForbiddenError("Super Admin cannot download project documents.")
 
     service = ProjectService(db)
     cid = current_user.company_id

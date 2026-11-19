@@ -84,30 +84,50 @@ def get_tenant_db(
 
 
 COMPANY_FORBIDDEN_MESSAGE = "You do not have permission to perform this action."
-
-
-def get_company_user(user: User = Depends(get_current_user)) -> User:
-    """Any logged-in user of a company, except a platform account: company payroll data
-    (salaries, runs, payslips, claims, bank details) is never opened to a super admin (5.8)."""
-    if user.role == UserRole.super_admin:
-        raise ForbiddenError(COMPANY_FORBIDDEN_MESSAGE)
-    return user
+PLATFORM_FORBIDDEN_MESSAGE = "You do not have permission to perform this action."
 
 
 def require_company_role(*roles: UserRole):
     """Like `require_role` for a company's own data: the listed roles (owner is added where
-    hr_admin is allowed) and never super_admin, which `require_role` always lets through."""
+    hr_admin is allowed) and never super_admin. If no roles are specified, any company user
+    is allowed."""
 
-    def _check(user: User = Depends(get_current_user)) -> User:
-        allowed_roles = list(roles)
-        if UserRole.hr_admin in roles and UserRole.owner not in allowed_roles:
-            allowed_roles.append(UserRole.owner)
-
-        if user.role == UserRole.super_admin or user.role not in allowed_roles:
+    def _require_company_role(user: User = Depends(get_current_user)) -> User:
+        if user.role == UserRole.super_admin:
             raise ForbiddenError(COMPANY_FORBIDDEN_MESSAGE)
+        if roles:
+            allowed_roles = list(roles)
+            if UserRole.hr_admin in roles and UserRole.owner not in allowed_roles:
+                allowed_roles.append(UserRole.owner)
+
+            if user.role not in allowed_roles:
+                raise ForbiddenError(COMPANY_FORBIDDEN_MESSAGE)
         return user
 
-    return _check
+    setattr(_require_company_role, "_guard", "require_company_role")  # noqa: B010
+    setattr(_require_company_role, "_allowed_roles", roles)  # noqa: B010
+    return _require_company_role
+
+
+def require_platform_role():
+    """Admits ONLY super_admin and refuses every other role."""
+    allowed_roles: tuple[UserRole, ...] = (UserRole.super_admin,)
+
+    def _require_platform_role(user: User = Depends(get_current_user)) -> User:
+        if user.role != UserRole.super_admin:
+            raise ForbiddenError(PLATFORM_FORBIDDEN_MESSAGE)
+        _ = allowed_roles
+        return user
+
+    setattr(_require_platform_role, "_guard", "require_platform_role")  # noqa: B010
+    setattr(_require_platform_role, "_allowed_roles", allowed_roles)  # noqa: B010
+    return _require_platform_role
+
+
+def get_company_user(user: User = Depends(require_company_role())) -> User:
+    """Any logged-in user of a company, except a platform account: company payroll data
+    (salaries, runs, payslips, claims, bank details) is never opened to a super admin (5.8)."""
+    return user
 
 
 def require_role(*roles: UserRole):

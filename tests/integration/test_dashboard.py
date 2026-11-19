@@ -93,13 +93,7 @@ def test_employee_dashboard_shape_with_real_data(client, company_a, db):
 
 def test_super_admin_dashboard_shape(client, super_admin_headers):
     resp = client.get("/api/v1/dashboard", headers=super_admin_headers)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["role"] == "super_admin"
-    data = body["data"]
-    assert "company_counts_by_status" in data
-    assert "pending_approvals" in data
-    assert data["platform_user_count"] >= 1
+    assert resp.status_code == 403
 
 
 def test_dashboard_is_served_from_cache_on_a_second_call_within_the_ttl(

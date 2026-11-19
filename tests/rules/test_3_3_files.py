@@ -278,9 +278,9 @@ def test_f1_link_access_uploader_and_hr_level(
     res_owner = client.get(f"/api/v1/files/{file_id}/url", headers=_auth_headers(owner1))
     assert res_owner.status_code == 200
 
-    # 4. Super Admin of same company can request link -> 200
+    # 4. Super Admin gets 403 on company files
     res_sa = client.get(f"/api/v1/files/{file_id}/url", headers=_auth_headers(sa1))
-    assert res_sa.status_code == 200
+    assert res_sa.status_code == 403
 
     # 5. Unrelated employee of same company gets 404 (same as missing)
     res_unauth = client.get(f"/api/v1/files/{file_id}/url", headers=_auth_headers(emp2_user))

@@ -202,6 +202,20 @@ class CompanyDeactivateRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=128)
 
 
+class AdminCompanyDeactivateRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _validate_reason(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Deactivation reason must be text.")
+        v = v.strip()
+        if not v or len(v) < 1 or len(v) > 500:
+            raise ValueError("Deactivation reason must be between 1 and 500 characters.")
+        return v
+
+
 class CompanyApproveResponse(BaseModel):
     """The temporary password is never returned here (CLAUDE.md rule 10) —
     it goes to the new HR admin's own email instead (Spec 13, WP-26)."""

@@ -167,9 +167,9 @@ def test_leave_balance_owner_consistency(
     )
     assert res_owner_b.status_code in (403, 404)
 
-    # 3. Super admin of another company gets the same 404
+    # 3. Super admin gets 403 (forbidden on company routes)
     res_sa = client.get(f"/api/v1/leaves/balance/{emp_a_id}?year=2026", headers=super_admin_headers)
-    assert res_sa.status_code == 404
+    assert res_sa.status_code == 403
 
     # 4. Owner of company_a gets 200
     res_owner_a = client.get(

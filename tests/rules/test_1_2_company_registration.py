@@ -352,17 +352,16 @@ def test_A01_role_guards_on_company_endpoints(client, db, company_a):
             == 403
         ), f"{role} reject"
 
-    # 3. Deactivate company: restricted to owner / super_admin; hr_admin, manager, employee -> 403
-    for role in ["hr_admin", "manager", "employee"]:
-        headers = roles_headers[role]
+    # 3. Deactivate company platform endpoint: restricted to super_admin; all tenant roles -> 403
+    for role, headers in roles_headers.items():
         res = client.post(
             f"/api/v1/companies/{comp_id}/deactivate",
             headers=headers,
-            json={"reason": "test", "password": "wrong"},
+            json={"reason": "test"},
         )
-        assert res.status_code == 403, f"{role} deactivate"
+        assert res.status_code == 403, f"{role} deactivate platform route"
 
-    # Owner of ANOTHER company -> 404
+    # Owner of another company calling platform deactivate -> 403
     other_comp = Company(
         name="Other Company",
         code=f"OTH{uuid.uuid4().hex[:5].upper()}",
@@ -375,9 +374,9 @@ def test_A01_role_guards_on_company_endpoints(client, db, company_a):
     other_deact_res = client.post(
         f"/api/v1/companies/{comp_id}/deactivate",
         headers=other_owner_headers,
-        json={"reason": "malicious", "password": "Test1234pass!"},
+        json={"reason": "malicious"},
     )
-    assert other_deact_res.status_code == 404
+    assert other_deact_res.status_code == 403
 
     # 4. Reactivate company: super_admin only; owner, hr_admin, manager, employee -> 403
     for role, headers in roles_headers.items():
@@ -899,9 +898,26 @@ def test_A09_owner_deactivates_own_company(client, db, super_admin_headers):
     owner_headers = {"Authorization": f"Bearer {token}"}
     assert client.get("/api/v1/auth/me", headers=owner_headers).status_code == 200
 
+    # Owner calling /companies/{other_company_id}/deactivate gets 403
+    other_comp_id = uuid.uuid4()
+    other_deact = client.post(
+        f"/api/v1/companies/{other_comp_id}/deactivate",
+        headers=owner_headers,
+        json={"reason": "Not allowed"},
+    )
+    assert other_deact.status_code == 403
+
+    # Wrong password on /companies/me/deactivate -> 401 with wrong login message
+    wrong_pw_resp = client.post(
+        "/api/v1/companies/me/deactivate",
+        headers=owner_headers,
+        json={"reason": "Closing business", "password": "WrongPassword123!"},
+    )
+    assert wrong_pw_resp.status_code == 401
+
     # Deactivate OWN company with correct password -> 200
     deact_resp = client.post(
-        f"/api/v1/companies/{comp_id}/deactivate",
+        "/api/v1/companies/me/deactivate",
         headers=owner_headers,
         json={"reason": "Closing business", "password": pw},
     )
@@ -909,6 +925,14 @@ def test_A09_owner_deactivates_own_company(client, db, super_admin_headers):
 
     # Owner's old token -> 401 on /auth/me
     assert client.get("/api/v1/auth/me", headers=owner_headers).status_code == 401
+
+    # Super admin calling /companies/me/deactivate gets 403
+    sa_me_deact = client.post(
+        "/api/v1/companies/me/deactivate",
+        headers=super_admin_headers,
+        json={"reason": "Closing business", "password": "AnyPassword123!"},
+    )
+    assert sa_me_deact.status_code == 403
 
 
 def test_R10_non_text_company_name_returns_422(client):
@@ -1009,18 +1033,29 @@ def test_gap6_deactivate_policy_matches_code():
     )
 
     discovered = _discover_app_routes(app)
-    deact_route = None
+    deact_platform_route = None
+    deact_me_route = None
     for m, p, r in discovered:
         if m == "POST" and p == "/api/v1/companies/{company_id}/deactivate":
-            deact_route = r
-            break
-    assert deact_route is not None, "Deactivate route not found"
+            deact_platform_route = r
+        elif m == "POST" and p == "/api/v1/companies/me/deactivate":
+            deact_me_route = r
 
-    code_roles = extract_roles_from_route(deact_route)
-    policy_entry = POLICY[("POST", "/api/v1/companies/{company_id}/deactivate")]
+    assert deact_platform_route is not None, "Platform deactivate route not found"
+    assert deact_me_route is not None, "Self deactivate route not found"
 
-    # Code dependency require_role(UserRole.owner, UserRole.super_admin) must match policy
-    assert code_roles is not None
-    assert isinstance(policy_entry, tuple)
-    assert set(code_roles) == set(policy_entry)
-    assert set(policy_entry) == {UserRole.owner, UserRole.super_admin}
+    # Platform route: {super_admin}
+    platform_code_roles = extract_roles_from_route(deact_platform_route)
+    platform_policy_entry = POLICY[("POST", "/api/v1/companies/{company_id}/deactivate")]
+    assert platform_code_roles is not None
+    assert isinstance(platform_policy_entry, tuple)
+    assert set(platform_code_roles) == set(platform_policy_entry)
+    assert set(platform_policy_entry) == {UserRole.super_admin}
+
+    # Me route: {owner}
+    me_code_roles = extract_roles_from_route(deact_me_route)
+    me_policy_entry = POLICY[("POST", "/api/v1/companies/me/deactivate")]
+    assert me_code_roles is not None
+    assert isinstance(me_policy_entry, tuple)
+    assert set(me_code_roles) == set(me_policy_entry)
+    assert set(me_policy_entry) == {UserRole.owner}

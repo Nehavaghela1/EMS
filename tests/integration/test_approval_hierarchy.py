@@ -679,7 +679,7 @@ def test_resignation_approval_hr_admin_own_resignation_forbidden(
 def test_resignation_approval_super_admin_or_owner_own_resignation_allowed(
     client: TestClient, db: Session, company_a: TenantContext
 ):
-    """3. Rule 1: Nobody approves own resignation (including owner and super admin) -> 403."""
+    """3. Rule 1: Super admin cannot access company resignation routes -> 403."""
     sa_emp = _create_employee(
         client, company_a.hr_headers, email=f"sa-{uuid.uuid4().hex[:6]}@example.com"
     )
@@ -687,15 +687,17 @@ def test_resignation_approval_super_admin_or_owner_own_resignation_allowed(
         db, company_a.company_id, sa_emp["id"], UserRole.super_admin
     )
 
-    _submit_resignation(client, sa_emp["id"], sa_headers)
-
-    res = client.put(
-        f"/api/v1/employees/{sa_emp['id']}/resignation/approve",
+    today = utcnow().date()
+    res = client.post(
+        f"/api/v1/employees/{sa_emp['id']}/resignation",
         headers=sa_headers,
-        json={"approved": True},
+        json={
+            "resignation_date": str(today - timedelta(days=14)),
+            "last_working_date": str(today + timedelta(days=16)),
+            "reason": "Moving on",
+        },
     )
-    assert res.status_code == 403, res.text
-    assert "Self-approval is forbidden" in res.text
+    assert res.status_code == 403
 
 
 def test_resignation_approval_hr_admin_amends_approved_resignation(

@@ -409,9 +409,7 @@ class EmployeeService:
         """Route 19. A manager sees only their own direct reports, no matter
         what `reporting_manager_id` the client sent — the server overrides
         it, it never trusts the caller's own claim of scope."""
-        target_company_id = company_id
-        if current_user.role != UserRole.super_admin:
-            target_company_id = current_user.company_id
+        target_company_id = current_user.company_id
 
         if current_user.role == UserRole.manager:
             caller_employee = self.repo.get_by_user_id(current_user.company_id, current_user.id)
@@ -526,8 +524,8 @@ class EmployeeService:
     def _assert_can_view(
         self, company_id: uuid.UUID | None, employee: Employee, current_user: User
     ) -> None:
-        # Owner, HR Admin, and Super Admin have unrestricted read access to all employee profiles.
-        if current_user.role in (UserRole.owner, UserRole.hr_admin, UserRole.super_admin):
+        # Owner and HR Admin have unrestricted read access to all employee profiles.
+        if current_user.role in (UserRole.owner, UserRole.hr_admin):
             return
         if employee.user_id == current_user.id:
             return
@@ -540,8 +538,8 @@ class EmployeeService:
     def get_employee(
         self, company_id: uuid.UUID | None, employee_id: uuid.UUID, current_user: User
     ) -> Employee:
-        """Route 22: Own, Mgr (own reports only), HR, Super Admin."""
-        lookup_company_id = None if current_user.role == UserRole.super_admin else company_id
+        """Route 22: Own, Mgr (own reports only), HR."""
+        lookup_company_id = company_id
         employee = self._get_or_404(lookup_company_id, employee_id)
         self._assert_can_view(lookup_company_id, employee, current_user)
         return employee
@@ -1347,7 +1345,7 @@ class EmployeeService:
             msg = "Self-approval is forbidden. You cannot approve your own resignation."
             raise ForbiddenError(msg)
 
-        is_admin_role = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        is_admin_role = actor.role in (UserRole.hr_admin, UserRole.owner)
         if not is_admin_role:
             is_dept_head = False
             actor_emp = self.repo.get_by_user_id(company_id, actor.id)
@@ -1811,7 +1809,7 @@ class EmployeeService:
         limit: int = 50,
     ) -> tuple[list[dict[str, Any]], int]:
         actor_emp = self.repo.get_by_user_id(company_id, actor.id)
-        is_executive = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        is_executive = actor.role in (UserRole.hr_admin, UserRole.owner)
 
         function: str | None = None
         if not is_executive:
@@ -1863,7 +1861,7 @@ class EmployeeService:
         data: FnFClearanceUpdateRequest,
         actor: User,
     ) -> Any:
-        is_executive = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        is_executive = actor.role in (UserRole.hr_admin, UserRole.owner)
         if data.mark_settled and not is_executive:
             raise ForbiddenError(
                 "Maker-Checker Enforcement: Only HR Admin or Company Owner can authorize "
@@ -2125,7 +2123,7 @@ class EmployeeSectionService:
             raise NotFoundError(f"Section {section} not found.")
 
         # If actor's company is different, return 404
-        if actor.role != UserRole.super_admin and actor.company_id != company_id:
+        if actor.company_id != company_id:
             raise NotFoundError("Employee not found.")
 
         # Load employee row (with row lock if requested)
@@ -2139,7 +2137,7 @@ class EmployeeSectionService:
         if not employee:
             raise NotFoundError("Employee not found.")
 
-        is_hr_or_owner = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        is_hr_or_owner = actor.role in (UserRole.hr_admin, UserRole.owner)
         is_own = employee.user_id is not None and employee.user_id == actor.id
 
         # Non-HR / non-owner:
@@ -2252,7 +2250,7 @@ class EmployeeSectionService:
         if not entry:
             raise NotFoundError(f"Entry {entry_id} not found in {section}.")
 
-        is_hr_or_owner = actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+        is_hr_or_owner = actor.role in (UserRole.hr_admin, UserRole.owner)
 
         # Uniqueness checks on update
         if section == "addresses" and "kind" in data and data["kind"] != entry.kind:
@@ -2400,11 +2398,11 @@ class EmployeeSectionService:
             raise NotFoundError(f"Verification not supported for section {section}.")
 
         # Strictly HR admin or Owner
-        if actor.role not in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin):
+        if actor.role not in (UserRole.hr_admin, UserRole.owner):
             raise ForbiddenError("Only HR admin or owner can verify entries.")
 
         # Employee check (must belong to same company)
-        if actor.role != UserRole.super_admin and actor.company_id != company_id:
+        if actor.company_id != company_id:
             raise NotFoundError("Employee not found.")
 
         employee = self.emp_repo.get_by_id_any_status(employee_id, company_id)

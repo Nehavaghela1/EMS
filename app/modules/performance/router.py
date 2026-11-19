@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user, get_tenant_db, require_role
+from app.core.dependencies import get_tenant_db, require_company_role
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.modules.hr.repository import EmployeeRepository
@@ -46,7 +46,7 @@ def list_performance_cycles(
     status_filter: CycleStatus | None = Query(default=None, alias="status_filter"),
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     cycles, total, pages = service.list_cycles(user.company_id, params, status_filter)
@@ -67,7 +67,7 @@ def create_performance_cycle(
     request: Request,
     data: PerformanceCycleCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     service = PerformanceService(db)
     cycle = service.create_cycle(user.company_id, data, user)
@@ -81,7 +81,7 @@ def update_performance_cycle(
     id: uuid.UUID,
     data: PerformanceCycleUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     service = PerformanceService(db)
     cycle = service.update_cycle(user.company_id, id, data, user)
@@ -94,7 +94,7 @@ def update_performance_cycle(
 @performance_router.get("/report", response_model=PerformanceReportResponse)
 def get_performance_report(
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     service = PerformanceService(db)
     return service.get_report(user.company_id)
@@ -109,7 +109,7 @@ def set_performance_goals(
     request: Request,
     data: GoalsCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     goals = service.create_goals(user.company_id, data, user)
@@ -121,7 +121,7 @@ def list_performance_goals(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(
-        require_role(UserRole.super_admin, UserRole.hr_admin, UserRole.manager, UserRole.employee)
+        require_company_role(UserRole.hr_admin, UserRole.manager, UserRole.employee)
     ),
 ):
     service = PerformanceService(db)
@@ -178,7 +178,7 @@ def update_performance_goal(
     id: uuid.UUID,
     data: GoalUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     updated = service.update_goal(user.company_id, id, data, user)
@@ -192,7 +192,7 @@ def update_goal_progress(
     id: uuid.UUID,
     data: GoalProgressUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     updated = service.update_goal_progress(user.company_id, id, data, user)
@@ -203,7 +203,7 @@ def update_goal_progress(
 def get_goal_progress_history(
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     history = service.get_goal_progress_history(user.company_id, id, user)
@@ -217,7 +217,7 @@ def submit_self_review(
     goal_id: uuid.UUID,
     data: SelfReviewRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     review = service.submit_self_review(user.company_id, goal_id, data, user)
@@ -233,7 +233,7 @@ def submit_manager_review(
     goal_id: uuid.UUID,
     data: ManagerReviewRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
     service = PerformanceService(db)
     review = service.submit_manager_review(user.company_id, goal_id, data, user)
@@ -246,7 +246,7 @@ def list_goal_reviews(
     request: Request,
     goal_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     reviews = service.list_goal_reviews(user.company_id, goal_id, user)
@@ -259,7 +259,7 @@ def get_performance_review(
     request: Request,
     id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     review = service.get_review_by_id(user.company_id, id, user)
@@ -273,7 +273,7 @@ def reopen_performance_review(
     id: uuid.UUID,
     data: ReviewReopenRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     service = PerformanceService(db)
     review = service.reopen_review(user.company_id, id, data.reason, user)
@@ -291,7 +291,9 @@ def get_performance_summary(
     request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.employee)),
+    user: User = Depends(
+        require_company_role(UserRole.hr_admin, UserRole.manager, UserRole.employee)
+    ),
 ):
     service = PerformanceService(db)
     summary = service.get_summary(user.company_id, employee_id, actor=user)
@@ -307,7 +309,7 @@ def list_performance_summaries(
     cycle_id: uuid.UUID = Query(...),
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
     service = PerformanceService(db)
     summaries, total, pages = service.list_summaries(user.company_id, cycle_id, params, actor=user)
@@ -329,7 +331,7 @@ def finalize_performance_summary(
     employee_id: uuid.UUID,
     data: SummaryFinalizeRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     service = PerformanceService(db)
     summary = service.finalize_summary(user.company_id, employee_id, data, user)
@@ -345,7 +347,7 @@ def initiate_pip(
     request: Request,
     data: PIPCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
     service = PerformanceService(db)
     return service.create_pip(user.company_id, data, user)
@@ -357,7 +359,7 @@ def activate_pip(
     request: Request,
     pip_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
     service = PerformanceService(db)
     return service.activate_pip(user.company_id, pip_id, user)
@@ -370,7 +372,7 @@ def extend_pip(
     pip_id: uuid.UUID,
     data: PIPExtendRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
     service = PerformanceService(db)
     return service.extend_pip(user.company_id, pip_id, data, user)
@@ -385,7 +387,7 @@ def add_pip_checkin(
     pip_id: uuid.UUID,
     data: PIPCheckInCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     checkin = service.add_pip_checkin(user.company_id, pip_id, data, user)
@@ -396,7 +398,7 @@ def add_pip_checkin(
 def list_pip_checkins(
     pip_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     checkins = service.list_pip_checkins(user.company_id, pip_id, user)
@@ -408,7 +410,7 @@ def list_pips(
     employee_id: uuid.UUID | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     target_emp_id = employee_id
@@ -427,7 +429,7 @@ def list_pips(
 def get_active_pip(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     service = PerformanceService(db)
     # Check scoping
@@ -450,7 +452,9 @@ def evaluate_pip(
     pip_id: uuid.UUID,
     data: PIPEvaluateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin, UserRole.manager)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
+    service = PerformanceService(db)
+    return service.evaluate_pip(user.company_id, pip_id, data, user)
     service = PerformanceService(db)
     return service.evaluate_pip(user.company_id, pip_id, data, user)

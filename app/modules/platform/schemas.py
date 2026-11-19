@@ -389,3 +389,61 @@ class PayrollMonthStats(BaseModel):
     runs_by_status: dict[str, int]
     employees_paid: int
     total_net_paid: Decimal
+
+
+# ── Live Platform Stats (PART B) ──────────────────────────────────────────────
+class PlatformStatsOverview(BaseModel):
+    companies_by_status: dict[str, int]
+    companies_created_this_month: int
+    total_users: int
+    total_employees: int
+    total_net_paid_this_month: Decimal
+    total_net_paid_last_month: Decimal
+
+
+class CompanyStatsItem(BaseModel):
+    company_id: uuid.UUID
+    name: str
+    code: str
+    status: str
+    created_at: datetime
+    headcount: int
+    active_user_count: int
+    joiners_this_month: int
+    leavers_this_month: int
+    last_payroll_run_date: date | None = None
+    most_recent_login: datetime | None = None
+
+
+class CompanyMonthlyPayrollStats(BaseModel):
+    company_id: uuid.UUID
+    company_name: str
+    company_code: str
+    year: int
+    month: int
+    runs_by_status: dict[str, int]
+    total_employees_in_run: int
+    total_net_paid: Decimal
+    total_employer_cost: Decimal
+    total_statutory_contributions: Decimal
+
+
+class CompanyActivityStats(BaseModel):
+    company_id: uuid.UUID
+    company_name: str
+    company_code: str
+    punch_count: int
+    leave_requests_by_status: dict[str, int]
+    pending_approvals: int
+    pending_regularizations: int
+    active_projects: int
+    approved_hours_logged: Decimal
+
+
+class PlatformHealthStats(BaseModel):
+    jobs_by_status: dict[str, int]
+    job_failures_last_24h: int
+    rate_drafts_awaiting_verification: int
+    next_scheduled_rate_checks: dict[str, Any]
+    storage_bytes_by_company: dict[str, int]
+    notification_backlog: int

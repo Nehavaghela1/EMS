@@ -376,8 +376,8 @@ def test_r01_roles_upload_view_delete(client: TestClient, doc_setup: dict[str, A
     res_emp2_del = client.delete(f"/api/v1/documents/{emp1.id}/{doc1_id}", headers=emp2_headers)
     assert res_emp2_del.status_code == 403
 
-    # 8. HR Admin, Owner, Super Admin view & upload
-    for h in [hr_headers, owner_headers, super_headers]:
+    # 8. HR Admin, Owner view & upload; Super Admin gets 403
+    for h in [hr_headers, owner_headers]:
         res_list = client.get(f"/api/v1/documents/{emp1.id}", headers=h)
         assert res_list.status_code == 200
 
@@ -393,6 +393,8 @@ def test_r01_roles_upload_view_delete(client: TestClient, doc_setup: dict[str, A
         # Delete by HR-level -> 204
         res_del = client.delete(f"/api/v1/documents/{emp1.id}/{created_id}", headers=h)
         assert res_del.status_code == 204
+
+    assert client.get(f"/api/v1/documents/{emp1.id}", headers=super_headers).status_code == 403
 
 
 # ==============================================================================

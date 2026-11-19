@@ -9,7 +9,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_user, get_tenant_db, require_role
+from app.core.dependencies import get_tenant_db, require_company_role
 from app.core.exceptions import NotFoundError
 from app.core.jobs import authorize_export_job, register_job
 from app.core.pagination import Page, PageParams, page_params
@@ -85,7 +85,7 @@ def list_departments(
     sort: str | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     items, total, pages, counts = DepartmentService(db).list_departments(
         user.company_id, q=q, sort=sort, page_params=params
@@ -106,7 +106,7 @@ def create_department(
     request: Request,
     data: DepartmentCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     department, count = DepartmentService(db).create_department(user.company_id, data, actor=user)
     return _to_department_response(department, count)
@@ -116,7 +116,7 @@ def create_department(
 def get_department(
     department_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     department, count = DepartmentService(db).get_department(user.company_id, department_id)
     return _to_department_response(department, count)
@@ -129,7 +129,7 @@ def update_department(
     department_id: uuid.UUID,
     data: DepartmentUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     department, count = DepartmentService(db).update_department(
         user.company_id, department_id, data, actor=user
@@ -143,7 +143,7 @@ def delete_department(
     request: Request,
     department_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     DepartmentService(db).delete_department(user.company_id, department_id, actor=user)
 
@@ -174,7 +174,6 @@ def _to_employee_response(
         is_hr_or_owner = viewer_user.role in (
             UserRole.hr_admin,
             UserRole.owner,
-            UserRole.super_admin,
         )
         is_self = employee.user_id is not None and employee.user_id == viewer_user.id
         if not is_hr_or_owner and not is_self:
@@ -199,7 +198,7 @@ def search_managers(
     exclude_id: uuid.UUID | None = None,
     limit: int = 15,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
     """Debounced search for candidate reporting managers."""
     return EmployeeService(db).search_managers(
@@ -225,9 +224,9 @@ def list_employees(
     sort: str | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
-    target_company_id = company_id if user.role == UserRole.super_admin else user.company_id
+    target_company_id = user.company_id
     effective_role = role or system_role
     items, total, pages = EmployeeService(db).list_employees(
         target_company_id,
@@ -288,7 +287,7 @@ def create_employee(
     request: Request,
     data: EmployeeCreateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     employee, sent_to = EmployeeService(db).create_employee(user.company_id, data, user)
     return _to_employee_create_response(employee, sent_to)
@@ -297,7 +296,7 @@ def create_employee(
 @employees_router.get("/me", response_model=EmployeeResponse)
 def get_my_employee(
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     employee = EmployeeService(db).get_my_employee_record(user.company_id, user)
     system_role = user.role.value if hasattr(user.role, "value") else str(user.role)
@@ -307,7 +306,7 @@ def get_my_employee(
 @employees_router.get("/resignations", response_model=list[EmployeeResponse])
 def list_resignations(
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.manager, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
 ):
     items, total, pages = EmployeeService(db).list_employees(
         user.company_id,
@@ -360,7 +359,7 @@ def bulk_deactivate_employees(
     request: Request,
     data: BulkActionRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     return EmployeeService(db).bulk_deactivate(user.company_id, data.employee_ids, actor=user)
 
@@ -371,7 +370,7 @@ def bulk_reactivate_employees(
     request: Request,
     data: BulkActionRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     return EmployeeService(db).bulk_reactivate(user.company_id, data.employee_ids, actor=user)
 
@@ -382,7 +381,7 @@ def bulk_resend_invite_employees(
     request: Request,
     data: BulkActionRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     return EmployeeService(db).bulk_resend_invite(user.company_id, data.employee_ids, actor=user)
 
@@ -393,9 +392,7 @@ def export_employees(
     request: Request,
     data: EmployeeExportRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(
-        require_role(UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin)
-    ),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner, UserRole.manager)),
 ):
     # Record EMPLOYEES_EXPORT_REQUESTED audit row
     AuditService(db).record(
@@ -438,9 +435,7 @@ def export_employees(
 def download_employee_export(
     job_id: str,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(
-        require_role(UserRole.hr_admin, UserRole.owner, UserRole.manager, UserRole.super_admin)
-    ),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner, UserRole.manager)),
 ):
     authorize_export_job(job_id, user, not_found_message="Export not found.")
 
@@ -459,7 +454,7 @@ def download_employee_export(
     # Authorization: Requester, or HR Admin / Owner of same company
     requester_id = result.get("requester_id")
     is_requester = requester_id and str(user.id) == requester_id
-    is_hr_or_owner = user.role in (UserRole.hr_admin, UserRole.owner, UserRole.super_admin)
+    is_hr_or_owner = user.role in (UserRole.hr_admin, UserRole.owner)
     if not (is_requester or is_hr_or_owner):
         raise NotFoundError("Export not found.")
 
@@ -508,9 +503,7 @@ def get_clearance_queue(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(
-        require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)
-    ),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager, UserRole.owner)),
 ):
     items, total = EmployeeService(db).list_clearance_queue(
         user.company_id, user, page=page, limit=limit
@@ -532,7 +525,7 @@ def reactivate_employee(
     request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     employee = EmployeeService(db).reactivate_employee(user.company_id, employee_id, actor=user)
     return _build_full_employee_response(db, employee, viewer_user=user)
@@ -542,7 +535,7 @@ def reactivate_employee(
 def get_employee(
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     employee = EmployeeService(db).get_employee(user.company_id, employee_id, user)
     return _build_full_employee_response(db, employee, viewer_user=user)
@@ -555,7 +548,7 @@ def update_employee(
     employee_id: uuid.UUID,
     data: EmployeeUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     employee = EmployeeService(db).update_employee(user.company_id, employee_id, data, user)
     return _build_full_employee_response(db, employee, viewer_user=user)
@@ -567,7 +560,7 @@ def deactivate_employee(
     request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     EmployeeService(db).deactivate_employee(user.company_id, employee_id, user)
 
@@ -582,7 +575,7 @@ def toggle_active_employee(
     request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     employee = EmployeeService(db).reactivate_employee(user.company_id, employee_id, actor=user)
     return _build_full_employee_response(db, employee, viewer_user=user)
@@ -594,7 +587,7 @@ def resend_invite(
     request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     employee, sent_to = EmployeeService(db).resend_invite(user.company_id, employee_id, actor=user)
     return _to_employee_create_response(employee, sent_to)
@@ -610,7 +603,7 @@ def submit_resignation(
     employee_id: uuid.UUID,
     data: ResignationSubmitRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     employee = EmployeeService(db).submit_resignation(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
@@ -622,7 +615,7 @@ def withdraw_resignation(
     request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     employee = EmployeeService(db).withdraw_resignation(user.company_id, employee_id, user)
     return _to_employee_response(employee)
@@ -635,9 +628,7 @@ def approve_resignation(
     employee_id: uuid.UUID,
     data: ResignationApproveRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(
-        require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)
-    ),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager, UserRole.owner)),
 ):
     employee = EmployeeService(db).approve_resignation(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
@@ -650,7 +641,7 @@ def terminate_employee(
     employee_id: uuid.UUID,
     data: TerminationRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_role(UserRole.hr_admin, UserRole.owner, UserRole.super_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     employee = EmployeeService(db).terminate_employee(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
@@ -670,7 +661,7 @@ def get_fnf_settlement(
     request: Request,
     employee_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     return EmployeeService(db).calculate_fnf(user.company_id, employee_id, user)
 
@@ -682,9 +673,7 @@ def update_fnf_clearance(
     employee_id: uuid.UUID,
     data: FnFClearanceUpdateRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(
-        require_role(UserRole.hr_admin, UserRole.manager, UserRole.owner, UserRole.super_admin)
-    ),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager, UserRole.owner)),
 ):
     return EmployeeService(db).update_fnf_clearance(user.company_id, employee_id, data, user)
 
@@ -723,7 +712,7 @@ def list_employee_section_entries(
     employee_id: uuid.UUID,
     section: str,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     entries = EmployeeSectionService(db).list_entries(user.company_id, employee_id, section, user)
     resp_cls = SECTION_RESPONSE_SCHEMAS.get(section)
@@ -739,7 +728,7 @@ async def create_employee_section_entry(
     employee_id: uuid.UUID,
     section: str,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     schema_cls = SECTION_CREATE_SCHEMAS.get(section)
     if not schema_cls:
@@ -767,7 +756,7 @@ async def update_employee_section_entry(
     section: str,
     entry_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     schema_cls = SECTION_UPDATE_SCHEMAS.get(section)
     if not schema_cls:
@@ -797,7 +786,7 @@ def delete_employee_section_entry(
     section: str,
     entry_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     EmployeeSectionService(db).delete_entry(user.company_id, employee_id, section, entry_id, user)
     return None
@@ -810,7 +799,7 @@ def verify_education_entry(
     employee_id: uuid.UUID,
     entry_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     entry = EmployeeSectionService(db).set_verification(
         user.company_id, employee_id, "education", entry_id, verified=True, actor=user
@@ -825,7 +814,7 @@ def unverify_education_entry(
     employee_id: uuid.UUID,
     entry_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     entry = EmployeeSectionService(db).set_verification(
         user.company_id, employee_id, "education", entry_id, verified=False, actor=user
@@ -840,7 +829,7 @@ def verify_experience_entry(
     employee_id: uuid.UUID,
     entry_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     entry = EmployeeSectionService(db).set_verification(
         user.company_id, employee_id, "experience", entry_id, verified=True, actor=user
@@ -855,7 +844,7 @@ def unverify_experience_entry(
     employee_id: uuid.UUID,
     entry_id: uuid.UUID,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_company_role()),
 ):
     entry = EmployeeSectionService(db).set_verification(
         user.company_id, employee_id, "experience", entry_id, verified=False, actor=user
