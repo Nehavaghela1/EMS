@@ -958,14 +958,16 @@ class AttendanceService:
             # Enterprise Priority Hierarchy (Zoho / Keka):
             # Priority 1: Approved / Pending Leave
             if leave is not None:
+                half_label = "1st Half" if leave.half_day_session == "first_half" else "2nd Half"
+                session_str = f" ({half_label})" if leave.half_day_session else ""
                 if leave.status == LeaveStatus.approved:
                     status = "half_day" if leave.is_half_day else "on_leave"
-                    session_str = f" ({'1st Half' if leave.half_day_session == 'first_half' else '2nd Half'})" if leave.half_day_session else ""
                     base_name = lt_map.get(leave.leave_type_id, "Leave")
-                    badge = f"Half Day ({base_name}){session_str}" if leave.is_half_day else base_name
+                    badge = (
+                        f"Half Day ({base_name}){session_str}" if leave.is_half_day else base_name
+                    )
                 else:
                     status = "pending_leave"
-                    session_str = f" ({'1st Half' if leave.half_day_session == 'first_half' else '2nd Half'})" if leave.half_day_session else ""
                     badge = f"Pending ({lt_map.get(leave.leave_type_id, 'Leave')}{session_str})"
                 work_hours = att.hours_worked if att else None
                 check_in_val = att.check_in if att else None
@@ -2293,7 +2295,10 @@ class LeaveService:
                     user_id=employee.user_id,
                     type="leave_cancelled",
                     title="Leave cancelled",
-                    message=f"Your leave from {leave.start_date} to {leave.end_date} has been cancelled.",
+                    message=(
+                        f"Your leave from {leave.start_date} to {leave.end_date} "
+                        "has been cancelled."
+                    ),
                     entity_type="leave",
                     entity_id=leave.id,
                 )

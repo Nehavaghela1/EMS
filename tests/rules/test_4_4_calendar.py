@@ -469,7 +469,7 @@ def test_R10_summary_counts_add_up_to_days_of_month(
 def test_R11_employee_joining_mid_month_not_absent_prior_to_hire_date(
     client: TestClient, db: Session, company_a: TenantContext
 ) -> None:
-    """An employee who joins mid-month should have no_record for days prior to hire_date, never absent."""
+    """A mid-month joiner has no_record, never absent, for days before hire_date."""
     m = 11
     y = 2026
     # Employee joined on Nov 19, 2026
@@ -484,6 +484,6 @@ def test_R11_employee_joining_mid_month_not_absent_prior_to_hire_date(
     for day_num in range(1, 19):
         d_str = f"2026-11-{day_num:02d}"
         assert days[d_str]["status"] != "absent", (
-            f"Day {d_str} prior to hire_date 2026-11-19 must not be absent, got {days[d_str]['status']}"
+            f"Day {d_str} prior to hire_date 2026-11-19 must not be absent, "
+            f"got {days[d_str]['status']}"
         )
-

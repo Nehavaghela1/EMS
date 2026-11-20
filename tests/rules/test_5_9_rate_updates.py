@@ -1088,7 +1088,11 @@ def test_R9_only_active_sources_that_are_due_are_fetched(
     off = _due_source(client, super_admin_headers, active=False)
     fetcher = FakeFetcher()
     _run_check(monkeypatch, db, fetcher)
-    assert fetcher.calls == [due["source_url"]], f"R9: only the due active source: {fetcher.calls}"
+    # Check only this test's own sources. The seeded official sources (app/db/seed/rate_sources.py)
+    # become due on fixed dates and are rightly fetched too, so a whole-list match breaks by date.
+    assert fetcher.calls.count(due["source_url"]) == 1, f"R9: due source once: {fetcher.calls}"
+    assert later["source_url"] not in fetcher.calls, "R9: a source not yet due is not fetched"
+    assert off["source_url"] not in fetcher.calls, "R9: an inactive source is not fetched"
     assert _source(client, super_admin_headers, later["id"])["last_result"] == "never"
     assert _source(client, super_admin_headers, off["id"])["last_result"] == "never"
 
