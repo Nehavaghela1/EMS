@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth, type UserRole } from "./auth-context";
 import { useTimer } from "./timer-context";
-import { getUserWorkspaces, switchWorkspace } from "../modules/identity/api";
+import { getUserWorkspaces, switchWorkspace, getMyCompany } from "../modules/identity/api";
 import { fetchDashboard } from "../modules/platform/api";
 import { NotificationBell } from "../shared/components/NotificationBell";
 
@@ -39,7 +39,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "dashboard",
     label: "Dashboard",
     to: "/dashboard",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>
@@ -50,7 +50,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "employees",
     label: "Employees",
     to: "/employees",
-    roles: ["hr_admin", "manager", "super_admin", "owner"],
+    roles: ["hr_admin", "manager", "owner"],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
@@ -60,12 +60,12 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "time_attendance",
     label: "Leave & Attendance",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     children: [
-      { to: "/attendance", label: "Attendance", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/leaves", label: "Leave Requests", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/shifts", label: "Shift Schedule", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/holidays", label: "Holidays", roles: ["hr_admin", "super_admin", "owner"] },
+      { to: "/attendance", label: "Attendance", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/leaves", label: "Leave Requests", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/shifts", label: "Shift Schedule", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/holidays", label: "Holidays", roles: ["hr_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -76,12 +76,12 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "payroll",
     label: "Payroll",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     children: [
-      { to: "/payroll/run", label: "Pay Runs", roles: ["hr_admin", "super_admin", "owner"] },
-      { to: "/payroll/setup", label: "Payroll Setup", roles: ["hr_admin", "super_admin", "owner"] },
-      { to: "/payroll/payslip", label: "My Payslips", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/payroll/reimbursements", label: "Reimbursements", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/payroll/run", label: "Pay Runs", roles: ["hr_admin", "owner"] },
+      { to: "/payroll/setup", label: "Payroll Setup", roles: ["hr_admin", "owner"] },
+      { to: "/payroll/payslip", label: "My Payslips", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/payroll/reimbursements", label: "Reimbursements", roles: ["employee", "manager", "hr_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -92,11 +92,11 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "performance",
     label: "Performance",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     children: [
-      { to: "/performance", label: "Cycles & Review", roles: ["hr_admin", "super_admin", "owner"] },
-      { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/performance/reviews", label: "Team Reviews", roles: ["manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/performance", label: "Cycles & Review", roles: ["hr_admin", "owner"] },
+      { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/performance/reviews", label: "Team Reviews", roles: ["manager", "hr_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -107,10 +107,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "projects",
     label: "Projects & Timesheet",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     children: [
-      { to: "/projects", label: "Projects", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
-      { to: "/timesheets", label: "Timesheets", roles: ["employee", "manager", "hr_admin", "super_admin", "owner"] },
+      { to: "/projects", label: "Projects", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/timesheets", label: "Timesheets", roles: ["employee", "manager", "hr_admin", "owner"] },
     ],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -122,7 +122,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: "settings",
     label: "Settings",
     to: "/settings",
-    roles: ["employee", "manager", "hr_admin", "super_admin", "owner"],
+    roles: ["employee", "manager", "hr_admin", "owner"],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -170,15 +170,25 @@ export function AppLayout({ children }: { children: ReactNode }) {
     enabled: !!user,
   });
 
+  const companyQuery = useQuery({
+    queryKey: ["company", "me"],
+    queryFn: () => getMyCompany(),
+    enabled: !!user && user.role !== "super_admin",
+  });
+
   const activeCompanyName =
     workspacesQuery.data?.find((c) => c.id === selectedWorkspace)?.name ||
+    companyQuery.data?.name ||
     user?.company_name ||
     "EMS Workspace";
 
   const activeCompanyCode =
     workspacesQuery.data?.find((c) => c.id === selectedWorkspace)?.code ||
+    companyQuery.data?.code ||
     user?.company_code ||
     "";
+
+  const activeCompanyLogo = companyQuery.data?.logo_url || null;
 
   // ── Profile pill dropdown (top-bar) ─────────────────────────────────────
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -292,7 +302,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const dashboardQuery = useQuery({
     queryKey: ["dashboard"],
     queryFn: fetchDashboard,
-    enabled: ["owner", "hr_admin", "super_admin"].includes(role),
+    enabled: ["owner", "hr_admin"].includes(role),
     staleTime: 60_000,
   });
   const pendingLeaves: number =
@@ -394,7 +404,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
                       width: "34px",
                       height: "34px",
                       borderRadius: "8px",
-                      background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                      background: activeCompanyLogo ? "#ffffff" : "var(--color-primary, #2563eb)",
+                      border: activeCompanyLogo ? "1px solid rgba(255,255,255,0.2)" : "none",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -403,9 +414,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
                       color: "#fff",
                       flexShrink: 0,
                       boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                      overflow: "hidden",
+                      padding: activeCompanyLogo ? "2px" : "0",
                     }}
                   >
-                    {activeCompanyName.charAt(0).toUpperCase()}
+                    {activeCompanyLogo ? (
+                      <img
+                        src={activeCompanyLogo}
+                        alt={activeCompanyName}
+                        style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                      />
+                    ) : (
+                      activeCompanyName.charAt(0).toUpperCase()
+                    )}
                   </div>
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div
@@ -653,7 +674,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   width: "34px",
                   height: "34px",
                   borderRadius: "8px",
-                  background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                  background: activeCompanyLogo ? "#ffffff" : "var(--color-primary, #2563eb)",
+                  border: activeCompanyLogo ? "1px solid rgba(255,255,255,0.2)" : "none",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -662,9 +684,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   color: "#fff",
                   flexShrink: 0,
                   boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
+                  overflow: "hidden",
+                  padding: activeCompanyLogo ? "2px" : "0",
                 }}
               >
-                {activeCompanyName.charAt(0).toUpperCase()}
+                {activeCompanyLogo ? (
+                  <img
+                    src={activeCompanyLogo}
+                    alt={activeCompanyName}
+                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                  />
+                ) : (
+                  activeCompanyName.charAt(0).toUpperCase()
+                )}
               </div>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div
@@ -755,11 +787,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
           {visibleSections.map((sec) => {
             const hasChildren = Boolean(sec.children && sec.children.length > 0);
             const isOpen = Boolean(openSections[sec.id]);
-            const isChildActive = sec.children?.some((c) =>
-              c.to === "/dashboard"
-                ? location.pathname === "/dashboard"
-                : location.pathname.startsWith(c.to)
-            );
+            const isChildActive = sec.children?.some((c) => {
+              if (c.to === "/dashboard") return location.pathname === "/dashboard";
+              if (c.to === "/performance") return location.pathname === "/performance";
+              return location.pathname.startsWith(c.to);
+            });
             const isSelfActive = sec.to ? location.pathname === sec.to : false;
             const isSectionActive = Boolean(isSelfActive || isChildActive);
 
@@ -776,7 +808,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                     padding: "0.48rem 0.75rem",
                     borderRadius: "6px",
                     color: isSelfActive ? "#ffffff" : "#94a3b8",
-                    background: isSelfActive ? "#2563eb" : "transparent",
+                    background: isSelfActive ? "var(--color-primary, #2563eb)" : "transparent",
                     textDecoration: "none",
                     fontSize: "0.84rem",
                     fontWeight: isSelfActive ? 600 : 500,
@@ -849,7 +881,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
                     }}
                   >
                     {sec.children.map((child) => {
-                      const isActive = location.pathname.startsWith(child.to);
+                      const isActive =
+                        child.to === "/performance"
+                          ? location.pathname === "/performance"
+                          : location.pathname.startsWith(child.to);
                       return (
                         <NavLink
                           key={child.to}
@@ -860,7 +895,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                             borderRadius: "5px",
                             fontSize: "0.8rem",
                             color: isActive ? "#ffffff" : "#94a3b8",
-                            background: isActive ? "rgba(37, 99, 235, 0.4)" : "transparent",
+                            background: isActive ? "var(--color-primary, #2563eb)" : "transparent",
                             textDecoration: "none",
                             fontWeight: isActive ? 600 : 400,
                             transition: "background 0.15s ease",

@@ -861,6 +861,7 @@ class CompanyService:
         self.company_repo = CompanyRepository(db)
         self.user_repo = UserRepository(db)
         self.department_repo = DepartmentRepository(db)
+        self.employee_repo = EmployeeRepository(db)
         self.leave_type_repo = LeaveTypeRepository(db)
         self.industry_preset_repo = IndustryPresetRepository(db)
         self.token_repo = RefreshTokenRepository(db)
@@ -901,7 +902,7 @@ class CompanyService:
     def list_companies(
         self,
         *,
-        status: CompanyStatus | None,
+        status: str | None,
         q: str | None,
         country: str | None,
         sort: str | None,
@@ -913,15 +914,14 @@ class CompanyService:
         )
 
     def get_company_detail(self, company_id: uuid.UUID) -> tuple[Company, dict[str, int]]:
-        """Route 14, SA only. Counts currently cover what exists: users and
-        departments. Employees join once WP-07 lands.
-        """
+        """Route 14, SA only. Counts cover users, departments, and active employees."""
         company = self.company_repo.get_by_id(company_id)
         if company is None:
             raise NotFoundError("Company not found.")
         counts = {
             "users": self.user_repo.count_by_company(company_id),
             "departments": self.department_repo.count_by_company(company_id),
+            "employees": self.employee_repo.count_by_company(company_id),
         }
         return company, counts
 

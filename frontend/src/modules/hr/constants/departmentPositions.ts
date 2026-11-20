@@ -139,6 +139,189 @@ export const DEFAULT_POSITIONS: string[] = [
 ];
 
 /**
+ * Recommended Standard Positions by Industry Preset.
+ * Gives employees standard designations appropriate for their company's industry.
+ */
+export const INDUSTRY_POSITIONS: Record<string, string[]> = {
+  technology: [
+    "Software Engineer / Developer",
+    "Senior Software Engineer",
+    "Frontend Developer",
+    "Backend Developer",
+    "Full Stack Developer",
+    "Mobile App Developer (iOS / Android)",
+    "DevOps Engineer",
+    "QA / Automation Test Engineer",
+    "Data Engineer",
+    "Engineering Manager / Tech Lead",
+    "Cloud Solutions Architect",
+    "UI/UX Designer",
+    "Product Manager",
+    "Technical Support Engineer",
+    "Security Analyst",
+    "IT Support Specialist",
+  ],
+  manufacturing: [
+    "Production Supervisor",
+    "Plant Operations Manager",
+    "Quality Control (QC) Inspector",
+    "Quality Assurance Specialist",
+    "Supply Chain Coordinator",
+    "Maintenance Engineer",
+    "Safety & EHS Officer",
+    "Inventory & Warehouse Manager",
+    "Procurement Specialist",
+    "Mechanical Engineer",
+    "Production Planner",
+  ],
+  healthcare: [
+    "Clinical Coordinator",
+    "Staff Nurse",
+    "Chief Medical Officer / Physician",
+    "Pharmacist",
+    "Medical Laboratory Technician",
+    "Healthcare Administrator",
+    "Billing & Insurance Specialist",
+    "Patient Care Coordinator",
+    "Quality & Accreditation Officer",
+  ],
+  retail: [
+    "Store Manager",
+    "Assistant Store Manager",
+    "Sales Associate / Cashier",
+    "Merchandiser",
+    "Inventory Controller",
+    "Supply Chain Associate",
+    "Visual Merchandising Specialist",
+    "Customer Support Specialist",
+    "E-Commerce Operations Coordinator",
+  ],
+  banking: [
+    "Branch Relationship Manager",
+    "Credit Analyst",
+    "Financial Analyst",
+    "Risk & Compliance Officer",
+    "Loan Officer",
+    "Investment Advisor",
+    "Internal Auditor",
+    "Operations Officer",
+    "Wealth Management Specialist",
+  ],
+  education: [
+    "Academic Coordinator",
+    "Professor / Lecturer",
+    "Admissions Counselor",
+    "Student Affairs Officer",
+    "Curriculum Developer",
+    "Administrative Officer",
+    "Librarian / Resource Specialist",
+    "Educational Counselor",
+  ],
+  hospitality: [
+    "Hotel General Manager",
+    "Front Desk Supervisor",
+    "Guest Relations Executive",
+    "Executive Chef",
+    "Food & Beverage Manager",
+    "Housekeeping Supervisor",
+    "Event & Banquet Coordinator",
+    "Catering Manager",
+  ],
+  construction: [
+    "Project Engineer",
+    "Site Supervisor / Manager",
+    "Civil Engineer",
+    "Safety & Compliance Manager",
+    "Quantity Surveyor",
+    "Draftsman / CAD Designer",
+    "Procurement Coordinator",
+    "Structural Engineer",
+  ],
+  real_estate: [
+    "Real Estate Agent / Broker",
+    "Property Manager",
+    "Leasing Consultant",
+    "Business Development Executive",
+    "Real Estate Legal Advisor",
+    "Valuation Analyst",
+    "Portfolio Manager",
+  ],
+  logistics: [
+    "Fleet Operations Manager",
+    "Warehouse Supervisor",
+    "Logistics Coordinator",
+    "Dispatch Specialist",
+    "Freight Forwarder",
+    "Inventory Controller",
+    "Route Optimization Specialist",
+    "Customs Clearance Executive",
+  ],
+  media: [
+    "Content Strategist / Copywriter",
+    "Creative Director",
+    "Video Producer / Editor",
+    "Graphic / Visual Designer",
+    "Digital Marketing Manager",
+    "Public Relations Specialist",
+    "Social Media Manager",
+    "Sound & Media Technician",
+  ],
+  non_profit: [
+    "Program Director / Manager",
+    "Fundraising & Development Coordinator",
+    "Grant Writer",
+    "Community Outreach Officer",
+    "Volunteer Coordinator",
+    "Monitoring & Evaluation Specialist",
+  ],
+};
+
+/**
+ * Returns the recommended standard positions matching a company industry name.
+ */
+export function getPositionsForIndustry(industryName: string | null | undefined): string[] {
+  if (!industryName) return DEFAULT_POSITIONS;
+  const lower = industryName.toLowerCase();
+
+  for (const [key, positions] of Object.entries(INDUSTRY_POSITIONS)) {
+    if (lower.includes(key)) {
+      return positions;
+    }
+  }
+
+  // Common aliases
+  if (lower.includes("tech") || lower.includes("software") || lower.includes("it") || lower.includes("saas")) {
+    return INDUSTRY_POSITIONS.technology;
+  }
+  if (lower.includes("finance") || lower.includes("bank") || lower.includes("fintech") || lower.includes("invest")) {
+    return INDUSTRY_POSITIONS.banking;
+  }
+  if (lower.includes("hospital") || lower.includes("health") || lower.includes("pharma") || lower.includes("medic")) {
+    return INDUSTRY_POSITIONS.healthcare;
+  }
+  if (lower.includes("manufactur") || lower.includes("factory") || lower.includes("plant") || lower.includes("industrial")) {
+    return INDUSTRY_POSITIONS.manufacturing;
+  }
+  if (lower.includes("transport") || lower.includes("freight") || lower.includes("supply")) {
+    return INDUSTRY_POSITIONS.logistics;
+  }
+  if (lower.includes("property") || lower.includes("estate")) {
+    return INDUSTRY_POSITIONS.real_estate;
+  }
+  if (lower.includes("school") || lower.includes("college") || lower.includes("universit")) {
+    return INDUSTRY_POSITIONS.education;
+  }
+  if (lower.includes("entertain") || lower.includes("film") || lower.includes("broadcast")) {
+    return INDUSTRY_POSITIONS.media;
+  }
+  if (lower.includes("charity") || lower.includes("ngo")) {
+    return INDUSTRY_POSITIONS.non_profit;
+  }
+
+  return DEFAULT_POSITIONS;
+}
+
+/**
  * Helper to format titles to Title Case (e.g., 'prompt engineer' -> 'Prompt Engineer')
  */
 export function toTitleCase(str: string): string {

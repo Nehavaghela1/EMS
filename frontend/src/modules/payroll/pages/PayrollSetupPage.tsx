@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   listStructures,
   createStructure,
@@ -34,9 +34,13 @@ const SUPPORTED_LEVELS = [
 
 export function PayrollSetupPage() {
   const { notify } = useToast();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialTab = (searchParams.get("tab") as "structures" | "statutory" | "pt_slabs" | "tax_slabs") || "structures";
   const [activeTab, setActiveTab] = useState<"structures" | "statutory" | "pt_slabs" | "tax_slabs">(initialTab);
+
+  const returnTo = searchParams.get("returnTo");
+  const autoOpenNew = searchParams.get("new") === "true";
 
   useEffect(() => {
     const tabParam = searchParams.get("tab") as any;
@@ -48,7 +52,7 @@ export function PayrollSetupPage() {
   // Structures state
   const [structures, setStructures] = useState<SalaryStructureListItem[]>([]);
   const [loadingStructures, setLoadingStructures] = useState(true);
-  const [showStructureModal, setShowStructureModal] = useState(false);
+  const [showStructureModal, setShowStructureModal] = useState(autoOpenNew);
 
   // Form for New Structure
   const [structName, setStructName] = useState("");
@@ -197,7 +201,7 @@ export function PayrollSetupPage() {
     }
 
     try {
-      await createStructure({
+      const created = await createStructure({
         name: structName,
         country: structCountry,
         level: structLevel,
@@ -207,6 +211,10 @@ export function PayrollSetupPage() {
       setShowStructureModal(false);
       setStructName("");
       fetchStructures();
+
+      if (returnTo) {
+        navigate(`${returnTo}?structureId=${created.id}`);
+      }
     } catch (err: unknown) {
       const parsed = parseApiError(err);
       notify(parsed.message || "Failed to create structure", parsed.status === 409 ? "warning" : "error");
@@ -520,10 +528,14 @@ export function PayrollSetupPage() {
                               updated[idx].value = null;
                               updated[idx].percentage_of = null;
                             } else if (newType === "percentage") {
-                              updated[idx].value = updated[idx].value || "50.00";
+                              // If switching to percentage, default to 50.00% (or 20.00% for custom allowance), never 1000.00
+                              const prevNum = Number(updated[idx].value);
+                              updated[idx].value = (!prevNum || prevNum > 100) ? (idx === 0 ? "50.00" : "20.00") : String(prevNum);
                               updated[idx].percentage_of = updated[idx].percentage_of || "ctc";
                             } else {
-                              updated[idx].value = updated[idx].value || "1000.00";
+                              // Fixed Rupee
+                              const prevNum = Number(updated[idx].value);
+                              updated[idx].value = (!prevNum || prevNum <= 100) ? "1000.00" : String(prevNum);
                               updated[idx].percentage_of = null;
                             }
                             setComponents(updated);

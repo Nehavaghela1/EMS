@@ -17,7 +17,7 @@ from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import get_user_or_ip_key, limiter
 from app.core.roles import HR_LEVEL_ROLES
 from app.db.session import get_db
-from app.modules.identity.models import CompanyStatus, User, UserRole
+from app.modules.identity.models import User, UserRole
 from app.modules.identity.schemas import (
     ActivateAccountRequest,
     ActivationPreviewResponse,
@@ -314,7 +314,7 @@ def create_workspace(
 
 @companies_router.get("", response_model=Page[CompanyResponse])
 def list_companies(
-    status: CompanyStatus | None = None,
+    status: str | None = None,
     q: str | None = None,
     country: str | None = None,
     sort: str | None = None,

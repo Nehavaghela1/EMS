@@ -411,6 +411,20 @@ class EmployeeRepository:
         results = self.db.execute(stmt).all()
         return [(row[0], row[1]) for row in results], total
 
+    def count_by_company(self, company_id: uuid.UUID) -> int:
+        return (
+            self.db.scalar(
+                select(func.count())
+                .select_from(Employee)
+                .where(
+                    Employee.company_id == company_id,
+                    Employee.deleted_at.is_(None),
+                    Employee.is_active.is_(True),
+                )
+            )
+            or 0
+        )
+
 
 class EmployeeSectionRepository:
     """Repository for employee profile sections:

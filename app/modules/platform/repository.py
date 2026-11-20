@@ -1152,7 +1152,10 @@ class PlatformStatsRepository:
                 )
             )
         if status_filter:
-            stmt = stmt.where(Company.status == status_filter)
+            if status_filter == "deactivated":
+                stmt = stmt.where(Company.is_active.is_(False))
+            else:
+                stmt = stmt.where(Company.status == status_filter)
 
         # Ordering
         sort_col = getattr(Company, sort_by, Company.name)

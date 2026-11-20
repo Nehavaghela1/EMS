@@ -1013,7 +1013,7 @@ table.data-table {
   border-radius: 16px;
   border: 1px solid #e2e8f0;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05);
-  padding: 0;
+  padding: 0 !important;
   max-width: 480px;
   width: 100%;
   max-height: 90vh;
@@ -1024,8 +1024,16 @@ table.data-table {
   flex-direction: column;
 }
 
+/* Modals that wrap a form directly (e.g. in projects) without .modal-body */
+.modal > form:not(.modal-body) {
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+  flex: 1;
+  margin: 0;
+}
+
 .modal-header {
-  padding: 16px 20px;
+  padding: 16px 24px;
   border-bottom: 1px solid #f1f5f9;
   background-color: #ffffff;
   display: flex;
@@ -1035,14 +1043,14 @@ table.data-table {
 }
 
 .modal-body {
-  padding: 20px;
+  padding: 20px 24px;
   background-color: #ffffff;
   overflow-y: auto;
   flex: 1;
 }
 
 .modal-footer {
-  padding: 14px 20px;
+  padding: 14px 24px;
   border-top: 1px solid #f1f5f9;
   background-color: #f8fafc;
   display: flex;

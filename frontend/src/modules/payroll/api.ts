@@ -58,6 +58,7 @@ export interface SalaryAssignInput {
   structure_id: string;
   ctc: string;
   effective_from: string;
+  revision_reason?: string | null;
 }
 
 export interface EmployeeSalaryResponse {

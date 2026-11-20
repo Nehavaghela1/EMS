@@ -50,29 +50,37 @@ export function SettingsPage() {
       {/* ── Admins & Access Control (Owner only) ─────────────── */}
       {user?.role === "owner" && <AdminDelegationSection />}
 
-      {!user?.employee ? (
+      {/* Profile Section: If linked employee exists, show full employee profile; if owner without employee record, show Owner Profile */}
+      {user?.employee ? (
+        employeeQuery.isLoading ? (
+          <div className="row">
+            <div className="spinner" />
+            <span className="text-muted">Loading…</span>
+          </div>
+        ) : employeeQuery.isError ? (
+          <div className="alert alert-error">{parseApiError(employeeQuery.error).message}</div>
+        ) : employee ? (
+          <ProfileSection
+            employee={employee}
+            departmentName={departmentName}
+            onSaved={() => {
+              queryClient.invalidateQueries({ queryKey: ["employee", "me"] });
+              queryClient.invalidateQueries({ queryKey: ["company", "me"] });
+            }}
+          />
+        ) : null
+      ) : user?.role === "owner" ? (
+        <OwnerProfileSection user={user} notify={notify} />
+      ) : (
         <div className="card mb-6">
           <span className="text-muted">
             This account has no employee record linked — there's no profile to show here.
           </span>
         </div>
-      ) : employeeQuery.isLoading ? (
-        <div className="row">
-          <div className="spinner" />
-          <span className="text-muted">Loading…</span>
-        </div>
-      ) : employeeQuery.isError ? (
-        <div className="alert alert-error">{parseApiError(employeeQuery.error).message}</div>
-      ) : employee ? (
-        <ProfileSection
-          employee={employee}
-          departmentName={departmentName}
-          onSaved={() => queryClient.invalidateQueries({ queryKey: ["employee", "me"] })}
-        />
-      ) : null}
+      )}
 
-      {/* Employee Track A Resignation & Departure Section */}
-      {employee && (
+      {/* Employee Track A Resignation & Departure Section (Only for standard employees, not workspace owners) */}
+      {employee && user?.role !== "owner" && (
         <EmployeeResignationSection
           employee={employee}
           onUpdated={() => queryClient.invalidateQueries({ queryKey: ["employee", "me"] })}
@@ -81,11 +89,15 @@ export function SettingsPage() {
 
       <ChangePasswordSection notify={notify} />
 
-      {/* Enterprise Security Policies & Multi-Tenancy */}
-      <EnterpriseSecuritySection notify={notify} />
+      {/* Enterprise Security Policies & Multi-Tenancy (Owner, HR Admin, Super Admin only) */}
+      {(user?.role === "owner" || user?.role === "hr_admin" || user?.role === "super_admin") && (
+        <EnterpriseSecuritySection notify={notify} />
+      )}
 
-      {/* Enterprise Branding & Theme Settings */}
-      <EnterpriseBrandingSection notify={notify} />
+      {/* Enterprise Branding & Theme Settings (Owner, HR Admin, Super Admin only) */}
+      {(user?.role === "owner" || user?.role === "hr_admin" || user?.role === "super_admin") && (
+        <EnterpriseBrandingSection notify={notify} />
+      )}
     </div>
   );
 }
@@ -660,7 +672,9 @@ function EnterpriseSecuritySection({ notify }: { notify: (msg: string, type?: "s
 
 function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "success" | "error" | "info") => void }) {
   const queryClient = useQueryClient();
-  const [brandColor, setBrandColor] = useState("#2563eb");
+  const [brandColor, setBrandColor] = useState(() => {
+    return localStorage.getItem("ems_brand_accent_color") || "#2563eb";
+  });
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [logoWidth, setLogoWidth] = useState<number>(140);
   const [saving, setSaving] = useState(false);
@@ -673,6 +687,11 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
     }).catch(() => {});
     const savedWidth = localStorage.getItem("ems_brand_logo_width");
     if (savedWidth) setLogoWidth(Number(savedWidth));
+    const savedColor = localStorage.getItem("ems_brand_accent_color");
+    if (savedColor) {
+      setBrandColor(savedColor);
+      document.documentElement.style.setProperty("--color-primary", savedColor);
+    }
   }, []);
 
   async function handleSaveBranding() {
@@ -682,7 +701,9 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
         await updateMyCompany({ logo_url: logoPreview });
       }
       localStorage.setItem("ems_brand_logo_width", String(logoWidth));
-      notify("Branding and payslip logo preferences saved successfully.", "success");
+      localStorage.setItem("ems_brand_accent_color", brandColor);
+      document.documentElement.style.setProperty("--color-primary", brandColor);
+      notify("Branding preferences and accent color saved successfully.", "success");
       await queryClient.invalidateQueries({ queryKey: ["company", "me"] });
     } catch (err) {
       notify(parseApiError(err).message || "Failed to save branding preferences", "error");
@@ -695,9 +716,9 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
     <div className="card stack mb-6">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h3 style={{ margin: 0 }}>Company Branding & Payslip Document Layout</h3>
+          <h3 style={{ margin: 0 }}>Company Branding & Theme Customization</h3>
           <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
-            Customize your company logo, payslip display width, and primary theme colors.
+            Customize your company logo, top workspace branding, payslip layout, and primary theme colors.
           </p>
         </div>
         <button
@@ -705,7 +726,6 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
           className="btn btn-primary btn-sm"
           onClick={handleSaveBranding}
           disabled={saving}
-          style={{ background: "#2563eb", borderColor: "#2563eb" }}
         >
           {saving ? "Saving…" : "Save Branding"}
         </button>
@@ -713,7 +733,7 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
 
       <div className="grid grid-2 gap-6 mt-2">
         <div className="field">
-          <label>Company Logo for Payslips & Reports</label>
+          <label>Company Brand Logo (Workspace & Payslips)</label>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             <div
               style={{
@@ -780,7 +800,7 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
                   </button>
                 )}
               </div>
-              <div className="text-muted text-xs mt-1">Accepts PNG, JPG, or SVG. Shows on all generated payslip PDFs.</div>
+              <div className="text-muted text-xs mt-1">Accepts PNG, JPG, or SVG. Displays in top navigation header and on payslip PDFs.</div>
             </div>
           </div>
 
@@ -800,7 +820,7 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
                 step="5"
                 value={logoWidth}
                 onChange={(e) => setLogoWidth(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "#2563eb", cursor: "pointer" }}
+                style={{ width: "100%", accentColor: "var(--color-primary, #2563eb)", cursor: "pointer" }}
               />
             </div>
           )}
@@ -827,6 +847,154 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
   );
 }
 
+function OwnerProfileSection({
+  user,
+  notify,
+}: {
+  user: { email: string; company_name?: string | null; company_code?: string | null };
+  notify: (msg: string, type?: "success" | "error" | "info") => void;
+}) {
+  const queryClient = useQueryClient();
+  const companyQuery = useQuery({
+    queryKey: ["company", "me"],
+    queryFn: getMyCompany,
+  });
+
+  const company = companyQuery.data;
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (company) {
+      setPhone(company.phone ?? "");
+      setAddress(company.address ?? "");
+    }
+  }, [company]);
+
+  async function handleSaveContact(e: FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await updateMyCompany({
+        phone: phone.trim() || undefined,
+        address: address.trim() || undefined,
+      });
+      notify("Owner profile & contact details updated.", "success");
+      queryClient.invalidateQueries({ queryKey: ["company", "me"] });
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card stack mb-6" style={{ background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #f1f5f9", paddingBottom: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: "50%",
+              background: "linear-gradient(135deg, #f59e0b, #d97706)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontWeight: 800,
+              fontSize: "1.1rem",
+              color: "#fff",
+              boxShadow: "0 2px 8px rgba(245, 158, 11, 0.3)",
+            }}
+          >
+            {user.email[0].toUpperCase()}
+          </div>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>My Profile</h3>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "2px 8px",
+                  borderRadius: "12px",
+                  fontSize: "0.72rem",
+                  fontWeight: 700,
+                  background: "#fffbeb",
+                  color: "#b45309",
+                  border: "1px solid #fde68a",
+                }}
+              >
+                👑 Primary Owner
+              </span>
+            </div>
+            <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+              Workspace Owner & Organization Administrator
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="form-grid" style={{ marginTop: "8px" }}>
+        <div className="field">
+          <label>Sign-in / Primary Email</label>
+          <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "0.9rem" }}>{user.email}</div>
+          <span className="field-hint">Primary account identity for workspace management.</span>
+        </div>
+        <div className="field">
+          <label>System Role</label>
+          <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "0.9rem" }}>Workspace Owner (Superuser)</div>
+          <span className="field-hint">Full administrative rights over organization & billing.</span>
+        </div>
+        <div className="field">
+          <label>Company / Organization</label>
+          <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "0.9rem" }}>
+            {company?.name || user.company_name || "Primary Organization"}
+          </div>
+        </div>
+        <div className="field">
+          <label>Company Code</label>
+          <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "0.9rem" }}>
+            {company?.code || user.company_code || "—"}
+          </div>
+        </div>
+      </div>
+
+      <form onSubmit={handleSaveContact} style={{ marginTop: "12px", borderTop: "1px solid #f1f5f9", paddingTop: "14px" }}>
+        <div className="form-grid">
+          <div className="field">
+            <label htmlFor="owner-phone">Contact Phone</label>
+            <input
+              id="owner-phone"
+              type="text"
+              placeholder="+91 98765 43210"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="owner-address">Office / Business Address</label>
+            <input
+              id="owner-address"
+              type="text"
+              placeholder="e.g. 402 Business Tower, Silicon Park"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="row-end mt-2">
+          <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>
+            {saving ? "Saving…" : "Save Contact Info"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function ProfileSection({
   employee,
   departmentName,
@@ -836,7 +1004,10 @@ function ProfileSection({
   departmentName: string | undefined;
   onSaved: () => void;
 }) {
+  const { user } = useAuth();
   const { notify } = useToast();
+  const isPrivileged = user?.role === "owner" || user?.role === "hr_admin";
+  const [firstName, setFirstName] = useState(employee.first_name ?? "");
   const [lastName, setLastName] = useState(employee.last_name ?? "");
   const [personalEmail, setPersonalEmail] = useState(employee.personal_email ?? "");
   const [phone, setPhone] = useState(employee.phone ?? "");
@@ -844,6 +1015,7 @@ function ProfileSection({
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    setFirstName(employee.first_name ?? "");
     setLastName(employee.last_name ?? "");
     setPersonalEmail(employee.personal_email ?? "");
     setPhone(employee.phone ?? "");
@@ -854,15 +1026,18 @@ function ProfileSection({
     setFormError(null);
     setSubmitting(true);
     try {
-      // Deliberately only these three keys — matching the backend's own
-      // contact-fields allowlist exactly, so there is never a client-sent
-      // field the server has to reject (Spec 10.3 route 23).
-      await updateEmployee(employee.id, {
+      // Owners & HR admins can update first_name as well; regular employees
+      // update contact details (last_name, personal_email, phone)
+      const payload: Record<string, any> = {
         last_name: lastName.trim() || null,
         personal_email: personalEmail.trim() || null,
         phone: phone.trim() || null,
-      });
-      notify("Profile updated.");
+      };
+      if (isPrivileged) {
+        payload.first_name = firstName.trim() || employee.first_name;
+      }
+      await updateEmployee(employee.id, payload);
+      notify("Profile updated successfully.");
       onSaved();
     } catch (err) {
       setFormError(parseApiError(err).message);
@@ -873,23 +1048,53 @@ function ProfileSection({
 
   return (
     <form className="card stack mb-6" onSubmit={handleSubmit}>
-      <h3>My profile</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ margin: 0 }}>My profile</h3>
+        {user?.role === "owner" && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              padding: "2px 8px",
+              borderRadius: "12px",
+              fontSize: "0.72rem",
+              fontWeight: 700,
+              background: "#fffbeb",
+              color: "#b45309",
+              border: "1px solid #fde68a",
+            }}
+          >
+            👑 Primary Owner
+          </span>
+        )}
+      </div>
       {formError && <div className="alert alert-error">{formError}</div>}
 
       <div className="form-grid">
         <div className="field">
-          <label>First name</label>
-          <div>{employee.first_name}</div>
-          <span className="field-hint">Managed by HR.</span>
+          <label htmlFor="first_name">First name</label>
+          {isPrivileged ? (
+            <input
+              id="first_name"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              placeholder="First name"
+            />
+          ) : (
+            <div>{employee.first_name}</div>
+          )}
+          {!isPrivileged && <span className="field-hint">Managed by HR.</span>}
         </div>
         <div className="field">
           <label>Employee code</label>
           <div>{employee.employee_code}</div>
+          <span className="field-hint">Unique system identifier.</span>
         </div>
         <div className="field">
           <label>Work email</label>
           <div>{employee.email}</div>
-          <span className="field-hint">Managed by HR.</span>
+          <span className="field-hint">Primary account identity.</span>
         </div>
         <div className="field">
           <label>Position</label>
@@ -912,9 +1117,11 @@ function ProfileSection({
           <div>{employee.hire_date}</div>
         </div>
       </div>
-      <p className="field-hint mt-0 mb-0">
-        The fields above are managed by HR — contact them if any of this needs to change.
-      </p>
+      {!isPrivileged && (
+        <p className="field-hint mt-0 mb-0">
+          The fields above are managed by HR — contact them if any of this needs to change.
+        </p>
+      )}
 
       <div className="form-grid">
         <div className="field">

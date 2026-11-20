@@ -134,9 +134,14 @@ def password_changed_email(*, first_name: str) -> tuple[str, str, str]:
 def leave_decision_email(
     *, first_name: str, status: str, start_date: str, end_date: str, rejection_reason: str | None
 ) -> tuple[str, str, str]:
-    """Route 64 — matches the in-app notification WP-11 already emits for
+    """Route 64 & 65 — matches the in-app notification WP-11 already emits for
     the same event, now also as email."""
-    verb = "approved" if status == "approved" else "rejected"
+    if status == "approved":
+        verb = "approved"
+    elif status == "cancelled":
+        verb = "cancelled"
+    else:
+        verb = "rejected"
     subject = f"Your leave request was {verb}"
     reason_line = f" Reason: {rejection_reason}" if rejection_reason else ""
     dates = f"from {start_date} to {end_date}"

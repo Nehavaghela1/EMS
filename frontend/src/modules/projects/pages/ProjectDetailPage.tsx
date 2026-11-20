@@ -1770,7 +1770,7 @@ export function ProjectDetailPage() {
       {/* TASK MODAL (CREATE / EDIT) */}
       {showTaskModal && (
         <div className="modal-backdrop" onClick={() => setShowTaskModal(false)}>
-          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{editingTaskId ? "Edit Task" : "+ Create Task"}</h2>
               <button
@@ -1782,7 +1782,7 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSaveTask} className="stack gap-4 my-2">
+            <form onSubmit={handleSaveTask} className="stack gap-4">
               <div className="field">
                 <label>Task Title *</label>
                 <input type="text" value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} required />
@@ -1863,7 +1863,7 @@ export function ProjectDetailPage() {
       {/* COMMENTS MODAL */}
       {activeCommentTask && (
         <div className="modal-backdrop" onClick={() => setActiveCommentTask(null)}>
-          <div className="modal card" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Comments: {activeCommentTask.title}</h2>
               <button
@@ -1875,31 +1875,33 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <div className="stack gap-2 my-2" style={{ maxHeight: "280px", overflowY: "auto", padding: "0.25rem" }}>
-              {loadingComments ? (
-                <p className="text-muted">Loading comments...</p>
-              ) : comments.length === 0 ? (
-                <p className="text-muted text-sm text-center p-4">No comments yet. Start the conversation!</p>
-              ) : (
-                comments.map((c) => (
-                  <div key={c.id} className="card p-3" style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)" }}>
-                    <p style={{ margin: 0, fontSize: "0.9rem" }}>{c.comment}</p>
-                    <span className="text-muted text-xs">{formatDateTime(c.created_at)}</span>
-                  </div>
-                ))
-              )}
+            <div className="modal-body stack gap-3" style={{ maxHeight: "400px" }}>
+              <div className="stack gap-2" style={{ maxHeight: "280px", overflowY: "auto", padding: "0.25rem" }}>
+                {loadingComments ? (
+                  <p className="text-muted">Loading comments...</p>
+                ) : comments.length === 0 ? (
+                  <p className="text-muted text-sm text-center p-4">No comments yet. Start the conversation!</p>
+                ) : (
+                  comments.map((c) => (
+                    <div key={c.id} className="card p-3" style={{ background: "var(--color-bg)", border: "1px solid var(--color-border)" }}>
+                      <p style={{ margin: 0, fontSize: "0.9rem" }}>{c.comment}</p>
+                      <span className="text-muted text-xs">{formatDateTime(c.created_at)}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+              <form onSubmit={handlePostComment} className="flex gap-2 mt-2" style={{ padding: 0 }}>
+                <input
+                  type="text"
+                  style={{ flex: 1 }}
+                  placeholder="Write a comment..."
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  required
+                />
+                <button type="submit" className="btn btn-primary btn-sm">Post</button>
+              </form>
             </div>
-            <form onSubmit={handlePostComment} className="flex gap-2 mt-3">
-              <input
-                type="text"
-                style={{ flex: 1 }}
-                placeholder="Write a comment..."
-                value={newComment}
-                onChange={(e) => setNewComment(e.target.value)}
-                required
-              />
-              <button type="submit" className="btn btn-primary btn-sm">Post</button>
-            </form>
           </div>
         </div>
       )}
@@ -1907,7 +1909,7 @@ export function ProjectDetailPage() {
       {/* MILESTONE MODAL (CREATE / EDIT) */}
       {showMilestoneModal && (
         <div className="modal-backdrop" onClick={() => setShowMilestoneModal(false)}>
-          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{editingMsId ? "Edit Milestone" : "+ Create Milestone"}</h2>
               <button
@@ -1919,7 +1921,7 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSaveMilestone} className="stack gap-4 my-2">
+            <form onSubmit={handleSaveMilestone} className="stack gap-4">
               <div className="field">
                 <label>Milestone Title *</label>
                 <input type="text" value={msTitle} onChange={(e) => setMsTitle(e.target.value)} required />
@@ -1994,7 +1996,7 @@ export function ProjectDetailPage() {
       {/* EDIT PROJECT MODAL */}
       {showProjectEditModal && (
         <div className="modal-backdrop" onClick={() => setShowProjectEditModal(false)}>
-          <div className="modal card" style={{ maxWidth: "540px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: "560px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Edit Project Workspace</h2>
               <button
@@ -2006,7 +2008,7 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSaveProject} className="stack gap-4 my-2">
+            <form onSubmit={handleSaveProject} className="stack gap-4">
               <div className="grid-2">
                 <div className="field">
                   <label>Project Name *</label>
@@ -2117,7 +2119,7 @@ export function ProjectDetailPage() {
       {/* ADD MEMBER MODAL */}
       {showMemberModal && (
         <div className="modal-backdrop" onClick={() => setShowMemberModal(false)}>
-          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Assign Team Member</h2>
               <button
@@ -2129,7 +2131,7 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleAddMember} className="stack gap-4 my-2">
+            <form onSubmit={handleAddMember} className="stack gap-4">
               <div className="field">
                 <label>Select Employee *</label>
                 <select
@@ -2166,7 +2168,7 @@ export function ProjectDetailPage() {
       {/* LOG TIME MODAL */}
       {showTimeModal && (
         <div className="modal-backdrop" onClick={() => setShowTimeModal(false)}>
-          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Log Hours: {project.name}</h2>
               <button
@@ -2514,7 +2516,7 @@ export function ProjectDetailPage() {
       {/* DOCUMENT UPLOAD MODAL */}
       {showDocModal && (
         <div className="modal-backdrop" onClick={() => setShowDocModal(false)}>
-          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: "500px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Upload Project Document</h2>
               <button
@@ -2526,7 +2528,7 @@ export function ProjectDetailPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleUploadDocument} className="stack gap-4 my-2">
+            <form onSubmit={handleUploadDocument} className="stack gap-4">
               <div className="field">
                 <label>Select File *</label>
                 <input

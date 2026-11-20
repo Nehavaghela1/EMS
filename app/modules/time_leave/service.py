@@ -958,12 +958,17 @@ class AttendanceService:
             # Enterprise Priority Hierarchy (Zoho / Keka):
             # Priority 1: Approved / Pending Leave
             if leave is not None:
+                half_label = "1st Half" if leave.half_day_session == "first_half" else "2nd Half"
+                session_str = f" ({half_label})" if leave.half_day_session else ""
                 if leave.status == LeaveStatus.approved:
-                    status = "on_leave"
-                    badge = lt_map.get(leave.leave_type_id, "On Leave")
+                    status = "half_day" if leave.is_half_day else "on_leave"
+                    base_name = lt_map.get(leave.leave_type_id, "Leave")
+                    badge = (
+                        f"Half Day ({base_name}){session_str}" if leave.is_half_day else base_name
+                    )
                 else:
                     status = "pending_leave"
-                    badge = f"Pending ({lt_map.get(leave.leave_type_id, 'Leave')})"
+                    badge = f"Pending ({lt_map.get(leave.leave_type_id, 'Leave')}{session_str})"
                 work_hours = att.hours_worked if att else None
                 check_in_val = att.check_in if att else None
                 check_out_val = att.check_out if att else None
@@ -1048,8 +1053,8 @@ class AttendanceService:
                 holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
-            # Priority 6: Future Work Days
-            elif is_future:
+            # Priority 6: Prior to Joining Date or Future Work Days
+            elif (emp and emp.hire_date and d < emp.hire_date) or is_future:
                 status = "no_record"
                 work_hours = None
                 check_in_val = None
@@ -1837,6 +1842,7 @@ class LeaveService:
                 "A half day leave can only be for a single date.",
                 details={"field": "is_half_day"},
             )
+        half_day_session = data.half_day_session if data.is_half_day else None
         settings_row = self.settings_repo.get_by_company(company_id)
         if self._leave_year(settings_row, data.start_date) != self._leave_year(
             settings_row, data.end_date
@@ -1916,6 +1922,7 @@ class LeaveService:
             end_date=data.end_date,
             total_days=total_days,
             is_half_day=data.is_half_day,
+            half_day_session=half_day_session,
             reason=data.reason,
             status=LeaveStatus.pending,
         )
@@ -2281,6 +2288,23 @@ class LeaveService:
                 "previous_status": previous_status.value,
             },
         )
+        if employee is not None:
+            if employee.user_id is not None:
+                self.notify.notify(
+                    company_id=company_id,
+                    user_id=employee.user_id,
+                    type="leave_cancelled",
+                    title="Leave cancelled",
+                    message=(
+                        f"Your leave from {leave.start_date} to {leave.end_date} "
+                        "has been cancelled."
+                    ),
+                    entity_type="leave",
+                    entity_id=leave.id,
+                )
+            self._send_leave_decision_email(
+                employee, leave, status="cancelled", rejection_reason=None
+            )
         self.db.commit()
         if previous_status == LeaveStatus.approved:
             DashboardService.invalidate_company_dashboards(company_id)

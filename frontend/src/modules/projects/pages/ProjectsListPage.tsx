@@ -365,8 +365,8 @@ export function ProjectsListPage() {
       {/* Create Modal */}
       {showModal && (
         <div className="modal-backdrop" onClick={() => setShowModal(false)}>
-          <div className="modal card stack performance-goal-modal" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header" style={{ marginBottom: "var(--space-2)" }}>
+          <div className="modal" style={{ maxWidth: "540px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
               <h3>{editingProjectId ? "Edit Project" : "+ Create New Project"}</h3>
               <button
                 type="button"
@@ -377,7 +377,7 @@ export function ProjectsListPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSave} className="stack gap-4 my-2">
+            <form onSubmit={handleSave} className="stack gap-4">
               {isSuperAdmin && !editingProjectId && (
                 <div className="field">
                   <label>Assign to Company *</label>
