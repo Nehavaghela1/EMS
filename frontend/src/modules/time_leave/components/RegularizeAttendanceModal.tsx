@@ -597,7 +597,7 @@ export const RegularizeAttendanceModal: React.FC<Props> = ({
                       style={{ fontSize: "0.82rem", color: "#475569" }}
                     />
                     <p style={{ margin: "6px 0 0 0", fontSize: "0.74rem", color: "#94a3b8" }}>
-                      Upload gate pass, client approval email, or outdoor duty slip (PDF, PNG, JPG up to 10MB)
+                      Upload gate pass, client approval email, or outdoor duty slip (PDF, PNG, JPG up to 25MB)
                     </p>
                   </div>
                 </div>
