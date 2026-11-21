@@ -130,16 +130,18 @@ describe("MyGoalsPage (6.2 Goals & 6.3 Self-Review & 6.4 PIP Alert)", () => {
     });
   });
 
-  it("opens Set Goals modal and validates weightage inputs", async () => {
+  it("does not open Set Goals when existing goals already total 100% (BUG-058)", async () => {
     renderWithProviders();
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /\+ Add Goals/i })).toBeInTheDocument();
     });
 
+    // The two mocked goals are 50% + 50%: nothing is left to allocate.
     fireEvent.click(screen.getByRole("button", { name: /\+ Add Goals/i }));
 
-    expect(screen.getByText("Set Performance Goals")).toBeInTheDocument();
+    expect(screen.queryByText("Set Performance Goals")).not.toBeInTheDocument();
+    expect(await screen.findByText(/already total 100%/i)).toBeInTheDocument();
   });
 
   it("submits self-review on goal and updates UI state", async () => {

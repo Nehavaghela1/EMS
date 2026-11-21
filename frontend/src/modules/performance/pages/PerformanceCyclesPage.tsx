@@ -167,8 +167,9 @@ export function PerformanceCyclesPage() {
       notify(`Cycle status updated to ${newStatus}`, "success");
       fetchCycles();
       fetchReport();
-    } catch {
-      notify("Failed to update cycle status", "error");
+    } catch (err) {
+      // e.g. 409 "another cycle is already active" (BUG-055)
+      notify(parseApiError(err).message, "error");
     }
   }
 
@@ -282,7 +283,7 @@ export function PerformanceCyclesPage() {
           }}
           onClick={() => setViewTab("pips")}
         >
-          ⚠️ Track C: Performance Improvement Plans (PIP)
+          ⚠️ Performance Improvement Plans (PIP)
         </button>
       </div>
 
@@ -336,6 +337,21 @@ export function PerformanceCyclesPage() {
 
           {/* Cycles Table */}
           <div className="card mt-4">
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "12px" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.85rem" }}>
+                Show
+                <select
+                  aria-label="Filter cycles by status"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as CycleStatus | "all")}
+                >
+                  <option value="all">All cycles</option>
+                  <option value="active">Active</option>
+                  <option value="draft">Draft</option>
+                  <option value="closed">Closed</option>
+                </select>
+              </label>
+            </div>
             {loading ? (
               <p>Loading cycles...</p>
             ) : cycles.length === 0 ? (
@@ -359,7 +375,13 @@ export function PerformanceCyclesPage() {
                       .filter((c) => statusFilter === "all" || c.status === statusFilter)
                       .map((c) => (
                       <tr key={c.id}>
-                        <td className="fw-bold">{c.name}</td>
+                        <td
+                          className="fw-bold"
+                          style={{ maxWidth: "260px", overflowWrap: "anywhere", wordBreak: "break-word" }}
+                          title={c.name}
+                        >
+                          {c.name}
+                        </td>
                         <td>
                           <span className="badge badge-outline">
                             {CYCLE_TYPE_LABELS[c.cycle_type] || c.cycle_type}
@@ -416,7 +438,7 @@ export function PerformanceCyclesPage() {
             <div className="flex justify-between items-center" style={{ flexWrap: "wrap", gap: "10px" }}>
               <div>
                 <h3 style={{ margin: "0 0 4px 0", color: "#92400e", fontSize: "1rem" }}>
-                  ⚠️ Track C: Performance Improvement & Warning Lifecycle
+                  ⚠️ Performance Improvement & Warning Lifecycle
                 </h3>
                 <p className="text-xs" style={{ margin: 0, color: "#b45309", maxWidth: "780px" }}>
                   When an employee underperforms, a formal documented PIP warning period (30, 60, or 90 days) defines measurable KPIs and assigns a dedicated mentor.
@@ -482,7 +504,7 @@ export function PerformanceCyclesPage() {
                             {Math.round((new Date(pip.end_date).getTime() - new Date(pip.start_date).getTime()) / 86400000)} days
                           </span>
                         </td>
-                        <td>{pip.mentor_name || "HR / Manager"}</td>
+                        <td>{pip.mentor_name || "Not assigned"}</td>
                         <td>
                           <span
                             className={`badge ${

@@ -242,7 +242,9 @@ export function PerformanceReviewPage() {
                 <div className="stack gap-3 p-4 bg-success-subtle border border-success rounded">
                   <div>
                     <span className="text-xs text-muted block">FINAL WEIGHTED RATING</span>
-                    <span className="text-3xl fw-bold text-success">{summary.final_rating} / 5.0</span>
+                    <span className="text-3xl fw-bold text-success">
+                      {summary.final_rating ? `${summary.final_rating} / 5.0` : "Pending"}
+                    </span>
                   </div>
                   {summary.overall_comments && (
                     <div>

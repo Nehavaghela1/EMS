@@ -154,10 +154,10 @@ describe("PerformanceCyclesPage (6.1 Appraisal Cycles & 6.4 PIPs)", () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText(/Track C: Performance Improvement Plans \(PIP\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/^⚠️ Performance Improvement Plans \(PIP\)$/i)).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText(/Track C: Performance Improvement Plans \(PIP\)/i));
+    fireEvent.click(screen.getByText(/^⚠️ Performance Improvement Plans \(PIP\)$/i));
 
     await waitFor(() => {
       expect(screen.getByText("Engineering PIP")).toBeInTheDocument();
@@ -175,10 +175,10 @@ describe("PerformanceCyclesPage (6.1 Appraisal Cycles & 6.4 PIPs)", () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText(/Track C: Performance Improvement Plans \(PIP\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/^⚠️ Performance Improvement Plans \(PIP\)$/i)).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText(/Track C: Performance Improvement Plans \(PIP\)/i));
+    fireEvent.click(screen.getByText(/^⚠️ Performance Improvement Plans \(PIP\)$/i));
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Evaluate Outcome" })).toBeInTheDocument();

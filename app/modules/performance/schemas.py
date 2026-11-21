@@ -145,7 +145,10 @@ class SummaryFinalizeRequest(BaseModel):
     cycle_id: uuid.UUID
     overall_comments: str | None = None
     salary_revision_recommended: bool = False
-    recommended_increment_percent: Decimal | None = None
+    # An increment recommendation is a raise: 0 to 100 percent, 2 decimals (BUG-064).
+    recommended_increment_percent: Decimal | None = Field(
+        default=None, ge=Decimal("0"), le=Decimal("100"), max_digits=5, decimal_places=2
+    )
 
 
 class PerformanceSummaryDetailResponse(BaseModel):
@@ -193,6 +196,14 @@ class PIPCreateRequest(BaseModel):
     milestones_kpis: str | None = None
     start_date: date
     end_date: date
+
+    @model_validator(mode="after")
+    def _check_dates_and_mentor(self) -> "PIPCreateRequest":
+        if self.end_date <= self.start_date:
+            raise ValueError("end_date must be after start_date.")  # BUG-067
+        if self.mentor_id is not None and self.mentor_id == self.employee_id:
+            raise ValueError("An employee cannot be their own PIP mentor.")  # BUG-066
+        return self
 
 
 class PIPEvaluateRequest(BaseModel):

@@ -412,17 +412,8 @@ def list_pips(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_company_role()),
 ):
-    service = PerformanceService(db)
-    target_emp_id = employee_id
-
-    # If employee, can only see their own PIPs
-    if user.role == UserRole.employee:
-        emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
-        if not emp:
-            return []
-        target_emp_id = emp.id
-
-    return service.list_pips(user.company_id, target_emp_id, status_filter)
+    # Employees see their own, managers their reporting chain, HR level everyone.
+    return PerformanceService(db).list_pips_for(user.company_id, user, employee_id, status_filter)
 
 
 @performance_router.get("/pips/active/{employee_id}", response_model=PerformancePIPResponse | None)
@@ -431,18 +422,7 @@ def get_active_pip(
     db: Session = Depends(get_tenant_db),
     user: User = Depends(require_company_role()),
 ):
-    service = PerformanceService(db)
-    # Check scoping
-    if user.role == UserRole.employee:
-        emp = EmployeeRepository(db).get_by_user_id(user.company_id, user.id)
-        if not emp or (emp.id != employee_id and user.id != employee_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Employees can only view their own active PIP.",
-            )
-        employee_id = emp.id
-
-    return service.get_active_pip(user.company_id, employee_id)
+    return PerformanceService(db).get_active_pip_for(user.company_id, user, employee_id)
 
 
 @performance_router.post("/pips/{pip_id}/evaluate", response_model=PerformancePIPResponse)

@@ -65,7 +65,19 @@ export function MyGoalsPage() {
   const [submittingReview, setSubmittingReview] = useState(false);
 
   const totalWeightage = goals.reduce((acc, g) => acc + Number(g.weightage), 0);
-  const newGoalTotalWeightage = goalInputs.reduce((acc, g) => acc + Number(g.weightage || 0), 0);
+  const newGoalsOnly = goalInputs.reduce((acc, g) => acc + Number(g.weightage || 0), 0);
+  // The server caps existing + new goals at 100%, so the form counts both (BUG-058).
+  const newGoalTotalWeightage = Math.round((totalWeightage + newGoalsOnly) * 100) / 100;
+  const remainingWeightage = Math.max(0, Math.round((100 - totalWeightage) * 100) / 100);
+
+  function openSetGoals() {
+    if (remainingWeightage <= 0) {
+      notify("Your goals already total 100%. Edit an existing goal to change the split.", "info");
+      return;
+    }
+    setGoalInputs([{ title: "", description: "", weightage: remainingWeightage.toFixed(2), target_value: "" }]);
+    setShowSetModal(true);
+  }
 
   useEffect(() => {
     init();
@@ -167,6 +179,12 @@ export function MyGoalsPage() {
   }
 
   function openEditGoal(g: PerformanceGoal) {
+    // A goal with a self-review is locked; say so instead of opening a form that
+    // can only fail on Save (BUG-060).
+    if (g.self_rating !== null && g.self_rating !== undefined) {
+      notify("This goal is locked because its self-review has been submitted.", "info");
+      return;
+    }
     setEditingGoal(g);
     setEditTitle(g.title);
     setEditDescription(g.description || "");
@@ -217,7 +235,7 @@ export function MyGoalsPage() {
           <p className="text-muted">Set goals for the active performance cycle & submit self-evaluations</p>
         </div>
         {activeCycle && (
-          <button className="btn btn-primary" onClick={() => setShowSetModal(true)}>
+          <button className="btn btn-primary" onClick={openSetGoals}>
             + Add Goals
           </button>
         )}
