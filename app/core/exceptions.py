@@ -63,6 +63,13 @@ class ExportTooLargeError(AppError):
     code = "export_too_large"
 
 
+class MissingIdempotencyKeyError(AppError):
+    """A route that needs an Idempotency-Key header was called without one."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    code = "idempotency_key_required"
+
+
 class PayloadTooLargeError(AppError):
     """Raised when an upload exceeds the system-configured maximum payload size."""
 

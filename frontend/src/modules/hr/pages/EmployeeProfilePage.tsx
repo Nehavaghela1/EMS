@@ -4449,7 +4449,8 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
               <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
                 <div className="text-muted text-xs font-semibold uppercase">Monthly Gross Pay</div>
                 <div className="text-xl font-bold text-success" style={{ marginTop: "4px" }}>
-                  ₹{Number(sal.gross_earnings).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  {/* The API returns structure amounts against the annual CTC (BUG-039). */}
+                  ₹{(Number(sal.gross_earnings) / 12).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div className="text-muted text-xs" style={{ marginTop: "2px" }}>
                   Before statutory deductions
@@ -4471,7 +4472,7 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
               {/* Earnings Breakdown */}
               <div className="card" style={{ border: "1px solid var(--color-border)" }}>
                 <h4 style={{ margin: "0 0 0.75rem", fontSize: "0.95rem", color: "#16a34a" }}>
-                  Earnings (Monthly)
+                  Earnings (Annual)
                 </h4>
                 <table className="table text-sm" style={{ width: "100%" }}>
                   <thead>
@@ -4502,7 +4503,7 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
               {/* Deductions Breakdown */}
               <div className="card" style={{ border: "1px solid var(--color-border)" }}>
                 <h4 style={{ margin: "0 0 0.75rem", fontSize: "0.95rem", color: "#dc2626" }}>
-                  Deductions (Monthly)
+                  Deductions
                 </h4>
                 {sal.deductions.length === 0 ? (
                   <p className="text-muted text-sm">No monthly deductions configured.</p>
@@ -4565,7 +4566,7 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
                   <div>
                     <span>Previous Monthly Salary : </span>
                     <strong style={{ color: "#0f172a" }}>
-                      ₹{sal ? Number(sal.gross_earnings).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "0.00"}
+                      ₹{sal ? (Number(sal.gross_earnings) / 12).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}
                     </strong>
                   </div>
                   <div>
