@@ -4,6 +4,7 @@ import {
   submitReimbursement,
   reviewReimbursement,
   withdrawReimbursement,
+  downloadReimbursementReceipt,
   type Reimbursement,
   type ReimbursementStatus,
   type ReimbursementType,
@@ -39,6 +40,7 @@ export function ReimbursementsPage() {
   const [selectedClaim, setSelectedClaim] = useState<Reimbursement | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
   const [reviewing, setReviewing] = useState(false);
+  const [openingReceipt, setOpeningReceipt] = useState(false);
 
   const isHR = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "owner";
   const isManager = user?.role === "manager";
@@ -118,6 +120,19 @@ export function ReimbursementsPage() {
       notify(parsed.message || "Failed to submit claim", parsed.status === 409 ? "warning" : "error");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  // The API serves the receipt but nothing linked to it, so a claim had to be
+  // approved without seeing what it was for.
+  async function handleOpenReceipt(claimId: string) {
+    setOpeningReceipt(true);
+    try {
+      await downloadReimbursementReceipt(claimId);
+    } catch (err) {
+      notify(parseApiError(err).message || "Could not open the receipt.", "error");
+    } finally {
+      setOpeningReceipt(false);
     }
   }
 
@@ -511,6 +526,20 @@ export function ReimbursementsPage() {
                   </span>
                 </div>
               </div>
+
+              {selectedClaim.file_object_id && (
+                <div>
+                  <span className="text-muted text-xs block">Receipt</span>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline mt-1"
+                    disabled={openingReceipt}
+                    onClick={() => handleOpenReceipt(selectedClaim.id)}
+                  >
+                    {openingReceipt ? "Opening..." : "📄 View receipt"}
+                  </button>
+                </div>
+              )}
 
               {selectedClaim.status === "pending" && selectedClaim.employee_id === user?.employee?.id && (
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>

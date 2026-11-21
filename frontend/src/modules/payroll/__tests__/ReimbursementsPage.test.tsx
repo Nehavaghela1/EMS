@@ -158,6 +158,26 @@ describe("Sub-feature 5.6: ReimbursementsPage Frontend", () => {
     });
   });
 
+  it("5.6 F2c: the review dialog opens the receipt of a claim that has one", async () => {
+    vi.mocked(payrollApi.downloadReimbursementReceipt).mockResolvedValue(undefined);
+
+    render(
+      <ToastProvider>
+        <ReimbursementsPage />
+      </ToastProvider>
+    );
+
+    const row = await screen.findByText("Client on-site visit taxi fare");
+    fireEvent.click(row.closest("tr") as HTMLElement);
+
+    const receiptBtn = await screen.findByRole("button", { name: /view receipt/i });
+    fireEvent.click(receiptBtn);
+
+    await waitFor(() => {
+      expect(payrollApi.downloadReimbursementReceipt).toHaveBeenCalledWith("claim-1");
+    });
+  });
+
   it("5.6 F2b: refuses to submit a claim with no receipt attached", async () => {
     render(
       <ToastProvider>

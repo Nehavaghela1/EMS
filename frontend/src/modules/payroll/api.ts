@@ -343,6 +343,36 @@ export async function downloadPaymentFile(runId: string): Promise<void> {
   }
 }
 
+/** Opens a claim's receipt. The API serves it as an attachment, so the blob is
+ * saved under the file name the server sends. */
+export async function downloadReimbursementReceipt(claimId: string): Promise<void> {
+  try {
+    const response = await apiClient.get<Blob>(`/payroll/reimbursements/${claimId}/receipt`, {
+      responseType: "blob",
+    });
+    const disposition = String(response.headers?.["content-disposition"] ?? "");
+    const match = /filename="([^"]+)"/.exec(disposition);
+    const url = window.URL.createObjectURL(response.data);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", match?.[1] ?? `receipt_${claimId}`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  } catch (err) {
+    const resp = (err as { response?: { data?: unknown } }).response;
+    if (resp && resp.data instanceof Blob) {
+      try {
+        resp.data = JSON.parse(await resp.data.text());
+      } catch {
+        // keep the original error
+      }
+    }
+    throw err;
+  }
+}
+
 export async function approvePayrollRun(id: string): Promise<PayrollRun> {
   const res = await apiClient.post<PayrollRun>(`/payroll/runs/${id}/approve`);
   return res.data;
