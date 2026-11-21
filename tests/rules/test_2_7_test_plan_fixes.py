@@ -1,3 +1,4 @@
+# ruff: noqa: F401, F811  (pytest fixtures imported from a sibling test module)
 """Module 2 fixes for problems found by the end-to-end test plan (21-Nov-2026).
 
 BUG-018  employee phone refuses letters
@@ -14,7 +15,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from app.core.time import utcnow
-from tests.rules.test_2_6_exit import _auth_headers, exit_setup  # noqa: F401
+from tests.rules.test_2_6_exit import _auth_headers, exit_setup
 
 
 def _new_employee_body(dept_id: str, **overrides: Any) -> dict[str, Any]:
@@ -30,7 +31,7 @@ def _new_employee_body(dept_id: str, **overrides: Any) -> dict[str, Any]:
     return body
 
 
-def test_employee_phone_refuses_letters(client: TestClient, exit_setup, limits_off) -> None:  # noqa: F811
+def test_employee_phone_refuses_letters(client: TestClient, exit_setup, limits_off) -> None:
     hr = _auth_headers(exit_setup["hr_user"])
     dept = str(exit_setup["dept_gen"].id)
     for bad in ["abcdefg", "12ab34567"]:
@@ -44,7 +45,7 @@ def test_employee_phone_refuses_letters(client: TestClient, exit_setup, limits_o
     assert ok.status_code == 201, ok.text
 
 
-def test_create_refuses_probation_before_hire(client: TestClient, exit_setup, limits_off) -> None:  # noqa: F811
+def test_create_refuses_probation_before_hire(client: TestClient, exit_setup, limits_off) -> None:
     hr = _auth_headers(exit_setup["hr_user"])
     today = utcnow().date()
     body = _new_employee_body(
@@ -59,7 +60,7 @@ def test_create_refuses_probation_before_hire(client: TestClient, exit_setup, li
 
 def test_bulk_deactivate_skips_owner_without_recorded_owner_id(
     client: TestClient,
-    exit_setup,  # noqa: F811
+    exit_setup,
 ) -> None:
     hr = _auth_headers(exit_setup["hr_user"])
     owner_emp = exit_setup["owner_emp"]
@@ -80,7 +81,7 @@ def test_bulk_deactivate_skips_owner_without_recorded_owner_id(
 
 def test_single_deactivate_refuses_owner_without_recorded_owner_id(
     client: TestClient,
-    exit_setup,  # noqa: F811
+    exit_setup,
 ) -> None:
     hr = _auth_headers(exit_setup["hr_user"])
     owner_emp = exit_setup["owner_emp"]
@@ -105,7 +106,7 @@ def _submit_resignation(client: TestClient, setup: dict[str, Any]) -> None:
 
 def test_rejected_resignation_clears_last_working_date(
     client: TestClient,
-    exit_setup,  # noqa: F811
+    exit_setup,
 ) -> None:
     _submit_resignation(client, exit_setup)
     emp = exit_setup["emp"]
@@ -120,7 +121,7 @@ def test_rejected_resignation_clears_last_working_date(
 
 def test_approved_resignation_cannot_then_be_rejected(
     client: TestClient,
-    exit_setup,  # noqa: F811
+    exit_setup,
 ) -> None:
     _submit_resignation(client, exit_setup)
     emp = exit_setup["emp"]

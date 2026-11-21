@@ -291,20 +291,24 @@ export function AppLayout({ children }: { children: ReactNode }) {
     return () => document.removeEventListener("keydown", handleKey);
   }, [openSearch]);
 
-  const SEARCH_SHORTCUTS = [
-    { label: "Employee Directory", icon: "👥", to: "/employees" },
-    { label: "Leave Requests", icon: "📋", to: "/leaves" },
-    { label: "Attendance", icon: "🕐", to: "/attendance" },
-    { label: "Pay Runs", icon: "💰", to: "/payroll/run" },
-    { label: "My Payslips", icon: "🧾", to: "/payroll/payslip" },
-    { label: "Performance Goals", icon: "🎯", to: "/performance/goals" },
-    { label: "Timesheets", icon: "⏱️", to: "/timesheets" },
-    { label: "Settings", icon: "⚙️", to: "/settings" },
-    { label: "Departments", icon: "🏢", to: "/departments" },
-    { label: "Shift Schedule", icon: "📅", to: "/shifts" },
-    { label: "Holidays", icon: "🎉", to: "/holidays" },
-    { label: "Reimbursements", icon: "🧾", to: "/payroll/reimbursements" },
+  // Each shortcut lists the roles its route allows (router.tsx), so the
+  // Ctrl+K list never offers a page that would just bounce the user (BUG-096).
+  const ALL_ROLES: UserRole[] = ["employee", "manager", "hr_admin", "owner"];
+  const shortcutList: { label: string; icon: string; to: string; roles: UserRole[] }[] = [
+    { label: "Employee Directory", icon: "👥", to: "/employees", roles: ["hr_admin", "manager", "owner"] },
+    { label: "Leave Requests", icon: "📋", to: "/leaves", roles: ALL_ROLES },
+    { label: "Attendance", icon: "🕐", to: "/attendance", roles: ALL_ROLES },
+    { label: "Pay Runs", icon: "💰", to: "/payroll/run", roles: ["hr_admin", "owner"] },
+    { label: "My Payslips", icon: "🧾", to: "/payroll/payslip", roles: ALL_ROLES },
+    { label: "Performance Goals", icon: "🎯", to: "/performance/goals", roles: ALL_ROLES },
+    { label: "Timesheets", icon: "⏱️", to: "/timesheets", roles: ALL_ROLES },
+    { label: "Settings", icon: "⚙️", to: "/settings", roles: ALL_ROLES },
+    { label: "Departments", icon: "🏢", to: "/departments", roles: ALL_ROLES },
+    { label: "Shift Schedule", icon: "📅", to: "/shifts", roles: ALL_ROLES },
+    { label: "Holidays", icon: "🎉", to: "/holidays", roles: ALL_ROLES },
+    { label: "Reimbursements", icon: "🧾", to: "/payroll/reimbursements", roles: ALL_ROLES },
   ];
+  const SEARCH_SHORTCUTS = shortcutList.filter((s) => s.roles.includes(role as UserRole));
   const filteredShortcuts = searchQ.trim()
     ? SEARCH_SHORTCUTS.filter((s) =>
         s.label.toLowerCase().includes(searchQ.toLowerCase())

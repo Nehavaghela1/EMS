@@ -926,7 +926,7 @@ BANK_NOT_FOUND_MESSAGE = "No bank details are saved for this employee."
 BANK_EMPLOYEE_NOT_FOUND_MESSAGE = "Employee not found."
 BANK_INACTIVE_MESSAGE = "Bank details can be saved only for an active employee."
 BANK_NOTIFICATION_TYPE = "bank_details_changed"
-BANK_PAGE_URL = "/payroll/bank-account"
+BANK_PAGE_URL = "/payroll/payslip"
 PAYMENT_EXCLUDED_NO_BANK = "no_bank_details"
 PAYMENT_EXCLUDED_NET_PAY = "net_pay_not_positive"
 PAYMENT_EXCLUDED_UNREADABLE = "bank_details_unreadable"
@@ -2150,7 +2150,7 @@ class PayrollRunService:
                     type="PAYROLL_PAID",
                     title="Salary Disbursed",
                     message=f"Your salary for {run.month}/{run.year} has been marked as paid.",
-                    action_url="/payroll/payslips/me",
+                    action_url="/payroll/payslip",
                     entity_type="payroll_run",
                     entity_id=run.id,
                 )

@@ -7,6 +7,19 @@ import {
   type NotificationItem,
 } from "../../modules/platform/api";
 
+/** Where a notification opens. Project notifications carry no action_url,
+ * only the record they are about, so fall back to the page for that record
+ * (BUG-095). */
+function notificationTarget(n: NotificationItem): string | null {
+  if (n.action_url) return n.action_url;
+  if (n.entity_type === "project" && n.entity_id) return `/projects/${n.entity_id}`;
+  if (n.entity_type === "time_entry") return "/timesheets";
+  if (n.entity_type && ["task", "project_task", "task_comment", "project_member"].includes(n.entity_type)) {
+    return "/projects";
+  }
+  return null;
+}
+
 export function NotificationBell() {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -65,8 +78,9 @@ export function NotificationBell() {
       }
     }
     setIsOpen(false);
-    if (n.action_url) {
-      navigate(n.action_url);
+    const target = notificationTarget(n);
+    if (target) {
+      navigate(target);
     }
   };
 
