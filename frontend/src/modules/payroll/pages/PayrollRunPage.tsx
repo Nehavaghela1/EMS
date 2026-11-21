@@ -973,7 +973,7 @@ export function PayrollRunPage() {
 
                 <div>
                   <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", fontWeight: 600, marginBottom: "4px" }}>
-                    Payment Date
+                    Pay Day (company default)
                   </div>
                   <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>
                     05/{String(readyRun ? readyRun.month : currentMonthIdx + 1).padStart(2, "0")}/{readyRun ? readyRun.year : currentYearNum}
@@ -1101,7 +1101,7 @@ export function PayrollRunPage() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.84rem" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid #e2e8f0", color: "#64748b", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.04em", textAlign: "left" }}>
-                  <th style={{ padding: "12px 16px" }}>PAYMENT DATE</th>
+                  <th style={{ padding: "12px 16px" }}>APPROVED ON</th>
                   <th style={{ padding: "12px 16px" }}>PAYROLL TYPE</th>
                   <th style={{ padding: "12px 16px" }}>DETAILS</th>
                   <th style={{ padding: "12px 16px" }}>PAYROLL STATUS</th>
@@ -1139,13 +1139,13 @@ export function PayrollRunPage() {
                         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                       >
                         <td style={{ padding: "14px 16px", color: "#334155", fontWeight: 500 }}>
-                          05/{monthStr}/{r.year}
+                          {r.approved_at ? new Date(r.approved_at).toLocaleDateString("en-GB") : "—"}
                         </td>
                         <td style={{ padding: "14px 16px", color: "#0f172a", fontWeight: 600 }}>
                           {isSettlement ? "Bulk Final Settlement Payroll" : r.run_type === "off_cycle" ? "Off-Cycle Payroll" : "Regular Payroll"}
                         </td>
                         <td style={{ padding: "14px 16px", color: "#64748b" }}>
-                          01/{monthStr}/{r.year} - 31/{monthStr}/{r.year}
+                          01/{monthStr}/{r.year} - {daysInMonth(r.year, r.month)}/{monthStr}/{r.year}
                         </td>
                         <td style={{ padding: "14px 16px" }}>
                           <span
