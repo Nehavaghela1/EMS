@@ -3,6 +3,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import (
@@ -101,24 +102,29 @@ class ProjectService:
         from app.modules.hr.models import Employee
         from app.modules.projects.models import Project
 
-        target_company_id = data.company_id or company_id
+        # Rule (never relaxed) 3: company_id comes from the verified token only. A
+        # body company_id that names another company is refused, not used (BUG-075).
+        if data.company_id is not None and data.company_id != company_id:
+            raise ValidationError("company_id cannot be set; it comes from your sign-in.")
+        target_company_id = company_id
         # Rule 1: Plain employees get 403
         if actor and actor.role == UserRole.employee:
             raise ForbiddenError("Employees cannot create projects.")
 
-        # Rule 3: Name is required and unique among company live projects
+        # Rule 3: Name is required and unique among company live projects, ignoring
+        # letter case; a duplicate is a conflict (409) (BUG-081).
         live_statuses = ["active", "planning", "on_hold"]
         same_name = (
             self.repo.db.query(Project)
             .filter(
                 Project.company_id == target_company_id,
-                Project.name == data.name,
+                func.lower(Project.name) == data.name.strip().lower(),
                 Project.status.in_(live_statuses),
             )
             .first()
         )
         if same_name:
-            raise ValidationError(f"A live project with name '{data.name}' already exists.")
+            raise ConflictError(f"A live project with name '{data.name}' already exists.")
 
         existing_code = self.repo.get_project_by_code(target_company_id, data.code)
         if existing_code:
@@ -328,31 +334,36 @@ class ProjectService:
                 ms_before = (
                     self.repo.db.query(Milestone)
                     .filter(Milestone.project_id == project.id, Milestone.due_date < new_start)
-                    .first()
+                    .count()
                 )
                 task_before = (
                     self.repo.db.query(Task)
                     .filter(Task.project_id == project.id, Task.due_date < new_start)
-                    .first()
+                    .count()
                 )
                 if ms_before or task_before:
+                    # Say how many items block the change (BUG-083).
                     raise ConflictError(
-                        "New project start date excludes existing milestones or tasks."
+                        "New project start date excludes existing milestones or tasks: "
+                        f"{ms_before} milestone(s) and {task_before} task(s) are due before it.",
+                        details={"milestones": ms_before, "tasks": task_before},
                     )
             if new_end:
                 ms_after = (
                     self.repo.db.query(Milestone)
                     .filter(Milestone.project_id == project.id, Milestone.due_date > new_end)
-                    .first()
+                    .count()
                 )
                 task_after = (
                     self.repo.db.query(Task)
                     .filter(Task.project_id == project.id, Task.due_date > new_end)
-                    .first()
+                    .count()
                 )
                 if ms_after or task_after:
                     raise ConflictError(
-                        "New project end date excludes existing milestones or tasks."
+                        "New project end date excludes existing milestones or tasks: "
+                        f"{ms_after} milestone(s) and {task_after} task(s) are due after it.",
+                        details={"milestones": ms_after, "tasks": task_after},
                     )
 
         if data.code and data.code != project.code:
@@ -588,6 +599,15 @@ class ProjectService:
         existing = self.repo.get_member(p_cid, project_id, data.employee_id)
         if existing:
             raise ConflictError("Employee is already a member of this project.")
+
+        # Rule 4: Only HR and owner set a billing rate, here as in the rate route
+        # (BUG-078).
+        if (
+            data.hourly_rate is not None
+            and actor is not None
+            and actor.role not in (UserRole.hr_admin, UserRole.owner)
+        ):
+            raise ForbiddenError("Only HR and owner can set or change member billing rates.")
 
         # Map role 'lead' to 'manager'
         assigned_role = data.role
@@ -1134,8 +1154,29 @@ class ProjectService:
             if not member and project.manager_id != emp.id:
                 raise NotFoundError("Task not found.")
 
-        task.position = position
-        task.updated_at = utcnow()
+        # Moves are serialised per project (row lock), then the task's column is
+        # renumbered 0..n-1 with this task at its new place, so concurrent moves can
+        # never leave two cards on the same position (BUG-100).
+        from app.modules.projects.models import Project, Task
+
+        self.repo.db.query(Project).filter(Project.id == project.id).with_for_update().one()
+        column = (
+            self.repo.db.query(Task)
+            .filter(
+                Task.company_id == project.company_id,
+                Task.project_id == project.id,
+                Task.status == task.status,
+                Task.id != task.id,
+            )
+            .order_by(Task.position, Task.created_at, Task.id)
+            .all()
+        )
+        column.insert(min(position, len(column)), task)
+        now = utcnow()
+        for index, item in enumerate(column):
+            if item.position != index or item.id == task.id:
+                item.position = index
+                item.updated_at = now
         self.repo.db.flush()
 
         # Audit
@@ -1410,6 +1451,13 @@ class ProjectService:
         if data.hours <= Decimal("0.00") or data.hours > Decimal("24.00"):
             raise ValidationError("Hours must be greater than 0 and at most 24.")
 
+        # Overtime and its multiplier change pay, so only HR, owner or a manager may
+        # set them; an employee's own entry is stored as regular time (BUG-079).
+        if not (is_admin_or_manager or is_hr_or_owner) and (
+            data.is_overtime or data.overtime_multiplier is not None
+        ):
+            raise ForbiddenError("Only HR or a manager can mark time as overtime.")
+
         if data.task_id:
             task = self.repo.get_task_by_id(company_id, data.task_id)
             if not task:
@@ -1587,6 +1635,14 @@ class ProjectService:
         target_hours = data.hours if data.hours is not None else entry.hours
         if target_hours <= Decimal("0.00") or target_hours > Decimal("24.00"):
             raise ValidationError("Hours must be greater than 0 and at most 24.")
+
+        # The employee editing their own entry cannot turn it into overtime (BUG-079).
+        if (
+            user_employee_id
+            and (actor is None or actor.role not in (UserRole.owner, UserRole.hr_admin))
+            and (data.is_overtime or data.overtime_multiplier is not None)
+        ):
+            raise ForbiddenError("Only HR or a manager can mark time as overtime.")
 
         # Check daily 24h cap across all projects, excluding rejected entries and current entry
         existing_entries = self.repo.list_time_entries(
@@ -1933,7 +1989,11 @@ class ProjectService:
             )
             open_tasks = [t for t in tasks if t.status not in ("done", "cancelled")]
             if open_tasks:
-                raise ConflictError("Cannot complete milestone while it has open tasks.")
+                raise ConflictError(
+                    "Cannot complete milestone while it has open tasks: "
+                    f"{len(open_tasks)} task(s) are not done or cancelled.",
+                    details={"open_tasks": len(open_tasks)},
+                )
 
         updated = self.repo.update_milestone(milestone, data)
 
@@ -2016,6 +2076,27 @@ class ProjectService:
 
         if project.status in ("completed", "archived"):
             raise ConflictError(f"Cannot upload documents to a {project.status} project.")
+
+        # The linked file must exist in this company; another company's file id is
+        # the same 404 as a missing one (BUG-080). Name, size and type come from the
+        # stored file, not from the request body.
+        from app.modules.platform.repository import FileRepository
+
+        file_obj = (
+            FileRepository(self.repo.db).get_by_id(project.company_id, data.file_id)
+            if data.file_id is not None
+            else None
+        )
+        if file_obj is None:
+            raise NotFoundError("File not found.")
+        data = data.model_copy(
+            update={
+                "file_size": file_obj.file_size,
+                "file_type": file_obj.file_type,
+                "file_name": data.file_name or file_obj.file_name,
+                "name": data.name or file_obj.file_name,
+            }
+        )
 
         doc = self.repo.create_project_document(project.company_id, project_id, data, actor_user.id)
         resp = ProjectDocumentResponse.model_validate(doc)

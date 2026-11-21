@@ -15,6 +15,7 @@ export interface Project {
   status: ProjectStatus;
   start_date?: string;
   deadline?: string;
+  end_date?: string | null;
   budget?: number;
   manager_id?: string;
   client_name?: string;

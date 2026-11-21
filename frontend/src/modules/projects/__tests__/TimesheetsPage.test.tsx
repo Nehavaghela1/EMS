@@ -62,7 +62,9 @@ const mockProjects: Project[] = [
   },
 ];
 
-function setupAuth(userRole = "hr_admin") {
+// The signed-in approver is a different employee from the entry authors (emp-1, emp-2):
+// "My Time Logs" shows only one's own entries and the approvals queue only the team's.
+function setupAuth(userRole = "hr_admin", employeeId: string = "emp-mgr") {
   vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
     status: "authenticated",
     user: {
@@ -74,7 +76,7 @@ function setupAuth(userRole = "hr_admin") {
       must_change_password: false,
       permissions: [],
       employee: {
-        id: "emp-1",
+        id: employeeId,
         employee_code: "EMP-001",
         first_name: "Admin",
         last_name: "User",
@@ -111,13 +113,14 @@ describe("TimesheetsPage (Module 7.5 Time Tracking & Approvals)", () => {
   });
 
   it("renders timesheets and entries correctly", async () => {
-    setupAuth("hr_admin");
+    setupAuth("hr_admin", "emp-1");
     renderComponent();
 
+    // emp-1's own entry is listed; emp-2's entry is not in "My Time Logs" (BUG-086).
     await waitFor(() => {
       expect(screen.getByText("Built API endpoints for timesheets")).toBeInTheDocument();
-      expect(screen.getByText("Database schema migration")).toBeInTheDocument();
     });
+    expect(screen.queryByText("Database schema migration")).not.toBeInTheDocument();
   });
 
   it("switches to approvals tab for manager/hr_admin", async () => {

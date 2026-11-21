@@ -615,9 +615,24 @@ async def add_project_document(
         )
         return service.add_document(cid, project_id, doc_create, current_user)
     else:
-        # Standard JSON body
-        body = await request.json()
-        doc_create = ProjectDocumentCreate.model_validate(body)
+        # Standard JSON body. A bad or incomplete body is a 422, never a 500 (BUG-077).
+        from pydantic import ValidationError as PydanticValidationError
+
+        from app.core.exceptions import ValidationError as AppValidationError
+
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            raise AppValidationError("The request body must be valid JSON.") from exc
+        if not isinstance(body, dict):
+            raise AppValidationError("The request body must be a JSON object.")
+        try:
+            doc_create = ProjectDocumentCreate.model_validate(body)
+        except PydanticValidationError as exc:
+            reasons = "; ".join(
+                str(e.get("msg", "")).removeprefix("Value error, ") for e in exc.errors()
+            )
+            raise AppValidationError(reasons or "Invalid document details.") from exc
         return service.add_document(cid, project_id, doc_create, current_user)
 
 
