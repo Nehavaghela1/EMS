@@ -2533,7 +2533,7 @@ export function ProjectDetailPage() {
                 <label>Select File *</label>
                 <input
                   type="file"
-                  accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.xlsx,.xls,.zip"
+                  accept=".pdf,.docx,.png,.jpg,.jpeg"
                   onChange={(e) => {
                     const file = e.target.files?.[0] || null;
                     if (file && file.size > 25 * 1024 * 1024) {
@@ -2547,7 +2547,7 @@ export function ProjectDetailPage() {
                   required
                 />
                 <span className="field-hint" style={{ fontSize: "0.75rem", display: "block", marginTop: "3px" }}>
-                  Supported formats: <strong>PDF, DOCX, PNG, JPG, XLSX, ZIP</strong> up to <strong>25MB</strong>.
+                  Supported formats: <strong>PDF, DOCX, PNG, JPG, JPEG</strong> up to <strong>25MB</strong>.
                 </span>
               </div>
               <div className="field">

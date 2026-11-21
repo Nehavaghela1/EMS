@@ -149,7 +149,7 @@ describe("Sub-feature 3.2: Notifications Frontend", () => {
     expect(mockNavigate).toHaveBeenCalledWith("/leaves");
   });
 
-  it("handles null action_url safely without triggering navigation", async () => {
+  it("opens the project page for a project notification with no action_url (BUG-095)", async () => {
     renderNotificationBell();
 
     const bellBtn = screen.getByTitle("Notifications");
@@ -158,10 +158,11 @@ describe("Sub-feature 3.2: Notifications Frontend", () => {
     const itemWithoutUrl = await screen.findByText("Assigned to Project Alpha");
     await userEvent.click(itemWithoutUrl);
 
-    // No link is rendered; already read, so no markNotificationRead call and no navigation
+    // No link is rendered; already read, so no markNotificationRead call. The page for
+    // the record it is about opens, since the server sends no action_url for projects.
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(PlatformApi.markNotificationRead).not.toHaveBeenCalled();
-    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith("/projects/proj-1");
   });
 
   it("does not crash and item stays unread when markNotificationRead rejects", async () => {

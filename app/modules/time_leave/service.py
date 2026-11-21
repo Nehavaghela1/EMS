@@ -1964,7 +1964,7 @@ class LeaveService:
                     type="leave_requested",
                     title="New Leave Request",
                     message=message_text,
-                    action_url="/leave",
+                    action_url="/leaves",
                     entity_type="leave",
                     entity_id=leave.id,
                 )

@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 
 ALLOWED_EXTENSIONS = {"pdf", "jpg", "jpeg", "png", "docx"}
 MAX_FILE_UPLOAD_BYTES = 25 * 1024 * 1024
+# Content-Length covers the whole multipart body (boundaries, part headers, other
+# form fields), not just the file, so the early check allows this much on top.
+# The exact limit is still enforced on the file bytes read below.
+MULTIPART_OVERHEAD_BYTES = 1024 * 1024
 
 
 async def read_upload_file_capped(
@@ -23,7 +27,7 @@ async def read_upload_file_capped(
         content_length_header = request.headers.get("content-length")
         if content_length_header:
             try:
-                if int(content_length_header) > max_bytes:
+                if int(content_length_header) > max_bytes + MULTIPART_OVERHEAD_BYTES:
                     max_mb = max_bytes // (1024 * 1024)
                     raise PayloadTooLargeError(
                         f"File size exceeds maximum upload limit of {max_mb} MB."
