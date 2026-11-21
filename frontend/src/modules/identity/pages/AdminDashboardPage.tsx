@@ -771,7 +771,7 @@ export function AdminDashboardPage() {
         title="Approve company?"
         message={
           actionError ??
-          `Approving ${approveTarget?.name ?? ""} seeds its departments, leave types, and company settings, creates an HR admin account, and sends credentials via email.`
+          `Approving ${approveTarget?.name ?? ""} seeds its departments, leave types, and company settings, creates the Owner account for the company email, and sends the sign-in details by email.`
         }
         confirmLabel="Approve"
         busy={busy}

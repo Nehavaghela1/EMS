@@ -1,9 +1,10 @@
 import logging
 import secrets
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import jwt
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -28,6 +29,7 @@ from app.core.pagination import PageParams
 from app.core.security import (
     DUMMY_HASH,
     create_access_token,
+    decode_access_token,
     generate_refresh_token,
     hash_password,
     hash_token,
@@ -35,6 +37,7 @@ from app.core.security import (
     verify_password,
 )
 from app.core.time import utcnow
+from app.core.token_denylist import revoke_access_token
 from app.db.rls import bind_tenant_to_session, set_tenant_context
 from app.modules.hr.models import Employee, InvitationStatus
 from app.modules.hr.repository import DepartmentRepository, EmployeeRepository
@@ -204,9 +207,12 @@ class InvalidActivationTokenError(NotFoundError):
 
 
 def _generate_company_code(name: str) -> str:
-    base = name.upper().replace(" ", "")[:6]
+    """Company codes are typed at login and password reset, so they use only
+    A-Z and 0-9 (plus the hyphen before the random suffix). A name with no
+    usable letters or digits falls back to 'CO'."""
+    base = "".join(ch for ch in name.upper() if "A" <= ch <= "Z" or "0" <= ch <= "9")[:6]
     suffix = uuid.uuid4().hex[:4].upper()
-    return f"{base}-{suffix}"
+    return f"{base or 'CO'}-{suffix}"
 
 
 class AuthService:
@@ -488,10 +494,20 @@ class AuthService:
         self.db.commit()
         return TokenResponse(access_token=access_token), raw_refresh
 
-    def logout(self, raw_token: str) -> None:
-        """Route 3: revoke just the presented refresh token. Idempotent —
-        an absent, already-revoked, or unrecognized cookie is a silent
-        no-op, never an error (the caller is logging out either way)."""
+    def logout(self, raw_token: str, access_token: str | None = None) -> None:
+        """Route 3: revoke the presented refresh token and the access token
+        the request was made with, so a page left open after logout (or the
+        browser Back button) cannot keep using it. Idempotent — an absent,
+        already-revoked, or unrecognized cookie is a silent no-op, never an
+        error (the caller is logging out either way)."""
+        if access_token:
+            try:
+                claims = decode_access_token(access_token)
+                revoke_access_token(
+                    str(claims["jti"]), datetime.fromtimestamp(int(claims["exp"]), tz=UTC)
+                )
+            except (jwt.PyJWTError, KeyError, ValueError, TypeError):
+                pass
         if not raw_token:
             return
         token_record = self.token_repo.get_by_hash(hash_token(raw_token))
@@ -1265,6 +1281,13 @@ class CompanyService:
         """
         email = data.company_email or current_user.email
         if self.company_repo.get_by_email(email):
+            if not data.company_email:
+                # The field is optional, but leaving it blank falls back to the
+                # owner's login email, which another workspace already uses.
+                raise ValidationError(
+                    "Your login email is already used by another workspace. "
+                    "Enter a separate company email for this workspace."
+                )
             raise ConflictError("A company with this email already exists.")
         if data.subdomain and self.company_repo.get_by_subdomain(data.subdomain):
             raise ConflictError("That subdomain is already taken.")

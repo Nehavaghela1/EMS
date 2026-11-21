@@ -15,6 +15,7 @@ from pydantic import (
 
 from app.core.config import settings
 from app.core.regions import allowed_country_codes, canonical_country
+from app.core.validators import clean_hex_color, clean_logo_url, clean_phone, clean_pincode
 from app.modules.identity.models import CompanyStatus, UserRole
 
 
@@ -151,6 +152,11 @@ class CompanyRegisterRequest(BaseModel):
     def _validate_subdomain(cls, v: str | None) -> str | None:
         return validate_subdomain_string(v)
 
+    @field_validator("phone", mode="before")
+    @classmethod
+    def _validate_phone(cls, v: str | None) -> str | None:
+        return clean_phone(v)
+
 
 class CompanyResponse(BaseModel):
     id: uuid.UUID
@@ -169,6 +175,7 @@ class CompanyResponse(BaseModel):
     pincode: str | None = None
     website: str | None = None
     logo_url: str | None = None
+    brand_color: str | None = None
     gst_number: str | None = None
     pan_number: str | None = None
     created_at: datetime
@@ -242,6 +249,40 @@ class CompanyProfileUpdateRequest(BaseModel):
     pincode: str | None = None
     website: str | None = None
     logo_url: str | None = None
+    brand_color: str | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _validate_name(cls, v: str | None) -> str | None:
+        # Absent means "leave unchanged"; a sent name must be real text.
+        if v is None:
+            raise ValueError("Company name cannot be empty.")
+        if not isinstance(v, str):
+            raise ValueError("Company name must be text.")
+        v = v.strip()
+        if not v or len(v) > 255:
+            raise ValueError("Company name must be between 1 and 255 characters.")
+        return v
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def _validate_phone(cls, v: str | None) -> str | None:
+        return clean_phone(v)
+
+    @field_validator("pincode", mode="before")
+    @classmethod
+    def _validate_pincode(cls, v: str | None) -> str | None:
+        return clean_pincode(v)
+
+    @field_validator("logo_url", mode="before")
+    @classmethod
+    def _validate_logo_url(cls, v: str | None) -> str | None:
+        return clean_logo_url(v)
+
+    @field_validator("brand_color", mode="before")
+    @classmethod
+    def _validate_brand_color(cls, v: str | None) -> str | None:
+        return clean_hex_color(v)
 
 
 class UserRoleUpdateRequest(BaseModel):

@@ -126,7 +126,7 @@ export function CreateWorkspacePage() {
                       placeholder="acme"
                       className="w-full px-4 py-3 bg-transparent text-sm outline-none"
                     />
-                    <span className="px-4 py-3 bg-slate-100 text-slate-500 text-sm border-l border-slate-200">.ems.dev</span>
+                    <span className="px-4 py-3 bg-slate-100 text-slate-500 text-sm border-l border-slate-200">.ems-pro.com</span>
                   </div>
                 </div>
               </div>

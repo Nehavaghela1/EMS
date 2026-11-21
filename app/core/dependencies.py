@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.security import decode_access_token
+from app.core.token_denylist import is_access_token_revoked
 from app.db.rls import bind_tenant_to_session
 from app.db.session import get_db
 from app.modules.identity.models import User, UserRole
@@ -36,6 +37,10 @@ def get_current_user(
         company_id = uuid.UUID(payload["company_id"])
     except (jwt.PyJWTError, KeyError, ValueError, TypeError) as exc:
         raise UnauthorizedError(INVALID_TOKEN_MESSAGE) from exc
+
+    # A token the user logged out with stays dead until it expires.
+    if is_access_token_revoked(payload.get("jti")):
+        raise UnauthorizedError(INVALID_TOKEN_MESSAGE)
 
     is_platform_admin = payload.get("role") == UserRole.super_admin.value
     # company_id comes from the verified JWT claim only — never a body,

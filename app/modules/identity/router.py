@@ -116,7 +116,9 @@ def logout(
     _user: User = Depends(get_current_user),
 ):
     raw_refresh = request.cookies.get(REFRESH_COOKIE_NAME, "")
-    AuthService(db).logout(raw_refresh)
+    auth_header = request.headers.get("authorization", "")
+    access_token = auth_header[7:] if auth_header.lower().startswith("bearer ") else None
+    AuthService(db).logout(raw_refresh, access_token=access_token)
     response.delete_cookie(REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
 
 

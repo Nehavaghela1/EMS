@@ -109,6 +109,13 @@ def test_clearance_function_migration_backfill_as_ems_owner(monkeypatch: pytest.
                         sa.text("DELETE FROM departments WHERE id IN (:fin_id, :it_id)"),
                         {"fin_id": fin_id, "it_id": it_id},
                     )
+                    # Upgrading to head runs the head office backfill (a7c3e9d1f2b4),
+                    # which gives this test company a head office location.
+                    conn.execute(sa.text("SELECT set_config('app.is_platform_admin', 'on', true)"))
+                    conn.execute(
+                        sa.text("DELETE FROM company_locations WHERE company_id = :comp_id"),
+                        {"comp_id": comp_id},
+                    )
                     conn.execute(
                         sa.text("DELETE FROM companies WHERE id = :comp_id"),
                         {"comp_id": comp_id},

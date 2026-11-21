@@ -32,6 +32,7 @@ export interface CompanyResponse {
   pincode?: string | null;
   website?: string | null;
   logo_url?: string | null;
+  brand_color?: string | null;
   gst_number?: string | null;
   pan_number?: string | null;
   created_at: string;
@@ -52,6 +53,7 @@ export interface UpdateMyCompanyInput {
   pincode?: string;
   website?: string;
   logo_url?: string;
+  brand_color?: string;
 }
 
 export async function updateMyCompany(input: UpdateMyCompanyInput): Promise<CompanyResponse> {

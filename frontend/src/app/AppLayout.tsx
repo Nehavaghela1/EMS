@@ -190,6 +190,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   const activeCompanyLogo = companyQuery.data?.logo_url || null;
 
+  // Apply the company's saved accent colour (shared by every user), and keep a
+  // copy in localStorage only so the next page load can paint it before the API answers.
+  const companyBrandColor = companyQuery.data?.brand_color || null;
+  useEffect(() => {
+    if (!companyBrandColor) return;
+    document.documentElement.style.setProperty("--color-primary", companyBrandColor);
+    try {
+      localStorage.setItem("ems_brand_accent_color", companyBrandColor);
+    } catch {
+      // storage may be unavailable; the colour still applies for this page
+    }
+  }, [companyBrandColor]);
+
   // ── Profile pill dropdown (top-bar) ─────────────────────────────────────
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
