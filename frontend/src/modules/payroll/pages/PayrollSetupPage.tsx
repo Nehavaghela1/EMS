@@ -891,7 +891,7 @@ export function PayrollSetupPage() {
                 <div>
                   <strong style={{ fontSize: "0.95rem", color: "#166534" }}>Auto-Localize Statutory Configuration</strong>
                   <p style={{ margin: "2px 0 0", fontSize: "0.8rem", color: "#15803d" }}>
-                    Instantly load verified legal statutory rates (EPF 12%, ESI 0.75%, PT slabs) tailored to your registered jurisdiction.
+                    Load the statutory rates (EPF, ESI, PT slabs) currently stored for your registered jurisdiction in the platform rates table.
                   </p>
                 </div>
                 <button

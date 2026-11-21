@@ -410,9 +410,14 @@ def list_shifts(
     db=Depends(get_tenant_db),
     user: User = Depends(require_company_role()),
 ):
-    items, total, pages = ShiftService(db).list_shifts(user.company_id, params)
+    service = ShiftService(db)
+    items, total, pages = service.list_shifts(user.company_id, params)
+    responses = [_to_shift_response(s) for s in items]
+    if not service.can_see_shift_pay(user):
+        for r in responses:
+            r.night_allowance = None
     return Page(
-        items=[_to_shift_response(s) for s in items],
+        items=responses,
         page=params.page,
         limit=params.limit,
         total=total,

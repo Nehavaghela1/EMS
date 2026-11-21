@@ -102,7 +102,7 @@ export function ShiftsPage() {
     { key: "start_time", label: "Start", render: (s) => formatTimeString(s.start_time) },
     { key: "end_time", label: "End", render: (s) => formatTimeString(s.end_time) },
     { key: "break_minutes", label: "Break (min)", render: (s) => `${s.break_minutes} min` },
-    { key: "night_allowance", label: "Night allowance", render: (s) => s.night_allowance },
+    { key: "night_allowance", label: "Night allowance", render: (s) => s.night_allowance ?? "—" },
     {
       key: "is_active",
       label: "Status",

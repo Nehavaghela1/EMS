@@ -204,7 +204,8 @@ class ShiftResponse(BaseModel):
     start_time: time
     end_time: time
     break_minutes: int
-    night_allowance: Decimal
+    # Pay data: None for plain employees (BUG-036).
+    night_allowance: Decimal | None
     is_active: bool
     created_at: datetime
 
