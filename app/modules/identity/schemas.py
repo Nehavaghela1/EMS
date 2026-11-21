@@ -205,8 +205,22 @@ class CompanyRejectRequest(BaseModel):
 
 
 class CompanyDeactivateRequest(BaseModel):
-    reason: str
+    # Same cap as every other reason field: the text is stored and shown back,
+    # so it must not be unbounded.
+    # Same cap as every other reason field: the text is stored and shown back,
+    # so it must not be unbounded.
+    reason: str = Field(..., min_length=1, max_length=500)
     password: str = Field(..., min_length=1, max_length=128)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _validate_reason(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Deactivation reason must be text.")
+        v = v.strip()
+        if not v or len(v) > 500:
+            raise ValueError("Deactivation reason must be between 1 and 500 characters.")
+        return v
 
 
 class AdminCompanyDeactivateRequest(BaseModel):

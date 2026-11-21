@@ -36,6 +36,13 @@ const SUPPORTED_LEVELS = [
   { code: "L3", label: "L3 — Lead / Senior / Executive" },
 ];
 
+/** Shows a configured ceiling as rupees, or a dash when it is not set. */
+function formatCeiling(value: string | null | undefined): string {
+  const n = Number(value);
+  if (!value || Number.isNaN(n)) return "—";
+  return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+}
+
 export function PayrollSetupPage() {
   const { notify } = useToast();
   const navigate = useNavigate();
@@ -1047,7 +1054,9 @@ export function PayrollSetupPage() {
                     onChange={(e) => setStatConfig({ ...statConfig, pf_restrict_to_ceiling: e.target.checked })}
                     style={{ accentColor: "#2563eb" }}
                   />
-                  <span>Restrict to Statutory Wage Ceiling (₹15,000)</span>
+                  {/* The ceiling and threshold come from the company's own
+                      statutory config, never from a number typed in here. */}
+                  <span>Restrict to Statutory Wage Ceiling ({formatCeiling(statConfig.pf_wage_ceiling)})</span>
                 </label>
               </div>
 
@@ -1059,7 +1068,7 @@ export function PayrollSetupPage() {
                   onChange={(e) => setStatConfig({ ...statConfig, esi_enabled: e.target.checked })}
                   style={{ accentColor: "#2563eb" }}
                 />
-                <span>Enable ESI (Coverage threshold ₹21,000 gross)</span>
+                <span>Enable ESI (Coverage threshold {formatCeiling(statConfig.esi_wage_ceiling)} gross)</span>
               </label>
 
               <h3 style={{ margin: "1rem 0 0.5rem", fontSize: "0.98rem", color: "#0f172a" }}>Professional Tax & TDS</h3>

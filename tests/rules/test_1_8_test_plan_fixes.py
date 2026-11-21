@@ -226,3 +226,36 @@ def test_brand_color_is_saved_for_the_company(client, company_a):
     for bad in ["blue", "#12345", "#GGGGGG"]:
         r = client.put("/api/v1/companies/me", json={"brand_color": bad}, headers=h)
         assert r.status_code == 422, bad
+
+
+def test_owner_deactivate_reason_is_capped_at_500_chars(client, db, company_a):
+    """Every other reason field is capped; this one took any length (BUG-093)."""
+    owner = User(
+        company_id=company_a.company_id,
+        email=f"owner-{uuid.uuid4().hex[:6]}@example.com",
+        hashed_password=hash_password("Test1234pass!"),
+        role=UserRole.owner,
+        is_active=True,
+    )
+    db.add(owner)
+    db.commit()
+    token = create_access_token(
+        sub=str(owner.id), company_id=str(company_a.company_id), role=UserRole.owner.value
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    resp = client.post(
+        "/api/v1/companies/me/deactivate",
+        json={"reason": "A" * 501, "password": "Test1234pass!"},
+        headers=headers,
+    )
+    assert resp.status_code == 422, resp.text
+
+    # A reason of a sane length is still accepted by validation (the password
+    # check is what decides the rest).
+    ok = client.post(
+        "/api/v1/companies/me/deactivate",
+        json={"reason": "Closing the pilot account.", "password": "Test1234pass!"},
+        headers=headers,
+    )
+    assert ok.status_code != 422, ok.text
