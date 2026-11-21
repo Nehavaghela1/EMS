@@ -2547,7 +2547,7 @@ export function ProjectDetailPage() {
                   required
                 />
                 <span className="field-hint" style={{ fontSize: "0.75rem", display: "block", marginTop: "3px" }}>
-                  Supported formats: <strong>PDF, DOCX, PNG, JPG, JPEG</strong> up to <strong>10MB</strong>.
+                  Supported formats: <strong>PDF, DOCX, PNG, JPG, JPEG</strong> up to <strong>25MB</strong>.
                 </span>
               </div>
               <div className="field">

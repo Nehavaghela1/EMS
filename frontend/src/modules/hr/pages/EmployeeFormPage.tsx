@@ -259,13 +259,16 @@ export function EmployeeFormPage() {
           if ((payload.personal_email ?? "") !== (existing?.personal_email ?? "")) diffPayload.personal_email = payload.personal_email ?? "";
           if (payload.phone !== undefined && payload.phone !== (existing?.phone ?? "")) diffPayload.phone = payload.phone;
           if ((payload.department_id ?? "") !== (existing?.department_id ?? "")) diffPayload.department_id = payload.department_id;
-          if ((payload.location_id ?? "") !== (existing?.location_id ?? "")) diffPayload.location_id = payload.location_id;
-          if ((payload.reporting_manager_id ?? "") !== (existing?.reporting_manager_id ?? "")) diffPayload.reporting_manager_id = payload.reporting_manager_id;
+          // Cleared optional links must travel as null: undefined is dropped by
+          // JSON, so the field was left unchanged and an otherwise-empty body
+          // came back 422 (clearing a work location was impossible).
+          if ((payload.location_id ?? "") !== (existing?.location_id ?? "")) diffPayload.location_id = payload.location_id ?? null;
+          if ((payload.reporting_manager_id ?? "") !== (existing?.reporting_manager_id ?? "")) diffPayload.reporting_manager_id = payload.reporting_manager_id ?? null;
           if (payload.position !== undefined && payload.position !== (existing?.position ?? "")) diffPayload.position = payload.position;
-          if ((payload.level ?? "") !== (existing?.level ?? "")) diffPayload.level = payload.level;
+          if ((payload.level ?? "") !== (existing?.level ?? "")) diffPayload.level = payload.level ?? null;
           if (payload.employment_type !== existing?.employment_type) diffPayload.employment_type = payload.employment_type;
           if (payload.hire_date !== existing?.hire_date) diffPayload.hire_date = payload.hire_date;
-          if ((payload.probation_end_date ?? "") !== (existing?.probation_end_date ?? "")) diffPayload.probation_end_date = payload.probation_end_date;
+          if ((payload.probation_end_date ?? "") !== (existing?.probation_end_date ?? "")) diffPayload.probation_end_date = payload.probation_end_date ?? null;
           if (payload.notice_period_days !== existing?.notice_period_days) diffPayload.notice_period_days = payload.notice_period_days;
         } else {
           // Non-HR caller: can only edit last_name, personal_email, phone
@@ -274,6 +277,9 @@ export function EmployeeFormPage() {
           if (payload.phone !== undefined && payload.phone !== (existing?.phone ?? "")) diffPayload.phone = payload.phone;
         }
 
+        for (const key of Object.keys(diffPayload) as (keyof EmployeeCreateInput)[]) {
+          if (diffPayload[key] === undefined) delete diffPayload[key];
+        }
         if (Object.keys(diffPayload).length === 0) {
           notify("No changes detected.");
           navigate(`/employees/${id}`);
@@ -527,8 +533,9 @@ export function EmployeeFormPage() {
 
             {/* Work Location / Branch Selection */}
             <div className={"field" + (fieldErrors.location_id ? " has-error" : "")}>
-              <label>Work Location / Branch</label>
+              <label htmlFor="employee-location">Work Location / Branch</label>
               <select
+                id="employee-location"
                 value={form.location_id}
                 onChange={(e) => setField("location_id", e.target.value)}
                 disabled={isEdit && !isHRAdminOrOwner}
