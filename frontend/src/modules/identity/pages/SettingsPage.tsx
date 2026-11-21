@@ -151,6 +151,10 @@ function AdminDelegationSection() {
     setRevoking(true);
     try {
       await updateUserRole(admin.id, "employee");
+      // Drop the row at once, then refetch to confirm against the server.
+      queryClient.setQueryData<AdminUser[]>(["administrators"], (prev) =>
+        (prev ?? []).filter((a) => a.id !== admin.id),
+      );
       await queryClient.invalidateQueries({ queryKey: ["administrators"] });
       notify(`${admin.first_name ?? admin.email}'s admin access revoked.`, "success");
       setConfirmRevoke(null);
@@ -684,22 +688,20 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
       if (comp.logo_url) {
         setLogoPreview(comp.logo_url);
       }
+      // The colour is stored for the company, so every user and browser sees it.
+      if (comp.brand_color) {
+        setBrandColor(comp.brand_color);
+        document.documentElement.style.setProperty("--color-primary", comp.brand_color);
+      }
     }).catch(() => {});
     const savedWidth = localStorage.getItem("ems_brand_logo_width");
     if (savedWidth) setLogoWidth(Number(savedWidth));
-    const savedColor = localStorage.getItem("ems_brand_accent_color");
-    if (savedColor) {
-      setBrandColor(savedColor);
-      document.documentElement.style.setProperty("--color-primary", savedColor);
-    }
   }, []);
 
   async function handleSaveBranding() {
     setSaving(true);
     try {
-      if (logoPreview) {
-        await updateMyCompany({ logo_url: logoPreview });
-      }
+      await updateMyCompany({ brand_color: brandColor, ...(logoPreview ? { logo_url: logoPreview } : {}) });
       localStorage.setItem("ems_brand_logo_width", String(logoWidth));
       localStorage.setItem("ems_brand_accent_color", brandColor);
       document.documentElement.style.setProperty("--color-primary", brandColor);
@@ -762,12 +764,21 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
             <div>
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/svg+xml"
+                accept="image/png,image/jpeg,image/webp"
                 id="tenant-logo-input"
                 style={{ display: "none" }}
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
                     const file = e.target.files[0];
+                    e.target.value = "";
+                    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+                      notify("Logo must be a PNG, JPEG or WebP image.", "error");
+                      return;
+                    }
+                    if (file.size > 500 * 1024) {
+                      notify("Logo must be smaller than 500 KB.", "error");
+                      return;
+                    }
                     const reader = new FileReader();
                     reader.onload = (ev) => {
                       const dataUrl = ev.target?.result as string;

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createLocation, type CompanyLocationCreate } from "../../identity/api";
 import { PageHeader } from "../../../shared/components/PageHeader";
+import { parseApiError } from "../../../shared/api/errors";
 
 export function LocationFormPage() {
   const navigate = useNavigate();
@@ -14,7 +15,7 @@ export function LocationFormPage() {
     address_line1: "",
     city: "",
     state: "",
-    country: "India",
+    country: "IN",
     postal_code: "",
     is_primary: false,
     latitude: undefined,
@@ -55,8 +56,8 @@ export function LocationFormPage() {
     try {
       await createLocation(formData);
       navigate("/settings/locations");
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to create location.");
+    } catch (err) {
+      setError(parseApiError(err).message);
       setIsSubmitting(false);
     }
   };
@@ -172,11 +173,13 @@ export function LocationFormPage() {
                 />
               </div>
               <div className="col-span-2 sm:col-span-1">
-                <label className="block text-sm font-medium text-slate-700 mb-2">Country</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Country (2-letter code)</label>
                 <input
                   type="text"
+                  maxLength={2}
+                  placeholder="IN"
                   value={formData.country || ""}
-                  onChange={(e) => setFormData({ ...formData, country: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, country: e.target.value.toUpperCase() })}
                   className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
                 />
               </div>

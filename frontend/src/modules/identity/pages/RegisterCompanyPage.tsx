@@ -127,7 +127,7 @@ export function RegisterCompanyPage() {
           </div>
           <p className="subtitle" style={{ lineHeight: 1.6 }}>
             Your admin workspace preferences and credentials have been established. Platform approval is underway for{" "}
-            <strong>{submitted.name}</strong>. You can sign in directly using <strong>{submitted.email}</strong> as your tenant admin.
+            <strong>{submitted.name}</strong>. Once the platform team approves it, you will get an email and can sign in using <strong>{submitted.email}</strong> as the workspace owner.
           </p>
           <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
             <Link

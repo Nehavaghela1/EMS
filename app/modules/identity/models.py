@@ -147,6 +147,7 @@ class Company(TimeStampedBase):
     company_size: Mapped[str | None] = mapped_column(String(50), nullable=True)
     admin_password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     logo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    brand_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     status: Mapped[CompanyStatus] = mapped_column(
         Enum(CompanyStatus, name="company_status"),
         nullable=False,

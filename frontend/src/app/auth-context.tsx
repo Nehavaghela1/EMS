@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiClient, setAccessToken, setOnSessionExpired } from "./api-client";
 
 export type UserRole = "owner" | "employee" | "manager" | "hr_admin" | "super_admin";
@@ -61,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const queryClient = useQueryClient();
 
   const clearSession = useCallback(() => {
     setAccessToken(null);
@@ -129,8 +131,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await apiClient.post("/auth/logout");
     } finally {
       clearSession();
+      // Drop every cached API response, so nothing from this session can be
+      // shown again by the browser Back button or the next user of this tab.
+      queryClient.clear();
     }
-  }, [clearSession]);
+  }, [clearSession, queryClient]);
 
   const value = useMemo<AuthContextValue>(
     () => ({ status, user, login, establishSession, logout, sessionExpired }),

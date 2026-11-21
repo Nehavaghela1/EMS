@@ -964,15 +964,20 @@ def test_R3_migration_index_round_trip_and_loud_failure_on_duplicates() -> None:
             day = _day(3)
             with Session(engine) as sess:
                 sess.execute(text("SELECT set_config('app.is_platform_admin', 'on', true)"))
-                sess.add(
-                    Company(
-                        id=cid,
-                        name="Reg Migration Co",
-                        code=f"RMC{uuid.uuid4().hex[:4].upper()}",
-                        email=f"rmc-{uuid.uuid4().hex[:6]}@example.com",
-                        status=CompanyStatus.active,
-                        is_active=True,
-                    )
+                # Plain SQL, not the ORM: at this older revision the companies table
+                # lacks columns the current Company model has (e.g. brand_color).
+                sess.execute(
+                    text(
+                        "INSERT INTO companies (id, name, code, email, country, currency,"
+                        " status, last_employee_seq, is_active)"
+                        " VALUES (:id, 'Reg Migration Co', :code, :email, 'IN', 'INR',"
+                        " 'active', 0, true)"
+                    ),
+                    {
+                        "id": cid,
+                        "code": f"RMC{uuid.uuid4().hex[:4].upper()}",
+                        "email": f"rmc-{uuid.uuid4().hex[:6]}@example.com",
+                    },
                 )
                 sess.flush()
                 emp = Employee(

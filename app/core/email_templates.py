@@ -7,7 +7,7 @@ previews, push banners, and mail server logs even when the body doesn't).
 """
 
 import html
-from datetime import datetime
+from datetime import UTC, datetime
 
 _STYLE = (
     "font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:15px;"
@@ -25,7 +25,11 @@ def _wrap_html(body: str) -> str:
 
 
 def _fmt(dt: datetime) -> str:
-    return dt.strftime("%B %d, %Y at %H:%M UTC")
+    # Values read back from the database carry the session's time zone (for
+    # example +05:30), so convert before labelling the time as UTC.
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).strftime("%B %d, %Y at %H:%M UTC")
 
 
 def employee_invitation_email(
