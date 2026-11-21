@@ -31,6 +31,7 @@ def test_leaves_are_tenant_isolated(client, company_a, company_b):
             "start_date": "2031-03-03",
             "end_date": "2031-03-03",
             "is_half_day": True,
+            "half_day_session": "first_half",
             "reason": "Isolation check",
         },
     )

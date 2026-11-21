@@ -169,6 +169,7 @@ def test_validation_5_start_date_must_not_be_in_the_past_unless_hr(client, compa
             "start_date": past,
             "end_date": past,
             "is_half_day": True,
+            "half_day_session": "first_half",
             "reason": "Backdated by the employee",
         },
     )
@@ -184,6 +185,7 @@ def test_validation_5_start_date_must_not_be_in_the_past_unless_hr(client, compa
             "start_date": past,
             "end_date": past,
             "is_half_day": True,
+            "half_day_session": "first_half",
             "reason": "Backdated by HR, audited",
         },
     )
@@ -486,6 +488,7 @@ def test_employee_can_cancel_their_own_pending_leave_but_not_an_approved_one(cli
             "start_date": another_start.isoformat(),
             "end_date": another_start.isoformat(),
             "is_half_day": True,
+            "half_day_session": "first_half",
             "reason": "Approve then try to self-cancel",
         },
     ).json()
@@ -540,6 +543,7 @@ def test_manager_can_approve_their_reports_leave_but_not_an_unrelated_employees(
             "start_date": other_start.isoformat(),
             "end_date": other_start.isoformat(),
             "is_half_day": True,
+            "half_day_session": "first_half",
             "reason": "Not my report",
         },
     ).json()

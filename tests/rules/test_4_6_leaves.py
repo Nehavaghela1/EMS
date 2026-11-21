@@ -93,6 +93,8 @@ def _apply(client: TestClient, headers: dict[str, str], lt_id: str, start: date,
         "reason": "Family trip",
     }
     body.update(over)
+    if body.get("is_half_day") and "half_day_session" not in body:
+        body["half_day_session"] = "first_half"  # a half day must name its half
     return client.post(LEAVES, headers=headers, json=body)
 
 
