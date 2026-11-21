@@ -22,7 +22,11 @@ down_revision: Union[str, Sequence[str], None] = "39a987d23e60"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-# One head office per company that has no primary location at all. The code
+# One head office per company that has no primary location at all. Only
+# companies created before this migration are touched: every company created
+# since gets its head office at approval or workspace creation, and a later
+# re-run of this migration (tests downgrade and upgrade) must not add rows to
+# companies that a test creates.  The code
 # keeps only A-Z, 0-9 and hyphens from the company code (old codes could hold
 # other characters) and never collides: a company with no locations has no
 # codes yet, and a company with locations but no head office gets the name
@@ -43,6 +47,7 @@ CROSS JOIN LATERAL (
     ) || '-HQ' AS hq_code
 ) sub
 WHERE c.deleted_at IS NULL
+  AND c.created_at < TIMESTAMPTZ '2026-11-21 00:00:00+00'
   AND c.status::text = 'active'
   AND NOT EXISTS (
       SELECT 1 FROM company_locations l

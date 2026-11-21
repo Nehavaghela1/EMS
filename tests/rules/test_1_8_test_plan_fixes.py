@@ -159,6 +159,7 @@ def test_head_office_backfill_adds_exactly_one_per_company_without_one(db, compa
 
     company = db.get(Company, company_a.company_id)
     company.code = "<OLD-7829"  # an old code with a character locations refuse
+    company.created_at = datetime(2026, 1, 1, tzinfo=UTC)  # a company from before locations
     db.flush()
     bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
     db.execute(text(_backfill_sql()))
@@ -171,6 +172,17 @@ def test_head_office_backfill_adds_exactly_one_per_company_without_one(db, compa
     assert rows[0].is_primary and rows[0].is_active
     assert rows[0].name == "Head Office"
     assert rows[0].code == "OLD-7829-HQ"
+
+
+def test_head_office_backfill_skips_companies_created_after_it(db, company_b):
+    from app.db.rls import bind_tenant_to_session
+
+    bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
+    db.execute(text(_backfill_sql()))
+    rows = db.scalars(
+        select(CompanyLocation).where(CompanyLocation.company_id == company_b.company_id)
+    ).all()
+    assert rows == []
 
 
 # --- BUG-016 / BUG-017 -------------------------------------------------------------------
