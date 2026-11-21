@@ -29,7 +29,7 @@ def test_employees_are_tenant_isolated(client, company_a, company_b):
         client.put(
             f"/api/v1/employees/{employee_id}",
             headers=company_b.hr_headers,
-            json={"phone": "hijacked"},
+            json={"phone": "+91 99999 00000"},  # valid, so only isolation can refuse it
         ).status_code
         == 404
     )
