@@ -5,6 +5,7 @@ import {
   setPerformanceGoals,
   updatePerformanceGoal,
   submitSelfReview,
+  updateGoalProgress,
   getActivePIP,
   type PerformanceCycle,
   type PerformanceGoal,
@@ -175,6 +176,22 @@ export function MyGoalsPage() {
       notify(parsed.message || "Failed to submit self-review", parsed.status === 409 ? "warning" : "error");
     } finally {
       setSubmittingReview(false);
+    }
+  }
+
+  async function handleProgressSave(g: PerformanceGoal, raw: string) {
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 0 || value > 100) {
+      notify("Progress must be a whole number from 0 to 100.", "error");
+      return;
+    }
+    if (value === (g.progress ?? 0)) return;
+    try {
+      const updated = await updateGoalProgress(g.id, value);
+      setGoals((prev) => prev.map((x) => (x.id === g.id ? { ...x, progress: updated.progress ?? value } : x)));
+      notify(`Progress saved: ${value}%`, "success");
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
     }
   }
 
@@ -384,6 +401,7 @@ export function MyGoalsPage() {
                   <th>Goal Title</th>
                   <th>Target / Metric</th>
                   <th>Weightage</th>
+                  <th>Progress</th>
                   <th>Status</th>
                   <th>Self Rating</th>
                   <th style={{ textAlign: "right" }}>Actions</th>
@@ -403,6 +421,21 @@ export function MyGoalsPage() {
                     </td>
                     <td>{g.target_value || "—"}</td>
                     <td className="fw-bold">{g.weightage}%</td>
+                    <td onDoubleClick={(e) => e.stopPropagation()}>
+                      {/* Goal progress 0-100 (BUG-059); saved when the field loses focus. */}
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={5}
+                        aria-label={`Progress for ${g.title}`}
+                        defaultValue={g.progress ?? 0}
+                        disabled={Boolean(g.self_rating)}
+                        style={{ width: "64px" }}
+                        onBlur={(e) => handleProgressSave(g, e.currentTarget.value)}
+                      />
+                      %
+                    </td>
                     <td>
                       <span className="badge badge-outline">{g.status}</span>
                     </td>
