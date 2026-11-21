@@ -199,8 +199,8 @@ class PIPCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def _check_dates_and_mentor(self) -> "PIPCreateRequest":
-        if self.end_date <= self.start_date:
-            raise ValueError("end_date must be after start_date.")  # BUG-067
+        if self.end_date < self.start_date:
+            raise ValueError("end_date cannot be before start_date.")  # BUG-067
         if self.mentor_id is not None and self.mentor_id == self.employee_id:
             raise ValueError("An employee cannot be their own PIP mentor.")  # BUG-066
         return self
