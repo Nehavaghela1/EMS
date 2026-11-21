@@ -51,7 +51,14 @@ from app.modules.hr.models import Department, Employee, EmploymentType
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.hr.schemas import EmployeeCreateRequest
 from app.modules.hr.service import EmployeeService
-from app.modules.identity.models import Company, CompanySettings, CompanyStatus, User, UserRole
+from app.modules.identity.models import (
+    Company,
+    CompanyLocation,
+    CompanySettings,
+    CompanyStatus,
+    User,
+    UserRole,
+)
 from app.modules.identity.schemas import CompanyRegisterRequest
 from app.modules.identity.service import CompanyService
 from app.modules.platform.models import AuditLog, Notification
@@ -89,12 +96,37 @@ DEMO_PASSWORD = "DemoPass123!"  # fixed and printed below — obviously not a re
 SEED_ADMIN_COMPANY_NAME = "EMS Seed Admin (internal)"
 SEED_ADMIN_EMAIL = "seed-admin@ems-pro.internal"
 
-LEVELS = ["L1", "L2", "L3", "L4", "L5"]
+LEVELS = ["L1", "L2", "L3"]  # the only levels the API accepts (Spec 2.2)
 EMPLOYMENT_TYPES = [EmploymentType.full_time] * 8 + [EmploymentType.contract, EmploymentType.intern]
 
 fake = Faker()
 Faker.seed(20260902)
 random.seed(20260902)
+
+
+_WIPED_SEPARATELY = {
+    "companies",
+    "users",
+    "employees",
+    "departments",
+    "company_settings",
+    "company_locations",  # employees.location_id points here: deleted after employees
+}
+
+
+def _wipe_company_scoped_tables(db: Session, company_id) -> None:
+    """Deletes this company's rows from every table that has a company_id column,
+    in reverse foreign-key order (BUG-001: reimbursements and other newer tables
+    made the old fixed list fail with a foreign key error)."""
+    from sqlalchemy import text
+
+    import app.main  # noqa: F401  (imports every module, so every table is registered)
+    from app.db.base import Base
+
+    for table in reversed(Base.metadata.sorted_tables):
+        if table.name in _WIPED_SEPARATELY or "company_id" not in table.c:
+            continue
+        db.execute(text(f'DELETE FROM "{table.name}" WHERE company_id = :cid'), {"cid": company_id})
 
 
 def _wipe_existing_demo_company(app_db: Session) -> None:
@@ -117,6 +149,11 @@ def _wipe_existing_demo_company(app_db: Session) -> None:
     try:
         with sessionmaker(bind=owner_engine)() as db:
             bind_tenant_to_session(db, company_id=company_id, is_platform_admin=True)
+            # Newer modules (payroll, reimbursements, projects, performance, bank
+            # accounts, files...) add tables this list never knew about, so first
+            # clear every company-scoped table, children before parents, except the
+            # few handled one by one below (they have reference cycles).
+            _wipe_company_scoped_tables(db, company_id)
 
             db.execute(delete(Notification).where(Notification.company_id == company_id))
             db.execute(delete(AuditLog).where(AuditLog.company_id == company_id))
@@ -136,8 +173,11 @@ def _wipe_existing_demo_company(app_db: Session) -> None:
             )
             db.execute(delete(Employee).where(Employee.company_id == company_id))
             db.execute(delete(Department).where(Department.company_id == company_id))
+            db.execute(delete(CompanyLocation).where(CompanyLocation.company_id == company_id))
             db.execute(delete(CompanySettings).where(CompanySettings.company_id == company_id))
-            db.query(Company).filter(Company.id == company_id).update({"approved_by": None})
+            db.query(Company).filter(Company.id == company_id).update(
+                {"approved_by": None, "owner_user_id": None}
+            )
             db.execute(delete(User).where(User.company_id == company_id))
             db.execute(delete(Company).where(Company.id == company_id))
             db.commit()
@@ -184,12 +224,15 @@ def _create_company_and_approve(db: Session) -> tuple[Company, str, str]:
             company_email=DEMO_COMPANY_EMAIL,
             industry="Technology",
             phone="+91-80-4000-1000",
+            # The owner signs in with this password (approval no longer returns one;
+            # it never leaves the server, CLAUDE.md rule 10).
+            password=DEMO_PASSWORD,
         )
     )
     seed_admin = _get_or_create_seed_admin(db)
-    print("Approving it (seeds company_settings, departments, leave types, HR admin)...")
-    approved, hr_email, hr_password = company_service.approve_company(company.id, seed_admin.id)
-    return approved, hr_email, hr_password
+    print("Approving it (seeds company_settings, departments, leave types, owner)...")
+    approved, owner_email = company_service.approve_company(company.id, seed_admin.id)
+    return approved, owner_email, DEMO_PASSWORD
 
 
 def _department_lookup(db: Session, company_id) -> dict[str, Department]:
@@ -510,12 +553,11 @@ def main() -> None:
         print()
         print("Log in at http://localhost:5173/login with any of these three roles:")
         print()
-        print(f"  HR admin  : {hr_email} / {hr_password}")
+        print(f"  Owner     : {hr_email} / {hr_password}")
         print(f"  Manager   : {roster['manager_user'].email} / {DEMO_PASSWORD}")
         print(f"  Employee  : {roster['demo_employee_user'].email} / {DEMO_PASSWORD}")
         print()
-        print("(The HR admin password is freshly generated each run — copy it now.")
-        print(f" The manager and employee passwords are always '{DEMO_PASSWORD}'.)")
+        print(f"(All three demo passwords are '{DEMO_PASSWORD}'; this is local demo data only.)")
     finally:
         db.close()
 

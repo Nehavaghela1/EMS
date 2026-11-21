@@ -2,18 +2,18 @@ import { useState, useEffect } from "react";
 import { listMyPayslips, type PayrollItem } from "../api";
 import { getMyCompany, type CompanyResponse } from "../../identity/api";
 import { getFnFSettlement, type FnFSettlement } from "../../hr/api";
-import { useToast } from "../../../app/toast-context";
 import { useAuth } from "../../../app/auth-context";
 import { formatDate } from "../../../shared/utils/date";
+import { parseApiError } from "../../../shared/api/errors";
 
 export function MyPayslipPage() {
   const { user } = useAuth();
-  const { notify } = useToast();
   const [activeTab, setActiveTab] = useState<"payslips" | "fnf">("payslips");
   const [payslips, setPayslips] = useState<PayrollItem[]>([]);
   const [fnfData, setFnfData] = useState<FnFSettlement | null>(null);
   const [company, setCompany] = useState<CompanyResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedPayslip, setSelectedPayslip] = useState<PayrollItem | null>(null);
   const [showDaysAuditModal, setShowDaysAuditModal] = useState(false);
   const [showFnfFormulaModal, setShowFnfFormulaModal] = useState(false);
@@ -48,6 +48,7 @@ export function MyPayslipPage() {
 
   async function fetchPayslips() {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await listMyPayslips();
       const list = Array.isArray(data) ? data : (data as any)?.items || [];
@@ -55,8 +56,11 @@ export function MyPayslipPage() {
       if (list.length > 0) {
         setSelectedPayslip(list[0]);
       }
-    } catch {
-      notify("Failed to load payslips", "error");
+    } catch (err) {
+      // Shown in the page, not as a toast: the load can run twice (StrictMode,
+      // retries), which used to stack duplicate toasts, and an empty list must not
+      // pretend there are no payslips when the server was not reached (BUG-103).
+      setLoadError(parseApiError(err).message);
     } finally {
       setLoading(false);
     }
@@ -405,7 +409,16 @@ export function MyPayslipPage() {
               </p>
             </div>
           ) : (
-            <p className="text-muted">No approved payslips available yet.</p>
+            loadError ? (
+              <div role="alert" className="stack" style={{ gap: "8px" }}>
+                <p className="text-red" style={{ margin: 0 }}>Could not load your payslips: {loadError}</p>
+                <button type="button" className="btn btn-sm btn-outline" onClick={() => fetchPayslips()}>
+                  Try again
+                </button>
+              </div>
+            ) : (
+              <p className="text-muted">No approved payslips available yet.</p>
+            )
           )}
         </div>
       ) : (

@@ -31,6 +31,7 @@ import { LocationFormPage } from "../modules/settings/pages/LocationFormPage";
 import { RequireAuth } from "../shared/components/RequireAuth";
 import { RoleGuard } from "../shared/components/RoleGuard";
 import { PublicOnly } from "../shared/components/PublicOnly";
+import { NotFoundPage } from "../shared/components/NotFoundPage";
 import type { UserRole } from "./auth-context";
 import { AppLayout } from "./AppLayout";
 
@@ -317,7 +318,7 @@ export function AppRouter() {
       />
 
       <Route path="/" element={<RoleDefaultRedirect />} />
-      <Route path="*" element={<RoleDefaultRedirect />} />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }
