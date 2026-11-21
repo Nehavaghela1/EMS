@@ -1170,6 +1170,11 @@ class ShiftService:
     ) -> tuple[list[Shift], int, int]:
         return self.repo.list_shifts(company_id, page_params)
 
+    @staticmethod
+    def can_see_shift_pay(user: User) -> bool:
+        """Night allowance is pay data: HR level and managers only (BUG-036)."""
+        return user.role in (UserRole.hr_admin, UserRole.owner, UserRole.manager)
+
     def create_shift(
         self, company_id: uuid.UUID, data: ShiftCreateRequest, actor: User | None = None
     ) -> Shift:

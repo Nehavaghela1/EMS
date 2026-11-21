@@ -83,6 +83,18 @@ class ProjectService:
         full_hours = Decimal(str(settings.full_day_hours))
         return (w_days * full_hours).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
+    def _can_see_budget(self, project, actor: User | None, actor_emp_id: UUID | None) -> bool:
+        """Budget is financial data: HR, owner, managers and the project's own
+        manager see it; a plain member does not (BUG-088)."""
+        if actor is None or actor.role in (UserRole.hr_admin, UserRole.owner, UserRole.manager):
+            return True
+        if actor_emp_id is None:
+            return False
+        if project.manager_id == actor_emp_id:
+            return True
+        mem = self.repo.get_member(project.company_id, project.id, actor_emp_id)
+        return bool(mem and mem.role in ("lead", "manager"))
+
     def _to_project_response(self, project) -> ProjectResponse:
         resp = ProjectResponse.model_validate(project)
         if getattr(project, "company", None):
@@ -211,6 +223,10 @@ class ProjectService:
                     is_member = True
             if not is_member and project.manager_id != (actor_emp.id if actor_emp else None):
                 raise NotFoundError("Project not found.")
+            resp = self._to_project_response(project)
+            if not self._can_see_budget(project, actor, actor_emp.id if actor_emp else None):
+                resp.budget = None
+            return resp
 
         return self._to_project_response(project)
 
@@ -263,8 +279,26 @@ class ProjectService:
             .limit(page_size)
             .all()
         )
+        viewer_emp_id = None
+        if actor and actor.role == UserRole.employee:
+            emp_row = (
+                self.repo.db.query(Employee)
+                .filter(Employee.user_id == actor.id, Employee.company_id == company_id)
+                .first()
+            )
+            viewer_emp_id = emp_row.id if emp_row else None
+        items = []
+        for proj in projects:
+            resp = self._to_project_response(proj)
+            if (
+                actor
+                and actor.role == UserRole.employee
+                and not self._can_see_budget(proj, actor, viewer_emp_id)
+            ):
+                resp.budget = None
+            items.append(resp)
         return PagedProjectResponse(
-            items=[self._to_project_response(p) for p in projects],
+            items=items,
             total=total,
             page=page,
             page_size=page_size,
@@ -545,8 +579,11 @@ class ProjectService:
         milestones_count = len(milestones)
         completed_milestones = sum(1 for m in milestones if m.status == "completed")
 
+        summary_project = self._to_project_response(project)
+        if not self._can_see_budget(project, actor, actor_emp_id) and not is_hr_or_owner:
+            summary_project.budget = None
         return ProjectSummaryResponse(
-            project=self._to_project_response(project),
+            project=summary_project,
             total_tasks=total_tasks,
             completed_tasks=completed_tasks,
             overdue_tasks=overdue_tasks,

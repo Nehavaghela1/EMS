@@ -171,7 +171,7 @@ export interface Shift {
   start_time: string;
   end_time: string;
   break_minutes: number;
-  night_allowance: string;
+  night_allowance: string | null;
   is_active: boolean;
   created_at: string;
 }

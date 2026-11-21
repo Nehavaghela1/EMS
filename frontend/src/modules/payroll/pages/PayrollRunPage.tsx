@@ -782,7 +782,7 @@ export function PayrollRunPage() {
                 </div>
               </div>
               <div style={{ padding: "1rem", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
-                <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", fontWeight: 600 }}>Employee PF (12%)</div>
+                <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", fontWeight: 600 }}>Employee PF</div>
                 <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#0f172a", marginTop: "4px" }}>
                   ₹{(Math.round(detailTotals.deductions * 0.25)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                 </div>
