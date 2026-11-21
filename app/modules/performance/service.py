@@ -13,6 +13,7 @@ from app.core.exceptions import (
 )
 from app.core.pagination import PageParams
 from app.core.time import utcnow
+from app.modules.hr.models import Employee
 from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.performance.models import (
@@ -567,6 +568,9 @@ class PerformanceService:
         if actor.role in (UserRole.hr_admin, UserRole.owner):
             # Check if actor is also the reporting manager
             mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            # Nobody rates their own goal as its manager (BUG-063).
+            if mgr_emp is not None and mgr_emp.id == target_emp.id:
+                raise ForbiddenError("You cannot submit a manager review for your own goal.")
             if target_emp.reporting_manager_id is not None:
                 if not mgr_emp or target_emp.reporting_manager_id != mgr_emp.id:
                     raise ForbiddenError(
@@ -685,6 +689,16 @@ class PerformanceService:
             is_reviewed_emp = emp and goal and goal.employee_id == emp.id
             if not (is_reviewer or is_reviewed_emp):
                 raise ForbiddenError("You are not authorized to view this review.")
+            # Same blind-review rule as the goal's review list: the reviewed employee
+            # never sees a manager review that is not submitted (BUG-062). 404, so a
+            # draft looks the same as a missing review.
+            if (
+                is_reviewed_emp
+                and not is_reviewer
+                and review.reviewer_role == ReviewerRole.manager
+                and review.status != "submitted"
+            ):
+                raise NotFoundError("Performance review not found.")
 
         return review
 
@@ -1134,6 +1148,53 @@ class PerformanceService:
     ) -> list[PerformancePIPResponse]:
         pips = self.pip_repo.list_pips(company_id, employee_id, status)
         return [self._pip_to_response(p, company_id) for p in pips]
+
+    def _can_see_pips_of(self, company_id: uuid.UUID, actor: User, employee: Employee) -> bool:
+        """HR level sees every PIP; anyone sees their own; a manager sees PIPs of
+        employees whose reporting chain they are in (BUG-069)."""
+        if actor.role in (UserRole.hr_admin, UserRole.owner):
+            return True
+        own = self.employee_repo.get_by_user_id(company_id, actor.id)
+        if own is not None and own.id == employee.id:
+            return True
+        if actor.role != UserRole.manager:
+            return False
+        from app.core.approval_authority import can_approve_for
+
+        try:
+            return bool(can_approve_for(self.db, actor, employee))
+        except ForbiddenError:
+            return False
+
+    def list_pips_for(
+        self,
+        company_id: uuid.UUID,
+        actor: User,
+        employee_id: uuid.UUID | None = None,
+        status: str | None = None,
+    ) -> list[PerformancePIPResponse]:
+        pips = self.pip_repo.list_pips(company_id, employee_id, status)
+        visible = []
+        cache: dict[uuid.UUID, bool] = {}
+        for pip in pips:
+            if pip.employee_id not in cache:
+                emp = self.employee_repo.get_by_id_any_status(pip.employee_id, company_id)
+                cache[pip.employee_id] = bool(emp and self._can_see_pips_of(company_id, actor, emp))
+            if cache[pip.employee_id]:
+                visible.append(pip)
+        return [self._pip_to_response(p, company_id) for p in visible]
+
+    def get_active_pip_for(
+        self, company_id: uuid.UUID, actor: User, employee_id: uuid.UUID
+    ) -> PerformancePIPResponse | None:
+        """Another company's (or a missing) employee is 404; one the caller may not
+        see is 403 (rule 6.4 R4)."""
+        emp = self.employee_repo.get_by_id_any_status(employee_id, company_id)
+        if emp is None:
+            raise NotFoundError("Employee profile not found.")
+        if not self._can_see_pips_of(company_id, actor, emp):
+            raise ForbiddenError("You can only view PIPs of yourself or your team.")
+        return self.get_active_pip(company_id, employee_id)
 
     def get_active_pip(
         self, company_id: uuid.UUID, employee_id: uuid.UUID
