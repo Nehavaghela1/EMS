@@ -3,6 +3,7 @@ import {
   listReimbursements,
   submitReimbursement,
   reviewReimbursement,
+  withdrawReimbursement,
   type Reimbursement,
   type ReimbursementStatus,
   type ReimbursementType,
@@ -56,6 +57,20 @@ export function ReimbursementsPage() {
       notify("Failed to load reimbursement claims", "error");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleWithdraw(id: string) {
+    setReviewing(true);
+    try {
+      await withdrawReimbursement(id);
+      notify("Claim withdrawn.", "success");
+      setSelectedClaim(null);
+      fetchClaims();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setReviewing(false);
     }
   }
 
@@ -252,6 +267,8 @@ export function ReimbursementsPage() {
                         </span>
                       ) : c.status === "rejected" ? (
                         <span className="badge badge-danger text-red">Rejected</span>
+                      ) : c.status === "withdrawn" ? (
+                        <span className="badge">Withdrawn</span>
                       ) : (
                         <span className="badge badge-warning">Pending Approval</span>
                       )}
@@ -407,7 +424,7 @@ export function ReimbursementsPage() {
                         Drag & drop receipt here, or <span style={{ color: "var(--color-primary, #2563eb)" }}>browse files</span>
                       </div>
                       <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", marginTop: "2px" }}>
-                        Supports PDF, PNG, JPG up to 10MB
+                        Supports PDF, PNG, JPG up to 25MB
                       </div>
                     </div>
                   )}
@@ -465,12 +482,27 @@ export function ReimbursementsPage() {
                       </span>
                     ) : selectedClaim.status === "rejected" ? (
                       <span className="badge badge-danger text-red">Rejected</span>
+                    ) : selectedClaim.status === "withdrawn" ? (
+                      <span className="badge">Withdrawn</span>
                     ) : (
                       <span className="badge badge-warning">Pending Approval</span>
                     )}
                   </span>
                 </div>
               </div>
+
+              {selectedClaim.status === "pending" && selectedClaim.employee_id === user?.employee?.id && (
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline"
+                    disabled={reviewing}
+                    onClick={() => handleWithdraw(selectedClaim.id)}
+                  >
+                    Withdraw claim
+                  </button>
+                </div>
+              )}
 
               {canReview && selectedClaim.status === "pending" && (
                 <div className="field">

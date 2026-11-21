@@ -2,7 +2,7 @@ import uuid
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from app.core.dependencies import (
     require_platform_role,
     require_role,
 )
+from app.core.exceptions import MissingIdempotencyKeyError
 from app.core.pagination import Page, PageParams, page_params
 from app.core.rate_limit import enforce_user_limit, get_user_or_ip_key, limiter
 from app.modules.identity.models import User, UserRole
@@ -481,10 +482,8 @@ def create_payroll_run(
     user: User = Depends(require_company_role(UserRole.hr_admin)),
 ):
     if not idempotency_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Idempotency-Key header is required.",
-        )
+        # Same {"error": {...}} envelope as every other error (BUG-052).
+        raise MissingIdempotencyKeyError("Idempotency-Key header is required.")
 
     service = PayrollRunService(db)
     run = service.create_run(

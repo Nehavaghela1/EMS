@@ -98,6 +98,7 @@ export function PayrollSetupPage() {
   const [selectedEmpId, setSelectedEmpId] = useState("");
   const [selectedStructId, setSelectedStructId] = useState("");
   const [assignCtc, setAssignCtc] = useState("600000.00");
+  const [assignReason, setAssignReason] = useState("");
   const [assignEffectiveFrom, setAssignEffectiveFrom] = useState(
     new Date().toISOString().split("T")[0]
   );
@@ -233,8 +234,11 @@ export function PayrollSetupPage() {
         structure_id: selectedStructId,
         ctc: assignCtc,
         effective_from: assignEffectiveFrom,
+        // Required by the server when the employee already has a salary (a revision).
+        revision_reason: assignReason.trim() || undefined,
       });
       notify("Salary assigned successfully", "success");
+      setAssignReason("");
       setShowAssignModal(false);
     } catch (err: unknown) {
       const parsed = parseApiError(err);
@@ -1155,6 +1159,23 @@ export function PayrollSetupPage() {
                     required
                   />
                 </div>
+              </div>
+              <div style={{ marginTop: "12px" }}>
+                <label
+                  htmlFor="assign-revision-reason"
+                  style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}
+                >
+                  Reason for revision (needed if the employee already has a salary)
+                </label>
+                <input
+                  id="assign-revision-reason"
+                  type="text"
+                  maxLength={500}
+                  value={assignReason}
+                  onChange={(e) => setAssignReason(e.target.value)}
+                  placeholder="e.g. Annual increment"
+                  style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                />
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "1.25rem", paddingTop: "1rem", borderTop: "1px solid #f1f5f9" }}>

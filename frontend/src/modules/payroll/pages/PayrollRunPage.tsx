@@ -5,6 +5,7 @@ import {
   getPayrollRunDetail,
   approvePayrollRun,
   deletePayrollRun,
+  downloadPaymentFile,
   getStatutoryConfig,
   updateStatutoryConfig,
   type PayrollRun,
@@ -18,6 +19,11 @@ import { parseApiError } from "../../../shared/api/errors";
 import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import { PayslipDocumentModal } from "../components/PayslipDocumentModal";
 
+
+/** Days in a 1-based month (30 for November, 28 or 29 for February). */
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate();
+}
 
 export function PayrollRunPage() {
   const { notify } = useToast();
@@ -131,6 +137,16 @@ export function PayrollRunPage() {
       notify("Failed to load run details", "error");
     } finally {
       setLoadingDetail(false);
+    }
+  }
+
+  async function handleDownloadBankAdvice(runId: string) {
+    try {
+      await downloadPaymentFile(runId);
+      notify("Bank advice downloaded.", "success");
+    } catch (err) {
+      // e.g. 409 for a run that is not approved yet (BUG-048)
+      notify(parseApiError(err).message, "error");
     }
   }
 
@@ -413,7 +429,7 @@ export function PayrollRunPage() {
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                    onClick={() => notify("Bank advice downloaded for direct deposit.", "info")}
+                    onClick={() => handleDownloadBankAdvice(r.id)}
                   >
                     <span>🏦</span>
                     <span>Download Bank Advice</span>
@@ -467,7 +483,7 @@ export function PayrollRunPage() {
           {/* Col 1: Period, Payroll Cost & Total Net Pay */}
           <div style={{ borderRight: "1px solid #f1f5f9", paddingRight: "1.5rem" }}>
             <div style={{ fontSize: "0.78rem", color: "#64748b", fontWeight: 600, marginBottom: "0.75rem" }}>
-              Period: 01/{String(r.month).padStart(2, "0")}/{r.year} - 31/{String(r.month).padStart(2, "0")}/{r.year} <span style={{ color: "#94a3b8" }}>| 31 Base Days</span>
+              Period: 01/{String(r.month).padStart(2, "0")}/{r.year} - {daysInMonth(r.year, r.month)}/{String(r.month).padStart(2, "0")}/{r.year} <span style={{ color: "#94a3b8" }}>| {daysInMonth(r.year, r.month)} Base Days</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
               <div>
@@ -490,7 +506,7 @@ export function PayrollRunPage() {
             <div style={{ marginTop: "1rem" }}>
               <button
                 type="button"
-                onClick={() => notify("Bank advice downloaded for direct deposit.")}
+                onClick={() => handleDownloadBankAdvice(r.id)}
                 style={{
                   background: "transparent",
                   border: "none",
@@ -719,7 +735,7 @@ export function PayrollRunPage() {
                           <td style={{ padding: "12px 8px", textAlign: "center" }}>
                             <button
                               type="button"
-                              onClick={() => notify(`TDS Worksheet for ${empName} downloaded.`)}
+                              onClick={() => notify(`The TDS worksheet download for ${empName} is not available yet.`, "info")}
                               style={{
                                 background: "transparent",
                                 border: "none",
@@ -736,9 +752,13 @@ export function PayrollRunPage() {
                             Manual Bank Transfer
                           </td>
                           <td style={{ padding: "12px 8px" }}>
-                            <span style={{ color: "#16a34a", fontWeight: 600, fontSize: "0.82rem" }}>
-                              Paid on 05/{String(r.month).padStart(2, "0")}/{r.year}
-                            </span>
+                            {r.status === "paid" ? (
+                              <span style={{ color: "#16a34a", fontWeight: 600, fontSize: "0.82rem" }}>Paid</span>
+                            ) : (
+                              <span style={{ color: "#b45309", fontWeight: 600, fontSize: "0.82rem" }}>
+                                {r.status === "approved" ? "Approved, not paid yet" : "Awaiting approval"}
+                              </span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -934,7 +954,8 @@ export function PayrollRunPage() {
                   textTransform: "uppercase",
                 }}
               >
-                READY
+                {/* An approved or paid month is not "ready" to process again (BUG-043). */}
+                {readyRun && ["approved", "paid"].includes(readyRun.status) ? readyRun.status : "READY"}
               </span>
             </div>
 

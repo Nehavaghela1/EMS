@@ -49,11 +49,15 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
 
   const empName = employee ? `${employee.first_name} ${employee.last_name || ""}`.trim() : "Employee";
   const empCode = employee?.employee_code || "INF" + item.employee_id.substring(0, 4).toUpperCase();
-  const designation = (employee as any)?.job_title || (employee as any)?.designation || "Software Engineer";
-  const department = employee?.department_name || "Engineering";
-  const dateOfJoining = employee?.hire_date ? new Date(employee.hire_date).toLocaleDateString("en-GB") : "01/08/2026";
-  const bankAccount = (employee as any)?.bank_account_number || "33138340254";
-  const workLocation = (employee as any)?.work_location || company?.city || "Corporate HQ";
+  // Only real data from the record is shown; anything missing reads "—" instead of
+  // invented sample values (a fixed bank account number was shown before, BUG-037).
+  const designation = (employee as any)?.position || (employee as any)?.job_title || "—";
+  const department = employee?.department_name || "—";
+  const dateOfJoining = employee?.hire_date ? new Date(employee.hire_date).toLocaleDateString("en-GB") : "—";
+  const rawAccount: string | undefined = (employee as any)?.bank_account_last4 || (employee as any)?.bank_account_number;
+  // A payslip never shows a full account number: last 4 digits only.
+  const bankAccount = rawAccount ? `XXXX${String(rawAccount).slice(-4)}` : "—";
+  const workLocation = (employee as any)?.work_location || company?.city || "—";
 
   const netPayNum = Number(item.net_salary) || 0;
   const grossPayNum = Number(item.gross_salary) || 0;
@@ -254,8 +258,6 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                 <span style={{ color: "#64748b" }}>Pay Period</span>
                 <span style={{ color: "#334155" }}>: {monthName} {year}</span>
 
-                <span style={{ color: "#64748b" }}>Pay Date</span>
-                <span style={{ color: "#334155" }}>: 05/{String(new Date().getMonth() + 1).padStart(2, "0")}/{year}</span>
 
                 <span style={{ color: "#64748b" }}>Bank Account No</span>
                 <span style={{ color: "#334155" }}>: {bankAccount}</span>
@@ -316,7 +318,6 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                   <tr style={{ borderBottom: "1.5px solid #cbd5e1" }}>
                     <th style={{ textAlign: "left", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>EARNINGS</th>
                     <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>AMOUNT</th>
-                    <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>YTD</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -327,19 +328,13 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                         <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
                           ₹{Number(e.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
-                        <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b" }}>
-                          ₹{(Number(e.amount) * (new Date().getMonth() + 1)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "8px 0", color: "#334155" }}>Basic Pay</td>
+                      <td style={{ padding: "8px 0", color: "#334155" }}>Gross pay (no breakdown recorded)</td>
                       <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
                         ₹{grossPayNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b" }}>
-                        ₹{(grossPayNum * 3).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
                     </tr>
                   )}
@@ -347,9 +342,6 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                     <td style={{ padding: "10px 0", color: "#0f172a" }}>Gross Earnings</td>
                     <td style={{ padding: "10px 0", textAlign: "right", color: "#16a34a" }}>
                       ₹{grossPayNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ padding: "10px 0", textAlign: "right", color: "#64748b" }}>
-                      —
                     </td>
                   </tr>
                 </tbody>
@@ -363,7 +355,6 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                   <tr style={{ borderBottom: "1.5px solid #cbd5e1" }}>
                     <th style={{ textAlign: "left", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>DEDUCTIONS</th>
                     <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>AMOUNT</th>
-                    <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>YTD</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -374,19 +365,13 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                         <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#dc2626" }}>
                           ₹{Number(d.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
-                        <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b" }}>
-                          ₹{(Number(d.amount) * (new Date().getMonth() + 1)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "8px 0", color: "#334155" }}>Professional Tax</td>
+                      <td style={{ padding: "8px 0", color: "#334155" }}>Deductions (no breakdown recorded)</td>
                       <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#dc2626" }}>
                         ₹{totalDeductionsNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
-                      <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b" }}>
-                        ₹{(totalDeductionsNum * 3).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
                     </tr>
                   )}
@@ -394,9 +379,6 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                     <td style={{ padding: "10px 0", color: "#0f172a" }}>Total Deductions</td>
                     <td style={{ padding: "10px 0", textAlign: "right", color: "#dc2626" }}>
                       ₹{totalDeductionsNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ padding: "10px 0", textAlign: "right", color: "#64748b" }}>
-                      —
                     </td>
                   </tr>
                 </tbody>

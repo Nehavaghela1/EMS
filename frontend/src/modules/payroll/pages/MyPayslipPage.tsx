@@ -487,7 +487,7 @@ export function MyPayslipPage() {
                     <p style={{ fontSize: "0.8rem", color: "var(--color-muted, #6b7280)", margin: "2px 0 0" }}>
                       Registered Office: {
                         [company?.address, company?.city, company?.state, company?.pincode].filter(Boolean).join(", ") ||
-                        (company?.city ? `${company.city}, ${company.state || "India"}` : "Plot 42, Corporate Tech Park, SG Highway, Gujarat 380015")
+                        "—"
                       }
                     </p>
                     <p style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", margin: "1px 0 0" }}>
