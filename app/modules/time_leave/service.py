@@ -126,6 +126,14 @@ class NoCheckInError(AppError):
         super().__init__("No check-in record found for today.")
 
 
+class AlreadyCheckedOutError(AppError):
+    status_code = 400
+    code = "already_checked_out"
+
+    def __init__(self) -> None:
+        super().__init__("You have already checked out today.")
+
+
 class InvalidCheckOutError(AppError):
     status_code = 400
     code = "invalid_check_out"
@@ -296,6 +304,11 @@ class AttendanceService:
             raise NotFoundError("You do not have an employee record.")
         record = self.repo.get_open_for_employee(company_id, employee.id)
         if record is None:
+            today_record = self.repo.get_by_employee_and_date(
+                company_id, employee.id, utcnow().date()
+            )
+            if today_record is not None and today_record.check_out is not None:
+                raise AlreadyCheckedOutError()
             raise NoCheckInError()
         assert record.check_in is not None  # guaranteed by get_open_for_employee's own filter
         now = utcnow()
@@ -402,6 +415,18 @@ class AttendanceService:
 
         eff_check_in = updates.get("check_in", record.check_in)
         eff_check_out = updates.get("check_out", record.check_out)
+
+        # HR corrections follow the same time rules as an employee's regularization
+        # request: no future times, check-out after check-in, on the record's date
+        # (check-out may run into the next morning), and at most 24 hours worked.
+        new_in, new_out = updates.get("check_in"), updates.get("check_out")
+        if new_in is not None or new_out is not None:
+            self._validate_regularization_times(record, new_in, new_out)
+        if eff_check_in and eff_check_out:
+            if eff_check_out <= eff_check_in:
+                raise ValidationError("The check-out time must be after the check-in time.")
+            if eff_check_out - eff_check_in > timedelta(hours=24):
+                raise ValidationError("A single attendance record cannot be longer than 24 hours.")
 
         if eff_check_in and eff_check_out and eff_check_out > eff_check_in:
             calc_hours = (
@@ -956,8 +981,11 @@ class AttendanceService:
             leave = leave_by_date.get(d)
 
             # Enterprise Priority Hierarchy (Zoho / Keka):
-            # Priority 1: Approved / Pending Leave
-            if leave is not None:
+            # Priority 1: Approved leave, or a pending leave on a day with no punch. A
+            # real punch beats a pending leave: that leave can no longer be approved
+            # for a day the employee worked (BUG-031).
+            punched = att is not None and att.check_in is not None
+            if leave is not None and (leave.status == LeaveStatus.approved or not punched):
                 half_label = "1st Half" if leave.half_day_session == "first_half" else "2nd Half"
                 session_str = f" ({half_label})" if leave.half_day_session else ""
                 if leave.status == LeaveStatus.approved:
@@ -1841,6 +1869,11 @@ class LeaveService:
             raise ValidationError(
                 "A half day leave can only be for a single date.",
                 details={"field": "is_half_day"},
+            )
+        if data.is_half_day and data.half_day_session is None:
+            raise ValidationError(
+                "Choose the first half or the second half for a half day leave.",
+                details={"field": "half_day_session"},
             )
         half_day_session = data.half_day_session if data.is_half_day else None
         settings_row = self.settings_repo.get_by_company(company_id)

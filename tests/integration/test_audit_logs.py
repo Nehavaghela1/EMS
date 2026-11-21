@@ -96,6 +96,7 @@ def test_leave_approve_and_reject_each_write_an_audit_row(client, company_a, db)
             "start_date": "2031-04-07",
             "end_date": "2031-04-07",
             "is_half_day": True,
+            "half_day_session": "first_half",
             "reason": "Audit check",
         },
     ).json()
@@ -115,6 +116,7 @@ def test_leave_approve_and_reject_each_write_an_audit_row(client, company_a, db)
             "start_date": "2031-04-08",
             "end_date": "2031-04-08",
             "is_half_day": True,
+            "half_day_session": "first_half",
             "reason": "Audit check 2",
         },
     ).json()

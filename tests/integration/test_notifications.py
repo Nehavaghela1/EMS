@@ -67,6 +67,7 @@ def test_leave_approval_and_rejection_each_notify_the_employee(client, company_a
             "start_date": "2031-05-05",
             "end_date": "2031-05-05",
             "is_half_day": True,
+            "half_day_session": "first_half",
             "reason": "Notify check",
         },
     ).json()
@@ -85,6 +86,7 @@ def test_leave_approval_and_rejection_each_notify_the_employee(client, company_a
             "start_date": "2031-05-06",
             "end_date": "2031-05-06",
             "is_half_day": True,
+            "half_day_session": "first_half",
             "reason": "Notify check 2",
         },
     ).json()
@@ -137,6 +139,7 @@ def test_mark_one_read_and_mark_all_read_and_unread_count(client, company_a, db)
                 "start_date": f"2031-06-{10 + i:02d}",
                 "end_date": f"2031-06-{10 + i:02d}",
                 "is_half_day": True,
+                "half_day_session": "first_half",
                 "reason": f"Mark read check {i}",
             },
         ).json()
@@ -187,6 +190,7 @@ def test_a_notification_belonging_to_another_user_404s_not_403s(client, company_
             "start_date": "2031-07-01",
             "end_date": "2031-07-01",
             "is_half_day": True,
+            "half_day_session": "first_half",
             "reason": "404 check",
         },
     ).json()

@@ -66,6 +66,11 @@ class AttendanceRegularizeRequest(BaseModel):
     notes: str | None = None
     reason: str
 
+    @field_validator("check_in", "check_out")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        return _as_utc(value)
+
 
 def _as_utc(value: datetime | None) -> datetime | None:
     """A time without a zone is taken as UTC (the server stores UTC only)."""
