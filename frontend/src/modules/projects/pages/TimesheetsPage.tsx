@@ -280,13 +280,16 @@ export function TimesheetsPage() {
   // Compute daily hours mapped to dates
   const dailyHoursMap = useMemo(() => {
     const map: Record<string, number> = {};
-    for (const e of entries) {
+    for (const e of myEntries) {
       if (e.date) {
         map[e.date] = (map[e.date] || 0) + (Number(e.hours) || 0);
       }
     }
     return map;
-  }, [entries]);
+    // My own entries only: this strip sits under "My Time Logs", and the KPI
+    // tiles above it count myEntries too, so counting the team here made the
+    // two disagree for HR and managers.
+  }, [myEntries]);
 
   const thisWeekTotalHours = useMemo(() => {
     return currentWeekDays.reduce((acc, d) => acc + (dailyHoursMap[d.iso] || 0), 0);
