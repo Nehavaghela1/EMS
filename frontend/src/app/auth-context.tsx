@@ -58,6 +58,8 @@ async function fetchMe(): Promise<CurrentUser> {
   return data;
 }
 
+const LOGOUT_SIGNAL_KEY = "ems_logout_signal";
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [user, setUser] = useState<CurrentUser | null>(null);
@@ -69,6 +71,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setStatus("unauthenticated");
   }, []);
+
+  // After logout, other copies of the app must not keep showing data:
+  // - a page the browser restores from its back/forward cache still holds its own
+  //   in-memory token, so a restored page reloads and boots again (the revoked
+  //   refresh cookie then sends it to /login);
+  // - other open tabs hear the logout through localStorage and clear at once.
+  useEffect(() => {
+    function onPageShow(event: PageTransitionEvent) {
+      if (event.persisted) window.location.reload();
+    }
+    function onStorage(event: StorageEvent) {
+      if (event.key === LOGOUT_SIGNAL_KEY) {
+        clearSession();
+        queryClient.clear();
+      }
+    }
+    window.addEventListener("pageshow", onPageShow);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("pageshow", onPageShow);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [clearSession, queryClient]);
 
   // The interceptor calls this when a refresh-and-retry both fail — the
   // session is over from an already-in-flight request, not just at boot,
@@ -134,6 +159,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Drop every cached API response, so nothing from this session can be
       // shown again by the browser Back button or the next user of this tab.
       queryClient.clear();
+      try {
+        localStorage.setItem(LOGOUT_SIGNAL_KEY, String(Date.now()));
+      } catch {
+        // storage unavailable: this tab is still logged out
+      }
     }
   }, [clearSession, queryClient]);
 
