@@ -8,6 +8,7 @@ import { EmployeeListPage } from "../pages/EmployeeListPage";
 import * as AuthContextModule from "../../../app/auth-context";
 import * as HrApi from "../api";
 import * as ToastContextModule from "../../../app/toast-context";
+import * as IdentityApi from "../../identity/api";
 
 vi.mock("../api", async () => {
   const actual = await vi.importActual<typeof import("../api")>("../api");
@@ -26,6 +27,11 @@ vi.mock("../api", async () => {
     downloadEmployeeExport: vi.fn(),
     searchManagers: vi.fn(),
   };
+});
+
+vi.mock("../../identity/api", async () => {
+  const actual = await vi.importActual<typeof import("../../identity/api")>("../../identity/api");
+  return { ...actual, listLocations: vi.fn() };
 });
 
 describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
@@ -70,6 +76,26 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
       has_next: false,
     });
     vi.mocked(HrApi.searchManagers).mockResolvedValue([]);
+    vi.mocked(IdentityApi.listLocations).mockResolvedValue([
+      {
+        id: "loc-1",
+        company_id: "cmp-1",
+        name: "Head Office",
+        code: "HO",
+        is_head_office: true,
+        address_line1: null,
+        address_line2: null,
+        city: null,
+        state: null,
+        pincode: null,
+        country: "IN",
+        latitude: null,
+        longitude: null,
+        geofence_radius_m: 150,
+        is_active: true,
+        created_at: "2024-01-01",
+      },
+    ] as unknown as Awaited<ReturnType<typeof IdentityApi.listLocations>>);
   });
 
   describe("EmployeeFormPage (F1, F2, F3)", () => {
@@ -181,6 +207,55 @@ describe("Sub-feature 2.4: Bulk actions and Export Frontend", () => {
         expect(HrApi.updateEmployee).toHaveBeenCalledWith("emp-1", {
           last_name: "Johnson",
         });
+      });
+    });
+
+    it("F2b: clearing the work location sends null, not an empty body", async () => {
+      const existingEmpData: HrApi.Employee = {
+        id: "emp-1",
+        user_id: "usr-other",
+        employee_code: "EMP-001",
+        first_name: "Alice",
+        last_name: "Smith",
+        email: "alice@company.com",
+        personal_email: "alice@gmail.com",
+        phone: "+1234567890",
+        department_id: "dept-1",
+        department_name: "Engineering",
+        location_id: "loc-1",
+        position: "Developer",
+        level: "L2",
+        reporting_manager_id: null,
+        employment_type: "full_time",
+        hire_date: "2024-01-01",
+        probation_end_date: null,
+        notice_period_days: 60,
+        is_active: true,
+        invitation_status: "activated",
+        created_at: "2024-01-01",
+      };
+      vi.mocked(HrApi.getEmployee).mockResolvedValue(existingEmpData);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={["/employees/emp-1/edit"]}>
+            <Routes>
+              <Route path="/employees/:id/edit" element={<EmployeeFormPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      const locationSelect = await screen.findByLabelText(/work location/i);
+      await waitFor(() => {
+        expect((locationSelect as HTMLSelectElement).value).toBe("loc-1");
+      });
+
+      await userEvent.selectOptions(locationSelect, "");
+      await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+      await waitFor(() => {
+        expect(HrApi.updateEmployee).toHaveBeenCalledWith("emp-1", { location_id: null });
       });
     });
 
