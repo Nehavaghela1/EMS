@@ -12,6 +12,10 @@ import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { formatDate } from "../../../shared/utils/date";
 import { parseApiError } from "../../../shared/api/errors";
+import { uploadFile } from "../../platform/api";
+
+const RECEIPT_TYPES = ["application/pdf", "image/png", "image/jpeg"];
+const RECEIPT_MAX_BYTES = 25 * 1024 * 1024;
 
 export function ReimbursementsPage() {
   const { user } = useAuth();
@@ -80,17 +84,34 @@ export function ReimbursementsPage() {
       notify("Please provide a valid amount and description", "error");
       return;
     }
+    // Every claim needs a receipt: the API requires file_object_id, so the
+    // chosen file is uploaded first and its id travels with the claim.
+    if (!receiptFile) {
+      notify("Attach the receipt (PDF, PNG or JPG) before submitting.", "error");
+      return;
+    }
+    if (!RECEIPT_TYPES.includes(receiptFile.type)) {
+      notify("The receipt must be a PDF, PNG or JPG file.", "error");
+      return;
+    }
+    if (receiptFile.size > RECEIPT_MAX_BYTES) {
+      notify("The receipt must be 25 MB or smaller.", "error");
+      return;
+    }
     setSubmitting(true);
     try {
+      const uploaded = await uploadFile(receiptFile);
       await submitReimbursement({
         type,
         amount,
         expense_date: expenseDate,
         description,
+        file_object_id: uploaded.file_object_id,
       });
       notify("Reimbursement claim submitted successfully", "success");
       setShowSubmitModal(false);
       setDescription("");
+      setReceiptFile(null);
       fetchClaims();
     } catch (err: unknown) {
       const parsed = parseApiError(err);
@@ -360,7 +381,7 @@ export function ReimbursementsPage() {
 
               {/* Receipt Drag & Drop Zone */}
               <div className="field">
-                <label>Receipt / Invoice Attachment (PDF / PNG / JPG)</label>
+                <label>Receipt / Invoice Attachment (PDF / PNG / JPG) <span style={{ color: "#dc2626" }}>*</span></label>
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
