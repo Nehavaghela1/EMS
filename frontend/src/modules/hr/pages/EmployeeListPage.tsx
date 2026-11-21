@@ -163,6 +163,20 @@ export function EmployeeListPage() {
     status: string;
     error: string | null;
   }>({ loading: false, jobId: null, status: "", error: null });
+  const exportCancelledRef = useRef(false);
+  const exportStartedAtRef = useRef(0);
+  const [exportSlow, setExportSlow] = useState(false);
+
+  // After 20 seconds still queued, warn that the worker may be down (BUG-104).
+  useEffect(() => {
+    if (!exportState.loading) {
+      setExportSlow(false);
+      return;
+    }
+    const remaining = Math.max(0, 20000 - (Date.now() - exportStartedAtRef.current));
+    const timer = setTimeout(() => setExportSlow(true), remaining);
+    return () => clearTimeout(timer);
+  }, [exportState.loading]);
 
   // Zoho custom views
   const [activeViewFilter, setActiveViewFilter] = useState<
@@ -257,6 +271,8 @@ export function EmployeeListPage() {
       if (activeViewFilter === "inactive") exportParams.is_active = false;
 
       const { job_id } = await requestEmployeeExport(exportParams);
+      exportCancelledRef.current = false;
+      exportStartedAtRef.current = Date.now();
       setExportState({ loading: true, jobId: job_id, status: "queued", error: null });
 
       // F-3: Poll every 2 seconds, give up after 2 minutes (60 attempts * 2000ms = 120s)
@@ -265,9 +281,11 @@ export function EmployeeListPage() {
       const pollInterval = 2000;
 
       const poll = async () => {
+        if (exportCancelledRef.current) return;
         try {
           attempts++;
           const statusRes = await getJobStatus(job_id);
+          if (exportCancelledRef.current) return;
           setExportState({ loading: true, jobId: job_id, status: statusRes.status, error: statusRes.error || null });
 
           if (statusRes.status === "success") {
@@ -299,6 +317,13 @@ export function EmployeeListPage() {
       setExportState({ loading: false, jobId: null, status: "", error: parsed.message });
       notify(parsed.message || "Failed to start export.", "error");
     }
+  }
+
+  function handleCancelExport() {
+    // Stops polling and closes the dialog; the job itself may still finish later.
+    exportCancelledRef.current = true;
+    setExportState({ loading: false, jobId: null, status: "", error: null });
+    notify("Export cancelled. You can start it again at any time.", "info");
   }
 
   function handleExportSelected() {
@@ -1348,6 +1373,20 @@ export function EmployeeListPage() {
             <p style={{ margin: 0, fontSize: "0.85rem", color: "#64748b" }}>
               Status: <strong>{exportState.status}</strong>. Your download will start automatically once ready.
             </p>
+            {exportSlow && (
+              <p role="alert" style={{ margin: "12px 0 0", fontSize: "0.85rem", color: "#b45309" }}>
+                This is taking longer than expected. The background worker may be offline. You can cancel and try
+                again later.
+              </p>
+            )}
+            <button
+              type="button"
+              className="btn btn-outline"
+              style={{ marginTop: "16px" }}
+              onClick={handleCancelExport}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}

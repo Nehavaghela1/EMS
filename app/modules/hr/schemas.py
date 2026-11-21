@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from app.core.time import utcnow
+from app.core.validators import clean_phone
 from app.modules.hr.models import EmploymentType, InvitationStatus
 
 
@@ -88,6 +89,13 @@ class EmployeeCreateRequest(BaseModel):
     notice_period_days: int | None = Field(default=None, ge=0, le=365)
     is_attendance_exempt: bool = False
 
+    @model_validator(mode="after")
+    def _probation_not_before_hire(self) -> "EmployeeCreateRequest":
+        # Same rule the edit route already applies.
+        if self.probation_end_date and self.probation_end_date < self.hire_date:
+            raise ValueError("Probation end date cannot be earlier than hire date.")
+        return self
+
     @field_validator("first_name")
     @classmethod
     def validate_first_name(cls, v: str) -> str:
@@ -109,10 +117,9 @@ class EmployeeCreateRequest(BaseModel):
     def validate_phone(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        s = v.strip()
-        if not s:
+        if not v.strip():
             raise ValueError("Phone cannot be empty string.")
-        return s
+        return clean_phone(v)
 
     @field_validator("position")
     @classmethod
@@ -214,10 +221,9 @@ class EmployeeUpdateRequest(BaseModel):
     def validate_phone(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        s = v.strip()
-        if not s:
+        if not v.strip():
             raise ValueError("Phone cannot be empty string.")
-        return s
+        return clean_phone(v)
 
     @field_validator("position")
     @classmethod
@@ -650,12 +656,7 @@ class EmployeeEmergencyContactCreate(BaseModel):
             s = v.strip()
             if not s:
                 raise ValueError("Phone cannot be empty.")
-            # Allowed characters: digits, +, -, space, (, )
-            import re
-
-            if not re.match(r"^[0-9+\-\s()]+$", s) or not re.search(r"\d", s):
-                raise ValueError("Invalid phone format.")
-            return s
+            return clean_phone(s)
         return v
 
 
@@ -689,11 +690,7 @@ class EmployeeEmergencyContactUpdate(BaseModel):
             s = v.strip()
             if not s:
                 raise ValueError("Phone cannot be empty.")
-            import re
-
-            if not re.match(r"^[0-9+\-\s()]+$", s) or not re.search(r"\d", s):
-                raise ValueError("Invalid phone format.")
-            return s
+            return clean_phone(s)
         return v
 
     @model_validator(mode="before")

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
@@ -79,6 +79,9 @@ export function EmployeeFormPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // State updates are async, so a fast double-click could submit twice before
+  // the button disables; this ref blocks the second call at once (BUG-020).
+  const submittingRef = useRef(false);
 
   const departmentsQuery = useQuery({
     queryKey: ["departments", "all-for-form"],
@@ -174,6 +177,7 @@ export function EmployeeFormPage() {
 
   async function handleStep1Submit(e: FormEvent) {
     e.preventDefault();
+    if (submittingRef.current) return;
     setFormError(null);
     setFieldErrors({});
 
@@ -207,12 +211,18 @@ export function EmployeeFormPage() {
       probation_end_date: form.probation_end_date || undefined,
       notice_period_days: form.notice_period_days ? Number(form.notice_period_days) : undefined,
     });
-    if (!parsed.success) {
+    // Department is required by the server; say so here instead of sending a
+    // request that comes back with a technical UUID error (BUG-022).
+    const departmentMissing = !isEdit && !form.department_id;
+    if (!parsed.success || departmentMissing) {
       const errors: Record<string, string> = {};
-      for (const issue of parsed.error.issues) {
-        const key = issue.path[0];
-        if (typeof key === "string") errors[key] = issue.message;
+      if (!parsed.success) {
+        for (const issue of parsed.error.issues) {
+          const key = issue.path[0];
+          if (typeof key === "string") errors[key] = issue.message;
+        }
       }
+      if (departmentMissing) errors.department_id = "Department is required.";
       setFieldErrors(errors);
       return;
     }
@@ -234,6 +244,7 @@ export function EmployeeFormPage() {
       notice_period_days: form.notice_period_days ? Number(form.notice_period_days) : undefined,
     };
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       if (isEdit && id) {
@@ -284,6 +295,7 @@ export function EmployeeFormPage() {
       const fromServer = fieldErrorsFromDetails(parsedErr.details);
       if (Object.keys(fromServer).length > 0) setFieldErrors(fromServer);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }

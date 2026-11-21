@@ -721,8 +721,7 @@ class EmployeeService:
             raise ConflictError("You cannot deactivate your own account.")
 
         # Company owner protection (R4)
-        company = self.company_repo.get_by_id(company_id)
-        if company and company.owner_user_id and employee.user_id == company.owner_user_id:
+        if self._is_company_owner(company_id, employee.user_id):
             raise ConflictError("Cannot deactivate the company owner.")
 
         # Already inactive: 204 no-op, no new audit log
@@ -838,6 +837,15 @@ class EmployeeService:
             details={"employee_code": emp.employee_code},
         )
 
+    def _is_company_owner(self, company_id: uuid.UUID, user_id: uuid.UUID | None) -> bool:
+        if user_id is None:
+            return False
+        company = self.company_repo.get_by_id(company_id)
+        if company and company.owner_user_id and user_id == company.owner_user_id:
+            return True
+        user = self.user_repo.get_by_id(user_id, company_id)
+        return bool(user and user.role == UserRole.owner)
+
     def bulk_deactivate(
         self, company_id: uuid.UUID, employee_ids: list[uuid.UUID], actor: User
     ) -> dict[str, Any]:
@@ -851,9 +859,6 @@ class EmployeeService:
         succeeded: list[uuid.UUID] = []
         skipped: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
-
-        company = self.company_repo.get_by_id(company_id)
-        company_owner_id = company.owner_user_id if company else None
 
         for emp_id in unique_ids:
             # Per-employee isolation via savepoint
@@ -873,8 +878,10 @@ class EmployeeService:
                     sp.commit()
                     continue
 
-                # Check company owner
-                if company_owner_id and emp.user_id == company_owner_id:
+                # Check company owner: the recorded owner, or any user with the owner
+                # role (companies can have more than one owner, and old companies
+                # may have no owner_user_id recorded).
+                if self._is_company_owner(company_id, emp.user_id):
                     skipped.append({"id": emp_id, "reason": "is_company_owner"})
                     sp.commit()
                     continue
@@ -1373,7 +1380,9 @@ class EmployeeService:
         today = utcnow().date()
         # State check:
         if employee.resignation_status == ResignationStatus.approved:
-            if not is_admin_role:
+            # An approved resignation can only be amended (approved=True), never
+            # flipped to rejected: the second of two opposite decisions gets 409.
+            if not is_admin_role or not data.approved:
                 raise ConflictError(
                     "Resignation is not pending decision (current status: approved)."
                 )
@@ -1420,7 +1429,10 @@ class EmployeeService:
             raise ConflictError(f"Resignation is not pending decision (current status: {st}).")
 
         if not data.approved:
-            self.repo.update(employee, resignation_status=ResignationStatus.rejected)
+            # A rejected resignation schedules no exit, so its last working date goes.
+            self.repo.update(
+                employee, resignation_status=ResignationStatus.rejected, last_working_date=None
+            )
             self.audit.record(
                 company_id=company_id,
                 actor=actor,
