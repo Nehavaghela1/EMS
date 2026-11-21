@@ -21,7 +21,7 @@ import {
   listDepartments,
   type Employee,
 } from "../api";
-import { getMyCompany } from "../../identity/api";
+import { getMyCompany, listLocations } from "../../identity/api";
 import { getPositionsForDepartment, getPositionsForIndustry, toTitleCase } from "../constants/departmentPositions";
 import { ManagerCombobox } from "../components/ManagerCombobox";
 import {
@@ -132,6 +132,11 @@ export function EmployeeProfilePage() {
     queryKey: ["leave-types"],
     queryFn: listLeaveTypes,
     enabled: showLeaveModal,
+  });
+
+  const locationsQuery = useQuery({
+    queryKey: ["company", "locations"],
+    queryFn: () => listLocations(),
   });
 
   const companyQuery = useQuery({
@@ -1046,7 +1051,10 @@ export function EmployeeProfilePage() {
                 />
                 <Field
                   label="Work Location"
-                  value={e.company_name ? `${e.company_name} - Head Office` : "Head Office"}
+                  value={
+                    (e.location_id && locationsQuery.data?.find((loc) => loc.id === e.location_id)?.name) ||
+                    "Unassigned"
+                  }
                   isLocked={!isHr}
                 />
                 <Field
