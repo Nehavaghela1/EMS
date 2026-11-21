@@ -2,10 +2,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ReimbursementsPage } from "../pages/ReimbursementsPage";
 import * as payrollApi from "../api";
+import * as platformApi from "../../platform/api";
 import * as AuthContextModule from "../../../app/auth-context";
 import { ToastProvider } from "../../../app/toast-context";
 
 vi.mock("../api");
+vi.mock("../../platform/api");
 
 const mockClaims: payrollApi.Reimbursement[] = [
   {
@@ -130,16 +132,52 @@ describe("Sub-feature 5.6: ReimbursementsPage Frontend", () => {
     const descInput = screen.getByPlaceholderText(/Explain the expense details/i);
     fireEvent.change(descInput, { target: { value: "Team lunch meeting" } });
 
+    // The API requires a receipt, so the page uploads the chosen file first and
+    // sends its id with the claim.
+    vi.mocked(platformApi.uploadFile).mockResolvedValue({
+      file_object_id: "file-new-1",
+      file_name: "receipt.pdf",
+      file_type: "application/pdf",
+      file_size: 1024,
+    });
+    const receipt = new File(["receipt"], "receipt.pdf", { type: "application/pdf" });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [receipt] } });
+
     const submitBtn = screen.getByRole("button", { name: /^Submit$/i });
     fireEvent.click(submitBtn);
 
     await waitFor(() => {
+      expect(platformApi.uploadFile).toHaveBeenCalledWith(receipt);
       expect(payrollApi.submitReimbursement).toHaveBeenCalledWith(
         expect.objectContaining({
           description: "Team lunch meeting",
+          file_object_id: "file-new-1",
         })
       );
     });
+  });
+
+  it("5.6 F2b: refuses to submit a claim with no receipt attached", async () => {
+    render(
+      <ToastProvider>
+        <ReimbursementsPage />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /\+ Submit Claim/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /\+ Submit Claim/i }));
+    fireEvent.change(screen.getByPlaceholderText(/Explain the expense details/i), {
+      target: { value: "No receipt attached" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Submit$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Attach the receipt/i)).toBeInTheDocument();
+    });
+    expect(payrollApi.submitReimbursement).not.toHaveBeenCalled();
   });
 
   it("5.6 F3: opens review modal for pending claim and approves it", async () => {
