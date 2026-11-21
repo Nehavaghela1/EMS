@@ -42,6 +42,7 @@ export interface GoalsCreateInput {
 
 export interface PerformanceGoal {
   id: string;
+  progress?: number;
   employee_id: string;
   cycle_id: string;
   title: string;
@@ -135,6 +136,12 @@ export async function updatePerformanceGoal(
 ): Promise<PerformanceGoal> {
   const res = await apiClient.put<PerformanceGoal>(`/performance/goals/${id}`, data);
   return res.data;
+}
+
+/** PUT /performance/goals/{id}/progress — 0 to 100; the server keeps the history. */
+export async function updateGoalProgress(goalId: string, progress: number, notes?: string): Promise<PerformanceGoal> {
+  const { data } = await apiClient.put<PerformanceGoal>(`/performance/goals/${goalId}/progress`, { progress, notes });
+  return data;
 }
 
 export async function submitSelfReview(goalId: string, data: SelfReviewInput): Promise<PerformanceReview> {
