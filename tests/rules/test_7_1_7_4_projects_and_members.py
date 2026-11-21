@@ -307,7 +307,7 @@ def test_7_1_r3_validation_rules(client: TestClient, db: Session, p1_setup: dict
     )
     assert r_diff_comp_mgr.status_code == 422
 
-    # 5. Duplicate name among live projects -> 422
+    # 5. Duplicate name among live projects -> 409 (a conflict, like a duplicate code)
     r_ok = client.post(
         "/api/v1/projects",
         json={"name": "Unique Project One", "code": "PRJ-UP1"},
@@ -320,7 +320,7 @@ def test_7_1_r3_validation_rules(client: TestClient, db: Session, p1_setup: dict
         json={"name": "Unique Project One", "code": "PRJ-UP2"},
         headers=hr_headers,
     )
-    assert r_dup_name.status_code == 422
+    assert r_dup_name.status_code == 409
 
 
 def test_7_1_r4_r5_lifecycle_archiving_and_delete_protection(

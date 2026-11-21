@@ -236,7 +236,7 @@ export function ProjectDetailPage() {
         err?.response?.data?.error?.message ||
         err?.response?.data?.message ||
         err?.message ||
-        "Failed to upload document. Please ensure the file is under 25MB.";
+        "Failed to upload document. Please ensure the file is under 10MB.";
       notify(errorMsg, "error");
     } finally {
       setUploadingDoc(false);
@@ -2536,8 +2536,8 @@ export function ProjectDetailPage() {
                   accept=".pdf,.docx,.png,.jpg,.jpeg"
                   onChange={(e) => {
                     const file = e.target.files?.[0] || null;
-                    if (file && file.size > 25 * 1024 * 1024) {
-                      notify("File size exceeds the 25MB limit.", "error");
+                    if (file && file.size > 10 * 1024 * 1024) {
+                      notify("File size exceeds the 10 MB limit for project documents.", "error");
                       e.target.value = "";
                       setUploadFile(null);
                       return;
@@ -2547,7 +2547,7 @@ export function ProjectDetailPage() {
                   required
                 />
                 <span className="field-hint" style={{ fontSize: "0.75rem", display: "block", marginTop: "3px" }}>
-                  Supported formats: <strong>PDF, DOCX, PNG, JPG, JPEG</strong> up to <strong>25MB</strong>.
+                  Supported formats: <strong>PDF, DOCX, PNG, JPG, JPEG</strong> up to <strong>10MB</strong>.
                 </span>
               </div>
               <div className="field">

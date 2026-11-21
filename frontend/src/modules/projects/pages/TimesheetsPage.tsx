@@ -210,7 +210,13 @@ export function TimesheetsPage() {
     rejected: "badge-danger",
   };
 
-  const pendingEntries = entries.filter((e) => e.status === "draft" || e.status === "submitted");
+  // "My Time Logs" shows only the signed-in person's own entries (BUG-086); the
+  // list API also returns a manager's team for the approvals queue.
+  const myEmployeeId = user?.employee?.id ?? null;
+  const myEntries = myEmployeeId ? entries.filter((e) => e.employee_id === myEmployeeId) : entries;
+  const teamEntries = myEmployeeId ? entries.filter((e) => e.employee_id !== myEmployeeId) : entries;
+  // Only submitted entries wait for approval; a draft is still the employee's (BUG-087).
+  const pendingEntries = teamEntries.filter((e) => e.status === "submitted");
 
   // Overtime helper: Calculate Monday-Sunday total approved/submitted hours for employee in that date's week
   function isWeeklyOvertime(entry: TimeEntry): boolean {
@@ -238,9 +244,9 @@ export function TimesheetsPage() {
   }
 
   // Summary calculations
-  const totalHours = entries.reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
-  const billableHours = entries.filter(e => e.is_billable).reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
-  const approvedHours = entries.filter(e => e.status === "approved").reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
+  const totalHours = myEntries.reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
+  const billableHours = myEntries.filter(e => e.is_billable).reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
+  const approvedHours = myEntries.filter(e => e.status === "approved").reduce((acc, curr) => acc + (Number(curr.hours) || 0), 0);
 
   // Log Time Modal state
   const [showLogModal, setShowLogModal] = useState(false);
@@ -413,7 +419,7 @@ export function TimesheetsPage() {
                 <span className="text-xs text-muted">Complete audit of recorded and approved hours across projects (click row to inspect)</span>
               </div>
               <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                <span className="badge badge-muted">{entries.length} entries</span>
+                <span className="badge badge-muted">{myEntries.length} entries</span>
                 <button
                   type="button"
                   className="btn btn-sm btn-outline"
@@ -428,7 +434,7 @@ export function TimesheetsPage() {
             <div className="table-wrap">
               {loading ? (
                 <div className="empty-state">Loading logs...</div>
-              ) : entries.length === 0 ? (
+              ) : myEntries.length === 0 ? (
                 <div className="empty-state">
                   <p>No time entries recorded yet.</p>
                   <button type="button" className="btn btn-primary btn-sm" onClick={() => setShowLogModal(true)}>
@@ -449,7 +455,7 @@ export function TimesheetsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {entries.map((entry) => {
+                    {myEntries.map((entry) => {
                       const isOT = isWeeklyOvertime(entry);
                       const projName = entry.project_name || projects.find(p => p.id === entry.project_id)?.name || entry.project_id;
                       return (
@@ -615,8 +621,8 @@ export function TimesheetsPage() {
                     className="btn btn-xs btn-outline"
                     style={{ fontSize: "0.75rem", padding: "3px 8px" }}
                     onClick={() => {
-                      if (entries.length > 0) {
-                        const last = entries[0];
+                      if (myEntries.length > 0) {
+                        const last = myEntries[0];
                         setSelectedProjectId(last.project_id);
                         setSelectedTaskId(last.task_id || "");
                         setHours(last.hours ? String(last.hours) : "4");
@@ -774,8 +780,8 @@ export function TimesheetsPage() {
                       <label>Hours Worked *</label>
                       <input
                         type="number"
-                        step="0.25"
-                        min="0.1"
+                        step="0.01"
+                        min="0.01"
                         max="24"
                         placeholder="e.g. 7.5"
                         value={hours}
@@ -991,7 +997,7 @@ export function TimesheetsPage() {
           </div>
 
           <div className="table-wrap">
-            {entries.length === 0 ? (
+            {teamEntries.length === 0 ? (
               <div className="empty-state">No timesheet entries found.</div>
             ) : (
               <table className="data-table">
@@ -1024,13 +1030,13 @@ export function TimesheetsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {entries.map((entry) => {
+                  {teamEntries.map((entry) => {
                     const emp = employeeMap.get(entry.employee_id);
                     const empName =
                       entry.employee_name ||
                       (emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : "Team Member");
                     const empCode = entry.employee_code || emp?.employee_code || null;
-                    const isPending = entry.status === "draft" || entry.status === "submitted";
+                    const isPending = entry.status === "submitted";
                     const isBusy = actionBusy[entry.id];
                     const isOT = isWeeklyOvertime(entry);
                     const projName = entry.project_name || projects.find(p => p.id === entry.project_id)?.name || entry.project_id;

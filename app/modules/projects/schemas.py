@@ -18,7 +18,8 @@ class ProjectBase(BaseModel):
     start_date: date | None = None
     deadline: date | None = None
     end_date: date | None = None
-    budget: Decimal | None = Field(None, ge=0)
+    # Column is NUMERIC(12, 2): a larger value used to crash the insert (BUG-074).
+    budget: Decimal | None = Field(None, ge=0, le=Decimal("9999999999.99"), decimal_places=2)
     manager_id: UUID | None = None
     client_name: str | None = None
 
@@ -44,7 +45,8 @@ class ProjectUpdate(BaseModel):
     start_date: date | None = None
     deadline: date | None = None
     end_date: date | None = None
-    budget: Decimal | None = Field(None, ge=0)
+    # Column is NUMERIC(12, 2): a larger value used to crash the insert (BUG-074).
+    budget: Decimal | None = Field(None, ge=0, le=Decimal("9999999999.99"), decimal_places=2)
     manager_id: UUID | None = None
     client_name: str | None = None
 
@@ -120,7 +122,8 @@ class TaskBase(BaseModel):
     priority: str = Field("medium", pattern="^(critical|high|medium|low)$")
     status: str = Field("todo", pattern="^(todo|in_progress|review|done|cancelled)$")
     due_date: date | None = None
-    estimated_hours: Decimal | None = Field(None, ge=0)
+    # Column is NUMERIC(6, 2) (BUG-076).
+    estimated_hours: Decimal | None = Field(None, ge=0, le=Decimal("9999.99"), decimal_places=2)
     milestone_id: UUID | None = None
     position: int = Field(0, ge=0)
 
@@ -136,7 +139,8 @@ class TaskUpdate(BaseModel):
     priority: str | None = Field(None, pattern="^(critical|high|medium|low)$")
     status: str | None = Field(None, pattern="^(todo|in_progress|review|done|cancelled)$")
     due_date: date | None = None
-    estimated_hours: Decimal | None = Field(None, ge=0)
+    # Column is NUMERIC(6, 2) (BUG-076).
+    estimated_hours: Decimal | None = Field(None, ge=0, le=Decimal("9999.99"), decimal_places=2)
     milestone_id: UUID | None = None
     position: int | None = Field(None, ge=0)
 
@@ -195,23 +199,29 @@ class TimeEntryCreate(BaseModel):
     task_id: UUID | None = None
     employee_id: UUID | None = None
     date: dt.date
-    hours: Decimal = Field(..., gt=0, le=24)
+    # Two decimals at most: 1.255 is refused, not silently rounded (BUG-082).
+    hours: Decimal = Field(..., gt=0, le=24, decimal_places=2)
     description: str | None = None
     is_billable: bool = True
     status: str = Field(default="draft", pattern="^(draft|submitted)$")
     is_overtime: bool = False
-    overtime_multiplier: Decimal | None = None
+    # 1x to 3x; who may set it is checked in the service (BUG-079).
+    overtime_multiplier: Decimal | None = Field(
+        None, ge=Decimal("1"), le=Decimal("3"), decimal_places=2
+    )
 
 
 class TimeEntryUpdate(BaseModel):
     task_id: UUID | None = None
     date: dt.date | None = None
-    hours: Decimal | None = Field(None, gt=0, le=24)
+    hours: Decimal | None = Field(None, gt=0, le=24, decimal_places=2)
     description: str | None = None
     is_billable: bool | None = None
     status: str | None = Field(None, pattern="^(draft|submitted|approved|rejected)$")
     is_overtime: bool | None = None
-    overtime_multiplier: Decimal | None = None
+    overtime_multiplier: Decimal | None = Field(
+        None, ge=Decimal("1"), le=Decimal("3"), decimal_places=2
+    )
 
 
 class TimeEntryResponse(BaseModel):
