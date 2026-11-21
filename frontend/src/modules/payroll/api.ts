@@ -216,6 +216,27 @@ export async function createStructure(data: SalaryStructureCreateInput): Promise
   return res.data;
 }
 
+export interface SalaryStructureUpdateInput {
+  name?: string;
+  level?: string | null;
+  is_active?: boolean;
+  components?: SalaryComponentInput[];
+}
+
+/** PUT /payroll/structures/{id} — components are replaced whole, never patched. */
+export async function updateStructure(
+  id: string,
+  data: SalaryStructureUpdateInput
+): Promise<SalaryStructure> {
+  const res = await apiClient.put<SalaryStructure>(`/payroll/structures/${id}`, data);
+  return res.data;
+}
+
+/** DELETE /payroll/structures/{id} — the server refuses (409) while employees use it. */
+export async function deleteStructure(id: string): Promise<void> {
+  await apiClient.delete(`/payroll/structures/${id}`);
+}
+
 export async function getStructure(id: string): Promise<SalaryStructure> {
   const res = await apiClient.get<SalaryStructure>(`/payroll/structures/${id}`);
   return res.data;

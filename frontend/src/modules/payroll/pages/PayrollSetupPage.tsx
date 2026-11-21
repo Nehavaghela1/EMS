@@ -3,6 +3,9 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   listStructures,
   createStructure,
+  getStructure,
+  updateStructure,
+  deleteStructure,
   assignEmployeeSalary,
   getStatutoryConfig,
   updateStatutoryConfig,
@@ -17,6 +20,7 @@ import {
 import { listEmployees, type Employee } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
 import { parseApiError } from "../../../shared/api/errors";
+import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 
 const SUPPORTED_COUNTRIES = [
   { code: "IN", name: "India" },
@@ -53,6 +57,12 @@ export function PayrollSetupPage() {
   const [structures, setStructures] = useState<SalaryStructureListItem[]>([]);
   const [loadingStructures, setLoadingStructures] = useState(true);
   const [showStructureModal, setShowStructureModal] = useState(autoOpenNew);
+  // Set while editing an existing structure; null means the form creates a new one (BUG-046).
+  const [editingStructureId, setEditingStructureId] = useState<string | null>(null);
+  const [structIsActive, setStructIsActive] = useState(true);
+  const [loadingStructure, setLoadingStructure] = useState(false);
+  const [structureToDelete, setStructureToDelete] = useState<SalaryStructureListItem | null>(null);
+  const [deletingStructure, setDeletingStructure] = useState(false);
 
   // Form for New Structure
   const [structName, setStructName] = useState("");
@@ -161,6 +171,59 @@ export function PayrollSetupPage() {
     }
   }
 
+  function openCreateStructure() {
+    setEditingStructureId(null);
+    setStructIsActive(true);
+    setShowStructureModal(true);
+  }
+
+  async function openEditStructure(row: SalaryStructureListItem) {
+    setLoadingStructure(true);
+    try {
+      const full = await getStructure(row.id);
+      setEditingStructureId(full.id);
+      setStructName(full.name);
+      setStructCountry(full.country);
+      setStructLevel(full.level || "L1");
+      setStructIsActive(full.is_active);
+      setComponents(
+        full.components.map((c, idx) => ({
+          code: c.code,
+          name: c.name,
+          type: c.type,
+          calculation_type: c.calculation_type,
+          value: c.value ?? null,
+          percentage_of: c.percentage_of ?? null,
+          is_taxable: c.is_taxable,
+          is_statutory: c.is_statutory,
+          display_order: c.display_order ?? idx + 1,
+        }))
+      );
+      setShowStructureModal(true);
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setLoadingStructure(false);
+    }
+  }
+
+  async function handleDeleteStructure() {
+    if (!structureToDelete) return;
+    setDeletingStructure(true);
+    try {
+      await deleteStructure(structureToDelete.id);
+      notify("Salary structure deleted.", "success");
+      setStructureToDelete(null);
+      fetchStructures();
+    } catch (err) {
+      // The server refuses with 409 while employees are assigned to it.
+      const parsed = parseApiError(err);
+      notify(parsed.message, parsed.status === 409 ? "warning" : "error");
+    } finally {
+      setDeletingStructure(false);
+    }
+  }
+
   async function handleCreateStructure(e: React.FormEvent) {
     e.preventDefault();
     if (!structName.trim()) {
@@ -202,6 +265,20 @@ export function PayrollSetupPage() {
     }
 
     try {
+      if (editingStructureId) {
+        await updateStructure(editingStructureId, {
+          name: structName,
+          level: structLevel,
+          is_active: structIsActive,
+          components,
+        });
+        notify("Salary structure updated. Issued payslips are unchanged.", "success");
+        setShowStructureModal(false);
+        setEditingStructureId(null);
+        setStructName("");
+        fetchStructures();
+        return;
+      }
       const created = await createStructure({
         name: structName,
         country: structCountry,
@@ -218,7 +295,10 @@ export function PayrollSetupPage() {
       }
     } catch (err: unknown) {
       const parsed = parseApiError(err);
-      notify(parsed.message || "Failed to create structure", parsed.status === 409 ? "warning" : "error");
+      notify(
+        parsed.message || (editingStructureId ? "Failed to update structure" : "Failed to create structure"),
+        parsed.status === 409 ? "warning" : "error"
+      );
     }
   }
 
@@ -338,7 +418,7 @@ export function PayrollSetupPage() {
             </button>
             <div>
               <h1 style={{ fontSize: "1.35rem", fontWeight: 700, color: "#0f172a", margin: 0 }}>
-                Create Salary Structure
+                {editingStructureId ? "Edit Salary Structure" : "Create Salary Structure"}
               </h1>
               <p style={{ margin: "2px 0 0", fontSize: "0.82rem", color: "#64748b" }}>
                 Define annual CTC allocation, earnings, deductions, and statutory compliance components.
@@ -350,7 +430,10 @@ export function PayrollSetupPage() {
             <button
               type="button"
               className="btn btn-ghost"
-              onClick={() => setShowStructureModal(false)}
+              onClick={() => {
+                setShowStructureModal(false);
+                setEditingStructureId(null);
+              }}
               style={{ border: "1px solid #cbd5e1", borderRadius: "6px", padding: "7px 16px", background: "#ffffff" }}
             >
               Cancel
@@ -361,7 +444,7 @@ export function PayrollSetupPage() {
               onClick={handleCreateStructure}
               style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px", padding: "7px 22px", fontWeight: 600 }}
             >
-              Save Salary Structure
+              {editingStructureId ? "Save Changes" : "Save Salary Structure"}
             </button>
           </div>
         </div>
@@ -780,7 +863,7 @@ export function PayrollSetupPage() {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => setShowStructureModal(true)}
+            onClick={openCreateStructure}
             style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px", fontWeight: 600 }}
           >
             + Create Structure
@@ -837,6 +920,7 @@ export function PayrollSetupPage() {
                   <th style={{ padding: "12px 16px" }}>LEVEL</th>
                   <th style={{ padding: "12px 16px" }}>COMPONENTS</th>
                   <th style={{ padding: "12px 16px" }}>STATUS</th>
+                  <th style={{ padding: "12px 16px", textAlign: "right" }}>ACTIONS</th>
                 </tr>
               </thead>
               <tbody>
@@ -860,6 +944,26 @@ export function PayrollSetupPage() {
                         {s.is_active ? "Active" : "Inactive"}
                       </span>
                     </td>
+                    <td style={{ padding: "14px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      {/* BUG-046: the API has had edit and delete all along; the table had no way in. */}
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline"
+                        disabled={loadingStructure}
+                        onClick={() => openEditStructure(s)}
+                        style={{ marginRight: "8px" }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline"
+                        onClick={() => setStructureToDelete(s)}
+                        style={{ color: "#b91c1c", borderColor: "#fecaca" }}
+                      >
+                        Delete
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -867,6 +971,17 @@ export function PayrollSetupPage() {
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={Boolean(structureToDelete)}
+        title="Delete salary structure?"
+        message={`"${structureToDelete?.name ?? ""}" will be removed. A structure that employees are assigned to cannot be deleted.`}
+        confirmLabel="Delete"
+        danger
+        busy={deletingStructure}
+        onConfirm={handleDeleteStructure}
+        onCancel={() => setStructureToDelete(null)}
+      />
 
       {/* Tab 2: Statutory Config */}
       {activeTab === "statutory" && (
