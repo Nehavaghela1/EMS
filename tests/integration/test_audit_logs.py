@@ -59,6 +59,14 @@ def _actions(resp) -> set[str]:
     return {row["action"] for row in resp.json()["items"]}
 
 
+def _audit_leave_day(offset: int) -> str:
+    """Inside the current leave year: a later leave year is refused."""
+    day = utcnow().date() + timedelta(days=offset)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return day.isoformat()
+
+
 def test_employee_create_update_deactivate_each_write_an_audit_row(client, company_a):
     employee = _create_employee(client, company_a.hr_headers)
 
@@ -93,8 +101,8 @@ def test_leave_approve_and_reject_each_write_an_audit_row(client, company_a, db)
         json={
             "employee_id": employee["id"],
             "leave_type_id": leave_type["id"],
-            "start_date": "2031-04-07",
-            "end_date": "2031-04-07",
+            "start_date": _audit_leave_day(5),
+            "end_date": _audit_leave_day(5),
             "is_half_day": True,
             "half_day_session": "first_half",
             "reason": "Audit check",
@@ -113,8 +121,8 @@ def test_leave_approve_and_reject_each_write_an_audit_row(client, company_a, db)
         json={
             "employee_id": employee["id"],
             "leave_type_id": leave_type["id"],
-            "start_date": "2031-04-08",
-            "end_date": "2031-04-08",
+            "start_date": _audit_leave_day(12),
+            "end_date": _audit_leave_day(12),
             "is_half_day": True,
             "half_day_session": "first_half",
             "reason": "Audit check 2",

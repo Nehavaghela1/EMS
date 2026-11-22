@@ -132,3 +132,106 @@ def test_employee_cannot_read_draft_manager_review_by_id(
     assert client.get(f"/api/v1/performance/reviews/{rev_id}", headers=emp_h).status_code == 404
     # The manager who wrote it still sees the draft.
     assert client.get(f"/api/v1/performance/reviews/{rev_id}", headers=mgr_h).status_code == 200
+
+
+# --- BUG-061 ---------------------------------------------------------------------------
+
+
+def test_manager_can_rate_a_goal_once_the_self_review_is_in(
+    client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any]
+):
+    """The 409 seen on the demo data was the data, not the rule (BUG-061).
+
+    A goal only carries a self rating because submit_self_review wrote both the
+    rating and the review row in the same commit, so a goal that shows a self
+    rating can always be reviewed by its manager.
+    """
+    emp_headers = rev_headers(p2_setup["emp_user_a"])
+    mgr_headers = rev_headers(p2_setup["mgr_user_a"])
+    goal_id = setup_active_cycle_with_goals["goal_1_id"]
+
+    # No self-review yet: the manager is refused, and the goal shows no rating.
+    early = client.post(
+        f"/api/v1/performance/goals/{goal_id}/manager-review",
+        json={"rating": 4.0, "comments": "Strong quarter overall."},
+        headers=mgr_headers,
+    )
+    assert early.status_code == 409, early.text
+
+    # The employee submits the self-review; the goal now shows a self rating.
+    self_review = client.post(
+        f"/api/v1/performance/goals/{goal_id}/self-review",
+        json={"rating": 3.5, "comments": "Met the delivery targets."},
+        headers=emp_headers,
+    )
+    assert self_review.status_code == 200, self_review.text
+
+    # The manager can now rate that same goal.
+    mgr = client.post(
+        f"/api/v1/performance/goals/{goal_id}/manager-review",
+        json={"rating": 4.0, "comments": "Strong quarter overall."},
+        headers=mgr_headers,
+    )
+    assert mgr.status_code == 200, mgr.text
+
+
+# --- BUG-071 ---------------------------------------------------------------------------
+
+
+def test_summary_refuses_to_finalize_while_a_manager_review_is_missing(
+    client: TestClient, p2_setup: dict[str, Any], setup_active_cycle_with_goals: dict[str, Any]
+):
+    """No invented ratings: every goal needs a real manager rating (BUG-071)."""
+    emp_headers = rev_headers(p2_setup["emp_user_a"])
+    mgr_headers = rev_headers(p2_setup["mgr_user_a"])
+    hr_headers = rev_headers(p2_setup["hr_a"])
+    employee_id = str(p2_setup["emp_a"].id)
+    cycle_id = setup_active_cycle_with_goals["cycle_id"]
+    goal_1 = setup_active_cycle_with_goals["goal_1_id"]
+    goal_2 = setup_active_cycle_with_goals["goal_2_id"]
+
+    for goal_id in (goal_1, goal_2):
+        assert (
+            client.post(
+                f"/api/v1/performance/goals/{goal_id}/self-review",
+                json={"rating": 3.0, "comments": "Self assessment for the cycle."},
+                headers=emp_headers,
+            ).status_code
+            == 200
+        )
+
+    # Only the first goal is rated by the manager.
+    assert (
+        client.post(
+            f"/api/v1/performance/goals/{goal_1}/manager-review",
+            json={"rating": 5.0, "comments": "Exceeded the target."},
+            headers=mgr_headers,
+        ).status_code
+        == 200
+    )
+
+    early = client.post(
+        f"/api/v1/performance/summary/{employee_id}",
+        json={"cycle_id": cycle_id, "overall_comments": "Finalising early."},
+        headers=hr_headers,
+    )
+    assert early.status_code == 409, early.text
+    assert "manager review" in early.json()["error"]["message"].lower()
+
+    # Once the second goal is rated, the summary finalizes on the real numbers:
+    # 5.0 at 60% + 2.0 at 40% = 3.8, never the old 3.0 fallback.
+    assert (
+        client.post(
+            f"/api/v1/performance/goals/{goal_2}/manager-review",
+            json={"rating": 2.0, "comments": "Below the target."},
+            headers=mgr_headers,
+        ).status_code
+        == 200
+    )
+    ok = client.post(
+        f"/api/v1/performance/summary/{employee_id}",
+        json={"cycle_id": cycle_id, "overall_comments": "Cycle closed."},
+        headers=hr_headers,
+    )
+    assert ok.status_code in (200, 201), ok.text
+    assert float(ok.json()["final_rating"]) == 3.8

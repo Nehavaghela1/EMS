@@ -865,12 +865,33 @@ class PerformanceService:
         if not goals:
             raise ConflictError("Cannot finalize summary for employee with no goals.")
 
+        # A final rating decides an appraisal, so every goal must carry a real
+        # manager rating: a missing one used to fall back to the self rating or
+        # a flat 3.0, which put an invented number on someone's record.
+        missing = [
+            g
+            for g in goals
+            if (
+                rev := self.review_repo.get_by_goal_and_role(company_id, g.id, ReviewerRole.manager)
+            )
+            is None
+            or rev.status != "submitted"
+            or rev.rating is None
+        ]
+        if missing:
+            titles = ", ".join(g.title for g in missing[:3])
+            more = f" and {len(missing) - 3} more" if len(missing) > 3 else ""
+            raise ConflictError(
+                f"{len(missing)} of {len(goals)} goals still have no submitted manager "
+                f"review ({titles}{more}). Finalize the summary once every goal is rated."
+            )
+
         # Calculate weighted average from manager reviews
         weighted_sum = Decimal("0.00")
         for g in goals:
             mgr_rev = self.review_repo.get_by_goal_and_role(company_id, g.id, ReviewerRole.manager)
-            rating = mgr_rev.rating if mgr_rev else g.self_rating or Decimal("3.0")
-            weighted_sum += rating * (g.weightage / Decimal("100.00"))
+            assert mgr_rev is not None and mgr_rev.rating is not None  # checked above
+            weighted_sum += mgr_rev.rating * (g.weightage / Decimal("100.00"))
 
         final_rating = weighted_sum.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
 

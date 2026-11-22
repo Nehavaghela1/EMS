@@ -4,10 +4,21 @@ mark-one-read, mark-all-read, unread count.
 """
 
 import uuid
+from datetime import timedelta
 
 from app.core.security import create_access_token, hash_password
+from app.core.time import utcnow
 from app.modules.hr.models import Employee
 from app.modules.identity.models import User, UserRole
+
+
+def _leave_day(offset: int = 3) -> str:
+    """A working day inside the current leave year. A leave cannot be applied
+    for in a later leave year, so fixed far-future dates do not work here."""
+    day = utcnow().date() + timedelta(days=offset)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return day.isoformat()
 
 
 def _create_employee(client, headers, **overrides) -> dict:
@@ -64,8 +75,8 @@ def test_leave_approval_and_rejection_each_notify_the_employee(client, company_a
         json={
             "employee_id": employee["id"],
             "leave_type_id": leave_type["id"],
-            "start_date": "2031-05-05",
-            "end_date": "2031-05-05",
+            "start_date": _leave_day(3),
+            "end_date": _leave_day(3),
             "is_half_day": True,
             "half_day_session": "first_half",
             "reason": "Notify check",
@@ -83,8 +94,8 @@ def test_leave_approval_and_rejection_each_notify_the_employee(client, company_a
         json={
             "employee_id": employee["id"],
             "leave_type_id": leave_type["id"],
-            "start_date": "2031-05-06",
-            "end_date": "2031-05-06",
+            "start_date": _leave_day(10),
+            "end_date": _leave_day(10),
             "is_half_day": True,
             "half_day_session": "first_half",
             "reason": "Notify check 2",
@@ -136,8 +147,8 @@ def test_mark_one_read_and_mark_all_read_and_unread_count(client, company_a, db)
             json={
                 "employee_id": employee["id"],
                 "leave_type_id": leave_type["id"],
-                "start_date": f"2031-06-{10 + i:02d}",
-                "end_date": f"2031-06-{10 + i:02d}",
+                "start_date": _leave_day(20 + i * 3),
+                "end_date": _leave_day(20 + i * 3),
                 "is_half_day": True,
                 "half_day_session": "first_half",
                 "reason": f"Mark read check {i}",
@@ -187,8 +198,8 @@ def test_a_notification_belonging_to_another_user_404s_not_403s(client, company_
         json={
             "employee_id": employee["id"],
             "leave_type_id": leave_type["id"],
-            "start_date": "2031-07-01",
-            "end_date": "2031-07-01",
+            "start_date": _leave_day(40),
+            "end_date": _leave_day(40),
             "is_half_day": True,
             "half_day_session": "first_half",
             "reason": "404 check",

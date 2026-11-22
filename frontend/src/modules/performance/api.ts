@@ -185,7 +185,10 @@ export interface PerformancePIP {
   milestones_kpis?: string | null;
   start_date: string;
   end_date: string;
-  status: "active" | "passed" | "failed" | "cancelled";
+  // Mirrors PIPStatus in app/modules/performance/models.py. "draft" and
+  // "extended" were missing, so a draft plan fell through to the closed branch
+  // and was shown as concluded.
+  status: "draft" | "active" | "extended" | "passed" | "failed" | "cancelled";
   outcome_notes?: string | null;
   evaluated_at?: string | null;
   evaluated_by?: string | null;
@@ -219,6 +222,11 @@ export async function getActivePIP(employeeId: string): Promise<PerformancePIP |
 
 export async function initiatePIP(data: PIPCreateInput): Promise<PerformancePIP> {
   const res = await apiClient.post<PerformancePIP>("/performance/pips", data);
+  return res.data;
+}
+
+export async function activatePIP(pipId: string): Promise<PerformancePIP> {
+  const res = await apiClient.post<PerformancePIP>(`/performance/pips/${pipId}/activate`);
   return res.data;
 }
 

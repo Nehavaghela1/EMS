@@ -5,6 +5,8 @@ import * as api from "../api";
 import * as hrApi from "../../hr/api";
 import { ToastProvider } from "../../../app/toast-context";
 
+import * as AuthContextModule from "../../../app/auth-context";
+
 vi.mock("../api");
 vi.mock("../../hr/api");
 
@@ -67,9 +69,32 @@ function renderComponent() {
   );
 }
 
+const mockHrUser: AuthContextModule.CurrentUser = {
+  id: "usr-hr-1",
+  email: "hr@acme.com",
+  role: "hr_admin",
+  company_id: "cmp-acme",
+  is_active: true,
+  must_change_password: false,
+  employee: null,
+  permissions: [],
+};
+
+function stubAuth(role: "hr_admin" | "manager") {
+  vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+    status: "authenticated",
+    user: { ...mockHrUser, role },
+    login: vi.fn(),
+    establishSession: vi.fn(),
+    logout: vi.fn(),
+    sessionExpired: false,
+  });
+}
+
 describe("PerformanceCyclesPage (6.1 Appraisal Cycles & 6.4 PIPs)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    stubAuth("hr_admin");
     vi.mocked(api.listPerformanceCycles).mockResolvedValue({
       items: mockCycles,
       total: 2,
@@ -201,5 +226,38 @@ describe("PerformanceCyclesPage (6.1 Appraisal Cycles & 6.4 PIPs)", () => {
         expect.objectContaining({ outcome: "passed", outcome_notes: "Demonstrated clear improvement" })
       );
     });
+  });
+
+  it("6.4 F5: a draft PIP offers Activate and is never described as concluded", async () => {
+    vi.mocked(api.listPIPs).mockResolvedValue([
+      { ...mockPips[0], id: "pip-draft", status: "draft" },
+    ]);
+    vi.mocked(api.activatePIP).mockResolvedValue({
+      ...mockPips[0],
+      id: "pip-draft",
+      status: "active",
+    });
+
+    renderComponent();
+    fireEvent.click(await screen.findByRole("button", { name: /Performance Improvement Plans/i }));
+
+    const activateBtn = await screen.findByRole("button", { name: /^Activate$/i });
+    expect(screen.queryByText(/Concluded/i)).not.toBeInTheDocument();
+
+    fireEvent.click(activateBtn);
+    await waitFor(() => {
+      expect(api.activatePIP).toHaveBeenCalledWith("pip-draft");
+    });
+  });
+
+  it("6.5 F1: a manager sees the PIP tab and no appraisal cycles tab", async () => {
+    stubAuth("manager");
+    renderComponent();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Performance Improvement Plans/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /Appraisal Cycles/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /\+ Create Cycle/i })).not.toBeInTheDocument();
   });
 });

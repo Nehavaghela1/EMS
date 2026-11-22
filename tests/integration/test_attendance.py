@@ -298,14 +298,29 @@ def test_short_punch_marks_absent_never_half_day(client, company_a, db):
 def test_regularize_with_timestamps_recomputes_hours_and_status(client, company_a, db):
     """Regularizing check-in and check-out recomputes hours_worked and assigns proper status."""
     employee = _create_employee(client, company_a.hr_headers)
-    own_headers = _link_user_to_employee(
-        db, company_a.company_id, employee["id"], UserRole.employee
+    _link_user_to_employee(db, company_a.company_id, employee["id"], UserRole.employee)
+    # Yesterday's record, so the eight-hour span always fits inside one date
+    # and never reaches into the future. Hanging it off today's check-in made
+    # the test fail whenever it ran before 08:00 UTC.
+    from app.modules.hr.models import Employee
+
+    yesterday = utcnow().date() - timedelta(days=1)
+    emp_row = db.get(Employee, uuid.UUID(employee["id"]))
+    record = Attendance(
+        company_id=company_a.company_id,
+        employee_id=emp_row.id,
+        date=yesterday,
+        check_in=datetime.combine(yesterday, time(9, 0), tzinfo=UTC),
+        status=AttendanceStatus.present,
+        source=AttendanceSource.web,
     )
-    created = client.post("/api/v1/attendance/check-in", headers=own_headers).json()
+    db.add(record)
+    db.commit()
+    created = {"id": str(record.id)}
 
     # Regularize with 8 hours worked
-    in_time = (utcnow() - timedelta(hours=8)).isoformat()
-    out_time = utcnow().isoformat()
+    in_time = datetime.combine(yesterday, time(9, 0), tzinfo=UTC).isoformat()
+    out_time = datetime.combine(yesterday, time(17, 0), tzinfo=UTC).isoformat()
     resp = client.put(
         f"/api/v1/attendance/{created['id']}",
         headers=company_a.hr_headers,

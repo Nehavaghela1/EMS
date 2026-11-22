@@ -220,7 +220,9 @@ export function AppRouter() {
       <Route
         path="/performance"
         element={
-          <Protected roles={["hr_admin", "owner"]}>
+          /* Managers run their own team's PIPs here, which the API already
+             allows; the page hides the HR-only cycles tab from them. */
+          <Protected roles={["hr_admin", "owner", "manager"]}>
             <PerformanceCyclesPage />
           </Protected>
         }
