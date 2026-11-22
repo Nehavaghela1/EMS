@@ -252,3 +252,26 @@ class PerformancePIPResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PIPSeparationDecisionRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    decision: str  # separate, extend, retain
+    last_working_date: date | None = None
+    notice_choice: str | None = None  # served, waived, pay_in_lieu
+    new_end_date: date | None = None
+    reason: str | None = None
+
+
+class PIPSeparationDecisionResponse(BaseModel):
+    id: uuid.UUID
+    pip_id: uuid.UUID
+    decision: str
+    decided_by: uuid.UUID
+    decided_at: datetime
+    last_working_date: date | None = None
+    notice_choice: str | None = None
+    notes: str | None = None
+
+    model_config = {"from_attributes": True}

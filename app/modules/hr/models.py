@@ -167,6 +167,7 @@ class Employee(TenantBase):
     last_working_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     notice_waived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     notice_recovery_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pending_separation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Separation / Involuntary Termination & FnF settlement tracking
     separation_type: Mapped[str | None] = mapped_column(

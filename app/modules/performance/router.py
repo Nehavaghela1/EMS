@@ -29,6 +29,8 @@ from app.modules.performance.schemas import (
     PIPCreateRequest,
     PIPEvaluateRequest,
     PIPExtendRequest,
+    PIPSeparationDecisionRequest,
+    PIPSeparationDecisionResponse,
     ReviewReopenRequest,
     SelfReviewRequest,
     SummaryFinalizeRequest,
@@ -436,5 +438,18 @@ def evaluate_pip(
 ):
     service = PerformanceService(db)
     return service.evaluate_pip(user.company_id, pip_id, data, user)
+
+
+@performance_router.post(
+    "/pips/{pip_id}/separation-decision", response_model=PIPSeparationDecisionResponse
+)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def decide_pip_separation(
+    request: Request,
+    pip_id: uuid.UUID,
+    data: PIPSeparationDecisionRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
+):
     service = PerformanceService(db)
-    return service.evaluate_pip(user.company_id, pip_id, data, user)
+    return service.decide_pip_separation(user.company_id, pip_id, data, user)

@@ -950,13 +950,26 @@ def test_r05_department_head_auto_clear_on_pip_failed(
     res_act = client.post(f"/api/v1/performance/pips/{pip_id}/activate", headers=hr_headers)
     assert res_act.status_code == 200
 
-    # Evaluate PIP with outcome failed -> deactivates employee and should clear department head!
+    # Evaluate PIP with outcome failed -> employee pending separation
     res_eval = client.post(
         f"/api/v1/performance/pips/{pip_id}/evaluate",
         headers=hr_headers,
         json={"outcome": "failed", "outcome_notes": "Did not meet milestones"},
     )
     assert res_eval.status_code == 200
+
+    # Owner confirms separation decision -> clears department head
+    owner_headers = _auth_headers(dept_company["owner"])
+    res_decide = client.post(
+        f"/api/v1/performance/pips/{pip_id}/separation-decision",
+        headers=owner_headers,
+        json={
+            "decision": "separate",
+            "last_working_date": str(utcnow().date()),
+            "notice_choice": "waived",
+        },
+    )
+    assert res_decide.status_code == 200
 
     # Department head must be cleared
     res_check = client.get(f"/api/v1/departments/{dept_id}", headers=hr_headers)

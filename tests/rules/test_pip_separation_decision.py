@@ -1,14 +1,14 @@
 """Tests for PIP Separation Decision Workflow (T1 - T8).
 
 Covers:
-- T1: A failed PIP leaves the employee active with no last working date and no resignation status.
-- T2: The manager who evaluated cannot confirm the separation (403); a different HR admin can.
-- T3: separate sets the last working date HR gave, and notice is NOT waived unless HR explicitly chose waived.
-- T4: extend reopens the PIP with the new end date; retain clears pending_separation.
+- T1: A failed PIP leaves employee active with no LWD and no resignation status.
+- T2: Evaluator cannot confirm separation (403); different HR admin can.
+- T3: separate sets HR's LWD; notice is NOT waived unless explicitly chosen.
+- T4: extend reopens PIP with new end date; retain clears pending_separation.
 - T5: Another company's PIP is 404 on the decision route.
 - T6: Both audit rows exist with the correct actor on each.
 - T7: A decision on a PIP that did not fail returns 409.
-- T8: Rate limit the new route at 30/minute with a 429 test using the shared limits_on fixture.
+- T8: Rate limit route at 30/minute with 429 test using limits_on fixture.
 """
 
 import uuid
@@ -181,7 +181,7 @@ def _create_active_pip(client: TestClient, headers: dict[str, str], emp_id: str)
 def test_t1_failed_pip_leaves_employee_active_pending_separation(
     client: TestClient, db: Session, pip_decision_setup: dict[str, Any]
 ):
-    """T1. A failed PIP leaves the employee active with no last working date and no resignation status."""
+    """T1. A failed PIP leaves employee active with no LWD and no resignation status."""
     mgr_h = _auth_headers(pip_decision_setup["mgr_user"])
     target_emp = pip_decision_setup["target_emp"]
     pip_id = _create_active_pip(client, mgr_h, str(target_emp.id))
@@ -206,7 +206,7 @@ def test_t1_failed_pip_leaves_employee_active_pending_separation(
 def test_t2_evaluator_cannot_confirm_separation_second_approver_can(
     client: TestClient, db: Session, pip_decision_setup: dict[str, Any]
 ):
-    """T2. The manager who evaluated cannot confirm the separation (403); a different HR admin can."""
+    """T2. Evaluator cannot confirm separation (403); different HR admin can."""
     hr1_h = _auth_headers(pip_decision_setup["hr1_user"])
     hr2_h = _auth_headers(pip_decision_setup["hr2_user"])
     target_emp = pip_decision_setup["target_emp"]
@@ -242,7 +242,7 @@ def test_t2_evaluator_cannot_confirm_separation_second_approver_can(
 def test_t3_separate_sets_last_working_date_and_notice_choice(
     client: TestClient, db: Session, pip_decision_setup: dict[str, Any]
 ):
-    """T3. separate sets the last working date HR gave, and notice is NOT waived unless HR explicitly chose waived."""
+    """T3. separate sets HR's lwd; notice is NOT waived unless explicitly chosen."""
     mgr_h = _auth_headers(pip_decision_setup["mgr_user"])
     hr1_h = _auth_headers(pip_decision_setup["hr1_user"])
     target_emp = pip_decision_setup["target_emp"]
@@ -260,7 +260,11 @@ def test_t3_separate_sets_last_working_date_and_notice_choice(
     r_decide = client.post(
         f"/api/v1/performance/pips/{pip_id}/separation-decision",
         headers=hr1_h,
-        json={"decision": "separate", "last_working_date": str(target_lwd), "notice_choice": "served"},
+        json={
+            "decision": "separate",
+            "last_working_date": str(target_lwd),
+            "notice_choice": "served",
+        },
     )
     assert r_decide.status_code == 200
 
@@ -379,8 +383,7 @@ def test_t6_both_audit_rows_exist_with_correct_actor(
     )
 
     audit_eval = db.scalar(
-        select(AuditLog)
-        .where(
+        select(AuditLog).where(
             AuditLog.company_id == pip_decision_setup["cid_a"],
             AuditLog.entity_id == uuid.UUID(pip_id),
             AuditLog.action == "PIP_FAILED",
@@ -390,8 +393,7 @@ def test_t6_both_audit_rows_exist_with_correct_actor(
     assert audit_eval.actor_user_id == pip_decision_setup["mgr_user"].id
 
     audit_decision = db.scalar(
-        select(AuditLog)
-        .where(
+        select(AuditLog).where(
             AuditLog.company_id == pip_decision_setup["cid_a"],
             AuditLog.entity_id == uuid.UUID(pip_id),
             AuditLog.action == "PIP_SEPARATION_DECISION",
@@ -439,7 +441,7 @@ def test_t7_decision_on_pip_that_did_not_fail_returns_409(
 def test_t8_rate_limit_separation_decision_30_per_minute(
     client: TestClient, pip_decision_setup: dict[str, Any], limits_on: None
 ):
-    """T8. Rate limit the new route at 30/minute with a 429 test using the shared limits_on fixture."""
+    """T8. Rate limit new route at 30/minute with 429 test using limits_on."""
     hr1_h = _auth_headers(pip_decision_setup["hr1_user"])
     fake_pip_id = str(uuid.uuid4())
     hit_429 = False
@@ -452,4 +454,6 @@ def test_t8_rate_limit_separation_decision_30_per_minute(
         if res.status_code == 429:
             hit_429 = True
             break
-    assert hit_429, "POST /pips/{pip_id}/separation-decision must trigger 429 when exceeding rate limit"
+    assert hit_429, (
+        "POST /pips/{pip_id}/separation-decision must trigger 429 when exceeding rate limit"
+    )
