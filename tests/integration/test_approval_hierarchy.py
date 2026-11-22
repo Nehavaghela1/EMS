@@ -103,13 +103,19 @@ def _create_pending_leave(client: TestClient, company: TenantContext, emp_header
     assert lt_res.status_code == 201
     lt_id = lt_res.json()["id"]
 
+    # Inside the current leave year: a leave in a later one is refused, so a
+    # fixed far-future date no longer works here.
+    start = utcnow().date() + timedelta(days=5)
+    while start.weekday() >= 5:
+        start += timedelta(days=1)
+
     res = client.post(
         "/api/v1/leaves",
         headers=emp_headers,
         json={
             "leave_type_id": lt_id,
-            "start_date": "2030-01-10",
-            "end_date": "2030-01-12",
+            "start_date": start.isoformat(),
+            "end_date": (start + timedelta(days=2)).isoformat(),
             "reason": "Test leave",
         },
     )

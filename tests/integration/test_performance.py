@@ -158,6 +158,33 @@ def test_goals_weightage_sum_gate_and_review_workflow(
     assert mgr_res.status_code == 200
     assert mgr_res.json()["rating"] == "5.0"
 
+    # 6b. A summary cannot be finalized while goal 2 has no manager rating:
+    # a missing rating is never filled in with a default.
+    early_summary = client.post(
+        f"/api/v1/performance/summary/{emp.id}",
+        json={"cycle_id": cycle_id, "overall_comments": "Too early"},
+        headers=company_a.hr_headers,
+    )
+    assert early_summary.status_code == 409, early_summary.text
+
+    # 6c. Goal 2 is reviewed too, so every goal carries a real rating.
+    assert (
+        client.post(
+            f"/api/v1/performance/goals/{goal2_id}/self-review",
+            json={"rating": "3.0", "comments": "Partly met"},
+            headers=emp_headers,
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/api/v1/performance/goals/{goal2_id}/manager-review",
+            json={"rating": "3.0", "comments": "Room to improve"},
+            headers=company_a.hr_headers,
+        ).status_code
+        == 200
+    )
+
     # 7. Finalize summary
     summary_res = client.post(
         f"/api/v1/performance/summary/{emp.id}",

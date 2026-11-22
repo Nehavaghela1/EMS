@@ -6,6 +6,7 @@ import {
   getPerformanceReport,
   listPIPs,
   initiatePIP,
+  activatePIP,
   evaluatePIP,
   type PerformanceCycle,
   type PerformanceReport,
@@ -15,6 +16,7 @@ import {
 } from "../api";
 import { listEmployees, type Employee } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
+import { useAuth } from "../../../app/auth-context";
 import { formatDate } from "../../../shared/utils/date";
 import { parseApiError } from "../../../shared/api/errors";
 
@@ -207,6 +209,19 @@ export function PerformanceCyclesPage() {
     }
   }
 
+  async function handleActivatePip(pipId: string) {
+    setActivatingPipId(pipId);
+    try {
+      await activatePIP(pipId);
+      notify("PIP activated. The plan is now running and can be evaluated at its end.", "success");
+      fetchPIPs();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setActivatingPipId(null);
+    }
+  }
+
   async function handleEvaluatePip(e: React.FormEvent) {
     e.preventDefault();
     if (!evaluatingPip) return;
@@ -233,7 +248,13 @@ export function PerformanceCyclesPage() {
     }
   }
 
-  const [viewTab, setViewTab] = useState<"cycles" | "pips">("cycles");
+  const { user } = useAuth();
+  const [activatingPipId, setActivatingPipId] = useState<string | null>(null);
+  // Appraisal cycles belong to HR; PIPs are run by the employee's own manager,
+  // which is what the API already allows, so a manager lands on the PIP tab and
+  // never sees the cycles tab.
+  const canSeeCycles = ["hr_admin", "owner"].includes(user?.role ?? "");
+  const [viewTab, setViewTab] = useState<"cycles" | "pips">(canSeeCycles ? "cycles" : "pips");
 
   return (
     <div className="container">
@@ -243,7 +264,7 @@ export function PerformanceCyclesPage() {
           <p className="text-muted">Appraisal cycles, review deadlines & Performance Improvement Plans (PIP)</p>
         </div>
         <div className="flex gap-2" style={{ flexWrap: "wrap", width: "100%" }}>
-          {viewTab === "cycles" ? (
+          {viewTab === "cycles" && canSeeCycles ? (
             <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
               + Create Cycle
             </button>
@@ -257,6 +278,7 @@ export function PerformanceCyclesPage() {
 
       {/* Tabs */}
       <div className="flex gap-4 border-b mb-4" style={{ borderColor: "var(--color-border)" }}>
+        {canSeeCycles && (
         <button
           type="button"
           className="btn-ghost"
@@ -271,6 +293,7 @@ export function PerformanceCyclesPage() {
         >
           🔄 Appraisal Cycles
         </button>
+        )}
         <button
           type="button"
           className="btn-ghost"
@@ -288,7 +311,7 @@ export function PerformanceCyclesPage() {
       </div>
 
       {/* VIEW TAB 1: CYCLES */}
-      {viewTab === "cycles" && (
+      {viewTab === "cycles" && canSeeCycles && (
         <>
           {/* Report Dashboard Card */}
           {report && report.active_cycle && (
@@ -508,10 +531,12 @@ export function PerformanceCyclesPage() {
                         <td>
                           <span
                             className={`badge ${
-                              pip.status === "active"
+                              pip.status === "active" || pip.status === "extended"
                                 ? "badge-warning"
                                 : pip.status === "passed"
                                 ? "badge-success"
+                                : pip.status === "draft"
+                                ? "badge-muted"
                                 : "badge-danger"
                             }`}
                             style={pip.status === "active" ? { background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" } : undefined}
@@ -520,7 +545,19 @@ export function PerformanceCyclesPage() {
                           </span>
                         </td>
                         <td style={{ textAlign: "right" }}>
-                          {pip.status === "active" ? (
+                          {/* A draft plan has not started yet: it is activated
+                              here rather than only through the API, and it is
+                              never described as concluded. */}
+                          {pip.status === "draft" ? (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-primary"
+                              disabled={activatingPipId === pip.id}
+                              onClick={() => handleActivatePip(pip.id)}
+                            >
+                              {activatingPipId === pip.id ? "Activating..." : "Activate"}
+                            </button>
+                          ) : pip.status === "active" || pip.status === "extended" ? (
                             <button
                               type="button"
                               className="btn btn-sm btn-primary"

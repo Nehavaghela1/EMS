@@ -1890,6 +1890,19 @@ class LeaveService:
                 details={"field": "end_date"},
             )
 
+        # 5d. Balances are allocated one leave year at a time, so a leave in a
+        # later year has nothing to deduct from and used to be approved against
+        # no balance at all. New year, new balance: apply when that year opens.
+        current_leave_year = self._leave_year(settings_row, today)
+        requested_leave_year = self._leave_year(settings_row, data.start_date)
+        if requested_leave_year > current_leave_year:
+            raise LeaveValidationError(
+                f"Leave for {requested_leave_year} cannot be applied for yet: "
+                f"balances are allocated per leave year. Apply once the "
+                f"{requested_leave_year} leave year has started.",
+                details={"field": "start_date", "leave_year": requested_leave_year},
+            )
+
         total_days = self._total_days(
             company_id,
             settings_row,

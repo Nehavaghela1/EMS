@@ -5,8 +5,22 @@ sweep already covers `leaves`, `leave_types`, `leave_balances` and
 additional HTTP-level, data-shaped proof for the leave application flow.
 """
 
+from datetime import timedelta
+
+from app.core.time import utcnow
+
+
+def _a_working_day_soon() -> str:
+    """A date inside the current leave year: a leave cannot be applied for in a
+    later one, so a fixed far-future date no longer works here."""
+    day = utcnow().date() + timedelta(days=3)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return day.isoformat()
+
 
 def test_leaves_are_tenant_isolated(client, company_a, company_b):
+    leave_day = _a_working_day_soon()
     leave_type = client.post(
         "/api/v1/leave-types",
         headers=company_a.hr_headers,
@@ -28,8 +42,8 @@ def test_leaves_are_tenant_isolated(client, company_a, company_b):
         json={
             "employee_id": employee["id"],
             "leave_type_id": leave_type["id"],
-            "start_date": "2031-03-03",
-            "end_date": "2031-03-03",
+            "start_date": leave_day,
+            "end_date": leave_day,
             "is_half_day": True,
             "half_day_session": "first_half",
             "reason": "Isolation check",

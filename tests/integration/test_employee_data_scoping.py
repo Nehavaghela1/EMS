@@ -38,6 +38,15 @@ def _link_user_to_employee(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _leave_dates(offset: int = 5) -> tuple[str, str]:
+    """A span inside the current leave year: a leave in a later leave year is
+    refused, so fixed far-future dates no longer work here."""
+    start = utcnow().date() + timedelta(days=offset)
+    while start.weekday() >= 5:
+        start += timedelta(days=1)
+    return start.isoformat(), (start + timedelta(days=2)).isoformat()
+
+
 def test_assigned_shift_colleague_forbidden_or_safe(
     client: TestClient, db: Session, company_a: TenantContext
 ):
@@ -429,8 +438,8 @@ def test_leaves_query_colleague_forbidden_or_safe(
         headers=headers_colleague,
         json={
             "leave_type_id": leave_type_id,
-            "start_date": "2030-05-10",
-            "end_date": "2030-05-12",
+            "start_date": _leave_dates(5)[0],
+            "end_date": _leave_dates(5)[1],
             "reason": "Colleague vacation",
         },
     )
@@ -469,8 +478,8 @@ def test_leaves_query_own_allowed(client: TestClient, db: Session, company_a: Te
         headers=headers_own,
         json={
             "leave_type_id": leave_type_id,
-            "start_date": "2030-06-10",
-            "end_date": "2030-06-12",
+            "start_date": _leave_dates(20)[0],
+            "end_date": _leave_dates(20)[1],
             "reason": "Own vacation",
         },
     )
