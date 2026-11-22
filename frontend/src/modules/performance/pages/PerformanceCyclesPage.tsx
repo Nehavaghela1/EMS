@@ -563,7 +563,7 @@ export function PerformanceCyclesPage() {
                 </h3>
                 <p className="text-xs" style={{ margin: 0, color: "#b45309", maxWidth: "780px" }}>
                   When an employee underperforms, a formal documented PIP warning period (30, 60, or 90 days) defines measurable KPIs and assigns a dedicated mentor.
-                  Employees view an amber warning banner. At the conclusion, HR marks the outcome as <b>Passed</b> (regular status retained) or <b>Failed</b> (automatically triggers involuntary separation & routes into FnF settlement).
+                  Employees view an amber warning banner. At the conclusion, HR marks the outcome as <b>Passed</b> (regular status retained) or <b>Failed</b>. A failed PIP records the outcome and places the employee in Separations pending decision, where an HR administrator other than the evaluator chooses to separate, extend or retain; no employee is exited automatically.
                 </p>
               </div>
               <button

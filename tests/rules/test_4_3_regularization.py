@@ -964,8 +964,8 @@ def test_R3_migration_index_round_trip_and_loud_failure_on_duplicates() -> None:
             day = _day(3)
             with Session(engine) as sess:
                 sess.execute(text("SELECT set_config('app.is_platform_admin', 'on', true)"))
-                # Plain SQL, not the ORM: at this older revision the companies table
-                # lacks columns the current Company model has (e.g. brand_color).
+                # No current ORM model may be used while the schema is downgraded,
+                # because any column added later will not exist there. Plain SQL only.
                 sess.execute(
                     text(
                         "INSERT INTO companies (id, name, code, email, country, currency,"
@@ -979,37 +979,55 @@ def test_R3_migration_index_round_trip_and_loud_failure_on_duplicates() -> None:
                         "email": f"rmc-{uuid.uuid4().hex[:6]}@example.com",
                     },
                 )
-                sess.flush()
-                emp = Employee(
-                    id=uuid.uuid4(),
-                    company_id=cid,
-                    employee_code=f"EMP{uuid.uuid4().hex[:4].upper()}",
-                    first_name="Mig",
-                    last_name="Rate",
-                    email=f"mig-{uuid.uuid4().hex[:6]}@example.com",
-                    hire_date=day,
-                    is_active=True,
+                emp_id = uuid.uuid4()
+                sess.execute(
+                    text(
+                        "INSERT INTO employees (id, company_id, employee_code, first_name,"
+                        " last_name, email, employment_type, hire_date, notice_period_days,"
+                        " is_active, invitation_status, resignation_status, notice_waived,"
+                        " notice_recovery_days)"
+                        " VALUES (:id, :company_id, :code, 'Mig', 'Rate', :email, 'full_time',"
+                        " :hire_date, 30, true, 'not_sent', 'none', false, 0)"
+                    ),
+                    {
+                        "id": emp_id,
+                        "company_id": cid,
+                        "code": f"EMP{uuid.uuid4().hex[:4].upper()}",
+                        "email": f"mig-{uuid.uuid4().hex[:6]}@example.com",
+                        "hire_date": day,
+                    },
                 )
-                sess.add(emp)
-                sess.flush()
-                att = Attendance(
-                    company_id=cid,
-                    employee_id=emp.id,
-                    date=day,
-                    status=AttendanceStatus.mispunch,
-                    source=AttendanceSource.web,
+                att_id = uuid.uuid4()
+                sess.execute(
+                    text(
+                        "INSERT INTO attendance (id, company_id, employee_id, date, status, source)"
+                        " VALUES (:id, :company_id, :employee_id, :date, :status, :source)"
+                    ),
+                    {
+                        "id": att_id,
+                        "company_id": cid,
+                        "employee_id": emp_id,
+                        "date": day,
+                        "status": AttendanceStatus.mispunch.value,
+                        "source": AttendanceSource.web.value,
+                    },
                 )
-                sess.add(att)
-                sess.flush()
                 for _ in range(2):
-                    sess.add(
-                        AttendanceRegularizationRequest(
-                            company_id=cid,
-                            attendance_id=att.id,
-                            employee_id=emp.id,
-                            reason="dup",
-                            status=RegularizationStatus.pending,
-                        )
+                    sess.execute(
+                        text(
+                            "INSERT INTO attendance_regularizations (id, company_id, attendance_id,"
+                            " employee_id, reason, status)"
+                            " VALUES (:id, :company_id, :attendance_id, :employee_id, :reason,"
+                            " :status)"
+                        ),
+                        {
+                            "id": uuid.uuid4(),
+                            "company_id": cid,
+                            "attendance_id": att_id,
+                            "employee_id": emp_id,
+                            "reason": "dup",
+                            "status": RegularizationStatus.pending.value,
+                        },
                     )
                 sess.commit()
             with pytest.raises(RuntimeError) as exc:
