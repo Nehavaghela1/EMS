@@ -7,6 +7,7 @@ import enum
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     ARRAY,
@@ -35,6 +36,9 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import TenantBase, TimeStampedBase
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, avoids an import cycle
+    from app.modules.identity.models import User
 
 
 class SalaryComponentType(str, enum.Enum):
@@ -80,12 +84,29 @@ class SalaryStructure(TenantBase):
     country: Mapped[str] = mapped_column(String(2), nullable=False, default="IN")
     level: Mapped[str | None] = mapped_column(String(10), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # A structure is the one payroll record edited in place rather than
+    # appended to (employee_salaries adds a row per revision), so two people
+    # editing it at once could overwrite each other silently. Every update
+    # states the version it read and is refused if the row has moved on.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
 
     components: Mapped[list["SalaryComponent"]] = relationship(
         "SalaryComponent",
         order_by="[SalaryComponent.display_order, SalaryComponent.code]",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    created_by_user: Mapped["User | None"] = relationship(
+        "User", foreign_keys=[created_by], lazy="joined"
+    )
+    updated_by_user: Mapped["User | None"] = relationship(
+        "User", foreign_keys=[updated_by], lazy="joined"
     )
 
 

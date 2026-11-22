@@ -117,6 +117,10 @@ class SalaryStructureUpdateRequest(BaseModel):
     level: _LEVEL | None = None
     is_active: bool | None = None
     components: list[SalaryComponentCreateRequest] | None = Field(default=None, max_length=30)
+    # The edition the caller read. Sent back on save, it is refused when the
+    # structure has been changed by someone else in the meantime. Optional so
+    # an older client still works, in which case last save wins as before.
+    version: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _required_fields_are_not_null(self) -> "SalaryStructureUpdateRequest":
@@ -132,7 +136,12 @@ class SalaryStructureResponse(BaseModel):
     country: str
     level: str | None
     is_active: bool
+    version: int
     created_at: datetime
+    updated_at: datetime
+    # Email, as the audit log identifies people, rather than a second style.
+    created_by_email: str | None = None
+    updated_by_email: str | None = None
     components: list[SalaryComponentResponse]
 
     model_config = {"from_attributes": True}
@@ -144,8 +153,13 @@ class SalaryStructureListItem(BaseModel):
     country: str
     level: str | None
     is_active: bool
+    version: int
     component_count: int
     created_at: datetime
+    updated_at: datetime
+    # Email, as the audit log identifies people, rather than a second style.
+    created_by_email: str | None = None
+    updated_by_email: str | None = None
 
 
 class SalaryAssignRequest(BaseModel):

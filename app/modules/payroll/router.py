@@ -82,7 +82,14 @@ tax_slabs_router = APIRouter(prefix="/payroll/tax-slabs", tags=["Payroll — Tax
 
 
 def _to_structure_response(structure: SalaryStructure) -> SalaryStructureResponse:
-    return SalaryStructureResponse.model_validate(structure)
+    response = SalaryStructureResponse.model_validate(structure)
+    # Who made it and who last touched it, by email, as the audit log does.
+    return response.model_copy(
+        update={
+            "created_by_email": getattr(structure.created_by_user, "email", None),
+            "updated_by_email": getattr(structure.updated_by_user, "email", None),
+        }
+    )
 
 
 # --- Routes 78-82: salary structures -----------------------------------
@@ -117,8 +124,12 @@ def list_structures(
                 country=s.country,
                 level=s.level,
                 is_active=s.is_active,
+                version=s.version,
                 component_count=len(s.components),
                 created_at=s.created_at,
+                updated_at=s.updated_at,
+                created_by_email=getattr(s.created_by_user, "email", None),
+                updated_by_email=getattr(s.updated_by_user, "email", None),
             )
             for s in items
         ],

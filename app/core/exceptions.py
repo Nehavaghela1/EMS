@@ -143,6 +143,34 @@ def _sanitize_validation_errors(errors: Sequence[dict]) -> list[dict]:
     return sanitized
 
 
+def _retry_after_seconds(exc: RateLimitExceeded) -> int | None:
+    """How long the limit's window runs, in seconds, or None when slowapi does
+    not tell us. The window length is the worst case, so a person told this
+    number is never asked back too early."""
+    limit = getattr(exc, "limit", None)
+    item = getattr(limit, "limit", None)
+    seconds = getattr(item, "GRANULARITY", None)
+    seconds = getattr(seconds, "seconds", None)
+    multiples = getattr(item, "multiples", 1) or 1
+    if not isinstance(seconds, int) or seconds <= 0:
+        return None
+    return seconds * multiples
+
+
+def _humanize_wait(seconds: int) -> str:
+    """Plain words, rounded up, so nobody is sent back a moment too soon."""
+    if seconds < 60:
+        return "a minute"
+    minutes = -(-seconds // 60)
+    if minutes < 60:
+        return f"about {minutes} minute{'s' if minutes != 1 else ''}"
+    hours = -(-minutes // 60)
+    if hours < 24:
+        return f"about {hours} hour{'s' if hours != 1 else ''}"
+    days = -(-hours // 24)
+    return f"about {days} day{'s' if days != 1 else ''}"
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
@@ -188,15 +216,24 @@ def register_exception_handlers(app: FastAPI) -> None:
             "rate_limited",
             extra={"request_id": request_id, "limit": str(exc.limit.limit if exc.limit else None)},
         )
+        # "Please try again later" leaves a blocked person with no idea whether
+        # to wait a minute or an hour, so say it: the window's own length is the
+        # longest they could have to wait.
+        wait_seconds = _retry_after_seconds(exc)
+        message = "Too many requests. Please try again later."
+        headers = {"X-Request-ID": request_id}
+        if wait_seconds is not None:
+            message = f"Too many requests. Please try again in {_humanize_wait(wait_seconds)}."
+            headers["Retry-After"] = str(wait_seconds)
         return JSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             content=_envelope(
                 "rate_limited",
-                "Too many requests. Please try again later.",
+                message,
                 details=None,
                 request_id=request_id,
             ),
-            headers={"X-Request-ID": request_id},
+            headers=headers,
         )
 
     @app.exception_handler(IntegrityError)
