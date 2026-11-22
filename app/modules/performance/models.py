@@ -236,3 +236,24 @@ class PerformancePIPCheckIn(TenantBase):
     created_by: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
+
+
+class SeparationDecision(TenantBase):
+    """HR Decision on Failed PIP. RLS: Yes."""
+
+    __tablename__ = "separation_decisions"
+
+    pip_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("performance_pips.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    decision: Mapped[str] = mapped_column(String(50), nullable=False)
+    decided_by: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_working_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notice_choice: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)

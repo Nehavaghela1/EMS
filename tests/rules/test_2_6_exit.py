@@ -1602,6 +1602,19 @@ def test_r10_pip_failure_uses_apply_exit(
     )
     assert r_eval.status_code == 200
 
+    # Separation decision confirmed by Owner (second-approver)
+    owner_headers = _auth_headers(exit_setup["owner_user"])
+    r_decide = client.post(
+        f"/api/v1/performance/pips/{pip.id}/separation-decision",
+        headers=owner_headers,
+        json={
+            "decision": "separate",
+            "last_working_date": str(utcnow().date()),
+            "notice_choice": "waived",
+        },
+    )
+    assert r_decide.status_code == 200
+
     db.refresh(emp._obj)
     db.refresh(emp_user._obj)
     assert emp.is_active is False

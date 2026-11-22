@@ -369,6 +369,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/performance/pips/{pip_id}/evaluate"): ROLES(
         UserRole.hr_admin, UserRole.manager
     ),
+    ("POST", "/api/v1/performance/pips/{pip_id}/separation-decision"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/performance/report"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/performance/summary/{employee_id}"): ROLES(
         UserRole.hr_admin, UserRole.manager, UserRole.employee

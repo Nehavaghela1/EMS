@@ -15,6 +15,7 @@ from app.modules.performance.models import (
     PerformanceReview,
     PerformanceSummary,
     ReviewerRole,
+    SeparationDecision,
 )
 
 
@@ -336,4 +337,21 @@ class PerformancePIPRepository:
                 )
                 .order_by(PerformancePIPCheckIn.created_at.asc())
             ).all()
+        )
+
+    def create_decision(self, **kwargs) -> SeparationDecision:
+        decision = SeparationDecision(**kwargs)
+        self.db.add(decision)
+        self.db.flush()
+        return decision
+
+    def get_decision_by_pip_id(
+        self, company_id: uuid.UUID, pip_id: uuid.UUID
+    ) -> SeparationDecision | None:
+        return self.db.scalar(
+            select(SeparationDecision).where(
+                SeparationDecision.company_id == company_id,
+                SeparationDecision.pip_id == pip_id,
+                SeparationDecision.deleted_at.is_(None),
+            )
         )

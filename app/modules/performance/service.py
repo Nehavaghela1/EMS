@@ -1,4 +1,5 @@
 import uuid
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -49,6 +50,7 @@ from app.modules.performance.schemas import (
     PIPCreateRequest,
     PIPEvaluateRequest,
     PIPExtendRequest,
+    PIPSeparationDecisionRequest,
     SelfReviewRequest,
     SummaryFinalizeRequest,
 )
@@ -1255,21 +1257,11 @@ class PerformanceService:
             evaluated_by=actor.id,
         )
 
-        # Track C rule: "If marked Failed, automatically triggers separation/termination"
         if data.outcome == "failed" and emp:
-            from app.modules.hr.models import ResignationStatus
-            from app.modules.hr.service import EmployeeService
-
             self.employee_repo.update(
                 emp,
-                resignation_status=ResignationStatus.approved,
-                separation_type="pip_failed",
-                termination_reason=f"Failed Performance Improvement Plan: {pip.title}",
-                last_working_date=utcnow().date(),
-                notice_waived=True,
-                notice_recovery_days=0,
+                pending_separation=True,
             )
-            EmployeeService(self.db).apply_exit(company_id, emp.id, actor=actor, commit=False)
 
         self.audit.record(
             company_id=company_id,
@@ -1280,8 +1272,7 @@ class PerformanceService:
             details={"outcome": data.outcome, "notes": data.outcome_notes},
         )
 
-        # Notify employee
-        if emp and emp.user_id:
+        if data.outcome != "failed" and emp and emp.user_id:
             self.notifications.notify(
                 company_id=company_id,
                 user_id=emp.user_id,
@@ -1366,3 +1357,148 @@ class PerformanceService:
             can_approve_for(self.db, actor, emp)
 
         return self.pip_repo.list_checkins(company_id, pip.id)
+
+    def decide_pip_separation(
+        self,
+        company_id: uuid.UUID,
+        pip_id: uuid.UUID,
+        data: PIPSeparationDecisionRequest,
+        actor: User,
+    ) -> Any:
+        from app.modules.hr.models import ResignationStatus
+        from app.modules.hr.service import EmployeeService
+
+        pip = self.pip_repo.get_by_id(pip_id, company_id)
+        if pip is None:
+            raise NotFoundError("PIP record not found.")
+
+        if pip.status != "failed":
+            raise ConflictError(
+                f"PIP has status '{pip.status}', must be 'failed' to make a separation decision."
+            )
+
+        # Second-approver rule: evaluator cannot confirm separation
+        if pip.evaluated_by == actor.id and actor.role != UserRole.owner:
+            raise ForbiddenError("Evaluator cannot decide separation for this PIP.")
+
+        emp = self.employee_repo.get_by_id_any_status(pip.employee_id, company_id)
+        if not emp:
+            raise NotFoundError("Employee not found.")
+
+        today = utcnow().date()
+        notes = data.reason
+        lwd: date | None = None
+        notice_choice: str | None = None
+
+        if data.decision == "separate":
+            if data.last_working_date is None:
+                raise ValidationError("last_working_date is required for separation.")
+            if data.last_working_date < today:
+                raise ValidationError("last_working_date cannot be in the past.")
+            if data.last_working_date > today + timedelta(days=180):
+                raise ValidationError(
+                    "last_working_date cannot be more than 180 days in the future."
+                )
+
+            notice_choice = data.notice_choice or "served"
+            if notice_choice not in ("served", "waived", "pay_in_lieu"):
+                raise ValidationError(f"Invalid notice_choice: {notice_choice}")
+
+            lwd = data.last_working_date
+            notice_waived = notice_choice == "waived"
+
+            self.employee_repo.update(
+                emp,
+                resignation_status=ResignationStatus.approved,
+                separation_type="pip_failed",
+                termination_reason=f"Failed Performance Improvement Plan: {pip.title}",
+                last_working_date=lwd,
+                notice_waived=notice_waived,
+                notice_recovery_days=0,
+                pending_separation=False,
+            )
+            if lwd == today:
+                EmployeeService(self.db).apply_exit(company_id, emp.id, actor=actor, commit=False)
+
+        elif data.decision == "extend":
+            if not data.reason or len(data.reason.strip()) < 1 or len(data.reason) > 500:
+                raise ValidationError("Reason is required for extend (1 to 500 characters).")
+            if data.new_end_date is None:
+                raise ValidationError("new_end_date is required to extend PIP.")
+            if data.new_end_date <= pip.end_date:
+                raise ValidationError("new_end_date must be later than the current PIP end date.")
+
+            notes = data.reason.strip()
+            self.pip_repo.update(
+                pip,
+                status="extended",
+                previous_end_date=pip.end_date,
+                end_date=data.new_end_date,
+                extension_reason=notes,
+            )
+            self.employee_repo.update(
+                emp,
+                pending_separation=False,
+            )
+
+        elif data.decision == "retain":
+            if not data.reason or len(data.reason.strip()) < 1 or len(data.reason) > 500:
+                raise ValidationError("Reason is required for retain (1 to 500 characters).")
+
+            notes = data.reason.strip()
+            self.employee_repo.update(
+                emp,
+                pending_separation=False,
+            )
+
+        else:
+            raise ValidationError(
+                f"Invalid decision '{data.decision}'. Must be separate, extend, or retain."
+            )
+
+        decision_row = self.pip_repo.create_decision(
+            company_id=company_id,
+            pip_id=pip.id,
+            decision=data.decision,
+            decided_by=actor.id,
+            decided_at=utcnow(),
+            last_working_date=lwd,
+            notice_choice=notice_choice,
+            notes=notes,
+        )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PIP_SEPARATION_DECISION",
+            entity_type="performance_pip",
+            entity_id=pip.id,
+            details={
+                "decision": data.decision,
+                "notes": notes,
+                "last_working_date": str(lwd) if lwd else None,
+                "notice_choice": notice_choice,
+            },
+        )
+
+        self.db.commit()
+
+        # Notify employee after commit
+        if emp and emp.user_id:
+            try:
+                self.notifications.notify(
+                    company_id=company_id,
+                    user_id=emp.user_id,
+                    type="pip_separation_decision",
+                    title="PIP Decision Update",
+                    message=(
+                        f"A decision of '{data.decision}' has been made for your PIP '{pip.title}'."
+                    ),
+                    entity_type="performance_pip",
+                    entity_id=pip.id,
+                )
+                self.db.commit()
+            except Exception:
+                pass
+
+        return decision_row

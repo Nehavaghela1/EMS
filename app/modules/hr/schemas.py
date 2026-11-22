@@ -286,6 +286,7 @@ class EmployeeResponse(BaseModel):
     last_working_date: date | None = None
     notice_waived: bool = False
     notice_recovery_days: int = 0
+    pending_separation: bool = False
     separation_type: str | None = None
     termination_reason: str | None = None
     termination_notes: str | None = None

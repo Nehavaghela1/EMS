@@ -1287,6 +1287,19 @@ def test_d4_extended_pip_can_fail_with_atomic_termination(
     assert r_fail.status_code == 200
     assert r_fail.json()["status"] == "failed"
 
+    # Separation decision confirmed by HR
+    hr_h = _auth_headers(gap_setup["hr_u"])
+    r_decide = client.post(
+        f"/api/v1/performance/pips/{pip_id}/separation-decision",
+        headers=hr_h,
+        json={
+            "decision": "separate",
+            "last_working_date": str(utcnow().date()),
+            "notice_choice": "waived",
+        },
+    )
+    assert r_decide.status_code == 200
+
     # Verify employee record is terminated atomically
     bind_tenant_to_session(db, company_id=gap_setup["cid"], is_platform_admin=True)
     emp_db = db.get(Employee, gap_setup["emp_e"].id)

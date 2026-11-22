@@ -679,14 +679,31 @@ def test_6_4_R6_failed_pip_triggers_atomic_separation(
     assert r_fail.status_code == 200
     assert r_fail.json()["status"] == "failed"
 
-    # Verify Employee database record
+    # Verify Employee database record: PIP failure sets pending_separation, leaves employee active
     db.expire_all()
     emp_refreshed = db.get(Employee, target_emp.id)
     assert emp_refreshed is not None
-    assert emp_refreshed.resignation_status == ResignationStatus.approved
-    assert emp_refreshed.separation_type == "pip_failed"
-    assert "Failed Performance Improvement Plan" in (emp_refreshed.termination_reason or "")
-    assert emp_refreshed.notice_waived is True
+    assert emp_refreshed.is_active is True
+    assert emp_refreshed.resignation_status == ResignationStatus.none
+    assert emp_refreshed.pending_separation is True
+
+    # HR confirms separation decision
+    hr_headers = _auth_headers(p3_setup["hr_a"])
+    r_decide = client.post(
+        f"/api/v1/performance/pips/{pip_id}/separation-decision",
+        headers=hr_headers,
+        json={"decision": "separate", "last_working_date": str(today), "notice_choice": "waived"},
+    )
+    assert r_decide.status_code == 200
+
+    db.expire_all()
+    emp_separated = db.get(Employee, target_emp.id)
+    assert emp_separated is not None
+    assert emp_separated.resignation_status == ResignationStatus.approved
+    assert emp_separated.separation_type == "pip_failed"
+    assert "Failed Performance Improvement Plan" in (emp_separated.termination_reason or "")
+    assert emp_separated.notice_waived is True
+    assert emp_separated.pending_separation is False
 
     # Verify Audit Log
     audit = db.scalar(
