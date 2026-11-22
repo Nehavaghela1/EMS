@@ -25,8 +25,16 @@ interface NavSection {
 const NAV_SECTIONS: NavSection[] = [
   {
     id: "admin",
-    label: "Admin Console",
-    to: "/admin",
+    label: "Platform",
+    // Super admin had exactly one entry here, so the whole sidebar read as
+    // empty. These four are the pages a platform operator opens, in the order
+    // they open them: what is broken, who is paying, who is using it, the list.
+    children: [
+      { to: "/admin/health", label: "Health", roles: ["super_admin"] },
+      { to: "/admin/payroll", label: "Payroll", roles: ["super_admin"] },
+      { to: "/admin/activity", label: "Activity", roles: ["super_admin"] },
+      { to: "/admin", label: "Companies", roles: ["super_admin"] },
+    ],
     roles: ["super_admin"],
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "currentColor" : "#64748b"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

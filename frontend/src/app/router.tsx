@@ -12,6 +12,9 @@ import { EmployeeListPage } from "../modules/hr/pages/EmployeeListPage";
 import { EmployeeProfilePage } from "../modules/hr/pages/EmployeeProfilePage";
 import { EmployeeFormPage } from "../modules/hr/pages/EmployeeFormPage";
 import { DepartmentListPage } from "../modules/hr/pages/DepartmentListPage";
+import { PlatformActivityPage } from "../modules/platform/pages/PlatformActivityPage";
+import { PlatformHealthPage } from "../modules/platform/pages/PlatformHealthPage";
+import { PlatformPayrollPage } from "../modules/platform/pages/PlatformPayrollPage";
 import { AttendancePage } from "../modules/time_leave/pages/AttendancePage";
 import { LeavePage } from "../modules/time_leave/pages/LeavePage";
 import { ShiftsPage } from "../modules/time_leave/pages/ShiftsPage";
@@ -105,6 +108,32 @@ export function AppRouter() {
         element={
           <Protected roles={["super_admin"]}>
             <AdminDashboardPage />
+          </Protected>
+        }
+      />
+      {/* Platform statistics the console never surfaced. Super admin only:
+          these are aggregates across companies, never a company's own data. */}
+      <Route
+        path="/admin/payroll"
+        element={
+          <Protected roles={["super_admin"]}>
+            <PlatformPayrollPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/admin/activity"
+        element={
+          <Protected roles={["super_admin"]}>
+            <PlatformActivityPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/admin/health"
+        element={
+          <Protected roles={["super_admin"]}>
+            <PlatformHealthPage />
           </Protected>
         }
       />

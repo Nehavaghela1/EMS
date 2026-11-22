@@ -289,3 +289,82 @@ export async function fetchPlatformOverviewStats(): Promise<PlatformOverviewStat
   return data;
 }
 
+
+// --- Platform statistics the dashboard had never called ---------------------
+// These three routes have existed since the stats surface was built; nothing
+// in the UI fetched them, which is why the super admin console looked bare.
+
+export interface CompanyMonthlyPayrollStats {
+  company_id: string;
+  company_name: string;
+  company_code: string;
+  year: number;
+  month: number;
+  runs_by_status: Record<string, number>;
+  total_employees_in_run: number;
+  total_net_paid: string;
+  total_employer_cost: string;
+  total_statutory_contributions: string;
+}
+
+/** GET /platform/stats/payroll — one row per company per month. `from` and `to`
+ * are "YYYY-MM"; leaving them out gives the most recent months the API holds. */
+export async function listPlatformPayrollStats(params?: {
+  page?: number;
+  limit?: number;
+  company_id?: string;
+  from?: string;
+  to?: string;
+}): Promise<Page<CompanyMonthlyPayrollStats>> {
+  const { data } = await apiClient.get<Page<CompanyMonthlyPayrollStats>>(
+    "/platform/stats/payroll",
+    {
+      params: {
+        page: params?.page ?? 1,
+        limit: params?.limit ?? 100,
+        company_id: params?.company_id || undefined,
+        from: params?.from || undefined,
+        to: params?.to || undefined,
+      },
+    }
+  );
+  return data;
+}
+
+export interface CompanyActivityStats {
+  company_id: string;
+  company_name: string;
+  company_code: string;
+  punch_count: number;
+  leave_requests_by_status: Record<string, number>;
+  pending_approvals: number;
+  pending_regularizations: number;
+  active_projects: number;
+  approved_hours_logged: string;
+}
+
+/** GET /platform/stats/activity — is each company actually being used. */
+export async function listPlatformActivityStats(params?: {
+  page?: number;
+  limit?: number;
+}): Promise<Page<CompanyActivityStats>> {
+  const { data } = await apiClient.get<Page<CompanyActivityStats>>("/platform/stats/activity", {
+    params: { page: params?.page ?? 1, limit: params?.limit ?? 25 },
+  });
+  return data;
+}
+
+export interface PlatformHealth {
+  jobs_by_status: Record<string, number>;
+  job_failures_last_24h: number;
+  rate_drafts_awaiting_verification: number;
+  next_scheduled_rate_checks: Record<string, string>;
+  storage_bytes_by_company: Record<string, number>;
+  notification_backlog: number;
+}
+
+/** GET /platform/stats/platform-health — what an operator checks first. */
+export async function fetchPlatformHealth(): Promise<PlatformHealth> {
+  const { data } = await apiClient.get<PlatformHealth>("/platform/stats/platform-health");
+  return data;
+}
