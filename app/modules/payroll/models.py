@@ -7,7 +7,6 @@ import enum
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     ARRAY,
@@ -37,8 +36,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import TenantBase, TimeStampedBase
 
-if TYPE_CHECKING:  # pragma: no cover - typing only, avoids an import cycle
-    from app.modules.identity.models import User
+# Imported for real, not only for typing: the relationships below name "User"
+# as a string, and SQLAlchemy can only resolve it once the class has been
+# imported. A type-only import left the seed scripts, which import this module
+# without the identity one, failing to configure their mappers. Identity does
+# not import payroll, so there is no cycle.
+from app.modules.identity.models import User
 
 
 class SalaryComponentType(str, enum.Enum):
@@ -102,10 +105,10 @@ class SalaryStructure(TenantBase):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    created_by_user: Mapped["User | None"] = relationship(
+    created_by_user: Mapped[User | None] = relationship(
         "User", foreign_keys=[created_by], lazy="joined"
     )
-    updated_by_user: Mapped["User | None"] = relationship(
+    updated_by_user: Mapped[User | None] = relationship(
         "User", foreign_keys=[updated_by], lazy="joined"
     )
 
