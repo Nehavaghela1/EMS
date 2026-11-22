@@ -52,6 +52,7 @@ export interface Employee {
   last_working_date?: string | null;
   notice_waived?: boolean;
   notice_recovery_days?: number;
+  pending_separation?: boolean;
   separation_type?: string | null;
   termination_reason?: string | null;
   severance_pay?: number | string | null;

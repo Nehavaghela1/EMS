@@ -234,3 +234,34 @@ export async function evaluatePIP(pipId: string, data: PIPEvaluateInput): Promis
   const res = await apiClient.post<PerformancePIP>(`/performance/pips/${pipId}/evaluate`, data);
   return res.data;
 }
+
+export interface PIPSeparationDecisionInput {
+  decision: "separate" | "extend" | "retain";
+  last_working_date?: string | null;
+  notice_choice?: "served" | "waived" | "pay_in_lieu" | null;
+  new_end_date?: string | null;
+  reason?: string | null;
+}
+
+export interface SeparationDecision {
+  id: string;
+  pip_id: string;
+  decision: "separate" | "extend" | "retain";
+  decided_by: string;
+  decided_at: string;
+  last_working_date?: string | null;
+  notice_choice?: string | null;
+  notes?: string | null;
+}
+
+export async function decidePIPSeparation(
+  pipId: string,
+  data: PIPSeparationDecisionInput
+): Promise<SeparationDecision> {
+  const res = await apiClient.post<SeparationDecision>(
+    `/performance/pips/${pipId}/separation-decision`,
+    data
+  );
+  return res.data;
+}
+

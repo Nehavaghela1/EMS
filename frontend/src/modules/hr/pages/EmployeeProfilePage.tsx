@@ -439,6 +439,31 @@ export function EmployeeProfilePage() {
           </Link>
         </div>
 
+        {/* Pending Separation Banner */}
+        {e.pending_separation && (
+          <div
+            className="card p-4"
+            style={{
+              backgroundColor: "#fffbeb",
+              borderColor: "#f59e0b",
+              borderLeft: "5px solid #d97706",
+              color: "#92400e",
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <span style={{ fontSize: "1.5rem" }}>⚠️</span>
+              <div>
+                <strong style={{ fontSize: "0.95rem" }}>
+                  Pending Separation Decision
+                </strong>
+                <p className="text-xs mb-0 mt-0.5" style={{ color: "#b45309" }}>
+                  This employee's Performance Improvement Plan (PIP) has concluded with outcome failed. Awaiting HR separation decision (Separate, Extend, or Retain).
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Unified Zoho-grade Profile Hero Banner */}
         <div
           className="card"

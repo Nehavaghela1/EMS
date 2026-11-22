@@ -8,6 +8,7 @@ import {
   initiatePIP,
   activatePIP,
   evaluatePIP,
+  decidePIPSeparation,
   type PerformanceCycle,
   type PerformanceReport,
   type PerformancePIP,
@@ -46,6 +47,15 @@ export function PerformanceCyclesPage() {
   const [pipOutcome, setPipOutcome] = useState<"passed" | "failed" | "cancelled">("passed");
   const [pipOutcomeNotes, setPipOutcomeNotes] = useState("");
   const [submittingEval, setSubmittingEval] = useState(false);
+
+  // Separation Decision Modal State (F2)
+  const [decisionPip, setDecisionPip] = useState<PerformancePIP | null>(null);
+  const [decisionAction, setDecisionAction] = useState<"separate" | "extend" | "retain">("separate");
+  const [decisionLwd, setDecisionLwd] = useState(new Date().toISOString().split("T")[0]);
+  const [decisionNoticeChoice, setDecisionNoticeChoice] = useState<"served" | "waived" | "pay_in_lieu">("served");
+  const [decisionNewEndDate, setDecisionNewEndDate] = useState("");
+  const [decisionReason, setDecisionReason] = useState("");
+  const [submittingDecision, setSubmittingDecision] = useState(false);
 
   // Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -232,7 +242,7 @@ export function PerformanceCyclesPage() {
         outcome_notes: pipOutcomeNotes.trim() || null,
       });
       if (pipOutcome === "failed") {
-        notify("PIP marked as Failed: Employee separation initiated and routed to FnF settlement.", "warning");
+        notify("PIP marked as Failed: Awaiting HR separation decision.", "warning");
       } else if (pipOutcome === "passed") {
         notify("PIP marked as Passed: Employee returned to regular status.", "success");
       } else {
@@ -248,13 +258,70 @@ export function PerformanceCyclesPage() {
     }
   }
 
+  async function handleSeparationDecision(e: React.FormEvent) {
+    e.preventDefault();
+    if (!decisionPip) return;
+    setSubmittingDecision(true);
+    try {
+      if (decisionAction === "separate") {
+        await decidePIPSeparation(decisionPip.id, {
+          decision: "separate",
+          last_working_date: decisionLwd,
+          notice_choice: decisionNoticeChoice,
+        });
+        notify("Separation confirmed for employee.", "success");
+      } else if (decisionAction === "extend") {
+        if (!decisionNewEndDate) {
+          notify("New PIP End Date is required.", "error");
+          setSubmittingDecision(false);
+          return;
+        }
+        if (new Date(decisionNewEndDate) <= new Date(decisionPip.end_date)) {
+          notify("New end date must be later than the current PIP end date.", "error");
+          setSubmittingDecision(false);
+          return;
+        }
+        if (!decisionReason.trim()) {
+          notify("Reason is required to extend PIP.", "error");
+          setSubmittingDecision(false);
+          return;
+        }
+        await decidePIPSeparation(decisionPip.id, {
+          decision: "extend",
+          new_end_date: decisionNewEndDate,
+          reason: decisionReason.trim(),
+        });
+        notify("PIP extended with new end date.", "success");
+      } else if (decisionAction === "retain") {
+        if (!decisionReason.trim()) {
+          notify("Reason is required to retain employee.", "error");
+          setSubmittingDecision(false);
+          return;
+        }
+        await decidePIPSeparation(decisionPip.id, {
+          decision: "retain",
+          reason: decisionReason.trim(),
+        });
+        notify("Employee retained. Pending separation cleared.", "success");
+      }
+      setDecisionPip(null);
+      setDecisionReason("");
+      setDecisionNewEndDate("");
+      fetchPIPs();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setSubmittingDecision(false);
+    }
+  }
+
   const { user } = useAuth();
   const [activatingPipId, setActivatingPipId] = useState<string | null>(null);
   // Appraisal cycles belong to HR; PIPs are run by the employee's own manager,
   // which is what the API already allows, so a manager lands on the PIP tab and
   // never sees the cycles tab.
   const canSeeCycles = ["hr_admin", "owner"].includes(user?.role ?? "");
-  const [viewTab, setViewTab] = useState<"cycles" | "pips">(canSeeCycles ? "cycles" : "pips");
+  const [viewTab, setViewTab] = useState<"cycles" | "pips" | "pending_separations">(canSeeCycles ? "cycles" : "pips");
 
   return (
     <div className="container">
@@ -308,6 +375,37 @@ export function PerformanceCyclesPage() {
         >
           ⚠️ Performance Improvement Plans (PIP)
         </button>
+        {canSeeCycles && (
+          <button
+            type="button"
+            className="btn-ghost"
+            style={{
+              padding: "0.5rem 1rem",
+              fontWeight: viewTab === "pending_separations" ? 600 : 400,
+              borderBottom: viewTab === "pending_separations" ? "2px solid #dc2626" : "2px solid transparent",
+              color: viewTab === "pending_separations" ? "#dc2626" : "var(--color-text-muted)",
+              cursor: "pointer",
+            }}
+            onClick={() => setViewTab("pending_separations")}
+          >
+            📋 Separations pending decision
+            {pips.filter((p) => p.status === "failed").length > 0 && (
+              <span
+                style={{
+                  marginLeft: "6px",
+                  padding: "2px 6px",
+                  borderRadius: "10px",
+                  fontSize: "0.75rem",
+                  background: "#fee2e2",
+                  color: "#dc2626",
+                  fontWeight: 700,
+                }}
+              >
+                {pips.filter((p) => p.status === "failed").length}
+              </span>
+            )}
+          </button>
+        )}
       </div>
 
       {/* VIEW TAB 1: CYCLES */}
@@ -537,11 +635,17 @@ export function PerformanceCyclesPage() {
                                 ? "badge-success"
                                 : pip.status === "draft"
                                 ? "badge-muted"
+                                : pip.status === "failed"
+                                ? "badge-warning"
                                 : "badge-danger"
                             }`}
-                            style={pip.status === "active" ? { background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" } : undefined}
+                            style={
+                              pip.status === "active" || pip.status === "failed"
+                                ? { background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a" }
+                                : undefined
+                            }
                           >
-                            {pip.status.toUpperCase()}
+                            {pip.status === "failed" ? "Awaiting HR decision" : pip.status.toUpperCase()}
                           </span>
                         </td>
                         <td style={{ textAlign: "right" }}>
@@ -585,7 +689,272 @@ export function PerformanceCyclesPage() {
         </div>
       )}
 
-      {/* MODAL: INITIATE PIP */}
+      {/* VIEW TAB 3: SEPARATIONS PENDING DECISION (F2) */}
+      {viewTab === "pending_separations" && canSeeCycles && (
+        <div className="stack gap-4 mt-2">
+          <div className="p-4 rounded border" style={{ background: "#fff1f2", borderColor: "#fecdd3" }}>
+            <div className="flex justify-between items-center" style={{ flexWrap: "wrap", gap: "10px" }}>
+              <div>
+                <h3 style={{ margin: "0 0 4px 0", color: "#9f1239", fontSize: "1rem" }}>
+                  📋 Failed PIP Separations Pending HR Decision
+                </h3>
+                <p className="text-xs" style={{ margin: 0, color: "#be123c", maxWidth: "780px" }}>
+                  These employees have failed their Performance Improvement Plan. Employment does not end automatically: HR must review and choose to <b>Separate</b> (with notice terms & last working date), <b>Extend</b> (set new PIP end date), or <b>Retain</b> (clear pending separation).
+                  Note: The manager who evaluated the PIP cannot confirm the separation (maker-checker rule).
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3 style={{ margin: "0 0 1rem 0", fontSize: "1.05rem" }}>Failed PIP Records Requiring Action</h3>
+            {pipsLoading ? (
+              <p>Loading records...</p>
+            ) : pips.filter((p) => p.status === "failed").length === 0 ? (
+              <div style={{ textAlign: "center", padding: "2rem 1rem" }}>
+                <span style={{ fontSize: "2rem" }}>✅</span>
+                <h4 style={{ margin: "0.5rem 0 0.25rem" }}>No Pending Separation Decisions</h4>
+                <p className="text-muted text-sm" style={{ margin: 0 }}>
+                  There are currently no failed PIPs awaiting an HR separation decision.
+                </p>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="table text-sm" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Employee</th>
+                      <th>Plan Title</th>
+                      <th>Evaluated By</th>
+                      <th>Evaluated At</th>
+                      <th>Evaluation Notes</th>
+                      <th style={{ textAlign: "right" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pips
+                      .filter((p) => p.status === "failed")
+                      .map((pip) => (
+                        <tr key={pip.id}>
+                          <td>
+                            <strong>{pip.employee_name || pip.employee_id}</strong>
+                            {pip.employee_code && (
+                              <span className="text-xs text-muted block">{pip.employee_code}</span>
+                            )}
+                          </td>
+                          <td>
+                            <div className="fw-bold">{pip.title}</div>
+                            <span className="badge badge-warning text-xs mt-1" style={{ background: "#fef3c7", color: "#b45309" }}>
+                              Awaiting HR decision
+                            </span>
+                          </td>
+                          <td>
+                            <span className="text-sm">{pip.evaluated_by || "Manager"}</span>
+                          </td>
+                          <td>
+                            <span className="text-sm">{pip.evaluated_at ? formatDate(pip.evaluated_at) : "Recently"}</span>
+                          </td>
+                          <td style={{ maxWidth: "260px" }}>
+                            <span className="text-xs text-muted" style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                              {pip.outcome_notes || "—"}
+                            </span>
+                          </td>
+                          <td style={{ textAlign: "right" }}>
+                            <div className="flex gap-2 justify-end" style={{ flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-danger"
+                                onClick={() => {
+                                  setDecisionPip(pip);
+                                  setDecisionAction("separate");
+                                  setDecisionLwd(new Date().toISOString().split("T")[0]);
+                                  setDecisionNoticeChoice("served");
+                                  setDecisionReason("");
+                                }}
+                              >
+                                Separate
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline"
+                                onClick={() => {
+                                  setDecisionPip(pip);
+                                  setDecisionAction("extend");
+                                  const currentEnd = new Date(pip.end_date);
+                                  const extended = new Date(currentEnd.getTime() + 30 * 86400000);
+                                  setDecisionNewEndDate(extended.toISOString().split("T")[0]);
+                                  setDecisionReason("");
+                                }}
+                              >
+                                Extend
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-success"
+                                onClick={() => {
+                                  setDecisionPip(pip);
+                                  setDecisionAction("retain");
+                                  setDecisionReason("");
+                                }}
+                              >
+                                Retain
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: SEPARATION DECISION (F2) */}
+      {decisionPip && (
+        <div className="modal-backdrop" onClick={() => setDecisionPip(null)}>
+          <div className="modal card" style={{ maxWidth: "560px", width: "95%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 style={{ margin: 0 }}>
+                {decisionAction === "separate"
+                  ? `Confirm Separation: ${decisionPip.employee_name || decisionPip.employee_id}`
+                  : decisionAction === "extend"
+                  ? `Extend PIP: ${decisionPip.employee_name || decisionPip.employee_id}`
+                  : `Retain Employee: ${decisionPip.employee_name || decisionPip.employee_id}`}
+              </h3>
+              <button type="button" className="modal-close-btn" onClick={() => setDecisionPip(null)}>✕</button>
+            </div>
+            <form onSubmit={handleSeparationDecision} className="stack gap-3 mt-3">
+              <div className="field">
+                <label>Decision Action</label>
+                <div className="flex gap-3 mt-1">
+                  <label className="flex items-center gap-1" style={{ cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      name="decisionAction"
+                      value="separate"
+                      checked={decisionAction === "separate"}
+                      onChange={() => setDecisionAction("separate")}
+                    />
+                    <span>Separate</span>
+                  </label>
+                  <label className="flex items-center gap-1" style={{ cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      name="decisionAction"
+                      value="extend"
+                      checked={decisionAction === "extend"}
+                      onChange={() => setDecisionAction("extend")}
+                    />
+                    <span>Extend</span>
+                  </label>
+                  <label className="flex items-center gap-1" style={{ cursor: "pointer" }}>
+                    <input
+                      type="radio"
+                      name="decisionAction"
+                      value="retain"
+                      checked={decisionAction === "retain"}
+                      onChange={() => setDecisionAction("retain")}
+                    />
+                    <span>Retain</span>
+                  </label>
+                </div>
+              </div>
+
+              {decisionAction === "separate" && (
+                <>
+                  <div className="p-3 bg-muted rounded border text-xs text-muted">
+                    <strong>Notice Policy:</strong> Notice is served by default. Waived notice or pay-in-lieu must be explicitly selected. Last working date cannot be in the past or more than 180 days ahead.
+                  </div>
+                  <div className="field">
+                    <label>Last Working Date *</label>
+                    <input
+                      type="date"
+                      value={decisionLwd}
+                      onChange={(e) => setDecisionLwd(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Notice Choice * (Default: Served)</label>
+                    <select
+                      value={decisionNoticeChoice}
+                      onChange={(e) => setDecisionNoticeChoice(e.target.value as typeof decisionNoticeChoice)}
+                      required
+                    >
+                      <option value="served">Notice Served (Employee works through last working date)</option>
+                      <option value="waived">Notice Waived (No notice required/recovered)</option>
+                      <option value="pay_in_lieu">Pay-in-Lieu (Company pays notice amount)</option>
+                    </select>
+                  </div>
+                </>
+              )}
+
+              {decisionAction === "extend" && (
+                <>
+                  <div className="field">
+                    <label>Current PIP End Date</label>
+                    <input type="date" value={decisionPip.end_date} disabled className="bg-muted" />
+                  </div>
+                  <div className="field">
+                    <label>New PIP End Date * (Must be later than current end date)</label>
+                    <input
+                      type="date"
+                      value={decisionNewEndDate}
+                      onChange={(e) => setDecisionNewEndDate(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Reason for Extension * (1–500 characters)</label>
+                    <textarea
+                      rows={3}
+                      maxLength={500}
+                      value={decisionReason}
+                      onChange={(e) => setDecisionReason(e.target.value)}
+                      placeholder="Explain targets to achieve during extended period..."
+                      required
+                    />
+                  </div>
+                </>
+              )}
+
+              {decisionAction === "retain" && (
+                <>
+                  <div className="p-3 bg-muted rounded border text-xs text-muted">
+                    Retaining will clear the pending separation status for the employee and keep them active in the organization.
+                  </div>
+                  <div className="field">
+                    <label>Reason for Retention * (1–500 characters)</label>
+                    <textarea
+                      rows={3}
+                      maxLength={500}
+                      value={decisionReason}
+                      onChange={(e) => setDecisionReason(e.target.value)}
+                      placeholder="Explain justification for retaining the employee..."
+                      required
+                    />
+                  </div>
+                </>
+              )}
+
+              <div className="row-end gap-2 mt-2">
+                <button type="button" className="btn btn-ghost" onClick={() => setDecisionPip(null)}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className={`btn ${decisionAction === "separate" ? "btn-danger" : "btn-primary"}`}
+                  disabled={submittingDecision}
+                >
+                  {submittingDecision ? "Saving..." : `Confirm ${decisionAction.charAt(0).toUpperCase() + decisionAction.slice(1)}`}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       {showPipCreateModal && (
         <div className="modal-backdrop" onClick={() => setShowPipCreateModal(false)}>
           <div className="modal card performance-goal-modal" style={{ maxWidth: "560px", width: "95%" }} onClick={(e) => e.stopPropagation()}>
@@ -719,8 +1088,8 @@ export function PerformanceCyclesPage() {
               </div>
 
               {pipOutcome === "failed" && (
-                <div className="alert alert-error text-xs" style={{ margin: 0 }}>
-                  <strong>⚠️ Automatic Action:</strong> Marking this PIP as Failed will immediately initiate separation for <b>{evaluatingPip.employee_name}</b>, mark their status as separated with reason "Failed Performance PIP", and trigger the Full & Final (FnF) financial settlement workflow.
+                <div className="alert alert-warning text-xs" style={{ margin: 0 }}>
+                  <strong>⚠️ Two-Step Separation:</strong> Marking this PIP as Failed will place <b>{evaluatingPip.employee_name}</b> in <code>Pending Separation</code> status. An HR administrator (different from the evaluating manager) will confirm the final separation decision.
                 </div>
               )}
 

@@ -260,4 +260,64 @@ describe("PerformanceCyclesPage (6.1 Appraisal Cycles & 6.4 PIPs)", () => {
     expect(screen.queryByRole("button", { name: /Appraisal Cycles/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /\+ Create Cycle/i })).not.toBeInTheDocument();
   });
+
+  it("F1: failed PIP displays 'Awaiting HR decision'", async () => {
+    vi.mocked(api.listPIPs).mockResolvedValue([
+      { ...mockPips[0], id: "pip-failed-1", status: "failed" },
+    ]);
+    renderComponent();
+    fireEvent.click(await screen.findByRole("button", { name: /Performance Improvement Plans/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Awaiting HR decision")).toBeInTheDocument();
+    });
+  });
+
+  it("F2: Separations pending decision tab shows failed PIP and allows confirming separation", async () => {
+    vi.mocked(api.listPIPs).mockResolvedValue([
+      {
+        ...mockPips[0],
+        id: "pip-failed-2",
+        status: "failed",
+        evaluated_by: "mgr-1",
+        evaluated_at: "2026-11-20T10:00:00Z",
+      },
+    ]);
+    vi.mocked(api.decidePIPSeparation).mockResolvedValue({
+      id: "dec-1",
+      pip_id: "pip-failed-2",
+      decision: "separate",
+      decided_by: "hr-1",
+      decided_at: "2026-11-21T10:00:00Z",
+      last_working_date: "2026-12-01",
+      notice_choice: "served",
+      notes: null,
+    });
+
+    renderComponent();
+
+    const pendingTab = await screen.findByRole("button", { name: /Separations pending decision/i });
+    fireEvent.click(pendingTab);
+
+    expect(await screen.findByText("Failed PIP Records Requiring Action")).toBeInTheDocument();
+    expect(screen.getByText("Alice Smith")).toBeInTheDocument();
+
+    const separateBtn = screen.getByRole("button", { name: /^Separate$/i });
+    fireEvent.click(separateBtn);
+
+    expect(screen.getByText(/Confirm Separation: Alice Smith/i)).toBeInTheDocument();
+
+    const confirmBtn = screen.getByRole("button", { name: /Confirm Separate/i });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(api.decidePIPSeparation).toHaveBeenCalledWith(
+        "pip-failed-2",
+        expect.objectContaining({
+          decision: "separate",
+          notice_choice: "served",
+        })
+      );
+    });
+  });
 });
