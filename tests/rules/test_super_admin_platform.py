@@ -454,6 +454,7 @@ def test_B5_stats_reads_are_audited(
         .first()
     )
     assert audit_row is not None
+    assert audit_row.details is not None
     assert audit_row.details.get("endpoint") == "/platform/stats/overview"
 
 
