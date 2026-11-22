@@ -303,7 +303,12 @@ class SalaryStructureService:
         self._assert_name_free(company_id, data.name)
         try:
             structure = self.repo.create(
-                company_id=company_id, name=data.name, country=data.country, level=data.level
+                company_id=company_id,
+                name=data.name,
+                country=data.country,
+                level=data.level,
+                created_by=actor.id,
+                updated_by=actor.id,
             )
         except IntegrityError as exc:
             # Two requests passed the look-up above at the same moment; the unique index decided.
@@ -339,7 +344,15 @@ class SalaryStructureService:
         actor: User,
     ) -> SalaryStructure:
         structure = self._get_or_404(company_id, structure_id)
-        updates = data.model_dump(exclude={"components"}, exclude_unset=True)
+        updates = data.model_dump(exclude={"version", "components"}, exclude_unset=True)
+        # The caller states the edition it read. If the row has moved on since,
+        # saving would wipe out whoever edited it in between with nobody told,
+        # so the edit is refused and the person is asked to reload.
+        if data.version is not None and data.version != structure.version:
+            raise ConflictError(
+                "This salary structure was changed by someone else while you were "
+                "editing it. Reload the structure and apply your change again."
+            )
         # Every check runs before the first write, so a refused edit changes nothing.
         if "name" in updates:
             self._assert_name_free(company_id, updates["name"], exclude_id=structure.id)
@@ -352,14 +365,21 @@ class SalaryStructureService:
                 )
             self._assert_assigned_salaries_stay_valid(company_id, structure.id, data.components)
 
-        if updates:
+        # Named before the bookkeeping columns join them, so the audit row lists
+        # what the person actually changed.
+        changed_fields = sorted(updates.keys())
+        if updates or data.components is not None:
+            # The counter moves on every accepted edit, components included, so
+            # a page holding the old edition cannot save over this one.
+            updates["version"] = structure.version + 1
+            updates["updated_by"] = actor.id
             try:
                 self.repo.update(structure, **updates)
             except IntegrityError as exc:
                 self.db.rollback()
                 raise ConflictError(_name_taken(updates.get("name", ""))) from exc
         details: dict = {"structure_id": str(structure.id)}
-        fields = sorted(updates.keys())
+        fields = changed_fields
         if data.components is not None:
             self.component_repo.delete_all_for_structure(structure.id, company_id)
             self._add_components(company_id, structure.id, data.components)

@@ -16,8 +16,12 @@ const mockStructures: payrollApi.SalaryStructureListItem[] = [
     country: "IN",
     level: "L1",
     is_active: true,
+    version: 1,
     component_count: 3,
     created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    created_by_email: "hr@acme.com",
+    updated_by_email: "hr@acme.com",
   },
   {
     id: "struct-2",
@@ -25,8 +29,12 @@ const mockStructures: payrollApi.SalaryStructureListItem[] = [
     country: "IN",
     level: "L3",
     is_active: true,
+    version: 2,
     component_count: 4,
     created_at: "2026-02-01T00:00:00Z",
+    updated_at: "2026-03-05T00:00:00Z",
+    created_by_email: "hr@acme.com",
+    updated_by_email: "owner@acme.com",
   },
 ];
 
@@ -185,8 +193,12 @@ describe("Sub-feature 5.1 & 5.2 & 5.3: PayrollSetupPage Frontend", () => {
       country: "IN",
       level: "L1",
       is_active: true,
+      version: 1,
       components: [],
       created_at: "2026-03-01T00:00:00Z",
+      updated_at: "2026-03-01T00:00:00Z",
+      created_by_email: "hr@acme.com",
+      updated_by_email: "hr@acme.com",
     });
 
     renderSetupPage();
@@ -310,5 +322,73 @@ describe("Sub-feature 5.1 & 5.2 & 5.3: PayrollSetupPage Frontend", () => {
 
     expect(screen.getByText(/300,000\.01/i)).toBeInTheDocument();
     expect(screen.getByText("5.00%")).toBeInTheDocument();
+  });
+
+  it("5.1 F6: an edit sends back the edition it opened, so a stale save is refused", async () => {
+    vi.mocked(payrollApi.getStructure).mockResolvedValue({
+      id: "struct-1",
+      name: "Engineering Standard Structure",
+      country: "IN",
+      level: "L1",
+      is_active: true,
+      version: 4,
+      components: [
+        {
+          id: "comp-1",
+          code: "BASIC",
+          name: "Basic Pay",
+          type: "earning",
+          calculation_type: "percentage",
+          value: "100.00",
+          percentage_of: "ctc",
+          is_taxable: true,
+          is_statutory: false,
+          display_order: 1,
+        },
+      ] as payrollApi.SalaryComponent[],
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      created_by_email: "hr@acme.com",
+      updated_by_email: "hr@acme.com",
+    });
+    vi.mocked(payrollApi.updateStructure).mockResolvedValue({
+      id: "struct-1",
+      name: "Engineering Standard Structure",
+      country: "IN",
+      level: "L2",
+      is_active: true,
+      version: 5,
+      components: [],
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-03-01T00:00:00Z",
+      created_by_email: "hr@acme.com",
+      updated_by_email: "hr@acme.com",
+    });
+
+    renderSetupPage();
+    const editButtons = await screen.findAllByRole("button", { name: /^Edit$/i });
+    fireEvent.click(editButtons[0]);
+
+    await waitFor(() => {
+      expect(payrollApi.getStructure).toHaveBeenCalledWith("struct-1");
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /Save Changes/i }));
+
+    await waitFor(() => {
+      expect(payrollApi.updateStructure).toHaveBeenCalledWith(
+        "struct-1",
+        expect.objectContaining({ version: 4 })
+      );
+    });
+  });
+
+  it("5.1 F7: the structure list says who last changed each one", async () => {
+    renderSetupPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Management Structure")).toBeInTheDocument();
+    });
+    expect(screen.getByText("owner@acme.com")).toBeInTheDocument();
   });
 });

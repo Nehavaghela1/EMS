@@ -33,8 +33,14 @@ export interface SalaryStructureListItem {
   country: string;
   level: string | null;
   is_active: boolean;
+  /** The row's edition. Sent back on save so a stale page cannot overwrite a
+   * newer edit; see SalaryStructureUpdateInput.version. */
+  version: number;
   component_count: number;
   created_at: string;
+  updated_at: string;
+  created_by_email: string | null;
+  updated_by_email: string | null;
 }
 
 export interface SalaryStructure {
@@ -43,8 +49,12 @@ export interface SalaryStructure {
   country: string;
   level: string | null;
   is_active: boolean;
+  version: number;
   components: SalaryComponent[];
   created_at: string;
+  updated_at: string;
+  created_by_email: string | null;
+  updated_by_email: string | null;
 }
 
 export interface SalaryStructureCreateInput {
@@ -221,6 +231,9 @@ export interface SalaryStructureUpdateInput {
   level?: string | null;
   is_active?: boolean;
   components?: SalaryComponentInput[];
+  /** The edition this edit started from. The API refuses the save with a 409
+   * if the structure has been changed by someone else since. */
+  version?: number;
 }
 
 /** PUT /payroll/structures/{id} — components are replaced whole, never patched. */

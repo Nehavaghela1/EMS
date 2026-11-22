@@ -20,6 +20,7 @@ import {
 import { listEmployees, type Employee } from "../../hr/api";
 import { useToast } from "../../../app/toast-context";
 import { parseApiError } from "../../../shared/api/errors";
+import { formatDate } from "../../../shared/utils/date";
 import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
 
 const SUPPORTED_COUNTRIES = [
@@ -66,6 +67,9 @@ export function PayrollSetupPage() {
   const [showStructureModal, setShowStructureModal] = useState(autoOpenNew);
   // Set while editing an existing structure; null means the form creates a new one (BUG-046).
   const [editingStructureId, setEditingStructureId] = useState<string | null>(null);
+  // The edition this edit started from, sent back on save so a page left open
+  // cannot quietly overwrite someone else's newer change.
+  const [editingStructureVersion, setEditingStructureVersion] = useState<number | null>(null);
   const [structIsActive, setStructIsActive] = useState(true);
   const [loadingStructure, setLoadingStructure] = useState(false);
   const [structureToDelete, setStructureToDelete] = useState<SalaryStructureListItem | null>(null);
@@ -179,6 +183,7 @@ export function PayrollSetupPage() {
   }
 
   function openCreateStructure() {
+    setEditingStructureVersion(null);
     setEditingStructureId(null);
     setStructIsActive(true);
     setShowStructureModal(true);
@@ -189,6 +194,7 @@ export function PayrollSetupPage() {
     try {
       const full = await getStructure(row.id);
       setEditingStructureId(full.id);
+      setEditingStructureVersion(full.version);
       setStructName(full.name);
       setStructCountry(full.country);
       setStructLevel(full.level || "L1");
@@ -278,10 +284,12 @@ export function PayrollSetupPage() {
           level: structLevel,
           is_active: structIsActive,
           components,
+          ...(editingStructureVersion !== null ? { version: editingStructureVersion } : {}),
         });
         notify("Salary structure updated. Issued payslips are unchanged.", "success");
         setShowStructureModal(false);
         setEditingStructureId(null);
+        setEditingStructureVersion(null);
         setStructName("");
         fetchStructures();
         return;
@@ -302,6 +310,8 @@ export function PayrollSetupPage() {
       }
     } catch (err: unknown) {
       const parsed = parseApiError(err);
+      // A stale edit keeps the modal open with the typing intact, so the
+      // person can reload and apply the same change again.
       notify(
         parsed.message || (editingStructureId ? "Failed to update structure" : "Failed to create structure"),
         parsed.status === 409 ? "warning" : "error"
@@ -927,6 +937,7 @@ export function PayrollSetupPage() {
                   <th style={{ padding: "12px 16px" }}>LEVEL</th>
                   <th style={{ padding: "12px 16px" }}>COMPONENTS</th>
                   <th style={{ padding: "12px 16px" }}>STATUS</th>
+                  <th style={{ padding: "12px 16px" }}>LAST CHANGED</th>
                   <th style={{ padding: "12px 16px", textAlign: "right" }}>ACTIONS</th>
                 </tr>
               </thead>
@@ -949,6 +960,14 @@ export function PayrollSetupPage() {
                         }}
                       >
                         {s.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    {/* Who touched this last. Until now that lived only in the
+                        audit log, which few people open. */}
+                    <td style={{ padding: "14px 16px", color: "#475569" }}>
+                      <div>{formatDate(s.updated_at)}</div>
+                      <span className="text-xs text-muted">
+                        {s.updated_by_email ?? s.created_by_email ?? "before this was recorded"}
                       </span>
                     </td>
                     <td style={{ padding: "14px 16px", textAlign: "right", whiteSpace: "nowrap" }}>

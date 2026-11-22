@@ -137,6 +137,11 @@ def test_T02a_rate_limits_per_ip(client, limits_on):
     assert resps_ip[1].status_code == 200
     assert resps_ip[2].status_code == 200
     assert resps_ip[3].status_code == 429
+    # The block must say how long it lasts: "try again later" left a blocked
+    # person with no idea whether to wait a minute or an hour (BUG-008).
+    blocked = resps_ip[3]
+    assert blocked.headers["Retry-After"] == "3600", blocked.headers
+    assert "about 1 hour" in blocked.json()["error"]["message"], blocked.text
 
 
 # ── T02b: Per-ACCOUNT limit 3/hour reached from different client IPs ──────────
