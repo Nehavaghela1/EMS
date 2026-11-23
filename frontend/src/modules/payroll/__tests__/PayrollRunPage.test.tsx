@@ -328,4 +328,42 @@ describe("Sub-feature 5.4: PayrollRunPage Frontend", () => {
     expect(screen.getByText("₹1,10,000.00")).toBeInTheDocument();
     expect(screen.queryByText("₹9,99,999.00")).not.toBeInTheDocument();
   });
+
+  it("G5: does not render dummy toast controls and kept action buttons make expected network calls", async () => {
+    vi.mocked(payrollApi.getPayrollRunDetail).mockResolvedValue(mockRunDetail);
+    vi.mocked(payrollApi.downloadPaymentFile).mockResolvedValue();
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /View & Process Pay Run/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /View & Process Pay Run/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Rahul Sharma")).toBeInTheDocument();
+    });
+
+    // Dummy controls must not exist:
+    // 1. Comments feature button
+    expect(screen.queryByTitle("Add Comments / Notes")).not.toBeInTheDocument();
+    // 2. Send Payslip button
+    expect(screen.queryByRole("button", { name: /Send Payslip/i })).not.toBeInTheDocument();
+    // 3. Filter button in summary table
+    expect(screen.queryByTitle("Filter employees")).not.toBeInTheDocument();
+    // 4. Duplicate Export Data button in summary table
+    expect(screen.queryByRole("button", { name: /Export Data ▾/i })).not.toBeInTheDocument();
+    // 5. TDS View link
+    expect(screen.queryByRole("button", { name: /The TDS worksheet download/i })).not.toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+
+    // Kept action: Download Bank Advice button makes real network call
+    const bankAdviceBtn = screen.getByRole("button", { name: /Download Bank Advice/i });
+    fireEvent.click(bankAdviceBtn);
+
+    await waitFor(() => {
+      expect(payrollApi.downloadPaymentFile).toHaveBeenCalledWith("run-1");
+    });
+  });
 });

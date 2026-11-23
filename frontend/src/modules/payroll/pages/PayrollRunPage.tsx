@@ -312,26 +312,7 @@ export function PayrollRunPage() {
 
           {/* Action buttons (Screen 3 top-right) */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost"
-              style={{ background: "#ffffff", border: "1px solid #cbd5e1", color: "#475569", padding: "6px 12px", borderRadius: "6px" }}
-              onClick={() => notify("Comments feature opened.")}
-              title="Add Comments / Notes"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            </button>
-
-            {isPaid ? (
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                onClick={() => notify("Payslips sent via email to all employees.")}
-                style={{ background: "#ffffff", color: "#2563eb", border: "1px solid #cbd5e1", padding: "6px 14px", borderRadius: "6px", fontWeight: 600 }}
-              >
-                Send Payslip
-              </button>
-            ) : (
+            {!isPaid && (
               <button
                 type="button"
                 className="btn btn-sm btn-primary"
@@ -599,37 +580,6 @@ export function PayrollRunPage() {
                   }}
                 />
               </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <button
-                  type="button"
-                  onClick={() => notify("Filter view applied.")}
-                  style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: "6px", padding: "6px 10px", cursor: "pointer", color: "#64748b" }}
-                  title="Filter employees"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => notify("Exporting employee summary data.")}
-                  style={{
-                    background: "#ffffff",
-                    border: "1px solid #cbd5e1",
-                    borderRadius: "6px",
-                    padding: "6px 12px",
-                    fontSize: "0.82rem",
-                    fontWeight: 600,
-                    color: "#475569",
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                  <span>Export Data ▾</span>
-                </button>
-              </div>
             </div>
 
             {/* Table (Screen 3) */}
@@ -719,21 +669,8 @@ export function PayrollRunPage() {
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                             </button>
                           </td>
-                          <td style={{ padding: "12px 8px", textAlign: "center" }}>
-                            <button
-                              type="button"
-                              onClick={() => notify(`The TDS worksheet download for ${empName} is not available yet.`, "info")}
-                              style={{
-                                background: "transparent",
-                                border: "none",
-                                color: "#2563eb",
-                                fontWeight: 600,
-                                cursor: "pointer",
-                                padding: 0,
-                              }}
-                            >
-                              View
-                            </button>
+                          <td style={{ padding: "12px 8px", textAlign: "center", color: "#94a3b8" }}>
+                            —
                           </td>
                           <td style={{ padding: "12px 8px", color: "#475569" }}>
                             Manual Bank Transfer
@@ -1007,14 +944,6 @@ export function PayrollRunPage() {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <button
-                type="button"
-                onClick={() => notify("Filter view applied.")}
-                style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: "6px", padding: "6px 8px", cursor: "pointer", color: "#64748b" }}
-                title="Filter history"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-              </button>
               <button
                 type="button"
                 onClick={() => setShowRunModal(true)}
