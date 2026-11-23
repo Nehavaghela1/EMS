@@ -395,6 +395,32 @@ export async function deletePayrollRun(id: string): Promise<void> {
   await apiClient.delete(`/payroll/runs/${id}`);
 }
 
+export interface SendPayslipsRecipientResult {
+  employee_id: string;
+  status: "queued" | "skipped";
+  reason: string | null;
+}
+
+export interface SendPayslipsResponse {
+  run_id: string;
+  delivery: "console" | "queued";
+  total_selected: number;
+  queued_count: number;
+  skipped_count: number;
+  recipients: SendPayslipsRecipientResult[];
+}
+
+export async function sendPayrollRunPayslips(
+  id: string,
+  employeeIds: string[] = []
+): Promise<SendPayslipsResponse> {
+  const res = await apiClient.post<SendPayslipsResponse>(`/payroll/runs/${id}/send-payslips`, {
+    employee_ids: employeeIds,
+  });
+  return res.data;
+}
+
+
 
 // 4. Payslips & Reimbursements
 export async function listMyPayslips(): Promise<PayrollItem[]> {

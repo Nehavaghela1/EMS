@@ -8,6 +8,8 @@ import {
   downloadPaymentFile,
   getStatutoryConfig,
   updateStatutoryConfig,
+  sendPayrollRunPayslips,
+  type SendPayslipsResponse,
   type PayrollRun,
   type PayrollRunDetail,
   type PayrollItem,
@@ -49,6 +51,12 @@ export function PayrollRunPage() {
   const [payoutAccNumber, setPayoutAccNumber] = useState("•••• •••• 9281");
   const [payoutIfsc, setPayoutIfsc] = useState("ICIC0000412");
   const [payoutSaving, setPayoutSaving] = useState(false);
+
+  // Send Payslips Modal (B6)
+  const [showSendPayslipModal, setShowSendPayslipModal] = useState(false);
+  const [sendPayslipSelectedIds, setSendPayslipSelectedIds] = useState<string[]>([]);
+  const [sendingPayslips, setSendingPayslips] = useState(false);
+  const [sendPayslipsResult, setSendPayslipsResult] = useState<SendPayslipsResponse | null>(null);
 
   const [company, setCompany] = useState<CompanyResponse | null>(null);
 
@@ -312,7 +320,26 @@ export function PayrollRunPage() {
 
           {/* Action buttons (Screen 3 top-right) */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            {!isPaid && (
+            {isPaid ? (
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={() => {
+                  const initialSelected = selectedRunDetail.items
+                    .filter((it) => {
+                      const emp = employeeMap.get(it.employee_id);
+                      return emp?.email && emp.email.trim();
+                    })
+                    .map((it) => it.employee_id);
+                  setSendPayslipSelectedIds(initialSelected);
+                  setSendPayslipsResult(null);
+                  setShowSendPayslipModal(true);
+                }}
+                style={{ background: "#ffffff", color: "#2563eb", border: "1px solid #cbd5e1", padding: "6px 14px", borderRadius: "6px", fontWeight: 600 }}
+              >
+                Send Payslip
+              </button>
+            ) : (
               <button
                 type="button"
                 className="btn btn-sm btn-primary"
@@ -729,6 +756,263 @@ export function PayrollRunPage() {
           onConfirm={handleDeleteRun}
           onCancel={() => setRunToDelete(null)}
         />
+
+        {/* Send Payslips Modal (B6) */}
+        {showSendPayslipModal && (
+          <div
+            className="modal-backdrop"
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(15, 23, 42, 0.5)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "20px",
+            }}
+          >
+            <div
+              className="modal-dialog"
+              style={{
+                background: "#ffffff",
+                borderRadius: "12px",
+                width: "100%",
+                maxWidth: "600px",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                className="modal-header"
+                style={{
+                  padding: "1.25rem 1.5rem",
+                  borderBottom: "1px solid #e2e8f0",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 700, color: "#0f172a" }}>
+                  Send Payslips via Email
+                </h3>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => setShowSendPayslipModal(false)}
+                  style={{ border: "none", background: "transparent", fontSize: "1.2rem", cursor: "pointer", color: "#64748b" }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ padding: "1.5rem", maxHeight: "65vh", overflowY: "auto" }}>
+                {sendPayslipsResult ? (
+                  <div>
+                    {sendPayslipsResult.delivery === "console" && (
+                      <div
+                        role="alert"
+                        style={{
+                          padding: "12px 16px",
+                          borderRadius: "8px",
+                          background: "#fffbeb",
+                          border: "1px solid #fef3c7",
+                          color: "#b45309",
+                          fontSize: "0.88rem",
+                          marginBottom: "16px",
+                        }}
+                      >
+                        <strong>Notice:</strong> The email backend is configured to <code>console</code>. Emails were logged to server output rather than dispatched to inboxes.
+                      </div>
+                    )}
+
+                    <div style={{ marginBottom: "16px", fontSize: "0.92rem", color: "#334155" }}>
+                      <strong>Summary:</strong> Queued {sendPayslipsResult.queued_count} payslip(s), skipped {sendPayslipsResult.skipped_count}.
+                    </div>
+
+                    {sendPayslipsResult.skipped_count > 0 && (
+                      <div style={{ marginTop: "12px" }}>
+                        <div style={{ fontSize: "0.84rem", fontWeight: 600, color: "#64748b", textTransform: "uppercase", marginBottom: "8px" }}>
+                          Skipped Employees
+                        </div>
+                        <div style={{ border: "1px solid #e2e8f0", borderRadius: "8px", overflow: "hidden" }}>
+                          {sendPayslipsResult.recipients
+                            .filter((res) => res.status === "skipped")
+                            .map((res) => {
+                              const emp = employeeMap.get(res.employee_id);
+                              return (
+                                <div
+                                  key={res.employee_id}
+                                  style={{
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    padding: "8px 12px",
+                                    fontSize: "0.84rem",
+                                    borderBottom: "1px solid #f1f5f9",
+                                    background: "#f8fafc",
+                                  }}
+                                >
+                                  <div>
+                                    <span style={{ fontWeight: 600, color: "#0f172a" }}>
+                                      {emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : res.employee_id}
+                                    </span>
+                                    {emp && <span style={{ color: "#64748b", marginLeft: "6px" }}>({emp.employee_code})</span>}
+                                  </div>
+                                  <span style={{ color: "#ef4444", fontWeight: 500 }}>{res.reason}</span>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                      <span style={{ fontSize: "0.88rem", fontWeight: 600, color: "#334155" }}>
+                        Send to {sendPayslipSelectedIds.length} of {selectedRunDetail.items.length} employees
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-xs btn-ghost"
+                        style={{ fontSize: "0.8rem", color: "#2563eb", background: "none", border: "none", cursor: "pointer" }}
+                        onClick={() => {
+                          const selectable = selectedRunDetail.items
+                            .filter((it) => {
+                              const emp = employeeMap.get(it.employee_id);
+                              return emp?.email && emp.email.trim();
+                            })
+                            .map((it) => it.employee_id);
+                          if (sendPayslipSelectedIds.length === selectable.length) {
+                            setSendPayslipSelectedIds([]);
+                          } else {
+                            setSendPayslipSelectedIds(selectable);
+                          }
+                        }}
+                      >
+                        {sendPayslipSelectedIds.length === selectedRunDetail.items.filter((it) => {
+                          const emp = employeeMap.get(it.employee_id);
+                          return emp?.email && emp.email.trim();
+                        }).length ? "Deselect All" : "Select All"}
+                      </button>
+                    </div>
+
+                    <div style={{ border: "1px solid #e2e8f0", borderRadius: "8px", maxHeight: "300px", overflowY: "auto" }}>
+                      {selectedRunDetail.items.map((it) => {
+                        const emp = employeeMap.get(it.employee_id);
+                        const hasEmail = Boolean(emp?.email && emp.email.trim());
+                        const isSelected = sendPayslipSelectedIds.includes(it.employee_id);
+
+                        return (
+                          <div
+                            key={it.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              padding: "10px 12px",
+                              borderBottom: "1px solid #f1f5f9",
+                              opacity: hasEmail ? 1 : 0.6,
+                              background: isSelected ? "#f0f9ff" : "transparent",
+                            }}
+                          >
+                            <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: hasEmail ? "pointer" : "not-allowed", flex: 1, margin: 0 }}>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                disabled={!hasEmail}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSendPayslipSelectedIds((prev) => [...prev, it.employee_id]);
+                                  } else {
+                                    setSendPayslipSelectedIds((prev) => prev.filter((id) => id !== it.employee_id));
+                                  }
+                                }}
+                              />
+                              <div>
+                                <div style={{ fontWeight: 600, fontSize: "0.88rem", color: "#0f172a" }}>
+                                  {emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : it.employee_id}
+                                  {emp && <span style={{ color: "#64748b", fontWeight: 400, marginLeft: "6px" }}>({emp.employee_code})</span>}
+                                </div>
+                                <div style={{ fontSize: "0.78rem", color: hasEmail ? "#64748b" : "#ef4444" }}>
+                                  {hasEmail ? emp?.email : "No email address on file"}
+                                </div>
+                              </div>
+                            </label>
+
+                            <div style={{ textAlign: "right", fontSize: "0.85rem", fontWeight: 600, color: "#334155" }}>
+                              ₹{Number(it.net_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div
+                className="modal-footer"
+                style={{
+                  padding: "1rem 1.5rem",
+                  background: "#f8fafc",
+                  borderTop: "1px solid #e2e8f0",
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: "10px",
+                }}
+              >
+                {sendPayslipsResult ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => setShowSendPayslipModal(false)}
+                    style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px", padding: "6px 18px", fontWeight: 600 }}
+                  >
+                    Done
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setShowSendPayslipModal(false)}
+                      style={{ border: "1px solid #cbd5e1", borderRadius: "6px" }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={sendingPayslips || sendPayslipSelectedIds.length === 0}
+                      onClick={async () => {
+                        setSendingPayslips(true);
+                        try {
+                          const result = await sendPayrollRunPayslips(
+                            selectedRunDetail.run.id,
+                            sendPayslipSelectedIds
+                          );
+                          setSendPayslipsResult(result);
+                        } catch (err) {
+                          notify(parseApiError(err).message, "error");
+                        } finally {
+                          setSendingPayslips(false);
+                        }
+                      }}
+                      style={{ background: "#2563eb", borderColor: "#2563eb", borderRadius: "6px", padding: "6px 18px", fontWeight: 600 }}
+                    >
+                      {sendingPayslips ? "Sending…" : `Send to ${sendPayslipSelectedIds.length} of ${selectedRunDetail.items.length}`}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     );
   }

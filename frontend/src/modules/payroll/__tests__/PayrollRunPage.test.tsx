@@ -415,4 +415,116 @@ describe("Sub-feature 5.4: PayrollRunPage Frontend", () => {
     expect(firstDataLine).not.toContain("emp-1");
     expect(firstDataLine).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   });
+
+  it("B7/B6: Send Payslip dialog sends only the ticked employees and renders skipped reasons", async () => {
+    // Provide a paid run
+    const paidRun: payrollApi.PayrollRun = {
+      ...mockRuns[1],
+      id: "run-paid-1",
+      status: "paid",
+    };
+    const empWithEmail: hrApi.Employee = {
+      id: "emp-1",
+      employee_code: "EMP-001",
+      first_name: "Rahul",
+      last_name: "Sharma",
+      email: "rahul@example.com",
+    } as unknown as hrApi.Employee;
+
+    const empNoEmail: hrApi.Employee = {
+      id: "emp-2",
+      employee_code: "EMP-002",
+      first_name: "Pooja",
+      last_name: "Patel",
+      email: "",
+    } as unknown as hrApi.Employee;
+
+    vi.mocked(payrollApi.listPayrollRuns).mockResolvedValue({
+      items: [paidRun],
+      total: 1,
+      page: 1,
+      limit: 20,
+      pages: 1,
+      has_next: false,
+    });
+    vi.mocked(hrApi.listEmployees).mockResolvedValue({
+      items: [empWithEmail, empNoEmail],
+      total: 2,
+      page: 1,
+      limit: 100,
+      pages: 1,
+      has_next: false,
+    });
+
+    vi.mocked(payrollApi.getPayrollRunDetail).mockResolvedValue({
+      run: paidRun,
+      items: [
+        {
+          id: "item-1",
+          payroll_run_id: "run-paid-1",
+          employee_id: "emp-1",
+          gross_salary: "75000.00",
+          total_deductions: "9000.00",
+          net_salary: "66000.00",
+        } as unknown as payrollApi.PayrollItem,
+        {
+          id: "item-2",
+          payroll_run_id: "run-paid-1",
+          employee_id: "emp-2",
+          gross_salary: "50000.00",
+          total_deductions: "5000.00",
+          net_salary: "45000.00",
+        } as unknown as payrollApi.PayrollItem,
+      ],
+    });
+
+    const sendMock = vi.mocked(payrollApi.sendPayrollRunPayslips).mockResolvedValue({
+      run_id: "run-paid-1",
+      delivery: "console",
+      total_selected: 1,
+      queued_count: 1,
+      skipped_count: 0,
+      recipients: [
+        { employee_id: "emp-1", status: "queued", reason: null },
+      ],
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /View & Process Pay Run/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /View & Process Pay Run/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Send Payslip/i })).toBeInTheDocument();
+    });
+
+    // Click Send Payslip button to open modal
+    fireEvent.click(screen.getByRole("button", { name: /Send Payslip/i }));
+
+    // Verify modal elements
+    await waitFor(() => {
+      expect(screen.getByText("Send Payslips via Email")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Send to 1 of 2 employees/i)).toBeInTheDocument();
+
+    // emp-2 has no email, so should indicate "No email address on file"
+    expect(screen.getByText("No email address on file")).toBeInTheDocument();
+
+    // Trigger send
+    const submitBtn = screen.getByRole("button", { name: /Send to 1 of 2/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(sendMock).toHaveBeenCalledWith("run-paid-1", ["emp-1"]);
+    });
+
+    // Server returned delivery: "console", so verify warning renders
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(screen.getByText(/The email backend is configured to/i)).toBeInTheDocument();
+    });
+  });
 });

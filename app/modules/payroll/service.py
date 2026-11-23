@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
+from typing import Literal
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.approval_authority import DEFAULT_FORBIDDEN_MESSAGE, can_approve_for
 from app.core.config import settings
+from app.core.email_templates import payslip_email
 from app.core.encryption import DecryptionFailedError, decrypt_field, encrypt_field
 from app.core.exceptions import (
     AppError,
@@ -98,6 +100,8 @@ from app.modules.payroll.schemas import (
     SalaryComponentCreateRequest,
     SalaryStructureCreateRequest,
     SalaryStructureUpdateRequest,
+    SendPayslipsRecipientResult,
+    SendPayslipsResponse,
     StatutoryConfigResponse,
     StatutoryConfigUpdateRequest,
     StatutoryRateCreateRequest,
@@ -114,6 +118,7 @@ from app.modules.time_leave.service import (
     require_deciding_role,
     verify_approval_authority,
 )
+from app.workers.tasks.email import send_email_task
 
 logger = logging.getLogger(__name__)
 
@@ -1348,6 +1353,7 @@ class PayrollRunService:
         self.payment_repo = PayrollRunPaymentRepository(db)
         self.bank_repo = EmployeeBankAccountRepository(db)
         self.settings_repo = CompanySettingsRepository(db)
+        self.company_repo = CompanyRepository(db)
         self.notification_service = NotificationService(db)
         self.audit = AuditService(db)
 
@@ -2189,6 +2195,146 @@ class PayrollRunService:
         )
         self.db.commit()
         return run
+
+    def send_payslips(
+        self,
+        company_id: uuid.UUID,
+        run_id: uuid.UUID,
+        employee_ids: list[uuid.UUID],
+        actor: User,
+    ) -> SendPayslipsResponse:
+        """Send payslip emails for an approved or paid payroll run (B2, B3, B5)."""
+        run = self.repo.get_by_id(run_id, company_id)
+        if run is None:
+            raise NotFoundError("Payroll run not found.")
+
+        if run.status not in (PayrollRunStatus.approved, PayrollRunStatus.paid):
+            raise ConflictError(
+                f"Payslips can only be sent for approved or paid payroll runs; "
+                f"this run is '{run.status.value}'."
+            )
+
+        items = self.item_repo.list_by_run_id(run.id, company_id)
+        item_by_emp_id = {item.employee_id: item for item in items}
+
+        if employee_ids:
+            target_ids = list(employee_ids)
+        else:
+            target_ids = [item.employee_id for item in items]
+
+        recipients: list[SendPayslipsRecipientResult] = []
+        queued_ids: list[uuid.UUID] = []
+
+        # Month and year details for the email
+        month_dt = date(run.year, run.month, 1)
+        month_name = month_dt.strftime("%B")
+        num_days = monthrange(run.year, run.month)[1]
+        start_date = date(run.year, run.month, 1).strftime("%B %d, %Y")
+        end_date = date(run.year, run.month, num_days).strftime("%B %d, %Y")
+        pay_period = f"{start_date} - {end_date}"
+
+        pay_dt = (run.approved_at or run.updated_at).date()
+        pay_date = pay_dt.strftime("%B %d, %Y")
+
+        company = self.company_repo.get_by_id(company_id)
+        currency = company.currency if company is not None else "INR"
+        base_url = settings.FRONTEND_BASE_URL.rstrip("/")
+        payslip_url = f"{base_url}/payroll/payslip"
+
+        for emp_id in target_ids:
+            # 1. Check if employee exists in this company
+            emp = self.employee_repo.get_by_id(emp_id, company_id)
+            if emp is None:
+                recipients.append(
+                    SendPayslipsRecipientResult(
+                        employee_id=emp_id,
+                        status="skipped",
+                        reason="Employee not in this company",
+                    )
+                )
+                continue
+
+            # 2. Check if employee is in this payroll run
+            item = item_by_emp_id.get(emp_id)
+            if item is None:
+                recipients.append(
+                    SendPayslipsRecipientResult(
+                        employee_id=emp_id,
+                        status="skipped",
+                        reason="Employee not in this run",
+                    )
+                )
+                continue
+
+            # 3. Check if employee has an email address on file
+            if not emp.email or not emp.email.strip():
+                recipients.append(
+                    SendPayslipsRecipientResult(
+                        employee_id=emp_id,
+                        status="skipped",
+                        reason="No email address on file",
+                    )
+                )
+                continue
+
+            # Format email figures and queue
+            subject, text_body, html_body = payslip_email(
+                first_name=emp.first_name,
+                month_name=month_name,
+                year=run.year,
+                pay_period=pay_period,
+                pay_date=pay_date,
+                gross_pay=Decimal(str(item.gross_salary)),
+                deductions=Decimal(str(item.total_deductions)),
+                net_pay=Decimal(str(item.net_salary)),
+                currency=currency,
+                payslip_url=payslip_url,
+            )
+
+            send_email_task.delay(
+                to=emp.email.strip(),
+                subject=subject,
+                text_body=text_body,
+                html_body=html_body,
+            )
+
+            queued_ids.append(emp_id)
+            recipients.append(
+                SendPayslipsRecipientResult(
+                    employee_id=emp_id,
+                    status="queued",
+                    reason=None,
+                )
+            )
+
+        delivery: Literal["console", "queued"] = (
+            "console" if settings.EMAIL_BACKEND == "console" else "queued"
+        )
+
+        if queued_ids:
+            self.audit.record(
+                company_id=company_id,
+                actor=actor,
+                action="PAYSLIPS_EMAILED",
+                entity_type="payroll_run",
+                entity_id=run.id,
+                details={
+                    "run_id": str(run.id),
+                    "count": len(queued_ids),
+                    "recipient_employee_ids": [str(i) for i in queued_ids],
+                },
+            )
+
+        self.db.commit()
+
+        return SendPayslipsResponse(
+            run_id=run.id,
+            delivery=delivery,
+            total_selected=len(target_ids),
+            queued_count=len(queued_ids),
+            skipped_count=len(recipients) - len(queued_ids),
+            recipients=recipients,
+        )
 
     def delete_run(self, company_id: uuid.UUID, run_id: uuid.UUID, actor: User) -> None:
         """Delete/cancel a payroll run. Allowed only if status in
