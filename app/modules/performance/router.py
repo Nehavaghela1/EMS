@@ -274,7 +274,7 @@ def reopen_performance_review(
     id: uuid.UUID,
     data: ReviewReopenRequest,
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_company_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     service = PerformanceService(db)
     review = service.reopen_review(user.company_id, id, data.reason, user)

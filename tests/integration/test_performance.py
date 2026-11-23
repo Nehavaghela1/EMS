@@ -384,5 +384,85 @@ def test_tier_1_performance_module_invariants(
     assert late_sub.status_code == 409
     assert "Self-review deadline" in late_sub.json()["error"]["message"]
     assert "has passed" in late_sub.json()["error"]["message"]
-    assert late_sub.status_code == 409
-    assert "deadline" in late_sub.json()["error"]["message"].lower()
+
+
+def test_tier_2_performance_reopen_and_guard(
+    client: TestClient, company_a: TenantContext, db: Session
+):
+    """Tier 2:
+    E. POST /reviews/{id}/reopen allowed for hr_admin and owner, refused (403) for manager.
+    F. GET /goals/{id}/history returns progress history.
+    """
+    from datetime import timedelta
+
+    today = utcnow().date()
+    cycle_res = client.post(
+        "/api/v1/performance/cycles",
+        json={
+            "name": f"Tier2 Cycle {uuid.uuid4().hex[:6]}",
+            "cycle_type": "quarterly",
+            "start_date": str(today - timedelta(days=5)),
+            "end_date": str(today + timedelta(days=90)),
+        },
+        headers=company_a.hr_headers,
+    )
+    cycle_id = cycle_res.json()["id"]
+    client.put(
+        f"/api/v1/performance/cycles/{cycle_id}",
+        json={"status": "active"},
+        headers=company_a.hr_headers,
+    )
+
+    emp, emp_headers = _create_employee_with_user(db, company_a.company_id)
+    _, owner_headers = _create_employee_with_user(db, company_a.company_id, role=UserRole.owner)
+    manager_headers = company_a.manager_headers
+
+    goals = client.post(
+        "/api/v1/performance/goals",
+        json={
+            "cycle_id": cycle_id,
+            "employee_id": str(emp.id),
+            "goals": [{"title": "Tier 2 Goal", "weightage": 100}],
+        },
+        headers=emp_headers,
+    ).json()
+    goal_id = goals[0]["id"]
+
+    # Update progress and check history (F)
+    client.put(
+        f"/api/v1/performance/goals/{goal_id}/progress",
+        json={"progress": 40, "notes": "Init progress"},
+        headers=emp_headers,
+    )
+    history_res = client.get(
+        f"/api/v1/performance/goals/{goal_id}/history",
+        headers=emp_headers,
+    )
+    assert history_res.status_code == 200
+    assert len(history_res.json()) >= 1
+    assert history_res.json()[0]["new_progress"] == 40
+
+    # Submit self review
+    rev_res = client.post(
+        f"/api/v1/performance/goals/{goal_id}/self-review",
+        json={"rating": "4.5", "comments": "Completed goals"},
+        headers=emp_headers,
+    )
+    rev_id = rev_res.json()["id"]
+
+    # Manager attempting to reopen -> 403 Forbidden (E)
+    mgr_reopen = client.post(
+        f"/api/v1/performance/reviews/{rev_id}/reopen",
+        json={"reason": "Manager trying to reopen"},
+        headers=manager_headers,
+    )
+    assert mgr_reopen.status_code == 403
+
+    # Owner attempting to reopen -> 200 OK (E)
+    owner_reopen = client.post(
+        f"/api/v1/performance/reviews/{rev_id}/reopen",
+        json={"reason": "Owner reopening review for correction"},
+        headers=owner_headers,
+    )
+    assert owner_reopen.status_code == 200
+    assert owner_reopen.json()["status"] == "draft"

@@ -6,10 +6,12 @@ import {
   updatePerformanceGoal,
   submitSelfReview,
   updateGoalProgress,
+  getGoalProgressHistory,
   getActivePIP,
   type PerformanceCycle,
   type PerformanceGoal,
   type PerformancePIP,
+  type GoalProgressHistoryItem,
   type GoalCreateItem,
   type GoalStatus,
 } from "../api";
@@ -26,6 +28,11 @@ export function MyGoalsPage() {
   const [goals, setGoals] = useState<PerformanceGoal[]>([]);
   const [activePip, setActivePip] = useState<PerformancePIP | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // History Drawer state
+  const [historyGoal, setHistoryGoal] = useState<PerformanceGoal | null>(null);
+  const [historyItems, setHistoryItems] = useState<GoalProgressHistoryItem[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Set Goals Modal state
   const [showSetModal, setShowSetModal] = useState(false);
@@ -65,6 +72,20 @@ export function MyGoalsPage() {
   // The server caps existing + new goals at 100%, so the form counts both (BUG-058).
   const newGoalTotalWeightage = Math.round((totalWeightage + newGoalsOnly) * 100) / 100;
   const remainingWeightage = Math.max(0, Math.round((100 - totalWeightage) * 100) / 100);
+
+  async function openHistory(goal: PerformanceGoal) {
+    setHistoryGoal(goal);
+    setLoadingHistory(true);
+    try {
+      const items = await getGoalProgressHistory(goal.id);
+      setHistoryItems(items);
+    } catch (err: unknown) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to load progress history", "error");
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
 
   function openSetGoals() {
     if (remainingWeightage <= 0) {
@@ -374,37 +395,49 @@ export function MyGoalsPage() {
                       <td>{g.target_value || "—"}</td>
                       <td className="fw-bold">{g.weightage}%</td>
                       <td onDoubleClick={(e) => e.stopPropagation()}>
-                        {Boolean(g.self_rating) ? (
-                          <span title="Locked: self-review submitted">
-                            {g.progress ?? 0}%
-                          </span>
-                        ) : (
-                          <span style={{ position: "relative", display: "inline-block" }}>
-                            <input
-                              type="number"
-                              min={0}
-                              max={100}
-                              step={5}
-                              aria-label={`Progress for ${g.title}`}
-                              defaultValue={g.progress ?? 0}
-                              style={{ width: "80px", paddingRight: "22px" }}
-                              onBlur={(e) => handleProgressSave(g, e.currentTarget.value)}
-                            />
-                            <span
-                              style={{
-                                position: "absolute",
-                                right: "8px",
-                                top: "50%",
-                                transform: "translateY(-50%)",
-                                pointerEvents: "none",
-                                color: "var(--text-muted, #64748b)",
-                                fontSize: "0.85rem",
-                              }}
-                            >
-                              %
+                        <div className="flex items-center gap-1">
+                          {Boolean(g.self_rating) ? (
+                            <span title="Locked: self-review submitted">
+                              {g.progress ?? 0}%
                             </span>
-                          </span>
-                        )}
+                          ) : (
+                            <span style={{ position: "relative", display: "inline-block" }}>
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={5}
+                                aria-label={`Progress for ${g.title}`}
+                                defaultValue={g.progress ?? 0}
+                                style={{ width: "80px", paddingRight: "22px" }}
+                                onBlur={(e) => handleProgressSave(g, e.currentTarget.value)}
+                              />
+                              <span
+                                style={{
+                                  position: "absolute",
+                                  right: "8px",
+                                  top: "50%",
+                                  transform: "translateY(-50%)",
+                                  pointerEvents: "none",
+                                  color: "var(--text-muted, #64748b)",
+                                  fontSize: "0.85rem",
+                                }}
+                              >
+                                %
+                              </span>
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm p-1"
+                            title="View progress change history"
+                            aria-label={`View history for ${g.title}`}
+                            onClick={() => openHistory(g)}
+                            style={{ fontSize: "0.9rem", color: "var(--color-primary, #3b82f6)", cursor: "pointer" }}
+                          >
+                            🕒
+                          </button>
+                        </div>
                       </td>
                       <td>
                         <span className="badge badge-outline">{g.status}</span>
@@ -712,6 +745,64 @@ export function MyGoalsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Progress History Modal */}
+      {historyGoal && (
+        <div className="modal-backdrop">
+          <div className="modal" style={{ maxWidth: "560px" }}>
+            <div className="flex justify-between align-center mb-3">
+              <h3 className="m-0">Progress Change History</h3>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setHistoryGoal(null)}
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-sm text-muted mb-4">
+              Audit trail of all progress changes recorded for <strong>{historyGoal.title}</strong>.
+            </p>
+
+            {loadingHistory ? (
+              <p>Loading history...</p>
+            ) : historyItems.length === 0 ? (
+              <p className="text-muted">No progress changes recorded yet.</p>
+            ) : (
+              <div style={{ maxHeight: "350px", overflowY: "auto" }}>
+                <table className="table text-sm" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Change</th>
+                      <th>Notes</th>
+                      <th>Updated At</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyItems.map((item) => (
+                      <tr key={item.id}>
+                        <td>
+                          <span className="font-mono">{item.old_progress}%</span>
+                          {" ➔ "}
+                          <strong className="font-mono">{item.new_progress}%</strong>
+                        </td>
+                        <td>{item.notes || "—"}</td>
+                        <td>{new Date(item.created_at).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="flex justify-end mt-4">
+              <button type="button" className="btn btn-primary" onClick={() => setHistoryGoal(null)}>
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

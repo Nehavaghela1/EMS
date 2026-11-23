@@ -464,8 +464,10 @@ class PerformanceService:
     ) -> PerformanceGoalResponse:
         self_rev = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.self)
         status = self_rev.status if self_rev else None
+        rev_id = self_rev.id if self_rev else None
         resp = PerformanceGoalResponse.model_validate(goal)
         resp.self_review_status = status
+        resp.self_review_id = rev_id
         return resp
 
     def get_goal_progress_history(

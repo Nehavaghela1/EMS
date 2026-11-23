@@ -53,6 +53,7 @@ export interface PerformanceGoal {
   self_rating: string | null;
   self_comments: string | null;
   self_review_status?: "draft" | "submitted" | null;
+  self_review_id?: string | null;
   created_at: string;
 }
 
@@ -233,6 +234,49 @@ export async function activatePIP(pipId: string): Promise<PerformancePIP> {
 
 export async function evaluatePIP(pipId: string, data: PIPEvaluateInput): Promise<PerformancePIP> {
   const res = await apiClient.post<PerformancePIP>(`/performance/pips/${pipId}/evaluate`, data);
+  return res.data;
+}
+
+export interface GoalProgressHistoryItem {
+  id: string;
+  goal_id: string;
+  updated_by_id: string;
+  old_progress: number;
+  new_progress: number;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface PIPCheckIn {
+  id: string;
+  company_id: string;
+  pip_id: string;
+  note: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface PIPCheckInCreateInput {
+  note: string;
+}
+
+export async function reopenReview(reviewId: string, data: { reason: string }): Promise<PerformanceReview> {
+  const res = await apiClient.post<PerformanceReview>(`/performance/reviews/${reviewId}/reopen`, data);
+  return res.data;
+}
+
+export async function getGoalProgressHistory(goalId: string): Promise<GoalProgressHistoryItem[]> {
+  const res = await apiClient.get<GoalProgressHistoryItem[]>(`/performance/goals/${goalId}/history`);
+  return res.data;
+}
+
+export async function listPIPCheckIns(pipId: string): Promise<PIPCheckIn[]> {
+  const res = await apiClient.get<PIPCheckIn[]>(`/performance/pips/${pipId}/check-ins`);
+  return res.data;
+}
+
+export async function addPIPCheckIn(pipId: string, data: PIPCheckInCreateInput): Promise<PIPCheckIn> {
+  const res = await apiClient.post<PIPCheckIn>(`/performance/pips/${pipId}/check-ins`, data);
   return res.data;
 }
 
