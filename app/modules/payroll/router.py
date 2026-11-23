@@ -34,6 +34,8 @@ from app.modules.payroll.schemas import (
     PaymentExclusion,
     PayrollItemResponse,
     PayrollPaymentRecordRequest,
+    PayrollRunAttendanceRelockRequest,
+    PayrollRunAttendanceUnlockRequest,
     PayrollRunCreateRequest,
     PayrollRunDetailResponse,
     PayrollRunResponse,
@@ -615,6 +617,34 @@ def record_payroll_payments(
 ):
     service = PayrollRunService(db)
     run = service.record_payments(user.company_id, id, data, user)
+    return PayrollRunResponse.model_validate(run)
+
+
+@payroll_runs_router.post("/{id}/unlock-attendance", response_model=PayrollRunResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
+def unlock_payroll_run_attendance(
+    request: Request,
+    id: uuid.UUID,
+    data: PayrollRunAttendanceUnlockRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
+):
+    service = PayrollRunService(db)
+    run = service.unlock_attendance(user.company_id, id, data, user)
+    return PayrollRunResponse.model_validate(run)
+
+
+@payroll_runs_router.post("/{id}/lock-attendance", response_model=PayrollRunResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
+def relock_payroll_run_attendance(
+    request: Request,
+    id: uuid.UUID,
+    data: PayrollRunAttendanceRelockRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
+):
+    service = PayrollRunService(db)
+    run = service.relock_attendance(user.company_id, id, data, user)
     return PayrollRunResponse.model_validate(run)
 
 
