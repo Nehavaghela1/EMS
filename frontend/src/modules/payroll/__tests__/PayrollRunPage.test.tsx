@@ -285,4 +285,47 @@ describe("Sub-feature 5.4: PayrollRunPage Frontend", () => {
       expect(payrollApi.deletePayrollRun).toHaveBeenCalledWith("run-1");
     });
   });
+
+  it("F4: hero renders the exact sum of item net_salary values", async () => {
+    // 2 items: 66,000.00 and 44,000.00 -> total net must be 1,10,000.00
+    const fixtureDetail: payrollApi.PayrollRunDetail = {
+      run: {
+        ...mockRuns[0],
+        total_net: "999999.00", // deliberate run mismatch to prove hero renders sum of item net_salaries
+        total_gross: "150000.00",
+        total_deductions: "40000.00",
+      },
+      items: [
+        {
+          ...mockRunDetail.items[0],
+          id: "item-1",
+          net_salary: "66000.00",
+        },
+        {
+          ...mockRunDetail.items[0],
+          id: "item-2",
+          employee_id: "emp-2",
+          net_salary: "44000.00",
+        },
+      ],
+    };
+    vi.mocked(payrollApi.getPayrollRunDetail).mockResolvedValue(fixtureDetail);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /View & Process Pay Run/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /View & Process Pay Run/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Rahul Sharma")).toBeInTheDocument();
+    });
+
+    // 66,000 + 44,000 = 1,10,000.00
+    // In Indian locale formatting: ₹1,10,000.00
+    expect(screen.getByText("₹1,10,000.00")).toBeInTheDocument();
+    expect(screen.queryByText("₹9,99,999.00")).not.toBeInTheDocument();
+  });
 });
