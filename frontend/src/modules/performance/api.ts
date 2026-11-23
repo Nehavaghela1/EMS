@@ -4,6 +4,7 @@ import type { Page } from "../../shared/api/pagination";
 export type CycleType = "annual" | "half_yearly" | "quarterly";
 export type CycleStatus = "draft" | "active" | "closed";
 export type GoalStatus = "draft" | "in_progress" | "completed";
+// "peer" is reserved for future 360-degree peer review workflows; not currently implemented in endpoints or UI.
 export type ReviewerRole = "self" | "manager" | "peer";
 
 export interface PerformanceCycle {
