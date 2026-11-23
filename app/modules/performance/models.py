@@ -43,6 +43,8 @@ class GoalStatus(str, enum.Enum):
 class ReviewerRole(str, enum.Enum):
     self = "self"
     manager = "manager"
+    # peer is reserved for future 360-degree peer review workflows;
+    # not currently implemented in endpoints or UI.
     peer = "peer"
 
 

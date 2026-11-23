@@ -39,7 +39,9 @@ class PerformanceCycleCreateRequest(BaseModel):
 
 
 class PerformanceCycleUpdateRequest(BaseModel):
-    status: CycleStatus
+    status: CycleStatus | None = None
+    self_review_deadline: date | None = None
+    manager_review_deadline: date | None = None
 
 
 class PerformanceCycleResponse(BaseModel):
@@ -107,6 +109,8 @@ class PerformanceGoalResponse(BaseModel):
     progress: int = 0
     self_rating: Decimal | None
     self_comments: str | None
+    self_review_status: str | None = None
+    self_review_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

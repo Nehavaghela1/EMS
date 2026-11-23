@@ -9,9 +9,12 @@ import {
   activatePIP,
   evaluatePIP,
   decidePIPSeparation,
+  listPIPCheckIns,
+  addPIPCheckIn,
   type PerformanceCycle,
   type PerformanceReport,
   type PerformancePIP,
+  type PIPCheckIn,
   type CycleType,
   type CycleStatus,
 } from "../api";
@@ -48,6 +51,13 @@ export function PerformanceCyclesPage() {
   const [pipOutcomeNotes, setPipOutcomeNotes] = useState("");
   const [submittingEval, setSubmittingEval] = useState(false);
 
+  // PIP Detail & Check-in Modal State
+  const [detailPip, setDetailPip] = useState<PerformancePIP | null>(null);
+  const [pipCheckIns, setPipCheckIns] = useState<PIPCheckIn[]>([]);
+  const [loadingCheckIns, setLoadingCheckIns] = useState(false);
+  const [newCheckInNote, setNewCheckInNote] = useState("");
+  const [submittingCheckIn, setSubmittingCheckIn] = useState(false);
+
   // Separation Decision Modal State (F2)
   const [decisionPip, setDecisionPip] = useState<PerformancePIP | null>(null);
   const [decisionAction, setDecisionAction] = useState<"separate" | "extend" | "retain">("separate");
@@ -66,6 +76,12 @@ export function PerformanceCyclesPage() {
   const [selfDeadline, setSelfDeadline] = useState("2027-03-15");
   const [mgrDeadline, setMgrDeadline] = useState("2027-03-25");
   const [submitting, setSubmitting] = useState(false);
+
+  // Edit Deadlines Modal State
+  const [editingCycle, setEditingCycle] = useState<PerformanceCycle | null>(null);
+  const [editSelfDeadline, setEditSelfDeadline] = useState("");
+  const [editMgrDeadline, setEditMgrDeadline] = useState("");
+  const [submittingDeadlines, setSubmittingDeadlines] = useState(false);
 
   useEffect(() => {
     fetchCycles();
@@ -113,6 +129,51 @@ export function PerformanceCyclesPage() {
       setReport(rep);
     } catch {
       // ignore
+    }
+  }
+
+  async function openPipDetail(pip: PerformancePIP) {
+    setDetailPip(pip);
+    setNewCheckInNote("");
+    setLoadingCheckIns(true);
+    try {
+      const checkins = await listPIPCheckIns(pip.id);
+      setPipCheckIns(checkins);
+    } catch (err: unknown) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to load check-ins", "error");
+    } finally {
+      setLoadingCheckIns(false);
+    }
+  }
+
+  async function handleAddCheckIn(e: React.FormEvent) {
+    e.preventDefault();
+    if (!detailPip || !newCheckInNote.trim()) return;
+    setSubmittingCheckIn(true);
+    try {
+      const checkin = await addPIPCheckIn(detailPip.id, { note: newCheckInNote.trim() });
+      setPipCheckIns((prev) => [checkin, ...prev]);
+      setNewCheckInNote("");
+      notify("Check-in note added successfully", "success");
+    } catch (err: unknown) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to add check-in note", "error");
+    } finally {
+      setSubmittingCheckIn(false);
+    }
+  }
+
+  function handleCycleTypeChange(newType: CycleType) {
+    setCycleType(newType);
+    if (startDate) {
+      const start = new Date(startDate);
+      if (!isNaN(start.getTime())) {
+        const monthsToAdd = newType === "quarterly" ? 3 : newType === "half_yearly" ? 6 : 12;
+        const computedEnd = new Date(start);
+        computedEnd.setMonth(computedEnd.getMonth() + monthsToAdd);
+        setEndDate(computedEnd.toISOString().split("T")[0]);
+      }
     }
   }
 
@@ -182,6 +243,47 @@ export function PerformanceCyclesPage() {
     } catch (err) {
       // e.g. 409 "another cycle is already active" (BUG-055)
       notify(parseApiError(err).message, "error");
+    }
+  }
+
+  function openEditDeadlines(cycle: PerformanceCycle) {
+    setEditingCycle(cycle);
+    setEditSelfDeadline(cycle.self_review_deadline || "");
+    setEditMgrDeadline(cycle.manager_review_deadline || "");
+  }
+
+  async function handleSaveDeadlines(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingCycle) return;
+
+    if (editSelfDeadline && editingCycle.end_date && new Date(editSelfDeadline) > new Date(editingCycle.end_date)) {
+      notify("Self-Review Deadline cannot be after the overall Cycle End Date.", "error");
+      return;
+    }
+    if (editMgrDeadline && editingCycle.end_date && new Date(editMgrDeadline) > new Date(editingCycle.end_date)) {
+      notify("Manager Review Deadline cannot be after the overall Cycle End Date.", "error");
+      return;
+    }
+    if (editSelfDeadline && editMgrDeadline && new Date(editSelfDeadline) > new Date(editMgrDeadline)) {
+      notify("Self-Review Deadline cannot be set later than the Manager Review Deadline.", "error");
+      return;
+    }
+
+    setSubmittingDeadlines(true);
+    try {
+      await updatePerformanceCycle(editingCycle.id, {
+        self_review_deadline: editSelfDeadline || null,
+        manager_review_deadline: editMgrDeadline || null,
+      });
+      notify("Review deadlines updated successfully", "success");
+      setEditingCycle(null);
+      fetchCycles();
+      fetchReport();
+    } catch (err: unknown) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to update deadlines", "error");
+    } finally {
+      setSubmittingDeadlines(false);
     }
   }
 
@@ -525,22 +627,32 @@ export function PerformanceCyclesPage() {
                           </span>
                         </td>
                         <td>
-                          {c.status === "draft" && (
-                            <button
-                              className="btn btn-sm btn-success"
-                              onClick={() => handleStatusChange(c.id, "active")}
-                            >
-                              Activate
-                            </button>
-                          )}
-                          {c.status === "active" && (
-                            <button
-                              className="btn btn-sm btn-outline text-red"
-                              onClick={() => handleStatusChange(c.id, "closed")}
-                            >
-                              Close Cycle
-                            </button>
-                          )}
+                          <div className="flex gap-2 align-center">
+                            {(c.status === "draft" || c.status === "active") && (
+                              <button
+                                className="btn btn-sm btn-outline"
+                                onClick={() => openEditDeadlines(c)}
+                              >
+                                Edit deadlines
+                              </button>
+                            )}
+                            {c.status === "draft" && (
+                              <button
+                                className="btn btn-sm btn-success"
+                                onClick={() => handleStatusChange(c.id, "active")}
+                              >
+                                Activate
+                              </button>
+                            )}
+                            {c.status === "active" && (
+                              <button
+                                className="btn btn-sm btn-outline text-red"
+                                onClick={() => handleStatusChange(c.id, "closed")}
+                              >
+                                Close Cycle
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -649,35 +761,44 @@ export function PerformanceCyclesPage() {
                           </span>
                         </td>
                         <td style={{ textAlign: "right" }}>
-                          {/* A draft plan has not started yet: it is activated
-                              here rather than only through the API, and it is
-                              never described as concluded. */}
-                          {pip.status === "draft" ? (
+                          <div className="flex gap-2 justify-end">
                             <button
                               type="button"
-                              className="btn btn-sm btn-primary"
-                              disabled={activatingPipId === pip.id}
-                              onClick={() => handleActivatePip(pip.id)}
+                              className="btn btn-sm btn-outline"
+                              onClick={() => openPipDetail(pip)}
                             >
-                              {activatingPipId === pip.id ? "Activating..." : "Activate"}
+                              Check-ins
                             </button>
-                          ) : pip.status === "active" || pip.status === "extended" ? (
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-primary"
-                              onClick={() => {
-                                setEvaluatingPip(pip);
-                                setPipOutcome("passed");
-                                setPipOutcomeNotes("");
-                              }}
-                            >
-                              Evaluate Outcome
-                            </button>
-                          ) : (
-                            <span className="text-xs text-muted" style={{ fontStyle: "italic" }}>
-                              {pip.outcome_notes || "Concluded"}
-                            </span>
-                          )}
+                            {/* A draft plan has not started yet: it is activated
+                                here rather than only through the API, and it is
+                                never described as concluded. */}
+                            {pip.status === "draft" ? (
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-primary"
+                                disabled={activatingPipId === pip.id}
+                                onClick={() => handleActivatePip(pip.id)}
+                              >
+                                {activatingPipId === pip.id ? "Activating..." : "Activate"}
+                              </button>
+                            ) : pip.status === "active" || pip.status === "extended" ? (
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-primary"
+                                onClick={() => {
+                                  setEvaluatingPip(pip);
+                                  setPipOutcome("passed");
+                                  setPipOutcomeNotes("");
+                                }}
+                              >
+                                Evaluate Outcome
+                              </button>
+                            ) : (
+                              <span className="text-xs text-muted" style={{ fontStyle: "italic", alignSelf: "center" }}>
+                                {pip.outcome_notes || "Concluded"}
+                              </span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1121,6 +1242,88 @@ export function PerformanceCyclesPage() {
         </div>
       )}
 
+      {/* MODAL: PIP DETAIL & CHECK-INS (G) */}
+      {detailPip && (
+        <div className="modal-backdrop" onClick={() => setDetailPip(null)}>
+          <div className="modal card performance-goal-modal" style={{ maxWidth: "600px", width: "95%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3 style={{ margin: 0 }}>PIP Details & Check-ins</h3>
+                <span className="text-xs text-muted">
+                  {detailPip.employee_name || detailPip.employee_id} — {detailPip.title}
+                </span>
+              </div>
+              <button type="button" className="modal-close-btn" onClick={() => setDetailPip(null)}>✕</button>
+            </div>
+
+            <div className="stack gap-3 mt-3">
+              <div className="p-3 bg-muted rounded text-sm">
+                <div><strong>Timeline:</strong> {formatDate(detailPip.start_date)} to {formatDate(detailPip.end_date)}</div>
+                <div><strong>Mentor:</strong> {detailPip.mentor_name || "Not assigned"}</div>
+                <div><strong>Status:</strong> <span className="badge badge-outline">{detailPip.status}</span></div>
+                {detailPip.milestones_kpis && (
+                  <div className="mt-2 text-xs">
+                    <strong>Milestones & KPIs:</strong>
+                    <div className="text-muted mt-1">{detailPip.milestones_kpis}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Form to add check-in during active or extended PIP */}
+              {(detailPip.status === "active" || detailPip.status === "extended") && (
+                <form onSubmit={handleAddCheckIn} className="stack gap-2 border p-3 rounded">
+                  <strong className="text-sm">Record Check-in Note</strong>
+                  <textarea
+                    rows={2}
+                    placeholder="Document progress observation, mentor guidance, or discussion notes..."
+                    value={newCheckInNote}
+                    onChange={(e) => setNewCheckInNote(e.target.value)}
+                    required
+                  />
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      className="btn btn-sm btn-primary"
+                      disabled={submittingCheckIn || !newCheckInNote.trim()}
+                    >
+                      {submittingCheckIn ? "Adding..." : "Add Check-in"}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Check-ins list */}
+              <div>
+                <strong className="text-sm block mb-2">Check-in History ({pipCheckIns.length})</strong>
+                {loadingCheckIns ? (
+                  <p className="text-sm">Loading check-in notes...</p>
+                ) : pipCheckIns.length === 0 ? (
+                  <p className="text-sm text-muted">No check-ins logged for this PIP yet.</p>
+                ) : (
+                  <div className="stack gap-2" style={{ maxHeight: "240px", overflowY: "auto" }}>
+                    {pipCheckIns.map((ci) => (
+                      <div key={ci.id} className="p-2 border rounded bg-white text-sm">
+                        <div className="text-xs text-muted flex justify-between mb-1">
+                          <span>Logged Check-in</span>
+                          <span>{new Date(ci.created_at).toLocaleString()}</span>
+                        </div>
+                        <div style={{ whiteSpace: "pre-wrap" }}>{ci.note}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="row-end mt-2">
+                <button type="button" className="btn btn-ghost" onClick={() => setDetailPip(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal: Create Cycle */}
       {showCreateModal && (
         <div className="modal-backdrop" onClick={() => setShowCreateModal(false)}>
@@ -1154,7 +1357,7 @@ export function PerformanceCyclesPage() {
                   <label>Type</label>
                   <select
                     value={cycleType}
-                    onChange={(e) => setCycleType(e.target.value as CycleType)}
+                    onChange={(e) => handleCycleTypeChange(e.target.value as CycleType)}
                   >
                     <option value="annual">Annual</option>
                     <option value="half_yearly">Half Yearly</option>
@@ -1209,6 +1412,60 @@ export function PerformanceCyclesPage() {
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
                   {submitting ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Deadlines */}
+      {editingCycle && (
+        <div className="modal-backdrop" onClick={() => setEditingCycle(null)}>
+          <div className="modal card max-w-lg performance-goal-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Edit Review Deadlines</h2>
+                <span className="text-xs text-muted">
+                  {editingCycle.name} ({formatDate(editingCycle.start_date)} to {formatDate(editingCycle.end_date)})
+                </span>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setEditingCycle(null)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleSaveDeadlines} className="stack gap-4 my-2">
+              <div className="field">
+                <label>Self Review Deadline</label>
+                <input
+                  type="date"
+                  value={editSelfDeadline}
+                  onChange={(e) => setEditSelfDeadline(e.target.value)}
+                />
+                <span className="field-hint">Must be on or before Manager Review Deadline.</span>
+              </div>
+
+              <div className="field">
+                <label>Manager Review Deadline</label>
+                <input
+                  type="date"
+                  value={editMgrDeadline}
+                  onChange={(e) => setEditMgrDeadline(e.target.value)}
+                />
+                <span className="field-hint">Must be on or before overall Cycle End Date ({formatDate(editingCycle.end_date)}).</span>
+              </div>
+
+              <div className="flex gap-2 justify-end mt-4">
+                <button type="button" className="btn btn-ghost" onClick={() => setEditingCycle(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submittingDeadlines}>
+                  {submittingDeadlines ? "Updating..." : "Update Deadlines"}
                 </button>
               </div>
             </form>
