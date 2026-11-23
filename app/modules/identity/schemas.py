@@ -114,10 +114,10 @@ class CompanyRegisterRequest(BaseModel):
 
     company_name: str
     company_email: EmailStr
-    industry: str
-    phone: str
-    address: str
-    pan_number: str
+    industry: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    pan_number: str | None = None
     gst_number: str | None = None
     country: str = "IN"
     subdomain: str | None = None
@@ -138,21 +138,27 @@ class CompanyRegisterRequest(BaseModel):
 
     @field_validator("industry", mode="before")
     @classmethod
-    def _validate_industry(cls, v: str) -> str:
+    def _validate_industry(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         if not isinstance(v, str) or not v.strip():
             raise ValueError("Industry is required.")
         return v.strip()
 
     @field_validator("address", mode="before")
     @classmethod
-    def _validate_address(cls, v: str) -> str:
+    def _validate_address(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         if not isinstance(v, str) or not v.strip():
             raise ValueError("Registered office address is required.")
         return v.strip()
 
     @field_validator("pan_number", mode="before")
     @classmethod
-    def _validate_pan(cls, v: str) -> str:
+    def _validate_pan(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         if not isinstance(v, str) or not v.strip():
             raise ValueError("PAN number is required.")
         val = v.strip().upper()
@@ -196,7 +202,9 @@ class CompanyRegisterRequest(BaseModel):
 
     @field_validator("phone", mode="before")
     @classmethod
-    def _validate_phone(cls, v: str) -> str:
+    def _validate_phone(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         if not isinstance(v, str) or not v.strip():
             raise ValueError("Phone number is required.")
         cleaned = clean_phone(v)
