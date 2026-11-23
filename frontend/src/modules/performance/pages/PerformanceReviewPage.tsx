@@ -198,9 +198,9 @@ export function PerformanceReviewPage() {
               ) : (
                 <div className="stack gap-4">
                   {goals.map((g) => {
-                    const isDraftSelfReview = g.self_review_status === "draft" || (!g.self_rating && Boolean(g.self_comments));
-                    const isSelfReviewSubmitted = g.self_review_status === "submitted" || Boolean(g.self_rating && !isDraftSelfReview);
-                    const canRateAsManager = isSelfReviewSubmitted && !isDraftSelfReview;
+                    const isDraftSelfReview = g.self_review_status === "draft";
+                    const isSelfReviewSubmitted = g.self_review_status === "submitted";
+                    const canRateAsManager = isSelfReviewSubmitted;
 
                     return (
                       <div key={g.id} className="p-4 border rounded stack gap-2">

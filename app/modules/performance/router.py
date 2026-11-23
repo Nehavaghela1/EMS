@@ -115,7 +115,7 @@ def set_performance_goals(
 ):
     service = PerformanceService(db)
     goals = service.create_goals(user.company_id, data, user)
-    return [PerformanceGoalResponse.model_validate(g) for g in goals]
+    return [service.goal_to_response(user.company_id, g) for g in goals]
 
 
 @performance_router.get("/goals/{employee_id}", response_model=list[PerformanceGoalResponse])
@@ -169,8 +169,7 @@ def list_performance_goals(
         else:
             target_emp_id = emp.id
 
-    goals = service.list_goals(user.company_id, target_emp_id, user)
-    return [PerformanceGoalResponse.model_validate(g) for g in goals]
+    return service.list_goals_with_reviews(user.company_id, target_emp_id, user)
 
 
 @performance_router.put("/goals/{id}", response_model=PerformanceGoalResponse)
@@ -184,7 +183,7 @@ def update_performance_goal(
 ):
     service = PerformanceService(db)
     updated = service.update_goal(user.company_id, id, data, user)
-    return PerformanceGoalResponse.model_validate(updated)
+    return service.goal_to_response(user.company_id, updated)
 
 
 @performance_router.put("/goals/{id}/progress", response_model=PerformanceGoalResponse)
@@ -198,7 +197,7 @@ def update_goal_progress(
 ):
     service = PerformanceService(db)
     updated = service.update_goal_progress(user.company_id, id, data, user)
-    return PerformanceGoalResponse.model_validate(updated)
+    return service.goal_to_response(user.company_id, updated)
 
 
 @performance_router.get("/goals/{id}/history", response_model=list[GoalProgressHistoryResponse])

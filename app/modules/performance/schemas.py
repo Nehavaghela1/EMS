@@ -107,6 +107,7 @@ class PerformanceGoalResponse(BaseModel):
     progress: int = 0
     self_rating: Decimal | None
     self_comments: str | None
+    self_review_status: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

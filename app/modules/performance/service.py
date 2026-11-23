@@ -346,13 +346,17 @@ class PerformanceService:
             if other_sum + data.weightage > Decimal("100.00"):
                 raise WeightageSumError("Total goal weightage cannot exceed 100.00%.")
 
+        new_status = data.status if data.status is not None else goal.status
+        new_progress = 100 if new_status == GoalStatus.completed else goal.progress
+
         updated = self.goal_repo.update(
             goal,
             title=data.title if data.title is not None else goal.title,
             description=data.description if data.description is not None else goal.description,
             weightage=data.weightage if data.weightage is not None else goal.weightage,
             target_value=data.target_value if data.target_value is not None else goal.target_value,
-            status=data.status if data.status is not None else goal.status,
+            status=new_status,
+            progress=new_progress,
         )
 
         self.audit.record(
@@ -416,12 +420,22 @@ class PerformanceService:
                 "Goals cannot be modified when the performance cycle is not active."
             )
 
+        # Self-review submission freeze check
+        existing_self_rev = self.review_repo.get_by_goal_and_role(
+            company_id, goal.id, ReviewerRole.self
+        )
+        if existing_self_rev is not None:
+            raise ConflictError("Goals are locked after self-review has been submitted.")
+
         emp = self.employee_repo.get_by_user_id(company_id, actor.id)
         is_owner = emp and goal.employee_id == emp.id
         is_hr = actor.role in (UserRole.hr_admin, UserRole.owner)
 
         if not (is_owner or is_hr):
             raise ForbiddenError("Employees can only update progress on their own goals.")
+
+        if data.progress == 100:
+            goal.status = GoalStatus.completed
 
         old_progress = goal.progress
         self.goal_repo.update(goal, progress=data.progress)
@@ -445,6 +459,15 @@ class PerformanceService:
         self.db.commit()
         return goal
 
+    def goal_to_response(
+        self, company_id: uuid.UUID, goal: PerformanceGoal
+    ) -> PerformanceGoalResponse:
+        self_rev = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.self)
+        status = self_rev.status if self_rev else None
+        resp = PerformanceGoalResponse.model_validate(goal)
+        resp.self_review_status = status
+        return resp
+
     def get_goal_progress_history(
         self, company_id: uuid.UUID, goal_id: uuid.UUID, actor: User
     ) -> list[Any]:
@@ -461,6 +484,12 @@ class PerformanceService:
             return []
         return self.goal_repo.list_by_employee_and_cycle(company_id, employee_id, active_cycle.id)
 
+    def list_goals_with_reviews(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
+    ) -> list[PerformanceGoalResponse]:
+        goals = self.list_goals(company_id, employee_id, actor)
+        return [self.goal_to_response(company_id, g) for g in goals]
+
     # 3. Reviews & Invariants
     def submit_self_review(
         self, company_id: uuid.UUID, goal_id: uuid.UUID, data: SelfReviewRequest, actor: User
@@ -475,6 +504,14 @@ class PerformanceService:
             raise ConflictError(
                 "Reviews can only be submitted while the performance cycle is active."
             )
+
+        # Review deadline check
+        if cycle.self_review_deadline is not None:
+            now_date = utcnow().date()
+            if now_date > cycle.self_review_deadline:
+                raise ConflictError(
+                    f"Self-review deadline ({cycle.self_review_deadline}) has passed."
+                )
 
         emp = self.employee_repo.get_by_user_id(company_id, actor.id)
         if emp is None or goal.employee_id != emp.id:
@@ -560,6 +597,14 @@ class PerformanceService:
             raise ConflictError(
                 "Reviews can only be submitted while the performance cycle is active."
             )
+
+        # Review deadline check
+        if cycle.manager_review_deadline is not None:
+            now_date = utcnow().date()
+            if now_date > cycle.manager_review_deadline:
+                raise ConflictError(
+                    f"Manager review deadline ({cycle.manager_review_deadline}) has passed."
+                )
 
         # Prerequisite: employee must have submitted self-review for this goal
         self_rev = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.self)
@@ -828,7 +873,7 @@ class PerformanceService:
             if has_pending_mgr_review:
                 weighted_manager_rating = None
 
-        goal_responses = [PerformanceGoalResponse.model_validate(g) for g in goals]
+        goal_responses = [self.goal_to_response(company_id, g) for g in goals]
 
         return {
             "employee_id": employee_id,
