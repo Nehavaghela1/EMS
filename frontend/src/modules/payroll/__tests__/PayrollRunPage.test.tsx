@@ -366,4 +366,53 @@ describe("Sub-feature 5.4: PayrollRunPage Frontend", () => {
       expect(payrollApi.downloadPaymentFile).toHaveBeenCalledWith("run-1");
     });
   });
+
+  it("I4: generated CSV first data row contains employee code and name, and no UUID", async () => {
+    vi.mocked(payrollApi.getPayrollRunDetail).mockResolvedValue(mockRunDetail);
+
+    // Spy on createElement & appendChild to inspect CSV content
+    let downloadedContent = "";
+    const originalCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
+      const element = originalCreateElement(tagName);
+      if (tagName.toLowerCase() === "a") {
+        const origSetAttribute = element.setAttribute.bind(element);
+        element.setAttribute = (name: string, value: string) => {
+          if (name === "href" && value.startsWith("data:text/csv")) {
+            downloadedContent = decodeURI(value.replace("data:text/csv;charset=utf-8,", ""));
+          }
+          return origSetAttribute(name, value);
+        };
+      }
+      return element;
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /View & Process Pay Run/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /View & Process Pay Run/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Rahul Sharma")).toBeInTheDocument();
+    });
+
+    // Open options menu and trigger CSV export
+    const moreActionsBtn = screen.getByTitle("More Options / Actions");
+    fireEvent.click(moreActionsBtn);
+
+    const exportBtn = screen.getByRole("button", { name: /Export Payroll Summary \(CSV\)/i });
+    fireEvent.click(exportBtn);
+
+    expect(downloadedContent).toBeTruthy();
+    const [headerLine, firstDataLine] = downloadedContent.split("\n");
+    expect(headerLine).toBe("Employee Code,Employee Name,CTC Snapshot,Gross Salary,Deductions,Net Salary");
+    // emp-1 has employee_code EMP-001, name "Rahul Sharma", and ctc 900000.00
+    expect(firstDataLine).toBe('EMP-001,"Rahul Sharma",900000.00,75000.00,9000.00,66000.00');
+    // Ensure no UUID in data line
+    expect(firstDataLine).not.toContain("emp-1");
+    expect(firstDataLine).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  });
 });

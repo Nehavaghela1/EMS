@@ -370,11 +370,21 @@ export function PayrollRunPage() {
                     onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                     onClick={() => {
-                      const headers = ["Employee ID", "Employee Name", "CTC Snapshot", "Gross Salary", "Deductions", "Net Salary"];
+                      const headers = ["Employee Code", "Employee Name", "CTC Snapshot", "Gross Salary", "Deductions", "Net Salary"];
                       const rows = selectedRunDetail.items.map((it) => {
                         const emp = employeeMap.get(it.employee_id);
-                        const name = emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : it.employee_id;
-                        return [it.employee_id, `"${name}"`, it.ctc_snapshot, it.gross_salary, it.total_deductions, it.net_salary].join(",");
+                        const empCode = emp?.employee_code || "";
+                        const name = emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : "";
+                        const formatAmount = (val: string | number | null | undefined) =>
+                          Number(val || 0).toFixed(2);
+                        return [
+                          empCode,
+                          `"${name.replace(/"/g, '""')}"`,
+                          formatAmount(it.ctc_snapshot),
+                          formatAmount(it.gross_salary),
+                          formatAmount(it.total_deductions),
+                          formatAmount(it.net_salary),
+                        ].join(",");
                       });
                       const csv = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
                       const link = document.createElement("a");
