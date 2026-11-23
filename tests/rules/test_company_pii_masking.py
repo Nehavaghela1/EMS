@@ -107,3 +107,36 @@ def test_company_user_attempt_to_reveal_returns_403(
         f"/api/v1/companies/{company_a.company_id}?reveal=true", headers=owner_headers
     )
     assert resp_owner.status_code == 403
+
+
+def test_admin_update_rejects_masked_tax_id(
+    client: TestClient, db: Session, company_a: TenantContext, super_admin_headers: dict[str, str]
+) -> None:
+    comp = db.get(Company, company_a.company_id)
+    assert comp is not None
+    comp.pan_number = "AAACA1234A"
+    comp.gst_number = "24AAACA1234A1Z5"
+    db.commit()
+
+    # Attempt to update with a masked PAN (containing •)
+    resp = client.put(
+        f"/api/v1/companies/{company_a.company_id}",
+        json={"pan_number": "•••••••34A"},
+        headers=super_admin_headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert "Invalid PAN format" in resp.text
+
+    # Attempt to update with a masked GSTIN (containing •)
+    resp_gst = client.put(
+        f"/api/v1/companies/{company_a.company_id}",
+        json={"gst_number": "••••••••••••1Z5"},
+        headers=super_admin_headers,
+    )
+    assert resp_gst.status_code == 422, resp_gst.text
+    assert "Invalid GSTIN format" in resp_gst.text
+
+    # Assert stored values remain unchanged in database
+    db.refresh(comp)
+    assert comp.pan_number == "AAACA1234A"
+    assert comp.gst_number == "24AAACA1234A1Z5"

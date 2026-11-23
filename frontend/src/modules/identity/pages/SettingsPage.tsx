@@ -676,9 +676,7 @@ function EnterpriseSecuritySection({ notify }: { notify: (msg: string, type?: "s
 
 function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "success" | "error" | "info") => void }) {
   const queryClient = useQueryClient();
-  const [brandColor, setBrandColor] = useState(() => {
-    return localStorage.getItem("ems_brand_accent_color") || "#2563eb";
-  });
+  const [brandColor, setBrandColor] = useState("#2563eb");
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [logoWidth, setLogoWidth] = useState<number>(140);
   const [saving, setSaving] = useState(false);
@@ -703,7 +701,6 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
     try {
       await updateMyCompany({ brand_color: brandColor, ...(logoPreview ? { logo_url: logoPreview } : {}) });
       localStorage.setItem("ems_brand_logo_width", String(logoWidth));
-      localStorage.setItem("ems_brand_accent_color", brandColor);
       document.documentElement.style.setProperty("--color-primary", brandColor);
       notify("Branding preferences and accent color saved successfully.", "success");
       await queryClient.invalidateQueries({ queryKey: ["company", "me"] });

@@ -242,6 +242,8 @@ class CompanyResponse(CompanyBase):
 class UnmaskedCompanyResponse(CompanyBase):
     """Returned when super admin explicitly requests reveal."""
 
+    pass
+
 
 class CompanyDetailResponse(CompanyResponse):
     phone: str | None
@@ -416,6 +418,30 @@ class AdminCompanyUpdateRequest(CompanyProfileUpdateRequest):
         if country is None:
             raise ValueError(f"Country must be one of: {allowed_country_codes()}.")
         return country
+
+    @field_validator("pan_number", mode="before")
+    @classmethod
+    def _validate_pan(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        val = v.strip().upper()
+        if not val:
+            return None
+        if not re.match(r"^[A-Z]{5}[0-9]{4}[A-Z]{1}$", val):
+            raise ValueError("Invalid PAN format. Expected format: ABCDE1234F.")
+        return val
+
+    @field_validator("gst_number", mode="before")
+    @classmethod
+    def _validate_gst(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        val = v.strip().upper()
+        if not val:
+            return None
+        if not re.match(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$", val):
+            raise ValueError("Invalid GSTIN format. Expected 15-character GSTIN format.")
+        return val
 
 
 # Auth
