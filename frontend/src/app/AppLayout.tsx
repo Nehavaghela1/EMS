@@ -105,6 +105,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: "/performance", label: "Cycles & Review", roles: ["hr_admin", "owner"] },
       { to: "/performance", label: "Improvement Plans", roles: ["manager"] },
       { to: "/performance/goals", label: "My Goals", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/performance/team-goals", label: "Team Goals", roles: ["manager", "hr_admin", "owner"] },
       { to: "/performance/reviews", label: "Team Reviews", roles: ["manager", "hr_admin", "owner"] },
     ],
     icon: (active) => (

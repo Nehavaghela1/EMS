@@ -177,6 +177,7 @@ class PerformanceService:
                         ),
                         entity_type="performance_cycle",
                         entity_id=cycle.id,
+                        action_url="/performance/goals",
                     )
 
         self.db.commit()
@@ -275,6 +276,7 @@ class PerformanceService:
                     message=f"Goals for you were created by {actor.email}.",
                     entity_type="employee",
                     entity_id=emp.id,
+                    action_url="/performance/goals",
                 )
             if emp.reporting_manager_id:
                 mgr = self.employee_repo.get_by_id(emp.reporting_manager_id, company_id)
@@ -290,6 +292,7 @@ class PerformanceService:
                         ),
                         entity_type="employee",
                         entity_id=emp.id,
+                        action_url="/performance/reviews",
                     )
 
         self.db.commit()
@@ -373,6 +376,7 @@ class PerformanceService:
                         message=f"Goals for you were updated by {actor.email}.",
                         entity_type="employee",
                         entity_id=target_emp.id,
+                        action_url="/performance/goals",
                     )
                 if target_emp.reporting_manager_id:
                     mgr = self.employee_repo.get_by_id(target_emp.reporting_manager_id, company_id)
@@ -388,6 +392,7 @@ class PerformanceService:
                             ),
                             entity_type="employee",
                             entity_id=target_emp.id,
+                            action_url="/performance/reviews",
                         )
 
         self.db.commit()
@@ -536,6 +541,7 @@ class PerformanceService:
                     message=f"Employee {emp_full_name} submitted a self-review.",
                     entity_type="performance_review",
                     entity_id=review.id,
+                    action_url="/performance/reviews",
                 )
 
         self.db.commit()
@@ -632,6 +638,7 @@ class PerformanceService:
                 message="Your manager has submitted a review for your goal.",
                 entity_type="performance_review",
                 entity_id=review.id,
+                action_url="/performance/goals",
             )
 
         self.db.commit()
@@ -1066,6 +1073,7 @@ class PerformanceService:
                 message=f"A Performance Improvement Plan '{pip.title}' has been initiated.",
                 entity_type="performance_pip",
                 entity_id=pip.id,
+                action_url="/performance",
             )
         if mentor and mentor.user_id:
             self.notifications.notify(
@@ -1078,6 +1086,7 @@ class PerformanceService:
                 ),
                 entity_type="performance_pip",
                 entity_id=pip.id,
+                action_url="/performance",
             )
 
         self.db.commit()
@@ -1281,6 +1290,7 @@ class PerformanceService:
                 message=f"Your PIP '{pip.title}' has been evaluated: {data.outcome}.",
                 entity_type="performance_pip",
                 entity_id=pip.id,
+                action_url="/performance",
             )
 
         self.db.commit()
@@ -1496,6 +1506,7 @@ class PerformanceService:
                     ),
                     entity_type="performance_pip",
                     entity_id=pip.id,
+                    action_url="/performance",
                 )
                 self.db.commit()
             except Exception:

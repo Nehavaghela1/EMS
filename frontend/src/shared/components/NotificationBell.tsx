@@ -7,17 +7,73 @@ import {
   type NotificationItem,
 } from "../../modules/platform/api";
 
-/** Where a notification opens. Project notifications carry no action_url,
- * only the record they are about, so fall back to the page for that record
- * (BUG-095). */
-function notificationTarget(n: NotificationItem): string | null {
+/** Where a notification opens. Falls back to entity_type routing when
+ * no action_url is present on the notification item. */
+export function notificationTarget(n: NotificationItem): string | null {
   if (n.action_url) return n.action_url;
-  if (n.entity_type === "project" && n.entity_id) return `/projects/${n.entity_id}`;
-  if (n.entity_type === "time_entry") return "/timesheets";
-  if (n.entity_type && ["task", "project_task", "task_comment", "project_member"].includes(n.entity_type)) {
-    return "/projects";
+  if (!n.entity_type) return null;
+
+  switch (n.entity_type) {
+    case "project":
+      return n.entity_id ? `/projects/${n.entity_id}` : "/projects";
+    case "project_task":
+    case "task":
+    case "task_comment":
+    case "project_member":
+    case "milestone":
+    case "project_document":
+      return "/projects";
+    case "time_entry":
+      return "/timesheets";
+    case "attendance":
+    case "attendance_regularization":
+      return "/attendance";
+    case "leave":
+    case "leave_balance":
+    case "leave_type":
+      return "/leaves";
+    case "payroll_run":
+      return "/payroll/payslip";
+    case "reimbursement":
+      return "/payroll/reimbursements";
+    case "performance_cycle":
+    case "performance_pip":
+    case "performance_pip_checkin":
+      return "/performance";
+    case "performance_goal":
+      return "/performance/goals";
+    case "performance_review":
+    case "performance_summary":
+      return "/performance/reviews";
+    case "employee":
+      return "/performance/goals";
+    case "employee_salary":
+    case "salary_structure":
+    case "statutory_config":
+    case "statutory_rate":
+    case "pt_slab":
+    case "tax_slab":
+      return "/payroll/setup";
+    case "employee_bank_account":
+      return "/payroll/payslip";
+    case "department":
+      return "/departments";
+    case "location":
+      return "/settings/locations";
+    case "shift":
+    case "employee_shift":
+      return "/shifts";
+    case "holiday":
+      return "/holidays";
+    case "platform_stats":
+      return "/admin/payroll";
+    case "rate":
+    case "rate_change_draft":
+    case "rate_source":
+      return "/admin/payroll";
+    default:
+      return null;
   }
-  return null;
 }
 
 export function NotificationBell() {
@@ -66,6 +122,9 @@ export function NotificationBell() {
   };
 
   const handleItemClick = async (n: NotificationItem) => {
+    const target = notificationTarget(n);
+    if (!target) return; // unmappable type is not clickable (B3)
+
     if (!n.is_read) {
       try {
         await markNotificationRead(n.id);
@@ -78,10 +137,7 @@ export function NotificationBell() {
       }
     }
     setIsOpen(false);
-    const target = notificationTarget(n);
-    if (target) {
-      navigate(target);
-    }
+    navigate(target);
   };
 
   return (
@@ -230,67 +286,83 @@ export function NotificationBell() {
                 No notifications yet.
               </div>
             ) : (
-              notifications.map((n) => (
-                <div
-                  key={n.id}
-                  onClick={() => handleItemClick(n)}
-                  style={{
-                    padding: "12px 16px",
-                    borderBottom: "1px solid #f8fafc",
-                    backgroundColor: n.is_read ? "#ffffff" : "#f0fdf4",
-                    cursor: "pointer",
-                    display: "flex",
-                    gap: "12px",
-                    transition: "background-color 0.15s ease",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f1f5f9")}
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.backgroundColor = n.is_read ? "#ffffff" : "#f0fdf4")
-                  }
-                >
-                  <span
-                    style={{
-                      width: "8px",
-                      height: "8px",
-                      borderRadius: "50%",
-                      backgroundColor: n.is_read ? "transparent" : "#22c55e",
-                      marginTop: "5px",
-                      flexShrink: 0,
+              notifications.map((n) => {
+                const target = notificationTarget(n);
+                const isClickable = Boolean(target);
+                const unreadBg = "#f0fdf4";
+                const readBg = "#ffffff";
+                const baseBg = n.is_read ? readBg : unreadBg;
+
+                return (
+                  <div
+                    key={n.id}
+                    onClick={() => {
+                      if (isClickable) handleItemClick(n);
                     }}
-                  />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
+                    style={{
+                      padding: "12px 16px",
+                      borderBottom: "1px solid #f8fafc",
+                      backgroundColor: baseBg,
+                      cursor: isClickable ? "pointer" : "default",
+                      display: "flex",
+                      gap: "12px",
+                      transition: isClickable ? "background-color 0.15s ease" : "none",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (isClickable) {
+                        e.currentTarget.style.backgroundColor = "#f1f5f9";
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (isClickable) {
+                        e.currentTarget.style.backgroundColor = baseBg;
+                      }
+                    }}
+                  >
+                    <span
                       style={{
-                        fontWeight: n.is_read ? 500 : 700,
-                        fontSize: "0.82rem",
-                        color: "#1e293b",
-                        lineHeight: 1.3,
+                        width: "8px",
+                        height: "8px",
+                        borderRadius: "50%",
+                        backgroundColor: n.is_read ? "transparent" : "#22c55e",
+                        marginTop: "5px",
+                        flexShrink: 0,
                       }}
-                    >
-                      {n.title}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: "0.78rem",
-                        color: "#64748b",
-                        marginTop: "2px",
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      {n.message}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: "0.68rem",
-                        color: "#94a3b8",
-                        marginTop: "4px",
-                      }}
-                    >
-                      {new Date(n.created_at).toLocaleString()}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: n.is_read ? 500 : 700,
+                          fontSize: "0.82rem",
+                          color: "#1e293b",
+                          lineHeight: 1.3,
+                        }}
+                      >
+                        {n.title}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "0.78rem",
+                          color: "#64748b",
+                          marginTop: "2px",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {n.message}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "0.68rem",
+                          color: "#94a3b8",
+                          marginTop: "4px",
+                        }}
+                      >
+                        {new Date(n.created_at).toLocaleString()}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

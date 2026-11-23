@@ -673,6 +673,7 @@ class ProjectService:
                 message=f"You have been added to project {project.name}.",
                 entity_type="project",
                 entity_id=project.id,
+                action_url=f"/projects/{project.id}",
             )
 
         # Rule 8: Audit
@@ -933,6 +934,7 @@ class ProjectService:
                     message=f"You have been assigned to task '{task.title}'.",
                     entity_type="project_task",
                     entity_id=task.id,
+                    action_url=f"/projects/{project.id}",
                 )
 
         # Audit (Rule 9)
@@ -1147,6 +1149,7 @@ class ProjectService:
                         message=f"You have been assigned to task '{task.title}'.",
                         entity_type="project_task",
                         entity_id=task.id,
+                        action_url=f"/projects/{project.id}",
                     )
 
         # Audit (Rule 9)
@@ -1570,6 +1573,7 @@ class ProjectService:
                         ),
                         entity_type="time_entry",
                         entity_id=entry.id,
+                        action_url="/timesheets",
                     )
 
         self.repo.db.commit()
@@ -1718,6 +1722,7 @@ class ProjectService:
                         ),
                         entity_type="time_entry",
                         entity_id=updated.id,
+                        action_url="/timesheets",
                     )
 
         # Rule 9: Audit
@@ -1807,6 +1812,7 @@ class ProjectService:
                 message=f"Your time entry for {entry.date} ({entry.hours} hrs) has been {status}.",
                 entity_type="time_entry",
                 entity_id=entry.id,
+                action_url="/timesheets",
             )
 
         # Rule 9: Audit

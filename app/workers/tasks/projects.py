@@ -89,6 +89,7 @@ def check_project_budget_alerts_task() -> int:
                         message=f"Project '{project.name}' has reached 80% of its budget.",
                         entity_type="project",
                         entity_id=project.id,
+                        action_url=f"/projects/{project.id}",
                     )
                 project.budget_alert_80_sent_at = utcnow()
                 should_commit = True
@@ -104,6 +105,7 @@ def check_project_budget_alerts_task() -> int:
                         message=f"Project '{project.name}' has reached 100% of its budget.",
                         entity_type="project",
                         entity_id=project.id,
+                        action_url=f"/projects/{project.id}",
                     )
                 project.budget_alert_100_sent_at = utcnow()
                 should_commit = True

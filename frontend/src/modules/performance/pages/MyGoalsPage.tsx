@@ -13,7 +13,6 @@ import {
   type GoalCreateItem,
   type GoalStatus,
 } from "../api";
-import { listEmployees, type Employee } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { formatDate } from "../../../shared/utils/date";
@@ -22,10 +21,6 @@ import { parseApiError } from "../../../shared/api/errors";
 export function MyGoalsPage() {
   const { user } = useAuth();
   const { notify } = useToast();
-
-  const isHrOrManager = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "manager" || user?.role === "owner";
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(user?.employee?.id || "");
 
   const [activeCycle, setActiveCycle] = useState<PerformanceCycle | null>(null);
   const [goals, setGoals] = useState<PerformanceGoal[]>([]);
@@ -82,26 +77,18 @@ export function MyGoalsPage() {
 
   useEffect(() => {
     init();
-  }, [selectedEmployeeId]);
+  }, [user?.employee?.id]);
 
   async function init() {
+    setGoals([]);
     setLoading(true);
     try {
-      if (isHrOrManager && employees.length === 0) {
-        const empRes = await listEmployees({ page: 1, limit: 100 });
-        setEmployees(empRes.items);
-        if (!selectedEmployeeId && empRes.items.length > 0) {
-          const firstEmpId = user?.employee?.id || empRes.items[0].id;
-          setSelectedEmployeeId(firstEmpId);
-        }
-      }
-
       const res = await listPerformanceCycles("active");
       if (res.items.length > 0) {
         const cycle = res.items[0];
         setActiveCycle(cycle);
 
-        const targetId = selectedEmployeeId || user?.employee?.id;
+        const targetId = user?.employee?.id;
         if (targetId) {
           const empGoals = await listPerformanceGoals(targetId);
           setGoals(empGoals);
@@ -130,9 +117,9 @@ export function MyGoalsPage() {
       notify(`Goal weightages must sum to exactly 100% (currently ${newGoalTotalWeightage}%)`, "error");
       return;
     }
-    const targetEmpId = selectedEmployeeId || user?.employee?.id;
+    const targetEmpId = user?.employee?.id;
     if (!targetEmpId) {
-      notify("Please select an employee profile to set goals for.", "error");
+      notify("No employee profile found for your account.", "error");
       return;
     }
 
@@ -196,10 +183,8 @@ export function MyGoalsPage() {
   }
 
   function openEditGoal(g: PerformanceGoal) {
-    // A goal with a self-review is locked; say so instead of opening a form that
-    // can only fail on Save (BUG-060).
+    // A goal with a self-review is locked; do not open edit modal and do not show toast (C5).
     if (g.self_rating !== null && g.self_rating !== undefined) {
-      notify("This goal is locked because its self-review has been submitted.", "info");
       return;
     }
     setEditingGoal(g);
@@ -249,9 +234,11 @@ export function MyGoalsPage() {
       <div className="page-header flex justify-between align-center page-header-responsive">
         <div>
           <h1>My Performance Goals</h1>
-          <p className="text-muted">Set goals for the active performance cycle & submit self-evaluations</p>
+          <p className="text-muted">
+            Your goals for this appraisal cycle. Weightages must total 100% before you can submit your self-review, which then goes to your reporting manager.
+          </p>
         </div>
-        {activeCycle && (
+        {activeCycle && user?.employee?.id && (
           <button className="btn btn-primary" onClick={openSetGoals}>
             + Add Goals
           </button>
@@ -259,53 +246,9 @@ export function MyGoalsPage() {
       </div>
 
       {/* Admin Information Card when user is not linked to an employee profile */}
-      {!user?.employee?.id && !isHrOrManager && (
+      {!user?.employee?.id && (
         <div className="alert alert-info my-3">
           <strong>ℹ️ Employee Profile Required:</strong> Performance goals are tracked on employee profiles. Since your current account is not linked to an employee profile, you cannot submit personal goals.
-        </div>
-      )}
-
-      {/* Employee Selector for HR Admin / Manager */}
-      {isHrOrManager && (
-        <div className="card p-4 my-3" style={{ background: "#f8fafc", border: "1px solid #e2e8f0" }}>
-          <div className="row-between align-center" style={{ flexWrap: "wrap", gap: "10px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontSize: "1.1rem" }}>👤</span>
-              <div>
-                <span className="text-xs text-muted block" style={{ fontWeight: 600 }}>Viewing & Setting Goals For</span>
-                <span style={{ fontSize: "0.9rem", fontWeight: 700 }}>
-                  {employees.find((e) => e.id === selectedEmployeeId)
-                    ? `${employees.find((e) => e.id === selectedEmployeeId)?.first_name} ${employees.find((e) => e.id === selectedEmployeeId)?.last_name || ""} (${employees.find((e) => e.id === selectedEmployeeId)?.employee_code})`
-                    : employees.length === 0
-                    ? "No employees in company"
-                    : "Select an employee"}
-                </span>
-              </div>
-            </div>
-            {employees.length > 0 ? (
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                <label className="text-xs text-muted">Switch Employee:</label>
-                <select
-                  value={selectedEmployeeId}
-                  onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                  style={{ minWidth: "220px", padding: "6px 10px", fontSize: "0.85rem" }}
-                >
-                  {employees.map((emp) => (
-                    <option key={emp.id} value={emp.id}>
-                      {emp.first_name} {emp.last_name || ""} ({emp.employee_code}) - {emp.position || "Staff"}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <span className="text-xs text-muted">Add employee records in Employee Directory first to assign goals.</span>
-            )}
-          </div>
-          {!user?.employee?.id && (
-            <div className="mt-2 pt-2 text-xs text-muted" style={{ borderTop: "1px dashed #cbd5e1" }}>
-              💡 <em>You are managing goals as an Administrator. Goals are saved directly to the selected employee profile.</em>
-            </div>
-          )}
         </div>
       )}
 
@@ -387,7 +330,7 @@ export function MyGoalsPage() {
       <div className="card mt-4">
         <div className="row-between align-center mb-3" style={{ flexWrap: "wrap", gap: "6px" }}>
           <h3 style={{ margin: 0, fontSize: "1rem" }}>Submitted Goals</h3>
-          <span className="text-xs text-muted">💡 Tip: Double-click on any goal to edit its details</span>
+          <span className="text-xs text-muted">💡 Tip: Double-click on any unlocked goal to edit its details</span>
         </div>
         {loading ? (
           <p>Loading performance goals...</p>
@@ -408,66 +351,75 @@ export function MyGoalsPage() {
                 </tr>
               </thead>
               <tbody>
-                {goals.map((g) => (
-                  <tr
-                    key={g.id}
-                    onDoubleClick={() => openEditGoal(g)}
-                    style={{ cursor: "pointer" }}
-                    title="Double-click to edit goal"
-                  >
-                    <td>
-                      <div className="fw-bold">{g.title}</div>
-                      <div className="text-xs text-muted">{g.description || "No description"}</div>
-                    </td>
-                    <td>{g.target_value || "—"}</td>
-                    <td className="fw-bold">{g.weightage}%</td>
-                    <td onDoubleClick={(e) => e.stopPropagation()}>
-                      {/* Goal progress 0-100 (BUG-059); saved when the field loses focus. */}
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step={5}
-                        aria-label={`Progress for ${g.title}`}
-                        defaultValue={g.progress ?? 0}
-                        disabled={Boolean(g.self_rating)}
-                        style={{ width: "64px" }}
-                        onBlur={(e) => handleProgressSave(g, e.currentTarget.value)}
-                      />
-                      %
-                    </td>
-                    <td>
-                      <span className="badge badge-outline">{g.status}</span>
-                    </td>
-                    <td>
-                      {g.self_rating ? (
-                        <span className="badge badge-success font-mono">{g.self_rating} / 5.0</span>
-                      ) : (
-                        <span className="text-muted text-xs">Not submitted</span>
-                      )}
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      <div className="flex gap-2 justify-end">
-                        {!g.self_rating ? (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-primary"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedGoal(g);
-                            }}
-                          >
-                            Self Review
-                          </button>
+                {goals.map((g) => {
+                  const isLocked = g.self_rating !== null && g.self_rating !== undefined;
+                  return (
+                    <tr
+                      key={g.id}
+                      onDoubleClick={() => openEditGoal(g)}
+                      style={{ cursor: isLocked ? "default" : "pointer" }}
+                      title={isLocked ? "Locked: self-review submitted" : "Double-click to edit goal"}
+                    >
+                      <td>
+                        <div className="fw-bold flex items-center gap-1">
+                          {isLocked && (
+                            <span role="img" aria-label="Locked" title="Locked: self-review submitted">
+                              🔒
+                            </span>
+                          )}
+                          <span>{g.title}</span>
+                        </div>
+                        <div className="text-xs text-muted">{g.description || "No description"}</div>
+                      </td>
+                      <td>{g.target_value || "—"}</td>
+                      <td className="fw-bold">{g.weightage}%</td>
+                      <td onDoubleClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={5}
+                          aria-label={`Progress for ${g.title}`}
+                          defaultValue={g.progress ?? 0}
+                          disabled={Boolean(g.self_rating)}
+                          style={{ width: "64px" }}
+                          onBlur={(e) => handleProgressSave(g, e.currentTarget.value)}
+                        />
+                        %
+                      </td>
+                      <td>
+                        <span className="badge badge-outline">{g.status}</span>
+                      </td>
+                      <td>
+                        {g.self_rating ? (
+                          <span className="badge badge-success font-mono">{g.self_rating} / 5.0</span>
                         ) : (
-                          <span className="text-xs text-muted" style={{ fontStyle: "italic" }}>
-                            Reviewed (Double-click to edit)
-                          </span>
+                          <span className="text-muted text-xs">Not submitted</span>
                         )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        <div className="flex gap-2 justify-end">
+                          {!g.self_rating ? (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-primary"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedGoal(g);
+                              }}
+                            >
+                              Self Review
+                            </button>
+                          ) : (
+                            <span className="text-xs text-muted" style={{ fontStyle: "italic" }}>
+                              Reviewed
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -534,7 +486,6 @@ export function MyGoalsPage() {
                             step="0.01"
                             min="0"
                             max="100"
-                            placeholder="50.00"
                             value={item.weightage}
                             onChange={(e) => {
                               const updated = [...goalInputs];
@@ -548,10 +499,10 @@ export function MyGoalsPage() {
 
                       <div className="grid-2 performance-grid-2-mobile">
                         <div className="field">
-                          <label>Target Metric</label>
+                          <label>Target / Metric</label>
                           <input
                             type="text"
-                            placeholder="e.g. 100% completed / 0 critical bugs"
+                            placeholder="e.g. 100% test pass rate"
                             value={item.target_value || ""}
                             onChange={(e) => {
                               const updated = [...goalInputs];
@@ -564,7 +515,7 @@ export function MyGoalsPage() {
                           <label>Description</label>
                           <input
                             type="text"
-                            placeholder="Brief description of deliverables..."
+                            placeholder="Brief description of the goal"
                             value={item.description || ""}
                             onChange={(e) => {
                               const updated = [...goalInputs];
@@ -579,40 +530,29 @@ export function MyGoalsPage() {
                 ))}
               </div>
 
-              <div className="row-between p-3 bg-muted rounded border align-center" style={{ flexWrap: "wrap", gap: "10px" }}>
-                <button type="button" className="btn btn-sm btn-outline" onClick={addGoalLine}>
+              <div className="row-between align-center">
+                <button type="button" className="btn btn-outline" onClick={addGoalLine}>
                   + Add Goal
                 </button>
-                <div className="text-right text-sm">
-                  <div>
-                    Total Weightage:{" "}
-                    <strong className={newGoalTotalWeightage === 100 ? "text-success font-mono" : "text-red font-mono"}>
-                      {newGoalTotalWeightage}%
-                    </strong>{" "}
-                    <span className="text-muted">/ 100%</span>
-                  </div>
-                  <div style={{ fontSize: "0.75rem", marginTop: "2px" }}>
-                    {newGoalTotalWeightage === 100 ? (
-                      <span className="text-success" style={{ fontWeight: 600 }}>✓ Balanced (100% allocated)</span>
-                    ) : newGoalTotalWeightage < 100 ? (
-                      <span className="text-warning" style={{ fontWeight: 600 }}>
-                        ⏳ {(100 - newGoalTotalWeightage).toFixed(2).replace(/\.00$/, "")}% remaining to allocate
-                      </span>
-                    ) : (
-                      <span className="text-red" style={{ fontWeight: 600 }}>
-                        ⚠️ Over by {(newGoalTotalWeightage - 100).toFixed(2).replace(/\.00$/, "")}% (must equal 100%)
-                      </span>
-                    )}
-                  </div>
+                <div className="text-sm">
+                  Total Allocated:{" "}
+                  <strong className={newGoalTotalWeightage === 100 ? "text-success" : "text-danger"}>
+                    {newGoalTotalWeightage}%
+                  </strong>{" "}
+                  / 100%
                 </div>
               </div>
 
-              <div className="flex gap-2 justify-end mt-2">
+              <div className="flex gap-2 justify-end mt-4">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowSetModal(false)}>
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={submittingGoals}>
-                  {submittingGoals ? "Saving..." : "Save"}
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={submittingGoals || newGoalTotalWeightage !== 100}
+                >
+                  {submittingGoals ? "Saving..." : "Save Goals"}
                 </button>
               </div>
             </form>
@@ -623,7 +563,7 @@ export function MyGoalsPage() {
       {/* Modal: Self Review */}
       {selectedGoal && (
         <div className="modal-backdrop" onClick={() => setSelectedGoal(null)}>
-          <div className="modal card max-w-md performance-goal-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal card performance-goal-modal" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Self Evaluation: {selectedGoal.title}</h2>
               <button
@@ -635,58 +575,29 @@ export function MyGoalsPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSubmitSelfReview} className="stack gap-4 my-2">
+            <p className="text-sm text-muted mb-3">
+              Rate your achievement against this goal on a 1.0 to 5.0 scale.
+            </p>
+
+            <form onSubmit={handleSubmitSelfReview} className="stack gap-4">
               <div className="field">
-                <label>Self Rating (1.0 to 5.0)</label>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", margin: "6px 0" }}>
-                  {[1, 2, 3, 4, 5].map((star) => {
-                    const currentVal = parseFloat(selfRating) || 0;
-                    const isFilled = star <= currentVal;
-                    return (
-                      <button
-                        key={star}
-                        type="button"
-                        onClick={() => setSelfRating(`${star}.0`)}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                          fontSize: "1.75rem",
-                          lineHeight: 1,
-                          padding: "2px",
-                          color: isFilled ? "#eab308" : "#d1d5db",
-                          transition: "transform 0.1s ease, color 0.1s ease",
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.2)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
-                        title={`${star}.0 Stars`}
-                      >
-                        ★
-                      </button>
-                    );
-                  })}
-                  <span style={{ marginLeft: "10px", fontWeight: 600, fontSize: "0.95rem", color: "var(--color-heading, #111827)" }}>
-                    {selfRating === "5.0"
-                      ? "5.0 — Outstanding"
-                      : selfRating === "4.0"
-                      ? "4.0 — Exceeds Expectations"
-                      : selfRating === "3.0"
-                      ? "3.0 — Meets Expectations"
-                      : selfRating === "2.0"
-                      ? "2.0 — Needs Improvement"
-                      : "1.0 — Unsatisfactory"}
-                  </span>
-                </div>
+                <label>Self Rating (1.0 – 5.0) *</label>
+                <select value={selfRating} onChange={(e) => setSelfRating(e.target.value)}>
+                  <option value="1.0">1.0 — Unsatisfactory</option>
+                  <option value="2.0">2.0 — Needs Improvement</option>
+                  <option value="3.0">3.0 — Meets Expectations</option>
+                  <option value="4.0">4.0 — Exceeds Expectations</option>
+                  <option value="5.0">5.0 — Outstanding</option>
+                </select>
               </div>
 
               <div className="field">
-                <label>Self Review Comments & Achievements</label>
+                <label>Accomplishments & Self Comments</label>
                 <textarea
                   rows={4}
-                  placeholder="Detail your accomplishments and results for this goal..."
+                  placeholder="Detail your accomplishments, metrics delivered, and blockers faced..."
                   value={selfComments}
                   onChange={(e) => setSelfComments(e.target.value)}
-                  required
                 />
               </div>
 
