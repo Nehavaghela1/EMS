@@ -339,4 +339,30 @@ describe("Sub-feature 2.2: Onboarding & Directory Frontend", () => {
     expect(document.body.textContent).not.toContain("SECRET-ACTIVATION-TOKEN-123");
     expect(document.body.textContent).not.toContain("SECRET-TOKEN-HASH-456");
   });
+
+  it("Rule T2: displays Unassigned and never company name when employee has no department", async () => {
+    const unassignedEmployee: HrApi.Employee = {
+      ...sampleEmployees[0],
+      id: "emp-unassigned",
+      first_name: "Unassigned",
+      last_name: "User",
+      employee_code: "NEX-001",
+      department_id: null,
+      company_name: "NexusPay Fintech",
+    };
+
+    vi.mocked(HrApi.listEmployees).mockResolvedValue({
+      items: [unassignedEmployee],
+      total: 1,
+      page: 1,
+      limit: 50,
+      pages: 1,
+      has_next: false,
+    });
+    renderDirectory(hrUser);
+
+    expect(await screen.findByText(/Unassigned User - NEX-001/i)).toBeInTheDocument();
+    expect(screen.getByText("Unassigned")).toBeInTheDocument();
+    expect(screen.queryByText("NexusPay Fintech")).not.toBeInTheDocument();
+  });
 });
