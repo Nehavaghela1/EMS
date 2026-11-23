@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from app.core.config import settings
+from app.core.masking import mask_tax_id
 from app.core.regions import allowed_country_codes, canonical_country
 from app.core.validators import clean_hex_color, clean_logo_url, clean_phone, clean_pincode
 from app.modules.identity.models import CompanyStatus, UserRole
@@ -113,8 +114,11 @@ class CompanyRegisterRequest(BaseModel):
 
     company_name: str
     company_email: EmailStr
-    industry: str | None = None
-    phone: str | None = None
+    industry: str
+    phone: str
+    address: str
+    pan_number: str
+    gst_number: str | None = None
     country: str = "IN"
     subdomain: str | None = None
     company_size: str | None = None
@@ -128,7 +132,45 @@ class CompanyRegisterRequest(BaseModel):
         v = v.strip()
         if not v or len(v) < 1 or len(v) > 255:
             raise ValueError("Company name must be between 1 and 255 characters.")
+        if "<" in v or ">" in v:
+            raise ValueError("Company name cannot contain HTML tags or '<', '>'.")
         return v
+
+    @field_validator("industry", mode="before")
+    @classmethod
+    def _validate_industry(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Industry is required.")
+        return v.strip()
+
+    @field_validator("address", mode="before")
+    @classmethod
+    def _validate_address(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Registered office address is required.")
+        return v.strip()
+
+    @field_validator("pan_number", mode="before")
+    @classmethod
+    def _validate_pan(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("PAN number is required.")
+        val = v.strip().upper()
+        if not re.match(r"^[A-Z]{5}[0-9]{4}[A-Z]{1}$", val):
+            raise ValueError("Invalid PAN format. Expected format: ABCDE1234F.")
+        return val
+
+    @field_validator("gst_number", mode="before")
+    @classmethod
+    def _validate_gst(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        val = v.strip().upper()
+        if not val:
+            return None
+        if not re.match(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$", val):
+            raise ValueError("Invalid GSTIN format. Expected 15-character GSTIN format.")
+        return val
 
     @field_validator("company_email", mode="before")
     @classmethod
@@ -154,11 +196,16 @@ class CompanyRegisterRequest(BaseModel):
 
     @field_validator("phone", mode="before")
     @classmethod
-    def _validate_phone(cls, v: str | None) -> str | None:
-        return clean_phone(v)
+    def _validate_phone(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Phone number is required.")
+        cleaned = clean_phone(v)
+        if not cleaned:
+            raise ValueError("Enter a valid phone number.")
+        return cleaned
 
 
-class CompanyResponse(BaseModel):
+class CompanyBase(BaseModel):
     id: uuid.UUID
     name: str
     code: str
@@ -183,8 +230,29 @@ class CompanyResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CompanyResponse(CompanyBase):
+    @field_validator("gst_number", "pan_number", mode="before")
+    @classmethod
+    def _mask_tax_ids(cls, v: str | None) -> str | None:
+        if not v or not isinstance(v, str):
+            return v
+        return mask_tax_id(v, visible=3)
+
+
+class UnmaskedCompanyResponse(CompanyBase):
+    """Returned when super admin explicitly requests reveal."""
+
+    pass
+
+
 class CompanyDetailResponse(CompanyResponse):
     phone: str | None
+    rejection_reason: str | None
+    approved_at: datetime | None
+    counts: dict[str, int]
+
+
+class UnmaskedCompanyDetailResponse(CompanyBase):
     rejection_reason: str | None
     approved_at: datetime | None
     counts: dict[str, int]
@@ -276,6 +344,8 @@ class CompanyProfileUpdateRequest(BaseModel):
         v = v.strip()
         if not v or len(v) > 255:
             raise ValueError("Company name must be between 1 and 255 characters.")
+        if "<" in v or ">" in v:
+            raise ValueError("Company name cannot contain HTML tags or '<', '>'.")
         return v
 
     @field_validator("phone", mode="before")
@@ -348,6 +418,30 @@ class AdminCompanyUpdateRequest(CompanyProfileUpdateRequest):
         if country is None:
             raise ValueError(f"Country must be one of: {allowed_country_codes()}.")
         return country
+
+    @field_validator("pan_number", mode="before")
+    @classmethod
+    def _validate_pan(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        val = v.strip().upper()
+        if not val:
+            return None
+        if not re.match(r"^[A-Z]{5}[0-9]{4}[A-Z]{1}$", val):
+            raise ValueError("Invalid PAN format. Expected format: ABCDE1234F.")
+        return val
+
+    @field_validator("gst_number", mode="before")
+    @classmethod
+    def _validate_gst(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        val = v.strip().upper()
+        if not val:
+            return None
+        if not re.match(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$", val):
+            raise ValueError("Invalid GSTIN format. Expected 15-character GSTIN format.")
+        return val
 
 
 # Auth
@@ -528,6 +622,7 @@ class UserWorkspaceResponse(BaseModel):
     code: str
     role: UserRole
     is_active: bool
+    logo_url: str | None = None
 
 
 class CreateWorkspaceResponse(BaseModel):

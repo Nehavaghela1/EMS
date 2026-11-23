@@ -129,7 +129,7 @@ describe("Super admin platform statistics pages", () => {
         ],
         total: 2,
         page: 1,
-        limit: 500,
+        limit: 100,
         pages: 1,
         has_next: false,
       });
@@ -161,7 +161,7 @@ describe("Super admin platform statistics pages", () => {
             total_employer_cost: "0.00", total_statutory_contributions: "0.00",
           },
         ],
-        total: 2, page: 1, limit: 500, pages: 1, has_next: false,
+        total: 2, page: 1, limit: 100, pages: 1, has_next: false,
       });
 
       page(<PlatformPayrollPage />);
@@ -173,7 +173,7 @@ describe("Super admin platform statistics pages", () => {
 
     it("P7: says so plainly when no payroll has run anywhere", async () => {
       vi.mocked(PlatformApi.listPlatformPayrollStats).mockResolvedValue({
-        items: [], total: 0, page: 1, limit: 500, pages: 0, has_next: false,
+        items: [], total: 0, page: 1, limit: 100, pages: 0, has_next: false,
       });
       page(<PlatformPayrollPage />);
 

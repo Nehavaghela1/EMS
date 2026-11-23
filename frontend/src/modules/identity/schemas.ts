@@ -16,7 +16,11 @@ export const passwordPolicySchema = z
  * else in this project yet. */
 export const registerCompanySchema = z
   .object({
-    company_name: z.string().trim().min(1, "Company name is required"),
+    company_name: z
+      .string()
+      .trim()
+      .min(1, "Company name is required")
+      .refine((v) => !v.includes("<") && !v.includes(">"), "Company name cannot contain HTML tags or '<', '>'"),
     company_email: z.string().trim().email("Enter a valid email address"),
     subdomain: z
       .string()
@@ -28,11 +32,22 @@ export const registerCompanySchema = z
       .optional()
       .or(z.literal("")),
     company_size: z.string().trim().min(1, "Please select your company size"),
-    industry: z.string().trim().optional(),
+    industry: z.string().trim().min(1, "Industry is required"),
     phone: z
       .string()
       .trim()
-      .regex(/^(\+?[0-9\s-]{7,15})?$/, "Enter a valid international phone number (e.g. +91 9876543210)")
+      .min(1, "Phone number is required")
+      .regex(/^(\+?[0-9\s-]{7,15})$/, "Enter a valid international phone number (e.g. +91 9876543210)"),
+    address: z.string().trim().min(1, "Registered office address is required"),
+    pan_number: z
+      .string()
+      .trim()
+      .min(1, "PAN number is required")
+      .regex(/^[A-Za-z]{5}[0-9]{4}[A-Za-z]{1}$/, "Invalid PAN format. Expected format: ABCDE1234F"),
+    gst_number: z
+      .string()
+      .trim()
+      .regex(/^[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z]{1}[1-9A-Za-z]{1}Z[0-9A-Za-z]{1}$/, "Invalid GSTIN format. Expected 15-character GSTIN format")
       .optional()
       .or(z.literal("")),
     password: passwordPolicySchema,

@@ -46,7 +46,14 @@ def test_logout_leaves_other_sessions_working(client, db, company_a):
 
 def _register(client, **overrides):
     sfx = uuid.uuid4().hex[:8]
-    body = {"company_name": f"Phone Co {sfx}", "company_email": f"p-{sfx}@example.com"}
+    body = {
+        "company_name": f"Phone Co {sfx}",
+        "company_email": f"p-{sfx}@example.com",
+        "industry": "Technology",
+        "phone": "+91 9876543210",
+        "address": "123 Tech Park",
+        "pan_number": "AAACA1234A",
+    }
     body.update(overrides)
     return client.post("/api/v1/companies/register", json=body)
 
@@ -100,10 +107,15 @@ def test_company_code_falls_back_when_name_has_no_letters():
 
 
 def test_registered_company_code_is_login_safe(client, limits_off):
+    # Under Part H, raw HTML like <b> is rejected at registration schema.
+    # Validate rejection when HTML is submitted:
     resp = _register(client, company_name="<b>Acme</b> & Sons")
-    assert resp.status_code == 201, resp.text
-    base = resp.json()["code"].split("-")[0]
-    assert base == "BACMEB"
+    assert resp.status_code == 422, resp.text
+    # And valid company name produces clean code:
+    resp_ok = _register(client, company_name="Acme & Sons")
+    assert resp_ok.status_code == 201, resp_ok.text
+    base = resp_ok.json()["code"].split("-")[0]
+    assert base == "ACMESO"
 
 
 # --- BUG-010 -----------------------------------------------------------------------------

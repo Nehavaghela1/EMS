@@ -33,7 +33,7 @@ describe('Sub-feature 1.2: RegisterCompanyPage', () => {
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
-    vi.spyOn(apiModule, 'listIndustryPresets').mockResolvedValue([])
+    vi.spyOn(apiModule, 'listIndustryPresets').mockResolvedValue(['Technology', 'Financial Services'])
   })
 
   function renderRegisterPage() {
@@ -95,6 +95,10 @@ describe('Sub-feature 1.2: RegisterCompanyPage', () => {
     await user.type(subInput, 'admin')
     await user.type(screen.getByLabelText(/admin \/ company work email \*/i), 'owner@admin.com')
     await user.selectOptions(screen.getByLabelText(/company size/i), '1-10')
+    await user.selectOptions(screen.getByLabelText(/industry \*/i), 'Technology')
+    await user.type(screen.getByLabelText(/contact phone \*/i), '+91 9876543210')
+    await user.type(screen.getByLabelText(/registered office address \*/i), '123 Tech Park')
+    await user.type(screen.getByLabelText(/company pan \*/i), 'ABCDE1234F')
     await user.type(screen.getByLabelText(/^password \*/i), 'SecurePass123!')
     await user.type(screen.getByLabelText(/confirm password \*/i), 'SecurePass123!')
     await user.click(screen.getByRole('button', { name: /register company/i }))
@@ -120,6 +124,10 @@ describe('Sub-feature 1.2: RegisterCompanyPage', () => {
     await user.type(screen.getByLabelText(/company name \*/i), 'Acme Global')
     await user.type(screen.getByLabelText(/admin \/ company work email \*/i), 'admin@acmeglobal.com')
     await user.selectOptions(screen.getByLabelText(/company size/i), '1-10')
+    await user.selectOptions(screen.getByLabelText(/industry \*/i), 'Technology')
+    await user.type(screen.getByLabelText(/contact phone \*/i), '+91 9876543210')
+    await user.type(screen.getByLabelText(/registered office address \*/i), '123 Tech Park')
+    await user.type(screen.getByLabelText(/company pan \*/i), 'ABCDE1234F')
     await user.type(screen.getByLabelText(/^password \*/i), 'SecurePass123!')
     await user.type(screen.getByLabelText(/confirm password \*/i), 'SecurePass123!')
     await user.click(screen.getByRole('button', { name: /register company/i }))

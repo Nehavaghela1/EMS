@@ -38,7 +38,30 @@ export function PlatformPayrollPage() {
 
   const stats = useQuery({
     queryKey: ["platform", "stats", "payroll", from, to],
-    queryFn: () => listPlatformPayrollStats({ from, to, limit: 500 }),
+    queryFn: async () => {
+      let currentPage = 1;
+      let totalPages = 1;
+      const allItems: CompanyMonthlyPayrollStats[] = [];
+
+      while (currentPage <= totalPages) {
+        const res = await listPlatformPayrollStats({ from, to, page: currentPage, limit: 100 });
+        allItems.push(...(res.items ?? []));
+        totalPages = res.pages || 1;
+        if (!res.has_next || currentPage >= totalPages) {
+          break;
+        }
+        currentPage += 1;
+      }
+
+      return {
+        items: allItems,
+        total: allItems.length,
+        page: 1,
+        limit: 100,
+        pages: totalPages,
+        has_next: false,
+      };
+    },
     retry: false,
   });
 

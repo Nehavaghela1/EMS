@@ -198,20 +198,28 @@ export function AppLayout({ children }: { children: ReactNode }) {
     user?.company_code ||
     "";
 
-  const activeCompanyLogo = companyQuery.data?.logo_url || null;
+  const activeCompanyLogo =
+    workspacesQuery.data?.find((c) => c.id === selectedWorkspace)?.logo_url ||
+    companyQuery.data?.logo_url ||
+    null;
 
   // Apply the company's saved accent colour (shared by every user), and keep a
   // copy in localStorage only so the next page load can paint it before the API answers.
   const companyBrandColor = companyQuery.data?.brand_color || null;
   useEffect(() => {
-    if (!companyBrandColor) return;
-    document.documentElement.style.setProperty("--color-primary", companyBrandColor);
-    try {
-      localStorage.setItem("ems_brand_accent_color", companyBrandColor);
-    } catch {
-      // storage may be unavailable; the colour still applies for this page
+    if (companyBrandColor) {
+      document.documentElement.style.setProperty("--color-primary", companyBrandColor);
+      if (user?.company_id) {
+        try {
+          localStorage.setItem(`ems_brand_accent_color_${user.company_id}`, companyBrandColor);
+        } catch {
+          // storage may be unavailable
+        }
+      }
+    } else {
+      document.documentElement.style.setProperty("--color-primary", "#2f5bea");
     }
-  }, [companyBrandColor]);
+  }, [companyBrandColor, user?.company_id]);
 
   // ── Profile pill dropdown (top-bar) ─────────────────────────────────────
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -365,7 +373,26 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
 
 
+  function clearBrandPreferences() {
+    document.documentElement.style.setProperty("--color-primary", "#2f5bea");
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("ems_brand_")) {
+          keysToRemove.push(k);
+        }
+      }
+      for (const k of keysToRemove) {
+        localStorage.removeItem(k);
+      }
+    } catch {
+      // storage unavailable
+    }
+  }
+
   async function handleLogout() {
+    clearBrandPreferences();
     await logout();
     navigate("/login", { replace: true });
   }
@@ -568,7 +595,13 @@ export function AppLayout({ children }: { children: ReactNode }) {
                       }}
                     >
                       <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
-                        <span style={{ fontSize: "0.85rem" }}>🏢</span>
+                        {activeCompanyLogo ? (
+                          <div style={{ width: 22, height: 22, borderRadius: 4, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "#fff", flexShrink: 0 }}>
+                            <img src={activeCompanyLogo} alt={user.company_name || ""} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: "0.85rem" }}>🏢</span>
+                        )}
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#f8fafc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {user.company_name || "Primary Tenant"}
@@ -596,6 +629,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                           <div
                             key={c.id}
                             onClick={async () => {
+                              clearBrandPreferences();
                               setSelectedWorkspace(c.id);
                               setIsWorkspaceDropdownOpen(false);
                               try {
@@ -625,7 +659,13 @@ export function AppLayout({ children }: { children: ReactNode }) {
                             }}
                           >
                             <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
-                              <span style={{ fontSize: "0.85rem" }}>🏢</span>
+                              {c.logo_url ? (
+                                <div style={{ width: 22, height: 22, borderRadius: 4, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "#fff", flexShrink: 0 }}>
+                                  <img src={c.logo_url} alt={c.name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: "0.85rem" }}>🏢</span>
+                              )}
                               <div style={{ minWidth: 0 }}>
                                 <div style={{ fontSize: "0.78rem", fontWeight: 500, color: "#cbd5e1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                   {c.name}
@@ -817,6 +857,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
             const isChildActive = sec.children?.some((c) => {
               if (c.to === "/dashboard") return location.pathname === "/dashboard";
               if (c.to === "/performance") return location.pathname === "/performance";
+              if (c.to === "/admin") return location.pathname === "/admin";
               return location.pathname.startsWith(c.to);
             });
             const isSelfActive = sec.to ? location.pathname === sec.to : false;
@@ -911,6 +952,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
                       const isActive =
                         child.to === "/performance"
                           ? location.pathname === "/performance"
+                          : child.to === "/admin"
+                          ? location.pathname === "/admin"
                           : location.pathname.startsWith(child.to);
                       return (
                         <NavLink
@@ -1156,7 +1199,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
 
             {/* Pending approvals badge — admin/owner only */}
-            {["owner", "hr_admin", "super_admin"].includes(role) && pendingLeaves > 0 && (
+            {role !== "super_admin" && ["owner", "hr_admin"].includes(role) && pendingLeaves > 0 && (
               <button
                 type="button"
                 id="btn-pending-approvals"
@@ -1179,10 +1222,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
               </button>
             )}
 
-            <NotificationBell />
+            {role !== "super_admin" && <NotificationBell />}
 
             {/* Zoho People / Coworker Directory Quick Access Icon (Only for HR, Manager, Owners) */}
-            {["hr_admin", "manager", "super_admin", "owner"].includes(role) && (
+            {role !== "super_admin" && ["hr_admin", "manager", "owner"].includes(role) && (
               <div ref={peopleMenuRef} style={{ position: "relative" }}>
               <button
                 type="button"
@@ -1305,7 +1348,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                       </div>
                     </button>
 
-                    {["owner", "hr_admin", "super_admin"].includes(role) && (
+                    {["owner", "hr_admin"].includes(role) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -1342,6 +1385,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           )}
 
             {/* Zoho Settings Gear Icon */}
+            {role !== "super_admin" && (
             <button
               type="button"
               id="btn-top-settings"
@@ -1374,8 +1418,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
               </svg>
             </button>
+            )}
 
             {/* 9-Dots / Apps Launcher Icon */}
+            {role !== "super_admin" && (
             <div ref={appsMenuRef} style={{ position: "relative" }}>
               <button
                 type="button"
@@ -1629,6 +1675,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 </div>
               )}
             </div>
+            )}
 
             {/* Interactive Profile Pill */}
             <div ref={profileMenuRef} style={{ position: "relative" }}>

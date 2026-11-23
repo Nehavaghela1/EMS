@@ -12,6 +12,9 @@ interface FormState {
   company_size: string;
   industry: string;
   phone: string;
+  address: string;
+  pan_number: string;
+  gst_number: string;
   password: string;
   confirm_password: string;
 }
@@ -23,6 +26,9 @@ const EMPTY: FormState = {
   company_size: "",
   industry: "",
   phone: "",
+  address: "",
+  pan_number: "",
+  gst_number: "",
   password: "",
   confirm_password: "",
 };
@@ -84,8 +90,11 @@ export function RegisterCompanyPage() {
         company_email: form.company_email.trim(),
         subdomain: form.subdomain.trim() || undefined,
         company_size: form.company_size || undefined,
-        industry: form.industry.trim() || undefined,
-        phone: form.phone.trim() || undefined,
+        industry: form.industry.trim(),
+        phone: form.phone.trim(),
+        address: form.address.trim(),
+        pan_number: form.pan_number.trim().toUpperCase(),
+        gst_number: form.gst_number.trim() ? form.gst_number.trim().toUpperCase() : undefined,
         password: form.password,
       });
       setSubmitted({
@@ -255,21 +264,22 @@ export function RegisterCompanyPage() {
 
           {/* Industry & Phone Row */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-            <div className="field">
-              <label htmlFor="industry">Industry (optional)</label>
+            <div className={"field" + (fieldErrors.industry ? " has-error" : "")}>
+              <label htmlFor="industry">Industry *</label>
               <select
                 id="industry"
                 value={form.industry}
                 onChange={(e) => setField("industry", e.target.value)}
                 disabled={industriesQuery.isLoading}
               >
-                <option value="">— None —</option>
+                <option value="">— Select industry —</option>
                 {industriesQuery.data?.map((name) => (
                   <option key={name} value={name}>
                     {name}
                   </option>
                 ))}
               </select>
+              {fieldErrors.industry && <span className="field-error">{fieldErrors.industry}</span>}
               {industriesQuery.isError && (
                 <span className="field-error">
                   Couldn't load industry list.
@@ -278,17 +288,55 @@ export function RegisterCompanyPage() {
             </div>
 
             <div className={"field" + (fieldErrors.phone ? " has-error" : "")}>
-              <label htmlFor="phone">Contact phone (optional)</label>
+              <label htmlFor="phone">Contact phone *</label>
               <input
                 id="phone"
                 type="tel"
                 placeholder="+91 9876543210"
                 value={form.phone}
                 onChange={(e) => setField("phone", e.target.value)}
-                pattern="^(\+?[0-9\s-]{7,15})?$"
                 title="International phone number e.g. +91 9876543210"
               />
               {fieldErrors.phone && <span className="field-error">{fieldErrors.phone}</span>}
+            </div>
+          </div>
+
+          {/* Registered Office Address */}
+          <div className={"field" + (fieldErrors.address ? " has-error" : "")}>
+            <label htmlFor="address">Registered Office Address *</label>
+            <input
+              id="address"
+              placeholder="Building, Street, Area, City, State"
+              value={form.address}
+              onChange={(e) => setField("address", e.target.value)}
+            />
+            {fieldErrors.address && <span className="field-error">{fieldErrors.address}</span>}
+          </div>
+
+          {/* PAN & GSTIN Row */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <div className={"field" + (fieldErrors.pan_number ? " has-error" : "")}>
+              <label htmlFor="pan_number">Company PAN *</label>
+              <input
+                id="pan_number"
+                placeholder="ABCDE1234F"
+                value={form.pan_number}
+                onChange={(e) => setField("pan_number", e.target.value.toUpperCase())}
+                style={{ fontFamily: "monospace", textTransform: "uppercase" }}
+              />
+              {fieldErrors.pan_number && <span className="field-error">{fieldErrors.pan_number}</span>}
+            </div>
+
+            <div className={"field" + (fieldErrors.gst_number ? " has-error" : "")}>
+              <label htmlFor="gst_number">GSTIN (optional)</label>
+              <input
+                id="gst_number"
+                placeholder="24ABCDE1234F1Z5"
+                value={form.gst_number}
+                onChange={(e) => setField("gst_number", e.target.value.toUpperCase())}
+                style={{ fontFamily: "monospace", textTransform: "uppercase" }}
+              />
+              {fieldErrors.gst_number && <span className="field-error">{fieldErrors.gst_number}</span>}
             </div>
           </div>
 
