@@ -311,11 +311,12 @@ def list_performance_summaries(
     cycle_id: uuid.UUID = Query(...),
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.manager)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner, UserRole.manager)),
 ):
     service = PerformanceService(db)
-    summaries, total, pages = service.list_summaries(user.company_id, cycle_id, params, actor=user)
-    items = [PerformanceSummaryResponse.model_validate(s) for s in summaries]
+    items, total, pages = service.list_summaries_with_details(
+        user.company_id, cycle_id, params, actor=user
+    )
     return Page(
         items=items,
         page=params.page,

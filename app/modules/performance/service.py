@@ -46,6 +46,7 @@ from app.modules.performance.schemas import (
     PerformanceGoalResponse,
     PerformancePIPResponse,
     PerformanceReportResponse,
+    PerformanceSummaryResponse,
     PIPCheckInCreateRequest,
     PIPCreateRequest,
     PIPEvaluateRequest,
@@ -854,6 +855,38 @@ class PerformanceService:
         ):
             raise ForbiddenError("Not authorized to list performance summaries.")
         return self.summary_repo.list_summaries(company_id, cycle_id, page_params)
+
+    def list_summaries_with_details(
+        self, company_id: uuid.UUID, cycle_id: uuid.UUID, page_params: PageParams, actor: User
+    ) -> tuple[list[PerformanceSummaryResponse], int, int]:
+        summaries, total, pages = self.list_summaries(company_id, cycle_id, page_params, actor)
+        items: list[PerformanceSummaryResponse] = []
+        for s in summaries:
+            emp = self.employee_repo.get_by_id_any_status(s.employee_id, company_id)
+            rev_user = self.db.get(User, s.reviewed_by)
+            rev_name: str | None = None
+            if rev_user is not None:
+                rev_emp = self.employee_repo.get_by_user_id(company_id, rev_user.id)
+                if rev_emp:
+                    rev_name = f"{rev_emp.first_name} {rev_emp.last_name or ''}".strip()
+                else:
+                    rev_name = rev_user.email
+            resp = PerformanceSummaryResponse(
+                id=s.id,
+                employee_id=s.employee_id,
+                employee_name=f"{emp.first_name} {emp.last_name or ''}".strip() if emp else None,
+                employee_code=emp.employee_code if emp else None,
+                cycle_id=s.cycle_id,
+                final_rating=s.final_rating,
+                overall_comments=s.overall_comments,
+                salary_revision_recommended=s.salary_revision_recommended,
+                recommended_increment_percent=s.recommended_increment_percent,
+                reviewed_by=s.reviewed_by,
+                reviewed_by_name=rev_name,
+                finalized_at=s.finalized_at,
+            )
+            items.append(resp)
+        return items, total, pages
 
     def finalize_summary(
         self,

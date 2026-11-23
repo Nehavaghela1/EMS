@@ -168,12 +168,15 @@ class PerformanceSummaryDetailResponse(BaseModel):
 class PerformanceSummaryResponse(BaseModel):
     id: uuid.UUID
     employee_id: uuid.UUID
+    employee_name: str | None = None
+    employee_code: str | None = None
     cycle_id: uuid.UUID
     final_rating: Decimal
     overall_comments: str | None
     salary_revision_recommended: bool
     recommended_increment_percent: Decimal | None
     reviewed_by: uuid.UUID
+    reviewed_by_name: str | None = None
     finalized_at: datetime
 
     model_config = {"from_attributes": True}
