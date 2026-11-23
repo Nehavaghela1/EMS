@@ -84,7 +84,10 @@ class PerformanceService:
             company_id=company_id, start_date=data.start_date, end_date=data.end_date
         )
         if clash is not None:
-            raise ConflictError(f"Cycle dates clash with existing cycle '{clash.name}'.")
+            raise ConflictError(
+                f"Cycle dates clash with existing cycle '{clash.name}' "
+                f"({clash.start_date} to {clash.end_date})."
+            )
 
         cycle = self.cycle_repo.create(
             company_id=company_id,
@@ -114,6 +117,9 @@ class PerformanceService:
         data: PerformanceCycleUpdateRequest,
         actor: User,
     ) -> PerformanceCycle:
+        if actor.role not in (UserRole.hr_admin, UserRole.owner):
+            raise ForbiddenError("Only HR administrators and owners can update performance cycles.")
+
         cycle = self.cycle_repo.get_by_id(cycle_id, company_id)
         if cycle is None:
             raise NotFoundError("Performance cycle not found.")
@@ -122,36 +128,96 @@ class PerformanceService:
         if cycle.status == CycleStatus.closed:
             raise ConflictError("A closed performance cycle cannot be reopened or edited.")
 
-        if cycle.status == CycleStatus.draft:
-            if data.status == CycleStatus.closed:
-                raise ConflictError(
-                    "A draft cycle cannot be closed directly; it must be activated first."
-                )
-            if data.status == CycleStatus.draft:
-                pass  # no-op
-            elif data.status == CycleStatus.active:
-                # Enforce single active cycle
-                existing_active = self.cycle_repo.get_active_cycle(company_id)
-                if existing_active is not None and existing_active.id != cycle.id:
-                    raise ConflictError(
-                        f"Cannot activate cycle: '{existing_active.name}' is already active."
-                    )
-        elif cycle.status == CycleStatus.active:
-            if data.status == CycleStatus.draft:
-                raise ConflictError("An active performance cycle cannot be reverted to draft.")
+        update_fields: dict[str, Any] = {}
 
-        self.cycle_repo.update(cycle, status=data.status)
+        # 1. Update deadlines if provided
+        if data.self_review_deadline is not None or data.manager_review_deadline is not None:
+            new_self = (
+                data.self_review_deadline
+                if data.self_review_deadline is not None
+                else cycle.self_review_deadline
+            )
+            new_mgr = (
+                data.manager_review_deadline
+                if data.manager_review_deadline is not None
+                else cycle.manager_review_deadline
+            )
+
+            # Ordering rules: start_date <= self <= manager <= cycle end date
+            if new_self is not None:
+                if not (cycle.start_date <= new_self <= cycle.end_date):
+                    raise ValidationError(
+                        "self_review_deadline must be between start_date and end_date."
+                    )
+            if new_mgr is not None:
+                if new_self is not None:
+                    if not (new_self <= new_mgr <= cycle.end_date):
+                        raise ValidationError(
+                            "manager_review_deadline must be between "
+                            "self_review_deadline and end_date."
+                        )
+                elif not (cycle.start_date <= new_mgr <= cycle.end_date):
+                    raise ValidationError(
+                        "manager_review_deadline must be between start_date and end_date."
+                    )
+
+            if data.self_review_deadline is not None:
+                update_fields["self_review_deadline"] = data.self_review_deadline
+            if data.manager_review_deadline is not None:
+                update_fields["manager_review_deadline"] = data.manager_review_deadline
+
+        # 2. Update status if provided
+        status_changed = False
+        if data.status is not None and data.status != cycle.status:
+            if cycle.status == CycleStatus.draft:
+                if data.status == CycleStatus.closed:
+                    raise ConflictError(
+                        "A draft cycle cannot be closed directly; it must be activated first."
+                    )
+                elif data.status == CycleStatus.active:
+                    # Enforce single active cycle
+                    existing_active = self.cycle_repo.get_active_cycle(company_id)
+                    if existing_active is not None and existing_active.id != cycle.id:
+                        raise ConflictError(
+                            f"Cannot activate cycle: '{existing_active.name}' is already active."
+                        )
+                    update_fields["status"] = data.status
+                    status_changed = True
+            elif cycle.status == CycleStatus.active:
+                if data.status == CycleStatus.draft:
+                    raise ConflictError("An active performance cycle cannot be reverted to draft.")
+                elif data.status == CycleStatus.closed:
+                    update_fields["status"] = data.status
+                    status_changed = True
+
+        if update_fields:
+            self.cycle_repo.update(cycle, **update_fields)
+
+        # Audit logging
+        audit_details: dict[str, Any] = {}
+        if status_changed and data.status is not None:
+            audit_details["status"] = data.status.value
+        if "self_review_deadline" in update_fields:
+            audit_details["self_review_deadline"] = str(update_fields["self_review_deadline"])
+        if "manager_review_deadline" in update_fields:
+            audit_details["manager_review_deadline"] = str(update_fields["manager_review_deadline"])
+
+        action = (
+            f"PERFORMANCE_CYCLE_{data.status.value.upper()}"
+            if status_changed and data.status is not None
+            else "PERFORMANCE_CYCLE_UPDATED"
+        )
         self.audit.record(
             company_id=company_id,
             actor=actor,
-            action=f"PERFORMANCE_CYCLE_{data.status.value.upper()}",
+            action=action,
             entity_type="performance_cycle",
             entity_id=cycle.id,
-            details={"status": data.status.value},
+            details=audit_details,
         )
 
         # Notification on activation
-        if data.status == CycleStatus.active:
+        if status_changed and data.status == CycleStatus.active:
             from sqlalchemy import select
 
             from app.modules.hr.models import Employee
@@ -347,13 +413,17 @@ class PerformanceService:
             if other_sum + data.weightage > Decimal("100.00"):
                 raise WeightageSumError("Total goal weightage cannot exceed 100.00%.")
 
+        new_status = data.status if data.status is not None else goal.status
+        new_progress = 100 if new_status == GoalStatus.completed else goal.progress
+
         updated = self.goal_repo.update(
             goal,
             title=data.title if data.title is not None else goal.title,
             description=data.description if data.description is not None else goal.description,
             weightage=data.weightage if data.weightage is not None else goal.weightage,
             target_value=data.target_value if data.target_value is not None else goal.target_value,
-            status=data.status if data.status is not None else goal.status,
+            status=new_status,
+            progress=new_progress,
         )
 
         self.audit.record(
@@ -417,12 +487,22 @@ class PerformanceService:
                 "Goals cannot be modified when the performance cycle is not active."
             )
 
+        # Self-review submission freeze check
+        existing_self_rev = self.review_repo.get_by_goal_and_role(
+            company_id, goal.id, ReviewerRole.self
+        )
+        if existing_self_rev is not None:
+            raise ConflictError("Goals are locked after self-review has been submitted.")
+
         emp = self.employee_repo.get_by_user_id(company_id, actor.id)
         is_owner = emp and goal.employee_id == emp.id
         is_hr = actor.role in (UserRole.hr_admin, UserRole.owner)
 
         if not (is_owner or is_hr):
             raise ForbiddenError("Employees can only update progress on their own goals.")
+
+        if data.progress == 100:
+            goal.status = GoalStatus.completed
 
         old_progress = goal.progress
         self.goal_repo.update(goal, progress=data.progress)
@@ -446,6 +526,17 @@ class PerformanceService:
         self.db.commit()
         return goal
 
+    def goal_to_response(
+        self, company_id: uuid.UUID, goal: PerformanceGoal
+    ) -> PerformanceGoalResponse:
+        self_rev = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.self)
+        status = self_rev.status if self_rev else None
+        rev_id = self_rev.id if self_rev else None
+        resp = PerformanceGoalResponse.model_validate(goal)
+        resp.self_review_status = status
+        resp.self_review_id = rev_id
+        return resp
+
     def get_goal_progress_history(
         self, company_id: uuid.UUID, goal_id: uuid.UUID, actor: User
     ) -> list[Any]:
@@ -462,6 +553,12 @@ class PerformanceService:
             return []
         return self.goal_repo.list_by_employee_and_cycle(company_id, employee_id, active_cycle.id)
 
+    def list_goals_with_reviews(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User
+    ) -> list[PerformanceGoalResponse]:
+        goals = self.list_goals(company_id, employee_id, actor)
+        return [self.goal_to_response(company_id, g) for g in goals]
+
     # 3. Reviews & Invariants
     def submit_self_review(
         self, company_id: uuid.UUID, goal_id: uuid.UUID, data: SelfReviewRequest, actor: User
@@ -476,6 +573,14 @@ class PerformanceService:
             raise ConflictError(
                 "Reviews can only be submitted while the performance cycle is active."
             )
+
+        # Review deadline check
+        if cycle.self_review_deadline is not None:
+            now_date = utcnow().date()
+            if now_date > cycle.self_review_deadline:
+                raise ConflictError(
+                    f"Self-review deadline ({cycle.self_review_deadline}) has passed."
+                )
 
         emp = self.employee_repo.get_by_user_id(company_id, actor.id)
         if emp is None or goal.employee_id != emp.id:
@@ -561,6 +666,14 @@ class PerformanceService:
             raise ConflictError(
                 "Reviews can only be submitted while the performance cycle is active."
             )
+
+        # Review deadline check
+        if cycle.manager_review_deadline is not None:
+            now_date = utcnow().date()
+            if now_date > cycle.manager_review_deadline:
+                raise ConflictError(
+                    f"Manager review deadline ({cycle.manager_review_deadline}) has passed."
+                )
 
         # Prerequisite: employee must have submitted self-review for this goal
         self_rev = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.self)
@@ -829,7 +942,7 @@ class PerformanceService:
             if has_pending_mgr_review:
                 weighted_manager_rating = None
 
-        goal_responses = [PerformanceGoalResponse.model_validate(g) for g in goals]
+        goal_responses = [self.goal_to_response(company_id, g) for g in goals]
 
         return {
             "employee_id": employee_id,

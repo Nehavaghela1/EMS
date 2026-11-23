@@ -359,7 +359,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/performance/goals/{goal_id}/self-review"): AUTHENTICATED,
     ("GET", "/api/v1/performance/goals/{goal_id}/reviews"): AUTHENTICATED,
     ("GET", "/api/v1/performance/reviews/{id}"): AUTHENTICATED,
-    ("POST", "/api/v1/performance/reviews/{id}/reopen"): ROLES(UserRole.hr_admin),
+    ("POST", "/api/v1/performance/reviews/{id}/reopen"): ROLES(UserRole.hr_admin, UserRole.owner),
     ("PUT", "/api/v1/performance/goals/{id}"): AUTHENTICATED,
     ("PUT", "/api/v1/performance/goals/{id}/progress"): AUTHENTICATED,
     ("GET", "/api/v1/performance/goals/{id}/history"): AUTHENTICATED,

@@ -6,6 +6,7 @@ import {
   submitManagerReview,
   getPerformanceSummary,
   finalizePerformanceSummary,
+  reopenReview,
   type PerformanceCycle,
   type PerformanceGoal,
   type PerformanceSummary,
@@ -34,6 +35,11 @@ export function PerformanceReviewPage() {
   const [mgrRating, setMgrRating] = useState("4.0");
   const [mgrComments, setMgrComments] = useState("");
   const [submittingReview, setSubmittingReview] = useState(false);
+
+  // Reopen Modal state
+  const [reopenGoal, setReopenGoal] = useState<PerformanceGoal | null>(null);
+  const [reopenReason, setReopenReason] = useState("");
+  const [submittingReopen, setSubmittingReopen] = useState(false);
 
   // Finalize Summary Form state
   const [overallComments, setOverallComments] = useState("");
@@ -109,6 +115,27 @@ export function PerformanceReviewPage() {
       notify(parsed.message || "Failed to submit manager rating", parsed.status === 409 ? "warning" : "error");
     } finally {
       setSubmittingReview(false);
+    }
+  }
+
+  async function handleReopenReview(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reopenGoal || !reopenGoal.self_review_id) return;
+    setSubmittingReopen(true);
+    try {
+      await reopenReview(reopenGoal.self_review_id, {
+        reason: reopenReason,
+      });
+      notify("Review reopened successfully", "success");
+      setReopenGoal(null);
+      setReopenReason("");
+      const target = employeeId || selectedId;
+      if (target) fetchData(target);
+    } catch (err: unknown) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to reopen review", "error");
+    } finally {
+      setSubmittingReopen(false);
     }
   }
 
@@ -198,9 +225,9 @@ export function PerformanceReviewPage() {
               ) : (
                 <div className="stack gap-4">
                   {goals.map((g) => {
-                    const isDraftSelfReview = g.self_review_status === "draft" || (!g.self_rating && Boolean(g.self_comments));
-                    const isSelfReviewSubmitted = g.self_review_status === "submitted" || Boolean(g.self_rating && !isDraftSelfReview);
-                    const canRateAsManager = isSelfReviewSubmitted && !isDraftSelfReview;
+                    const isDraftSelfReview = g.self_review_status === "draft";
+                    const isSelfReviewSubmitted = g.self_review_status === "submitted";
+                    const canRateAsManager = isSelfReviewSubmitted;
 
                     return (
                       <div key={g.id} className="p-4 border rounded stack gap-2">
@@ -230,7 +257,18 @@ export function PerformanceReviewPage() {
 
                         {/* Action */}
                         <div className="stack gap-1 mt-2 align-end">
-                          <div className="flex justify-end">
+                          <div className="flex gap-2 justify-end">
+                            {(user?.role === "hr_admin" || user?.role === "owner") && isSelfReviewSubmitted && g.self_review_id && (
+                              <button
+                                className="btn btn-sm btn-outline text-amber-600"
+                                onClick={() => {
+                                  setReopenGoal(g);
+                                  setReopenReason("");
+                                }}
+                              >
+                                Reopen Review
+                              </button>
+                            )}
                             <button
                               className="btn btn-sm btn-primary"
                               disabled={!canRateAsManager}
@@ -402,6 +440,40 @@ export function PerformanceReviewPage() {
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submittingReview}>
                   {submittingReview ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reopen Review Modal */}
+      {reopenGoal && (
+        <div className="modal-backdrop">
+          <div className="modal" style={{ maxWidth: "500px" }}>
+            <h3 className="mb-2">Reopen Self Review</h3>
+            <p className="text-sm text-muted mb-4">
+              Reopening will return this self-review to draft status so the employee can modify their comments and rating. A reason is required for the audit trail.
+            </p>
+
+            <form onSubmit={handleReopenReview} className="stack gap-4">
+              <div className="field">
+                <label>Reason for Reopening</label>
+                <textarea
+                  rows={4}
+                  placeholder="Explain why this review is being reopened..."
+                  value={reopenReason}
+                  onChange={(e) => setReopenReason(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end mt-4">
+                <button type="button" className="btn btn-ghost" onClick={() => setReopenGoal(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submittingReopen || !reopenReason.trim()}>
+                  {submittingReopen ? "Reopening..." : "Confirm Reopen"}
                 </button>
               </div>
             </form>

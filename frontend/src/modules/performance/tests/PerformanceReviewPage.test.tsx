@@ -61,6 +61,7 @@ const mockGoals: api.PerformanceGoal[] = [
     status: "in_progress",
     self_rating: "4.5",
     self_comments: "Migration successfully deployed",
+    self_review_status: "submitted",
     created_at: "2026-10-02T00:00:00Z",
   },
   {
@@ -74,6 +75,7 @@ const mockGoals: api.PerformanceGoal[] = [
     status: "completed",
     self_rating: "4.0",
     self_comments: "Reviewed 18 PRs",
+    self_review_status: "submitted",
     created_at: "2026-10-02T00:00:00Z",
   },
 ];
