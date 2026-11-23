@@ -192,8 +192,8 @@ export function PayrollRunPage() {
   // Filter in Payroll History (Screen 2): "All", "regular", "off_cycle", "final_settlement"
   const [payrollTypeFilter, setPayrollTypeFilter] = useState<string>("All");
 
-  // Run detail internal tabs (Screen 3): "employee_summary" | "taxes_deductions" | "overall_insights"
-  const [detailSubTab, setDetailSubTab] = useState<"employee_summary" | "taxes_deductions" | "overall_insights">("employee_summary");
+  // Run detail internal tabs (Screen 3): "employee_summary"
+  const [detailSubTab, setDetailSubTab] = useState<"employee_summary">("employee_summary");
   const [employeeSearchTerm, setEmployeeSearchTerm] = useState("");
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -230,17 +230,14 @@ export function PayrollRunPage() {
 
   // Calculated totals for selected run detail
   const detailTotals = useMemo(() => {
-    if (!selectedRunDetail) return { gross: 0, net: 0, taxes: 0, benefits: 0, deductions: 0, count: 0 };
+    if (!selectedRunDetail) return { gross: 0, net: 0, deductions: 0, count: 0 };
+    const itemsNet = selectedRunDetail.items.reduce((sum, it) => sum + Number(it.net_salary || 0), 0);
     const gross = Number(selectedRunDetail.run.total_gross || 0);
-    const net = Number(selectedRunDetail.run.total_net || 0);
+    const net = selectedRunDetail.items.length > 0 ? itemsNet : Number(selectedRunDetail.run.total_net || 0);
     const deductions = Number(selectedRunDetail.run.total_deductions || 0);
-    const taxes = Math.round(deductions * 0.7); // approximate TDS split
-    const benefits = 0;
     return {
       gross,
       net,
-      taxes,
-      benefits,
       deductions,
       count: selectedRunDetail.items.length,
     };
@@ -315,26 +312,7 @@ export function PayrollRunPage() {
 
           {/* Action buttons (Screen 3 top-right) */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost"
-              style={{ background: "#ffffff", border: "1px solid #cbd5e1", color: "#475569", padding: "6px 12px", borderRadius: "6px" }}
-              onClick={() => notify("Comments feature opened.")}
-              title="Add Comments / Notes"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            </button>
-
-            {isPaid ? (
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                onClick={() => notify("Payslips sent via email to all employees.")}
-                style={{ background: "#ffffff", color: "#2563eb", border: "1px solid #cbd5e1", padding: "6px 14px", borderRadius: "6px", fontWeight: 600 }}
-              >
-                Send Payslip
-              </button>
-            ) : (
+            {!isPaid && (
               <button
                 type="button"
                 className="btn btn-sm btn-primary"
@@ -392,11 +370,21 @@ export function PayrollRunPage() {
                     onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                     onClick={() => {
-                      const headers = ["Employee ID", "Employee Name", "CTC Snapshot", "Gross Salary", "Deductions", "Net Salary"];
+                      const headers = ["Employee Code", "Employee Name", "CTC Snapshot", "Gross Salary", "Deductions", "Net Salary"];
                       const rows = selectedRunDetail.items.map((it) => {
                         const emp = employeeMap.get(it.employee_id);
-                        const name = emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : it.employee_id;
-                        return [it.employee_id, `"${name}"`, it.ctc_snapshot, it.gross_salary, it.total_deductions, it.net_salary].join(",");
+                        const empCode = emp?.employee_code || "";
+                        const name = emp ? `${emp.first_name} ${emp.last_name || ""}`.trim() : "";
+                        const formatAmount = (val: string | number | null | undefined) =>
+                          Number(val || 0).toFixed(2);
+                        return [
+                          empCode,
+                          `"${name.replace(/"/g, '""')}"`,
+                          formatAmount(it.ctc_snapshot),
+                          formatAmount(it.gross_salary),
+                          formatAmount(it.total_deductions),
+                          formatAmount(it.net_salary),
+                        ].join(",");
                       });
                       const csv = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
                       const link = document.createElement("a");
@@ -542,32 +530,22 @@ export function PayrollRunPage() {
             </div>
           </div>
 
-          {/* Col 3: Taxes & Deductions */}
+          {/* Col 3: Deductions */}
           <div>
             <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#0f172a", marginBottom: "0.75rem" }}>
               Taxes & Deductions
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", marginBottom: "6px" }}>
-              <span style={{ color: "#64748b" }}>Taxes</span>
-              <span style={{ fontWeight: 600, color: "#0f172a" }}>₹{detailTotals.taxes.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", marginBottom: "6px" }}>
-              <span style={{ color: "#64748b" }}>Benefits</span>
-              <span style={{ fontWeight: 600, color: "#0f172a" }}>₹0.00</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", paddingTop: "6px", borderTop: "1px solid #f1f5f9" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", paddingTop: "6px" }}>
               <span style={{ color: "#334155", fontWeight: 600 }}>Total Deductions</span>
               <span style={{ fontWeight: 700, color: "#0f172a" }}>₹{detailTotals.deductions.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
             </div>
           </div>
         </div>
 
-        {/* Sub-tabs below Hero (Screen 3): Employee Summary | Taxes & Deductions | Overall Insights */}
+        {/* Sub-tabs below Hero (Screen 3): Employee Summary */}
         <div style={{ display: "flex", gap: "2rem", borderBottom: "1px solid #e2e8f0", marginBottom: "1.25rem" }}>
           {[
             { id: "employee_summary", label: "Employee Summary" },
-            { id: "taxes_deductions", label: "Taxes & Deductions" },
-            { id: "overall_insights", label: "Overall Insights" },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -611,37 +589,6 @@ export function PayrollRunPage() {
                     width: "220px",
                   }}
                 />
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <button
-                  type="button"
-                  onClick={() => notify("Filter view applied.")}
-                  style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: "6px", padding: "6px 10px", cursor: "pointer", color: "#64748b" }}
-                  title="Filter employees"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => notify("Exporting employee summary data.")}
-                  style={{
-                    background: "#ffffff",
-                    border: "1px solid #cbd5e1",
-                    borderRadius: "6px",
-                    padding: "6px 12px",
-                    fontSize: "0.82rem",
-                    fontWeight: 600,
-                    color: "#475569",
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                  <span>Export Data ▾</span>
-                </button>
               </div>
             </div>
 
@@ -732,21 +679,8 @@ export function PayrollRunPage() {
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                             </button>
                           </td>
-                          <td style={{ padding: "12px 8px", textAlign: "center" }}>
-                            <button
-                              type="button"
-                              onClick={() => notify(`The TDS worksheet download for ${empName} is not available yet.`, "info")}
-                              style={{
-                                background: "transparent",
-                                border: "none",
-                                color: "#2563eb",
-                                fontWeight: 600,
-                                cursor: "pointer",
-                                padding: 0,
-                              }}
-                            >
-                              View
-                            </button>
+                          <td style={{ padding: "12px 8px", textAlign: "center", color: "#94a3b8" }}>
+                            —
                           </td>
                           <td style={{ padding: "12px 8px", color: "#475569" }}>
                             Manual Bank Transfer
@@ -770,56 +704,7 @@ export function PayrollRunPage() {
           </div>
         )}
 
-        {/* Tab 2: Taxes & Deductions */}
-        {detailSubTab === "taxes_deductions" && (
-          <div style={{ background: "#ffffff", borderRadius: "10px", border: "1px solid #e2e8f0", padding: "1.5rem" }}>
-            <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", color: "#0f172a" }}>Tax Liability Breakdown</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "1rem" }}>
-              <div style={{ padding: "1rem", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
-                <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", fontWeight: 600 }}>TDS on Salary (Sec 192)</div>
-                <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#0f172a", marginTop: "4px" }}>
-                  ₹{detailTotals.taxes.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </div>
-              </div>
-              <div style={{ padding: "1rem", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
-                <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", fontWeight: 600 }}>Employee PF</div>
-                <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#0f172a", marginTop: "4px" }}>
-                  ₹{(Math.round(detailTotals.deductions * 0.25)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </div>
-              </div>
-              <div style={{ padding: "1rem", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
-                <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", fontWeight: 600 }}>Professional Tax (PT)</div>
-                <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#0f172a", marginTop: "4px" }}>
-                  ₹{(selectedRunDetail.items.length * 200).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Tab 3: Overall Insights */}
-        {detailSubTab === "overall_insights" && (
-          <div style={{ background: "#ffffff", borderRadius: "10px", border: "1px solid #e2e8f0", padding: "1.5rem" }}>
-            <h3 style={{ margin: "0 0 1rem 0", fontSize: "1rem", color: "#0f172a" }}>Department Payroll Allocation</h3>
-            <p style={{ color: "#64748b", fontSize: "0.85rem" }}>
-              Total workforce compensation for this pay run across all enrolled departments.
-            </p>
-            <div style={{ marginTop: "1rem", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-              <div style={{ padding: "1rem", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
-                <div style={{ fontWeight: 600, color: "#0f172a" }}>Engineering & Tech</div>
-                <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#2563eb", marginTop: "4px" }}>
-                  ₹{(detailTotals.gross * 0.65).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </div>
-              </div>
-              <div style={{ padding: "1rem", border: "1px solid #e2e8f0", borderRadius: "8px" }}>
-                <div style={{ fontWeight: 600, color: "#0f172a" }}>Operations & Admin</div>
-                <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#2563eb", marginTop: "4px" }}>
-                  ₹{(detailTotals.gross * 0.35).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Zoho Standard Payslip Document Viewer Modal */}
         {payslipModalItem && (
@@ -1069,14 +954,6 @@ export function PayrollRunPage() {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <button
-                type="button"
-                onClick={() => notify("Filter view applied.")}
-                style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: "6px", padding: "6px 8px", cursor: "pointer", color: "#64748b" }}
-                title="Filter history"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-              </button>
               <button
                 type="button"
                 onClick={() => setShowRunModal(true)}

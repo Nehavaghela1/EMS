@@ -285,4 +285,134 @@ describe("Sub-feature 5.4: PayrollRunPage Frontend", () => {
       expect(payrollApi.deletePayrollRun).toHaveBeenCalledWith("run-1");
     });
   });
+
+  it("F4: hero renders the exact sum of item net_salary values", async () => {
+    // 2 items: 66,000.00 and 44,000.00 -> total net must be 1,10,000.00
+    const fixtureDetail: payrollApi.PayrollRunDetail = {
+      run: {
+        ...mockRuns[0],
+        total_net: "999999.00", // deliberate run mismatch to prove hero renders sum of item net_salaries
+        total_gross: "150000.00",
+        total_deductions: "40000.00",
+      },
+      items: [
+        {
+          ...mockRunDetail.items[0],
+          id: "item-1",
+          net_salary: "66000.00",
+        },
+        {
+          ...mockRunDetail.items[0],
+          id: "item-2",
+          employee_id: "emp-2",
+          net_salary: "44000.00",
+        },
+      ],
+    };
+    vi.mocked(payrollApi.getPayrollRunDetail).mockResolvedValue(fixtureDetail);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /View & Process Pay Run/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /View & Process Pay Run/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Rahul Sharma")).toBeInTheDocument();
+    });
+
+    // 66,000 + 44,000 = 1,10,000.00
+    // In Indian locale formatting: ₹1,10,000.00
+    expect(screen.getByText("₹1,10,000.00")).toBeInTheDocument();
+    expect(screen.queryByText("₹9,99,999.00")).not.toBeInTheDocument();
+  });
+
+  it("G5: does not render dummy toast controls and kept action buttons make expected network calls", async () => {
+    vi.mocked(payrollApi.getPayrollRunDetail).mockResolvedValue(mockRunDetail);
+    vi.mocked(payrollApi.downloadPaymentFile).mockResolvedValue();
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /View & Process Pay Run/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /View & Process Pay Run/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Rahul Sharma")).toBeInTheDocument();
+    });
+
+    // Dummy controls must not exist:
+    // 1. Comments feature button
+    expect(screen.queryByTitle("Add Comments / Notes")).not.toBeInTheDocument();
+    // 2. Send Payslip button
+    expect(screen.queryByRole("button", { name: /Send Payslip/i })).not.toBeInTheDocument();
+    // 3. Filter button in summary table
+    expect(screen.queryByTitle("Filter employees")).not.toBeInTheDocument();
+    // 4. Duplicate Export Data button in summary table
+    expect(screen.queryByRole("button", { name: /Export Data ▾/i })).not.toBeInTheDocument();
+    // 5. TDS View link
+    expect(screen.queryByRole("button", { name: /The TDS worksheet download/i })).not.toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+
+    // Kept action: Download Bank Advice button makes real network call
+    const bankAdviceBtn = screen.getByRole("button", { name: /Download Bank Advice/i });
+    fireEvent.click(bankAdviceBtn);
+
+    await waitFor(() => {
+      expect(payrollApi.downloadPaymentFile).toHaveBeenCalledWith("run-1");
+    });
+  });
+
+  it("I4: generated CSV first data row contains employee code and name, and no UUID", async () => {
+    vi.mocked(payrollApi.getPayrollRunDetail).mockResolvedValue(mockRunDetail);
+
+    // Spy on createElement & appendChild to inspect CSV content
+    let downloadedContent = "";
+    const originalCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
+      const element = originalCreateElement(tagName);
+      if (tagName.toLowerCase() === "a") {
+        const origSetAttribute = element.setAttribute.bind(element);
+        element.setAttribute = (name: string, value: string) => {
+          if (name === "href" && value.startsWith("data:text/csv")) {
+            downloadedContent = decodeURI(value.replace("data:text/csv;charset=utf-8,", ""));
+          }
+          return origSetAttribute(name, value);
+        };
+      }
+      return element;
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /View & Process Pay Run/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /View & Process Pay Run/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Rahul Sharma")).toBeInTheDocument();
+    });
+
+    // Open options menu and trigger CSV export
+    const moreActionsBtn = screen.getByTitle("More Options / Actions");
+    fireEvent.click(moreActionsBtn);
+
+    const exportBtn = screen.getByRole("button", { name: /Export Payroll Summary \(CSV\)/i });
+    fireEvent.click(exportBtn);
+
+    expect(downloadedContent).toBeTruthy();
+    const [headerLine, firstDataLine] = downloadedContent.split("\n");
+    expect(headerLine).toBe("Employee Code,Employee Name,CTC Snapshot,Gross Salary,Deductions,Net Salary");
+    // emp-1 has employee_code EMP-001, name "Rahul Sharma", and ctc 900000.00
+    expect(firstDataLine).toBe('EMP-001,"Rahul Sharma",900000.00,75000.00,9000.00,66000.00');
+    // Ensure no UUID in data line
+    expect(firstDataLine).not.toContain("emp-1");
+    expect(firstDataLine).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  });
 });
