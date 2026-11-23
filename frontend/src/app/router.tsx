@@ -25,6 +25,7 @@ import { MyPayslipPage } from "../modules/payroll/pages/MyPayslipPage";
 import { ReimbursementsPage } from "../modules/payroll/pages/ReimbursementsPage";
 import { PerformanceCyclesPage } from "../modules/performance/pages/PerformanceCyclesPage";
 import { MyGoalsPage } from "../modules/performance/pages/MyGoalsPage";
+import { TeamGoalsPage } from "../modules/performance/pages/TeamGoalsPage";
 import { PerformanceReviewPage } from "../modules/performance/pages/PerformanceReviewPage";
 import { ProjectsListPage } from "../modules/projects/pages/ProjectsListPage";
 import { ProjectDetailPage } from "../modules/projects/pages/ProjectDetailPage";
@@ -261,6 +262,14 @@ export function AppRouter() {
         element={
           <Protected roles={ALL_COMPANY_ROLES}>
             <MyGoalsPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/performance/team-goals"
+        element={
+          <Protected roles={["hr_admin", "manager", "owner"]}>
+            <TeamGoalsPage />
           </Protected>
         }
       />

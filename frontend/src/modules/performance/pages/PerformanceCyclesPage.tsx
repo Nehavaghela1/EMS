@@ -328,7 +328,7 @@ export function PerformanceCyclesPage() {
       <div className="page-header flex justify-between align-center page-header-responsive">
         <div>
           <h1>Performance & Evaluation</h1>
-          <p className="text-muted">Appraisal cycles, review deadlines & Performance Improvement Plans (PIP)</p>
+          <p className="text-muted">Formal performance warnings with a mentor and a review date.</p>
         </div>
         <div className="flex gap-2" style={{ flexWrap: "wrap", width: "100%" }}>
           {viewTab === "cycles" && canSeeCycles ? (
