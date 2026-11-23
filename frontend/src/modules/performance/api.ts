@@ -52,6 +52,7 @@ export interface PerformanceGoal {
   status: GoalStatus;
   self_rating: string | null;
   self_comments: string | null;
+  self_review_status?: "draft" | "submitted" | null;
   created_at: string;
 }
 

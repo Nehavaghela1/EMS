@@ -11,10 +11,12 @@ import {
   type PerformanceSummary,
 } from "../api";
 import { getEmployee, listEmployees, type Employee } from "../../hr/api";
+import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { parseApiError } from "../../../shared/api/errors";
 
 export function PerformanceReviewPage() {
+  const { user } = useAuth();
   const { employeeId } = useParams<{ employeeId?: string }>();
   const navigate = useNavigate();
   const { notify } = useToast();
@@ -46,9 +48,11 @@ export function PerformanceReviewPage() {
   async function loadEmployees() {
     try {
       const res = await listEmployees({ page: 1, limit: 100 });
-      setEmployees(res.items);
-      if (!employeeId && res.items.length > 0) {
-        setSelectedId(res.items[0].id);
+      // Remove signed-in user's own name from team member dropdown (K3)
+      const filtered = res.items.filter((emp) => emp.id !== user?.employee?.id);
+      setEmployees(filtered);
+      if (!employeeId && filtered.length > 0) {
+        setSelectedId(filtered[0].id);
       }
     } catch {
       // Non-critical
@@ -136,7 +140,7 @@ export function PerformanceReviewPage() {
         <div>
           <h1>Performance Review & Rating</h1>
           <p className="text-muted">
-            Evaluate team members and submit manager ratings for the active performance cycle
+            Rate each goal your team member has self-rated. Your rating stays hidden from them until you submit it.
           </p>
         </div>
         {employees.length > 0 && (
@@ -193,41 +197,57 @@ export function PerformanceReviewPage() {
                 <p className="text-muted">No goals set for this employee in the active cycle.</p>
               ) : (
                 <div className="stack gap-4">
-                  {goals.map((g) => (
-                    <div key={g.id} className="p-4 border rounded stack gap-2">
-                      <div className="flex justify-between align-center">
-                        <strong className="text-base">{g.title}</strong>
-                        <span className="badge badge-outline">Weightage: {g.weightage}%</span>
-                      </div>
-                      <p className="text-sm text-muted">{g.description || "No description"}</p>
-                      <div className="text-xs">
-                        Target Metric: <strong>{g.target_value || "N/A"}</strong>
-                      </div>
+                  {goals.map((g) => {
+                    const isDraftSelfReview = g.self_review_status === "draft" || (!g.self_rating && Boolean(g.self_comments));
+                    const isSelfReviewSubmitted = g.self_review_status === "submitted" || Boolean(g.self_rating && !isDraftSelfReview);
+                    const canRateAsManager = isSelfReviewSubmitted && !isDraftSelfReview;
 
-                      {/* Self Rating */}
-                      <div className="p-3 bg-muted rounded flex justify-between align-center mt-2">
-                        <div>
-                          <span className="text-xs text-muted block">Self Evaluation</span>
-                          <span className="text-sm">{g.self_comments || "No comments"}</span>
+                    return (
+                      <div key={g.id} className="p-4 border rounded stack gap-2">
+                        <div className="flex justify-between align-center">
+                          <strong className="text-base">{g.title}</strong>
+                          <span className="badge badge-outline">Weightage: {g.weightage}%</span>
                         </div>
-                        {g.self_rating ? (
-                          <span className="badge badge-success font-mono">{g.self_rating} / 5.0</span>
-                        ) : (
-                          <span className="text-muted text-xs">Self rating pending</span>
-                        )}
-                      </div>
+                        <p className="text-sm text-muted">{g.description || "No description"}</p>
+                        <div className="text-xs">
+                          Target Metric: <strong>{g.target_value || "N/A"}</strong>
+                        </div>
 
-                      {/* Action */}
-                      <div className="flex justify-end mt-2">
-                        <button
-                          className="btn btn-sm btn-primary"
-                          onClick={() => setSelectedGoal(g)}
-                        >
-                          Rate Goal as Manager
-                        </button>
+                        {/* Self Rating */}
+                        <div className="p-3 bg-muted rounded flex justify-between align-center mt-2">
+                          <div>
+                            <span className="text-xs text-muted block">Self Evaluation</span>
+                            <span className="text-sm">{g.self_comments || "No comments"}</span>
+                          </div>
+                          {isDraftSelfReview ? (
+                            <span className="badge badge-warning">Draft</span>
+                          ) : g.self_rating ? (
+                            <span className="badge badge-success font-mono">{g.self_rating} / 5.0</span>
+                          ) : (
+                            <span className="text-muted text-xs">Self rating pending</span>
+                          )}
+                        </div>
+
+                        {/* Action */}
+                        <div className="stack gap-1 mt-2 align-end">
+                          <div className="flex justify-end">
+                            <button
+                              className="btn btn-sm btn-primary"
+                              disabled={!canRateAsManager}
+                              onClick={() => setSelectedGoal(g)}
+                            >
+                              Rate Goal as Manager
+                            </button>
+                          </div>
+                          {!canRateAsManager && (
+                            <p className="text-xs text-muted text-right m-0">
+                              Employee must submit their self-review before manager review can be submitted.
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
