@@ -224,9 +224,9 @@ def test_tier_1_performance_module_invariants(
 ):
     """Tests for Tier 1:
     A. self_review_status (null before review, submitted after submission, draft after reopen)
-    B. update_goal_progress refuses (409) after self-review has been submitted and progress unchanged
+    B. update_goal_progress refuses (409) after self-review submitted and progress unchanged
     C. review deadlines enforced (reject late submission with 409 Conflict)
-    D. status and progress synchronization (completed sets progress=100; progress=100 sets completed)
+    D. status and progress sync (completed sets progress=100; progress=100 sets completed)
     """
     from datetime import timedelta
 
@@ -278,7 +278,7 @@ def test_tier_1_performance_module_invariants(
     listed = client.get(f"/api/v1/performance/goals/{emp.id}", headers=emp_headers).json()
     assert listed[0]["self_review_status"] is None
 
-    # Part D Test 1: Updating progress to 50 does not mark completed; updating progress to 100 sets status to completed
+    # Part D Test 1: Updating progress to 50 does not mark completed
     prg_res1 = client.put(
         f"/api/v1/performance/goals/{goal_a_id}/progress",
         json={"progress": 50, "notes": "Halfway"},
@@ -322,7 +322,7 @@ def test_tier_1_performance_module_invariants(
     goal_map = {g["id"]: g for g in listed_after_sub}
     assert goal_map[goal_a_id]["self_review_status"] == "submitted"
 
-    # Part B Test: PUT to /goals/{id}/progress on reviewed goal returns 409 and stored value is unchanged
+    # Part B Test: PUT to /goals/{id}/progress on reviewed goal returns 409
     fail_prg = client.put(
         f"/api/v1/performance/goals/{goal_a_id}/progress",
         json={"progress": 80, "notes": "Trying to modify reviewed goal"},
@@ -357,6 +357,7 @@ def test_tier_1_performance_module_invariants(
     )
 
     from tests.conftest import _make_tenant
+
     company_late = _make_tenant(db, name="Late Review Co", code="LATE")
     emp_late, emp_late_headers = _create_employee_with_user(db, company_late.company_id)
 
