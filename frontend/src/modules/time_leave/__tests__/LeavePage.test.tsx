@@ -286,19 +286,14 @@ describe("Sub-features 4.5 & 4.6: Leave Balances & Requests Frontend (LeavePage)
     });
   });
 
-  it("seeds leave balances when HR clicks '⚡ Seed Balances'", async () => {
-    vi.mocked(timeLeaveApi.seedLeaveBalances).mockResolvedValue(mockBalances);
-
+  it("PART L1: does not show '⚡ Seed Balances' or setup tips in normal production LeavePage", async () => {
     renderLeavePage("hr_admin", "emp-1");
 
     await waitFor(() => {
-      expect(screen.getByText("⚡ Seed Balances")).toBeInTheDocument();
+      expect(screen.getByText("My balances")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("⚡ Seed Balances"));
-
-    await waitFor(() => {
-      expect(timeLeaveApi.seedLeaveBalances).toHaveBeenCalledWith("emp-1", 2026);
-    });
+    expect(screen.queryByText(/Seed Balances/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Click.*Seed Balances/i)).not.toBeInTheDocument();
   });
 });

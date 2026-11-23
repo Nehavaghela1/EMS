@@ -40,6 +40,7 @@ export function ReimbursementsPage() {
   // Review Modal state
   const [selectedClaim, setSelectedClaim] = useState<Reimbursement | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [isRejecting, setIsRejecting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [openingReceipt, setOpeningReceipt] = useState(false);
 
@@ -167,6 +168,7 @@ export function ReimbursementsPage() {
       notify(`Claim ${action}d successfully`, "success");
       setSelectedClaim(null);
       setRejectionReason("");
+      setIsRejecting(false);
       fetchClaims();
       fetchSummaryClaims();
     } catch (err: unknown) {
@@ -589,14 +591,15 @@ export function ReimbursementsPage() {
                 </div>
               )}
 
-              {canReview && selectedClaim.status === "pending" && (
+              {canReview && selectedClaim.status === "pending" && isRejecting && (
                 <div className="field">
-                  <label>Rejection Reason (required if rejecting)</label>
+                  <label>Rejection Reason <span className="text-danger">*</span></label>
                   <input
                     type="text"
                     placeholder="Enter reason if rejecting..."
                     value={rejectionReason}
                     onChange={(e) => setRejectionReason(e.target.value)}
+                    autoFocus
                   />
                 </div>
               )}
@@ -606,19 +609,49 @@ export function ReimbursementsPage() {
               {canReview && selectedClaim.status === "pending" ? (
                 <>
                   <button
-                    className="btn btn-danger"
-                    onClick={() => handleReview("reject")}
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => {
+                      if (isRejecting) {
+                        setIsRejecting(false);
+                        setRejectionReason("");
+                      } else {
+                        setSelectedClaim(null);
+                      }
+                    }}
                     disabled={reviewing}
                   >
-                    Reject
+                    Cancel
                   </button>
-                  <button
-                    className="btn btn-success"
-                    onClick={() => handleReview("approve")}
-                    disabled={reviewing}
-                  >
-                    Approve
-                  </button>
+                  {!isRejecting ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={() => setIsRejecting(true)}
+                        disabled={reviewing}
+                      >
+                        Reject
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => handleReview("approve")}
+                        disabled={reviewing}
+                      >
+                        Approve
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      onClick={() => handleReview("reject")}
+                      disabled={reviewing || !rejectionReason.trim()}
+                    >
+                      Confirm Reject
+                    </button>
+                  )}
                 </>
               ) : (
                 <button

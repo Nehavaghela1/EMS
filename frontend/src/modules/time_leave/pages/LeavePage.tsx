@@ -15,7 +15,6 @@ import {
   getLeaveBalance,
   listLeaveTypes,
   listLeaves,
-  seedLeaveBalances,
   type Leave,
   type LeaveStatus,
   type LeaveType,
@@ -45,8 +44,6 @@ export function LeavePage() {
   const queryClient = useQueryClient();
   const canDecide = user?.role === "hr_admin" || user?.role === "manager" || user?.role === "super_admin" || user?.role === "owner";
   const canPickEmployee = user?.role === "hr_admin" || user?.role === "manager" || user?.role === "super_admin" || user?.role === "owner";
-  const isHR = user?.role === "hr_admin" || user?.role === "super_admin" || user?.role === "owner";
-  const [seedingBalances, setSeedingBalances] = useState(false);
 
   const leaveTypesQuery = useQuery({ queryKey: ["leave-types"], queryFn: listLeaveTypes });
   const employeesQuery = useQuery({
@@ -300,28 +297,6 @@ export function LeavePage() {
         <div className="card mb-6">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
             <h3 style={{ margin: 0 }}>My balances</h3>
-            {isHR && user.employee && (
-              <button
-                className="btn btn-sm btn-outline"
-                disabled={seedingBalances}
-                title="Create leave balance records for all active leave types for this employee"
-                onClick={async () => {
-                  if (!user.employee?.id) return;
-                  setSeedingBalances(true);
-                  try {
-                    await seedLeaveBalances(user.employee.id, new Date().getFullYear());
-                    await queryClient.invalidateQueries({ queryKey: ["leave-balance"] });
-                    notify("Leave balances seeded successfully.");
-                  } catch {
-                    notify("Failed to seed leave balances", "error");
-                  } finally {
-                    setSeedingBalances(false);
-                  }
-                }}
-              >
-                {seedingBalances ? "Seeding…" : "⚡ Seed Balances"}
-              </button>
-            )}
           </div>
           {balancesQuery.isLoading && <span className="text-muted">Loading…</span>}
           {balancesQuery.isError && (
@@ -332,11 +307,6 @@ export function LeavePage() {
               <span className="text-muted">
                 No balances yet — they're created the first time you apply for leave.
               </span>
-              {isHR && user.employee && (
-                <span className="text-muted" style={{ fontSize: "0.8rem" }}>
-                  💡 Click <strong>⚡ Seed Balances</strong> above to instantly create all leave allocations for this employee based on the company's leave policy.
-                </span>
-              )}
             </div>
           )}
           {balancesQuery.data && balancesQuery.data.length > 0 && (

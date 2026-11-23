@@ -200,7 +200,7 @@ describe("Sub-feature 5.6: ReimbursementsPage Frontend", () => {
     expect(payrollApi.submitReimbursement).not.toHaveBeenCalled();
   });
 
-  it("5.6 F3: opens review modal for pending claim and approves it", async () => {
+  it("5.6 F3: opens review modal for pending claim and approves it without showing or requiring rejection reason", async () => {
     vi.mocked(payrollApi.reviewReimbursement).mockResolvedValue({
       ...mockClaims[0],
       status: "approved",
@@ -225,6 +225,9 @@ describe("Sub-feature 5.6: ReimbursementsPage Frontend", () => {
       expect(screen.getByText("Review Reimbursement Claim")).toBeInTheDocument();
     });
 
+    // Rejection reason field is not visible initially when reviewing
+    expect(screen.queryByPlaceholderText(/Enter reason if rejecting/i)).not.toBeInTheDocument();
+
     const approveBtn = screen.getByRole("button", { name: /^Approve$/i });
     fireEvent.click(approveBtn);
 
@@ -236,7 +239,7 @@ describe("Sub-feature 5.6: ReimbursementsPage Frontend", () => {
     });
   });
 
-  it("5.6 F4: requires a rejection reason when rejecting a claim", async () => {
+  it("5.6 F4 & L2: clicking Reject shows rejection reason and requires it before confirming", async () => {
     render(
       <ToastProvider>
         <ReimbursementsPage />
@@ -253,17 +256,26 @@ describe("Sub-feature 5.6: ReimbursementsPage Frontend", () => {
       expect(screen.getByText("Review Reimbursement Claim")).toBeInTheDocument();
     });
 
-    // Try to reject without reason
+    // Rejection reason not shown initially
+    expect(screen.queryByPlaceholderText(/Enter reason if rejecting/i)).not.toBeInTheDocument();
+
+    // Click Reject to initiate rejection flow
     const rejectBtn = screen.getByRole("button", { name: /^Reject$/i });
     fireEvent.click(rejectBtn);
 
-    expect(payrollApi.reviewReimbursement).not.toHaveBeenCalled();
+    // Now reason input appears
+    const reasonInput = screen.getByPlaceholderText(/Enter reason if rejecting/i);
+    expect(reasonInput).toBeInTheDocument();
+
+    // Confirm Reject button is disabled or blocked when reason is empty
+    const confirmRejectBtn = screen.getByRole("button", { name: /Confirm Reject/i });
+    expect(confirmRejectBtn).toBeDisabled();
 
     // Fill in rejection reason
-    const reasonInput = screen.getByPlaceholderText(/Enter reason if rejecting/i);
     fireEvent.change(reasonInput, { target: { value: "Receipt is blurred" } });
+    expect(confirmRejectBtn).not.toBeDisabled();
 
-    fireEvent.click(rejectBtn);
+    fireEvent.click(confirmRejectBtn);
 
     await waitFor(() => {
       expect(payrollApi.reviewReimbursement).toHaveBeenCalledWith("claim-1", {
