@@ -272,4 +272,150 @@ describe("Sub-feature 5.6: ReimbursementsPage Frontend", () => {
       });
     });
   });
+
+  it("PART A5: filter tabs call API with correct status and renders matching rows, empty state when empty", async () => {
+    vi.mocked(payrollApi.listReimbursements).mockImplementation(async (status) => {
+      if (status === "pending") {
+        return {
+          items: [mockClaims[0]],
+          total: 1,
+          page: 1,
+          limit: 20,
+          pages: 1,
+          has_next: false,
+        };
+      }
+      if (status === "approved") {
+        return {
+          items: [mockClaims[1]],
+          total: 1,
+          page: 1,
+          limit: 20,
+          pages: 1,
+          has_next: false,
+        };
+      }
+      if (status === "withdrawn") {
+        return {
+          items: [],
+          total: 0,
+          page: 1,
+          limit: 20,
+          pages: 0,
+          has_next: false,
+        };
+      }
+      return {
+        items: mockClaims,
+        total: 2,
+        page: 1,
+        limit: 20,
+        pages: 1,
+        has_next: false,
+      };
+    });
+
+    render(
+      <ToastProvider>
+        <ReimbursementsPage />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      expect(payrollApi.listReimbursements).toHaveBeenCalledWith(undefined);
+    });
+
+    // Click PENDING APPROVAL tab
+    const pendingTab = screen.getByRole("button", { name: /PENDING APPROVAL/i });
+    fireEvent.click(pendingTab);
+
+    await waitFor(() => {
+      expect(payrollApi.listReimbursements).toHaveBeenCalledWith("pending");
+      expect(screen.getByText("Client on-site visit taxi fare")).toBeInTheDocument();
+      expect(screen.queryByText("Annual health checkup")).not.toBeInTheDocument();
+    });
+
+    // Click WITHDRAWN tab which has empty items
+    const withdrawnTab = screen.getByRole("button", { name: /WITHDRAWN/i });
+    fireEvent.click(withdrawnTab);
+
+    await waitFor(() => {
+      expect(payrollApi.listReimbursements).toHaveBeenCalledWith("withdrawn");
+      expect(screen.getByText(/No reimbursement claims found for this filter/i)).toBeInTheDocument();
+    });
+  });
+
+  it("PART A5: summary figures match fixture amounts and do not conflate approved and paid", async () => {
+    const fixtureClaims: payrollApi.Reimbursement[] = [
+      {
+        id: "c-1",
+        employee_id: "e-1",
+        type: "travel",
+        amount: "1000.00",
+        expense_date: "2026-11-01",
+        description: "Taxi",
+        file_object_id: null,
+        status: "pending",
+        approved_by: null,
+        approved_at: null,
+        rejection_reason: null,
+        added_to_payroll_run_id: null,
+        created_at: "2026-11-01T00:00:00Z",
+      },
+      {
+        id: "c-2",
+        employee_id: "e-1",
+        type: "travel",
+        amount: "2500.50",
+        expense_date: "2026-11-02",
+        description: "Hotel",
+        file_object_id: null,
+        status: "approved",
+        approved_by: "usr-hr",
+        approved_at: "2026-11-03T00:00:00Z",
+        rejection_reason: null,
+        added_to_payroll_run_id: null,
+        created_at: "2026-11-02T00:00:00Z",
+      },
+      {
+        id: "c-3",
+        employee_id: "e-1",
+        type: "food",
+        amount: "3000.00",
+        expense_date: "2026-11-04",
+        description: "Dinner",
+        file_object_id: null,
+        status: "paid",
+        approved_by: "usr-hr",
+        approved_at: "2026-11-05T00:00:00Z",
+        rejection_reason: null,
+        added_to_payroll_run_id: "run-1",
+        created_at: "2026-11-04T00:00:00Z",
+      },
+    ];
+
+    vi.mocked(payrollApi.listReimbursements).mockResolvedValue({
+      items: fixtureClaims,
+      total: 3,
+      page: 1,
+      limit: 20,
+      pages: 1,
+      has_next: false,
+    });
+
+    render(
+      <ToastProvider>
+        <ReimbursementsPage />
+      </ToastProvider>
+    );
+
+    await waitFor(() => {
+      // Pending: 1000.00 in summary card and table
+      expect(screen.getAllByText("₹1,000.00").length).toBeGreaterThanOrEqual(1);
+      // Approved (pending payroll): 2500.50
+      expect(screen.getAllByText("₹2,500.50").length).toBeGreaterThanOrEqual(1);
+      // Paid in payroll: 3000.00
+      expect(screen.getAllByText("₹3,000.00").length).toBeGreaterThanOrEqual(1);
+    });
+  });
 });

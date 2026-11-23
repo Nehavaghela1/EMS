@@ -452,7 +452,7 @@ export async function listReimbursements(
   limit = 20
 ): Promise<Page<Reimbursement>> {
   const res = await apiClient.get<Page<Reimbursement>>("/payroll/reimbursements", {
-    params: { status_filter: status, page, limit },
+    params: { status, page, limit },
   });
   return res.data;
 }

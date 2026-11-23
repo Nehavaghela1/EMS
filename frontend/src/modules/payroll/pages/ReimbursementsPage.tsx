@@ -23,6 +23,7 @@ export function ReimbursementsPage() {
   const { notify } = useToast();
 
   const [claims, setClaims] = useState<Reimbursement[]>([]);
+  const [summaryClaims, setSummaryClaims] = useState<Reimbursement[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<ReimbursementStatus | "all">("all");
 
@@ -52,6 +53,19 @@ export function ReimbursementsPage() {
     fetchClaims();
   }, [statusFilter]);
 
+  useEffect(() => {
+    fetchSummaryClaims();
+  }, []);
+
+  async function fetchSummaryClaims() {
+    try {
+      const res = await listReimbursements(undefined, 1, 1000);
+      setSummaryClaims(res.items);
+    } catch {
+      // Summary cards fallback to current claims if batch load fails
+    }
+  }
+
   async function fetchClaims() {
     setLoading(true);
     try {
@@ -73,6 +87,7 @@ export function ReimbursementsPage() {
       notify("Claim withdrawn.", "success");
       setSelectedClaim(null);
       fetchClaims();
+      fetchSummaryClaims();
     } catch (err) {
       notify(parseApiError(err).message, "error");
     } finally {
@@ -115,6 +130,7 @@ export function ReimbursementsPage() {
       setDescription("");
       setReceiptFile(null);
       fetchClaims();
+      fetchSummaryClaims();
     } catch (err: unknown) {
       const parsed = parseApiError(err);
       notify(parsed.message || "Failed to submit claim", parsed.status === 409 ? "warning" : "error");
@@ -152,6 +168,7 @@ export function ReimbursementsPage() {
       setSelectedClaim(null);
       setRejectionReason("");
       fetchClaims();
+      fetchSummaryClaims();
     } catch (err: unknown) {
       const parsed = parseApiError(err);
       notify(parsed.message || `Failed to ${action} claim`, parsed.status === 409 ? "warning" : "error");
@@ -161,15 +178,25 @@ export function ReimbursementsPage() {
   }
 
   // Calculate summary metrics for Zoho-style KPI cards
-  const totalApproved = claims
-    .filter((c) => c.status === "approved" || c.status === "paid")
+  const pool = summaryClaims.length > 0 ? summaryClaims : claims;
+  const totalApproved = pool
+    .filter((c) => c.status === "approved")
     .reduce((sum, c) => sum + Number(c.amount || 0), 0);
-  const totalPending = claims
+  const totalPending = pool
     .filter((c) => c.status === "pending")
     .reduce((sum, c) => sum + Number(c.amount || 0), 0);
-  const totalPaidInPayroll = claims
+  const totalPaidInPayroll = pool
     .filter((c) => c.status === "paid")
     .reduce((sum, c) => sum + Number(c.amount || 0), 0);
+
+  const tabLabels: Record<string, string> = {
+    all: "ALL",
+    pending: "PENDING APPROVAL",
+    approved: "APPROVED (PENDING PAYROLL)",
+    paid: "PAID IN PAYROLL",
+    rejected: "REJECTED",
+    withdrawn: "WITHDRAWN",
+  };
 
   return (
     <div className="container">
@@ -195,7 +222,7 @@ export function ReimbursementsPage() {
         <div className="card p-3" style={{ background: "#f8fafc" }}>
           <div className="text-muted text-xs uppercase font-semibold">Total Claims</div>
           <div className="text-xl font-bold mt-1" style={{ color: "#0f172a" }}>
-            {claims.length}
+            {pool.length}
           </div>
           <div className="text-xs text-muted mt-1">Submitted in record</div>
         </div>
@@ -209,11 +236,19 @@ export function ReimbursementsPage() {
         </div>
 
         <div className="card p-3" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-          <div className="text-xs uppercase font-semibold" style={{ color: "#166534" }}>✓ Approved / Disbursed</div>
+          <div className="text-xs uppercase font-semibold" style={{ color: "#166534" }}>⏳ Approved (Pending Payroll)</div>
           <div className="text-xl font-bold mt-1 text-success">
             ₹{totalApproved.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
           </div>
-          <div className="text-xs text-muted mt-1">₹{totalPaidInPayroll.toLocaleString("en-IN")} credited in payslips</div>
+          <div className="text-xs text-muted mt-1">Approved, awaiting next pay run</div>
+        </div>
+
+        <div className="card p-3" style={{ background: "#ecfeff", border: "1px solid #a5f3fc" }}>
+          <div className="text-xs uppercase font-semibold" style={{ color: "#0e7490" }}>✅ Paid in Payroll</div>
+          <div className="text-xl font-bold mt-1" style={{ color: "#0891b2" }}>
+            ₹{totalPaidInPayroll.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-xs text-muted mt-1">Credited in finalized payslips</div>
         </div>
       </div>
 
@@ -226,14 +261,14 @@ export function ReimbursementsPage() {
           WebkitOverflowScrolling: "touch",
         }}
       >
-        {(["all", "pending", "approved", "rejected", "paid"] as const).map((st) => (
+        {(["all", "pending", "approved", "paid", "rejected", "withdrawn"] as const).map((st) => (
           <button
             key={st}
             className={`btn btn-sm ${statusFilter === st ? "btn-primary" : "btn-outline"}`}
             style={{ whiteSpace: "nowrap" }}
             onClick={() => setStatusFilter(st)}
           >
-            {st.toUpperCase()}
+            {tabLabels[st]}
           </button>
         ))}
       </div>
