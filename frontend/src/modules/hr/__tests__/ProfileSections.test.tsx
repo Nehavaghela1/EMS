@@ -42,6 +42,7 @@ vi.mock("../../time_leave/api", async () => {
     getLeaveBalance: vi.fn(),
     listHolidays: vi.fn(),
     listLeaveTypes: vi.fn(),
+    listLeaves: vi.fn(),
     applyLeave: vi.fn(),
   };
 });
@@ -262,5 +263,89 @@ describe("Sub-feature 2.3: Profile & Editing Frontend", () => {
     expect(screen.queryByTitle("Edit Basic Information")).not.toBeInTheDocument();
     expect(screen.queryByTitle("Edit Contact Information")).not.toBeInTheDocument();
     expect(screen.queryByTitle("Edit Personal Information")).not.toBeInTheDocument();
+  });
+
+  it("PART J: View Details button switches to Leave Requests & History tab showing employee leave history and year filter", async () => {
+    const user = userEvent.setup();
+    const currentYear = new Date().getFullYear();
+
+    vi.mocked(TimeLeaveApi.listLeaveTypes).mockResolvedValue([
+      { id: "lt-vacation", name: "Vacation", days_per_year: "15.0", is_active: true } as any,
+    ]);
+
+    vi.mocked(TimeLeaveApi.listLeaves).mockImplementation(async (params) => {
+      if (params.date_from?.startsWith(String(currentYear))) {
+        return {
+          items: [
+            {
+              id: "leave-rec-1",
+              employee_id: "emp-1",
+              leave_type_id: "lt-vacation",
+              start_date: `${currentYear}-06-10`,
+              end_date: `${currentYear}-06-12`,
+              total_days: "3.0",
+              is_half_day: false,
+              reason: "Summer holiday",
+              status: "rejected",
+              approved_by: "usr-mgr-12345678",
+              approved_at: `${currentYear}-06-08T10:00:00Z`,
+              rejection_reason: "Critical project deadline",
+              created_at: `${currentYear}-06-05T10:00:00Z`,
+            } as any,
+          ],
+          total: 1,
+          page: 1,
+          limit: 100,
+          pages: 1,
+          has_next: false,
+        };
+      }
+      return {
+        items: [],
+        total: 0,
+        page: 1,
+        limit: 100,
+        pages: 0,
+        has_next: false,
+      };
+    });
+
+    renderProfile(hrUser);
+
+    expect(await screen.findByRole("heading", { level: 1, name: /Alice Smith/i })).toBeInTheDocument();
+
+    // Click on the Leave profile tab
+    const leaveTab = screen.getByRole("button", { name: "Leave" });
+    await user.click(leaveTab);
+
+    // Verify "View Details ›" button is present and not an <a> tag linking to /leaves
+    const viewDetailsBtn = screen.getByRole("button", { name: /View Details ›/i });
+    expect(viewDetailsBtn).toBeInTheDocument();
+    expect(viewDetailsBtn.closest("a")).toBeNull();
+
+    // Click "View Details ›"
+    await user.click(viewDetailsBtn);
+
+    // Verify employee-specific leave history table is visible
+    expect(await screen.findByText("Critical project deadline")).toBeInTheDocument();
+    expect(screen.getByText("Vacation")).toBeInTheDocument();
+    expect(screen.getByText("3.0")).toBeInTheDocument();
+    expect(screen.getByText("rejected")).toBeInTheDocument();
+
+    // Verify year filter works
+    const yearSelect = screen.getByRole("combobox");
+    expect(yearSelect).toBeInTheDocument();
+    await user.selectOptions(yearSelect, String(currentYear - 1));
+
+    await waitFor(() => {
+      expect(TimeLeaveApi.listLeaves).toHaveBeenCalledWith(
+        expect.objectContaining({
+          employee_id: "emp-1",
+          date_from: `${currentYear - 1}-01-01`,
+          date_to: `${currentYear - 1}-12-31`,
+        })
+      );
+      expect(screen.getByText(new RegExp(`No leave requests found for ${currentYear - 1}`, "i"))).toBeInTheDocument();
+    });
   });
 });
