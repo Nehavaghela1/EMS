@@ -48,6 +48,8 @@ from app.modules.payroll.schemas import (
     SalaryStructureListItem,
     SalaryStructureResponse,
     SalaryStructureUpdateRequest,
+    SendPayslipsRequest,
+    SendPayslipsResponse,
     StatutoryConfigResponse,
     StatutoryConfigUpdateRequest,
     StatutoryRateCreateRequest,
@@ -586,6 +588,20 @@ def approve_payroll_run(
     service = PayrollRunService(db)
     run = service.approve_run(user.company_id, id, user)
     return PayrollRunResponse.model_validate(run)
+
+
+@payroll_runs_router.post("/{id}/send-payslips", response_model=SendPayslipsResponse)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
+def send_payroll_run_payslips(
+    request: Request,
+    id: uuid.UUID,
+    data: SendPayslipsRequest | None = None,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
+):
+    service = PayrollRunService(db)
+    employee_ids = data.employee_ids if data else []
+    return service.send_payslips(user.company_id, id, employee_ids, user)
 
 
 @payroll_runs_router.post("/{id}/payments", response_model=PayrollRunResponse)

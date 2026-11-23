@@ -682,3 +682,24 @@ class ReimbursementResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SendPayslipsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class SendPayslipsRecipientResult(BaseModel):
+    employee_id: uuid.UUID
+    status: Literal["queued", "skipped"]
+    reason: str | None = None
+
+
+class SendPayslipsResponse(BaseModel):
+    run_id: uuid.UUID
+    delivery: Literal["console", "queued"]
+    total_selected: int
+    queued_count: int
+    skipped_count: int
+    recipients: list[SendPayslipsRecipientResult]

@@ -8,6 +8,7 @@ previews, push banners, and mail server logs even when the body doesn't).
 
 import html
 from datetime import UTC, datetime
+from decimal import Decimal
 
 _STYLE = (
     "font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:15px;"
@@ -250,5 +251,70 @@ def role_changed_owner_notification_email(
         f"<li><strong>Previous role:</strong> {safe_prev}</li>"
         f"<li><strong>New role:</strong> {safe_new}</li>"
         f"</ul>"
+    )
+    return subject, text, html_body
+
+
+def payslip_email(
+    *,
+    first_name: str,
+    month_name: str,
+    year: int,
+    pay_period: str,
+    pay_date: str,
+    gross_pay: Decimal,
+    deductions: Decimal,
+    net_pay: Decimal,
+    currency: str = "INR",
+    payslip_url: str,
+) -> tuple[str, str, str]:
+    """Route 94 / B1 — Payslip notification email.
+    Subject names month & year.
+    Body addresses employee by first name, states pay period, net pay, pay date,
+    and links to their payslip in the app.
+    NEVER includes bank account, PAN, Aadhaar, password or unneeded figures.
+    """
+    subject = f"Your payslip for {month_name} {year} is ready"
+    safe_name = html.escape(first_name)
+    safe_month = html.escape(month_name)
+    safe_period = html.escape(pay_period)
+    safe_pay_date = html.escape(pay_date)
+    safe_currency = html.escape(currency)
+    safe_url = html.escape(payslip_url, quote=True)
+
+    text = (
+        f"Hi {first_name},\n\n"
+        f"Your payslip for {month_name} {year} has been processed and is ready to view.\n\n"
+        f"Pay Period: {pay_period}\n"
+        f"Pay Date: {pay_date}\n"
+        f"Gross Pay: {currency} {gross_pay:.2f}\n"
+        f"Total Deductions: {currency} {deductions:.2f}\n"
+        f"Net Pay: {currency} {net_pay:.2f}\n\n"
+        f"View your payslip in EMS: {payslip_url}\n\n"
+        "If you have any questions regarding your payslip, please contact HR."
+    )
+
+    html_body = _wrap_html(
+        f"<p>Hi {safe_name},</p>"
+        f"<p>Your payslip for <strong>{safe_month} {year}</strong> "
+        f"has been processed and is ready to view.</p>"
+        f'<table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:14px;">'
+        f'<tr><td style="padding:6px 0;color:#666;">Pay Period:</td>'
+        f'<td style="padding:6px 0;font-weight:600;text-align:right;">{safe_period}</td></tr>'
+        f'<tr><td style="padding:6px 0;color:#666;">Pay Date:</td>'
+        f'<td style="padding:6px 0;font-weight:600;text-align:right;">{safe_pay_date}</td></tr>'
+        f'<tr><td style="padding:6px 0;color:#666;">Gross Pay:</td>'
+        f'<td style="padding:6px 0;text-align:right;">{safe_currency} {gross_pay:.2f}</td></tr>'
+        f'<tr><td style="padding:6px 0;color:#666;">Total Deductions:</td>'
+        f'<td style="padding:6px 0;text-align:right;">{safe_currency} {deductions:.2f}</td></tr>'
+        f'<tr style="border-top:1px solid #eee;">'
+        f'<td style="padding:8px 0;font-weight:600;">Net Pay:</td>'
+        f'<td style="padding:8px 0;font-weight:600;font-size:16px;color:#2f5bea;text-align:right;">'
+        f"{safe_currency} {net_pay:.2f}</td></tr>"
+        f"</table>"
+        f'<p style="margin:24px 0;">'
+        f'<a href="{safe_url}" style="{_BUTTON_STYLE}">View Payslip</a></p>'
+        f'<p style="color:#8a90a0;font-size:13px;">'
+        f"If you have any questions regarding your payslip, please contact HR.</p>"
     )
     return subject, text, html_body
