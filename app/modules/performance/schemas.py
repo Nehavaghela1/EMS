@@ -39,7 +39,9 @@ class PerformanceCycleCreateRequest(BaseModel):
 
 
 class PerformanceCycleUpdateRequest(BaseModel):
-    status: CycleStatus
+    status: CycleStatus | None = None
+    self_review_deadline: date | None = None
+    manager_review_deadline: date | None = None
 
 
 class PerformanceCycleResponse(BaseModel):

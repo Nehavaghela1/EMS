@@ -118,8 +118,18 @@ export async function createPerformanceCycle(data: PerformanceCycleCreateInput):
   return res.data;
 }
 
-export async function updatePerformanceCycle(id: string, status: CycleStatus): Promise<PerformanceCycle> {
-  const res = await apiClient.put<PerformanceCycle>(`/performance/cycles/${id}`, { status });
+export interface PerformanceCycleUpdateInput {
+  status?: CycleStatus | null;
+  self_review_deadline?: string | null;
+  manager_review_deadline?: string | null;
+}
+
+export async function updatePerformanceCycle(
+  id: string,
+  data: PerformanceCycleUpdateInput | CycleStatus
+): Promise<PerformanceCycle> {
+  const payload = typeof data === "string" ? { status: data } : data;
+  const res = await apiClient.put<PerformanceCycle>(`/performance/cycles/${id}`, payload);
   return res.data;
 }
 

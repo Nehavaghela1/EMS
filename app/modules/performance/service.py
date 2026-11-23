@@ -116,6 +116,9 @@ class PerformanceService:
         data: PerformanceCycleUpdateRequest,
         actor: User,
     ) -> PerformanceCycle:
+        if actor.role not in (UserRole.hr_admin, UserRole.owner):
+            raise ForbiddenError("Only HR administrators and owners can update performance cycles.")
+
         cycle = self.cycle_repo.get_by_id(cycle_id, company_id)
         if cycle is None:
             raise NotFoundError("Performance cycle not found.")
@@ -124,36 +127,96 @@ class PerformanceService:
         if cycle.status == CycleStatus.closed:
             raise ConflictError("A closed performance cycle cannot be reopened or edited.")
 
-        if cycle.status == CycleStatus.draft:
-            if data.status == CycleStatus.closed:
-                raise ConflictError(
-                    "A draft cycle cannot be closed directly; it must be activated first."
-                )
-            if data.status == CycleStatus.draft:
-                pass  # no-op
-            elif data.status == CycleStatus.active:
-                # Enforce single active cycle
-                existing_active = self.cycle_repo.get_active_cycle(company_id)
-                if existing_active is not None and existing_active.id != cycle.id:
-                    raise ConflictError(
-                        f"Cannot activate cycle: '{existing_active.name}' is already active."
-                    )
-        elif cycle.status == CycleStatus.active:
-            if data.status == CycleStatus.draft:
-                raise ConflictError("An active performance cycle cannot be reverted to draft.")
+        update_fields: dict[str, Any] = {}
 
-        self.cycle_repo.update(cycle, status=data.status)
+        # 1. Update deadlines if provided
+        if data.self_review_deadline is not None or data.manager_review_deadline is not None:
+            new_self = (
+                data.self_review_deadline
+                if data.self_review_deadline is not None
+                else cycle.self_review_deadline
+            )
+            new_mgr = (
+                data.manager_review_deadline
+                if data.manager_review_deadline is not None
+                else cycle.manager_review_deadline
+            )
+
+            # Ordering rules: start_date <= self <= manager <= cycle end date
+            if new_self is not None:
+                if not (cycle.start_date <= new_self <= cycle.end_date):
+                    raise ValidationError(
+                        "self_review_deadline must be between start_date and end_date."
+                    )
+            if new_mgr is not None:
+                if new_self is not None:
+                    if not (new_self <= new_mgr <= cycle.end_date):
+                        raise ValidationError(
+                            "manager_review_deadline must be between "
+                            "self_review_deadline and end_date."
+                        )
+                elif not (cycle.start_date <= new_mgr <= cycle.end_date):
+                    raise ValidationError(
+                        "manager_review_deadline must be between start_date and end_date."
+                    )
+
+            if data.self_review_deadline is not None:
+                update_fields["self_review_deadline"] = data.self_review_deadline
+            if data.manager_review_deadline is not None:
+                update_fields["manager_review_deadline"] = data.manager_review_deadline
+
+        # 2. Update status if provided
+        status_changed = False
+        if data.status is not None and data.status != cycle.status:
+            if cycle.status == CycleStatus.draft:
+                if data.status == CycleStatus.closed:
+                    raise ConflictError(
+                        "A draft cycle cannot be closed directly; it must be activated first."
+                    )
+                elif data.status == CycleStatus.active:
+                    # Enforce single active cycle
+                    existing_active = self.cycle_repo.get_active_cycle(company_id)
+                    if existing_active is not None and existing_active.id != cycle.id:
+                        raise ConflictError(
+                            f"Cannot activate cycle: '{existing_active.name}' is already active."
+                        )
+                    update_fields["status"] = data.status
+                    status_changed = True
+            elif cycle.status == CycleStatus.active:
+                if data.status == CycleStatus.draft:
+                    raise ConflictError("An active performance cycle cannot be reverted to draft.")
+                elif data.status == CycleStatus.closed:
+                    update_fields["status"] = data.status
+                    status_changed = True
+
+        if update_fields:
+            self.cycle_repo.update(cycle, **update_fields)
+
+        # Audit logging
+        audit_details: dict[str, Any] = {}
+        if status_changed and data.status is not None:
+            audit_details["status"] = data.status.value
+        if "self_review_deadline" in update_fields:
+            audit_details["self_review_deadline"] = str(update_fields["self_review_deadline"])
+        if "manager_review_deadline" in update_fields:
+            audit_details["manager_review_deadline"] = str(update_fields["manager_review_deadline"])
+
+        action = (
+            f"PERFORMANCE_CYCLE_{data.status.value.upper()}"
+            if status_changed and data.status is not None
+            else "PERFORMANCE_CYCLE_UPDATED"
+        )
         self.audit.record(
             company_id=company_id,
             actor=actor,
-            action=f"PERFORMANCE_CYCLE_{data.status.value.upper()}",
+            action=action,
             entity_type="performance_cycle",
             entity_id=cycle.id,
-            details={"status": data.status.value},
+            details=audit_details,
         )
 
         # Notification on activation
-        if data.status == CycleStatus.active:
+        if status_changed and data.status == CycleStatus.active:
             from sqlalchemy import select
 
             from app.modules.hr.models import Employee

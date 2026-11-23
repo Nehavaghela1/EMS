@@ -77,6 +77,12 @@ export function PerformanceCyclesPage() {
   const [mgrDeadline, setMgrDeadline] = useState("2027-03-25");
   const [submitting, setSubmitting] = useState(false);
 
+  // Edit Deadlines Modal State
+  const [editingCycle, setEditingCycle] = useState<PerformanceCycle | null>(null);
+  const [editSelfDeadline, setEditSelfDeadline] = useState("");
+  const [editMgrDeadline, setEditMgrDeadline] = useState("");
+  const [submittingDeadlines, setSubmittingDeadlines] = useState(false);
+
   useEffect(() => {
     fetchCycles();
     fetchReport();
@@ -237,6 +243,47 @@ export function PerformanceCyclesPage() {
     } catch (err) {
       // e.g. 409 "another cycle is already active" (BUG-055)
       notify(parseApiError(err).message, "error");
+    }
+  }
+
+  function openEditDeadlines(cycle: PerformanceCycle) {
+    setEditingCycle(cycle);
+    setEditSelfDeadline(cycle.self_review_deadline || "");
+    setEditMgrDeadline(cycle.manager_review_deadline || "");
+  }
+
+  async function handleSaveDeadlines(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingCycle) return;
+
+    if (editSelfDeadline && editingCycle.end_date && new Date(editSelfDeadline) > new Date(editingCycle.end_date)) {
+      notify("Self-Review Deadline cannot be after the overall Cycle End Date.", "error");
+      return;
+    }
+    if (editMgrDeadline && editingCycle.end_date && new Date(editMgrDeadline) > new Date(editingCycle.end_date)) {
+      notify("Manager Review Deadline cannot be after the overall Cycle End Date.", "error");
+      return;
+    }
+    if (editSelfDeadline && editMgrDeadline && new Date(editSelfDeadline) > new Date(editMgrDeadline)) {
+      notify("Self-Review Deadline cannot be set later than the Manager Review Deadline.", "error");
+      return;
+    }
+
+    setSubmittingDeadlines(true);
+    try {
+      await updatePerformanceCycle(editingCycle.id, {
+        self_review_deadline: editSelfDeadline || null,
+        manager_review_deadline: editMgrDeadline || null,
+      });
+      notify("Review deadlines updated successfully", "success");
+      setEditingCycle(null);
+      fetchCycles();
+      fetchReport();
+    } catch (err: unknown) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to update deadlines", "error");
+    } finally {
+      setSubmittingDeadlines(false);
     }
   }
 
@@ -580,22 +627,32 @@ export function PerformanceCyclesPage() {
                           </span>
                         </td>
                         <td>
-                          {c.status === "draft" && (
-                            <button
-                              className="btn btn-sm btn-success"
-                              onClick={() => handleStatusChange(c.id, "active")}
-                            >
-                              Activate
-                            </button>
-                          )}
-                          {c.status === "active" && (
-                            <button
-                              className="btn btn-sm btn-outline text-red"
-                              onClick={() => handleStatusChange(c.id, "closed")}
-                            >
-                              Close Cycle
-                            </button>
-                          )}
+                          <div className="flex gap-2 align-center">
+                            {(c.status === "draft" || c.status === "active") && (
+                              <button
+                                className="btn btn-sm btn-outline"
+                                onClick={() => openEditDeadlines(c)}
+                              >
+                                Edit deadlines
+                              </button>
+                            )}
+                            {c.status === "draft" && (
+                              <button
+                                className="btn btn-sm btn-success"
+                                onClick={() => handleStatusChange(c.id, "active")}
+                              >
+                                Activate
+                              </button>
+                            )}
+                            {c.status === "active" && (
+                              <button
+                                className="btn btn-sm btn-outline text-red"
+                                onClick={() => handleStatusChange(c.id, "closed")}
+                              >
+                                Close Cycle
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1355,6 +1412,60 @@ export function PerformanceCyclesPage() {
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
                   {submitting ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Deadlines */}
+      {editingCycle && (
+        <div className="modal-backdrop" onClick={() => setEditingCycle(null)}>
+          <div className="modal card max-w-lg performance-goal-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Edit Review Deadlines</h2>
+                <span className="text-xs text-muted">
+                  {editingCycle.name} ({formatDate(editingCycle.start_date)} to {formatDate(editingCycle.end_date)})
+                </span>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setEditingCycle(null)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleSaveDeadlines} className="stack gap-4 my-2">
+              <div className="field">
+                <label>Self Review Deadline</label>
+                <input
+                  type="date"
+                  value={editSelfDeadline}
+                  onChange={(e) => setEditSelfDeadline(e.target.value)}
+                />
+                <span className="field-hint">Must be on or before Manager Review Deadline.</span>
+              </div>
+
+              <div className="field">
+                <label>Manager Review Deadline</label>
+                <input
+                  type="date"
+                  value={editMgrDeadline}
+                  onChange={(e) => setEditMgrDeadline(e.target.value)}
+                />
+                <span className="field-hint">Must be on or before overall Cycle End Date ({formatDate(editingCycle.end_date)}).</span>
+              </div>
+
+              <div className="flex gap-2 justify-end mt-4">
+                <button type="button" className="btn btn-ghost" onClick={() => setEditingCycle(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submittingDeadlines}>
+                  {submittingDeadlines ? "Updating..." : "Update Deadlines"}
                 </button>
               </div>
             </form>

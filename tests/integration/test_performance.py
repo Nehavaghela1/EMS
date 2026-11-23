@@ -404,6 +404,82 @@ def test_tier_1_performance_module_invariants(
     assert "has passed" in late_sub.json()["error"]["message"]
 
 
+def test_deadline_extension_and_recovery(client: TestClient, db: Session):
+    """Test deadline passes, submission is refused with 409, HR extends deadline,
+    and submission then succeeds.
+    """
+    from datetime import timedelta
+
+    from tests.conftest import _make_tenant
+
+    today = utcnow().date()
+    company = _make_tenant(db, name="Deadline Ext Co", code="DEXT")
+    emp, emp_headers = _create_employee_with_user(db, company.company_id)
+
+    # Cycle with self-review deadline in past, cycle end date in future
+    cycle_res = client.post(
+        "/api/v1/performance/cycles",
+        json={
+            "name": f"Ext Cycle {uuid.uuid4().hex[:6]}",
+            "cycle_type": "annual",
+            "start_date": str(today - timedelta(days=30)),
+            "end_date": str(today + timedelta(days=60)),
+            "self_review_deadline": str(today - timedelta(days=2)),
+            "manager_review_deadline": str(today + timedelta(days=30)),
+        },
+        headers=company.hr_headers,
+    )
+    assert cycle_res.status_code == 201
+    cycle_id = cycle_res.json()["id"]
+
+    # Activate cycle
+    client.put(
+        f"/api/v1/performance/cycles/{cycle_id}",
+        json={"status": "active"},
+        headers=company.hr_headers,
+    )
+
+    # Create goals totaling 100%
+    goals = client.post(
+        "/api/v1/performance/goals",
+        json={
+            "cycle_id": cycle_id,
+            "employee_id": str(emp.id),
+            "goals": [{"title": "Goal to Review", "weightage": 100}],
+        },
+        headers=emp_headers,
+    ).json()
+    goal_id = goals[0]["id"]
+
+    # 1. Attempt self-review past deadline -> fails with 409 Conflict
+    sub_fail = client.post(
+        f"/api/v1/performance/goals/{goal_id}/self-review",
+        json={"rating": "4.0", "comments": "Attempt before extension"},
+        headers=emp_headers,
+    )
+    assert sub_fail.status_code == 409
+    assert "Self-review deadline" in sub_fail.json()["error"]["message"]
+
+    # 2. HR extends self_review_deadline to future date
+    new_self_deadline = str(today + timedelta(days=10))
+    ext_res = client.put(
+        f"/api/v1/performance/cycles/{cycle_id}",
+        json={"self_review_deadline": new_self_deadline},
+        headers=company.hr_headers,
+    )
+    assert ext_res.status_code == 200
+    assert ext_res.json()["self_review_deadline"] == new_self_deadline
+
+    # 3. Employee attempts self-review again -> succeeds 200 OK
+    sub_success = client.post(
+        f"/api/v1/performance/goals/{goal_id}/self-review",
+        json={"rating": "4.0", "comments": "Submission after extension"},
+        headers=emp_headers,
+    )
+    assert sub_success.status_code == 200
+    assert sub_success.json()["status"] == "submitted"
+
+
 def test_tier_2_performance_reopen_and_guard(
     client: TestClient, company_a: TenantContext, db: Session
 ):
