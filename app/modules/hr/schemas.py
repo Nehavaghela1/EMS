@@ -276,6 +276,7 @@ class EmployeeResponse(BaseModel):
     employment_type: EmploymentType
     hire_date: date
     probation_end_date: date | None
+    probation_status: str = "pending"
     notice_period_days: int
     is_active: bool
     is_attendance_exempt: bool = False
@@ -537,6 +538,25 @@ class FnFSettlementResponse(BaseModel):
     resignation_status: str = "none"
     is_active: bool = True
     total_settlement_amount: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProbationDecisionRequest(BaseModel):
+    outcome: Literal["confirmed", "extended", "not_confirmed"]
+    new_end_date: date | None = None
+    reason: str | None = None
+
+
+class ProbationDecisionResponse(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    outcome: str
+    previous_end_date: date
+    new_end_date: date | None = None
+    reason: str | None = None
+    decided_by: uuid.UUID
+    decided_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -75,4 +75,8 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.projects.check_project_budget_alerts_task",
         "schedule": crontab(hour=5, minute=0),
     },
+    "notify-probations-due-soon-daily": {
+        "task": "app.workers.tasks.hr.notify_probations_due_soon_task",
+        "schedule": crontab(hour=6, minute=0),
+    },
 }

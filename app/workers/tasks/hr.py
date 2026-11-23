@@ -294,3 +294,83 @@ def apply_due_exits_task() -> dict[str, int]:
         db.close()
 
     return {"applied_count": applied_count, "error_count": error_count}
+
+
+@celery_app.task(name="app.workers.tasks.hr.notify_probations_due_soon_task")
+def notify_probations_due_soon_task() -> dict[str, int]:
+    """Q3: Celery job that lists active employees whose probation ends within
+    the next 14 days [today, today + 14 days] and notifies HR admins and owners
+    with an explicit action_url.
+    Employees without a probation_end_date or already decided are excluded.
+    """
+    from app.modules.hr.models import Employee
+    from app.modules.identity.models import User, UserRole
+    from app.modules.platform.service import NotificationService
+
+    db = get_task_db_session()
+    notified_count = 0
+    try:
+        bind_tenant_to_session(db, company_id=None, is_platform_admin=True)
+        today_utc = datetime.now(UTC).date()
+        cutoff = today_utc + timedelta(days=14)
+
+        # Find candidates
+        candidates = (
+            db.execute(
+                select(Employee).where(
+                    Employee.is_active.is_(True),
+                    Employee.probation_end_date.isnot(None),
+                    Employee.probation_end_date >= today_utc,
+                    Employee.probation_end_date <= cutoff,
+                    Employee.probation_status.in_(["pending", "extended"]),
+                    Employee.deleted_at.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if not candidates:
+            return {"notified_count": 0}
+
+        # Group by company
+        by_company: dict[uuid.UUID, list[Employee]] = {}
+        for emp in candidates:
+            by_company.setdefault(emp.company_id, []).append(emp)
+
+        notifier = NotificationService(db)
+        for cid, emps in by_company.items():
+            hr_users = (
+                db.execute(
+                    select(User).where(
+                        User.company_id == cid,
+                        User.role.in_([UserRole.hr_admin, UserRole.owner]),
+                        User.is_active.is_(True),
+                        User.deleted_at.is_(None),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            for emp in emps:
+                for hr in hr_users:
+                    notifier.notify(
+                        company_id=cid,
+                        user_id=hr.id,
+                        type="probation_due_soon",
+                        title="Probation Ending Soon",
+                        message=(
+                            f"Probation for {emp.first_name} {emp.last_name or ''} "
+                            f"({emp.employee_code}) ends on {emp.probation_end_date}."
+                        ).strip(),
+                        entity_type="employee",
+                        entity_id=emp.id,
+                        action_url=f"/employees/{emp.id}",
+                    )
+                    notified_count += 1
+        db.commit()
+    finally:
+        db.close()
+
+    return {"notified_count": notified_count}
