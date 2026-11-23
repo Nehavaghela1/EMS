@@ -474,6 +474,7 @@ class AttendanceService:
                     message=f"Your attendance for {record.date} was corrected by HR: {data.reason}",
                     entity_type="attendance",
                     entity_id=record.id,
+                    action_url="/attendance",
                 )
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
@@ -2224,6 +2225,7 @@ class LeaveService:
                     message=f"Your leave from {leave.start_date} to {leave.end_date} was approved.",
                     entity_type="leave",
                     entity_id=leave.id,
+                    action_url="/leaves",
                 )
             self._send_leave_decision_email(
                 employee, leave, status="approved", rejection_reason=None
@@ -2259,6 +2261,7 @@ class LeaveService:
                     f"{rejection_reason}",
                     entity_type="leave",
                     entity_id=leave.id,
+                    action_url="/leaves",
                 )
             self._send_leave_decision_email(
                 employee, leave, status="rejected", rejection_reason=rejection_reason
@@ -2352,6 +2355,7 @@ class LeaveService:
                     ),
                     entity_type="leave",
                     entity_id=leave.id,
+                    action_url="/leaves",
                 )
             self._send_leave_decision_email(
                 employee, leave, status="cancelled", rejection_reason=None

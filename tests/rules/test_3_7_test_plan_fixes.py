@@ -45,7 +45,10 @@ def test_file_one_byte_over_25_mb_is_refused(
 def test_every_hard_coded_notification_link_is_a_real_app_page() -> None:
     router = Path("frontend/src/app/router.tsx").read_text()
     routes = set(re.findall(r'path="(/[^"]*)"', router))
-    sources = "\n".join(p.read_text() for p in Path("app/modules").rglob("service.py"))
+    sources = "\n".join(
+        p.read_text()
+        for p in list(Path("app/modules").rglob("*.py")) + list(Path("app/workers").rglob("*.py"))
+    )
     links = set(re.findall(r'action_url="(/[^"]+)"', sources))
     links |= set(re.findall(r'_PAGE_URL = "(/[^"]+)"', sources))
     assert links, "no notification links found"

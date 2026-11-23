@@ -217,4 +217,121 @@ describe("Sub-feature 3.2: Notifications Frontend", () => {
       expect(screen.queryByText("Leave Request Approved")).not.toBeInTheDocument();
     });
   });
+
+  describe("B5: Entity type routing & clickability", () => {
+    const testCases: Array<{ entity_type: string; entity_id?: string; expectedPath: string }> = [
+      { entity_type: "project", entity_id: "p-123", expectedPath: "/projects/p-123" },
+      { entity_type: "project", expectedPath: "/projects" },
+      { entity_type: "project_task", expectedPath: "/projects" },
+      { entity_type: "task", expectedPath: "/projects" },
+      { entity_type: "task_comment", expectedPath: "/projects" },
+      { entity_type: "project_member", expectedPath: "/projects" },
+      { entity_type: "milestone", expectedPath: "/projects" },
+      { entity_type: "project_document", expectedPath: "/projects" },
+      { entity_type: "time_entry", expectedPath: "/timesheets" },
+      { entity_type: "attendance", expectedPath: "/attendance" },
+      { entity_type: "attendance_regularization", expectedPath: "/attendance" },
+      { entity_type: "leave", expectedPath: "/leaves" },
+      { entity_type: "leave_balance", expectedPath: "/leaves" },
+      { entity_type: "leave_type", expectedPath: "/leaves" },
+      { entity_type: "payroll_run", expectedPath: "/payroll/payslip" },
+      { entity_type: "reimbursement", expectedPath: "/payroll/reimbursements" },
+      { entity_type: "performance_cycle", expectedPath: "/performance" },
+      { entity_type: "performance_pip", expectedPath: "/performance" },
+      { entity_type: "performance_pip_checkin", expectedPath: "/performance" },
+      { entity_type: "performance_goal", expectedPath: "/performance/goals" },
+      { entity_type: "performance_review", expectedPath: "/performance/reviews" },
+      { entity_type: "performance_summary", expectedPath: "/performance/reviews" },
+      { entity_type: "employee", expectedPath: "/performance/goals" },
+      { entity_type: "employee_salary", expectedPath: "/payroll/setup" },
+      { entity_type: "salary_structure", expectedPath: "/payroll/setup" },
+      { entity_type: "statutory_config", expectedPath: "/payroll/setup" },
+      { entity_type: "statutory_rate", expectedPath: "/payroll/setup" },
+      { entity_type: "pt_slab", expectedPath: "/payroll/setup" },
+      { entity_type: "tax_slab", expectedPath: "/payroll/setup" },
+      { entity_type: "employee_bank_account", expectedPath: "/payroll/payslip" },
+      { entity_type: "department", expectedPath: "/departments" },
+      { entity_type: "location", expectedPath: "/settings/locations" },
+      { entity_type: "shift", expectedPath: "/shifts" },
+      { entity_type: "employee_shift", expectedPath: "/shifts" },
+      { entity_type: "holiday", expectedPath: "/holidays" },
+      { entity_type: "platform_stats", expectedPath: "/admin/payroll" },
+      { entity_type: "rate", expectedPath: "/admin/payroll" },
+      { entity_type: "rate_change_draft", expectedPath: "/admin/payroll" },
+      { entity_type: "rate_source", expectedPath: "/admin/payroll" },
+    ];
+
+    testCases.forEach(({ entity_type, entity_id = null, expectedPath }) => {
+      it(`navigates entity_type '${entity_type}' without action_url to '${expectedPath}'`, async () => {
+        const notif: PlatformApi.NotificationItem = {
+          id: `notif-${entity_type}`,
+          type: "TEST_NOTICE",
+          title: `Notice for ${entity_type}`,
+          message: `Testing mapping for ${entity_type}`,
+          action_url: null,
+          entity_type,
+          entity_id: entity_id ?? null,
+          is_read: true,
+          created_at: "2026-10-31T09:00:00Z",
+        };
+        vi.mocked(PlatformApi.fetchNotifications).mockResolvedValue({
+          items: [notif],
+          page: 1,
+          limit: 15,
+          total: 1,
+          pages: 1,
+          has_next: false,
+          unread_count: 0,
+        });
+
+        renderNotificationBell();
+        const bellBtn = screen.getByTitle("Notifications");
+        await userEvent.click(bellBtn);
+
+        const item = await screen.findByText(`Notice for ${entity_type}`);
+        await userEvent.click(item);
+
+        expect(mockNavigate).toHaveBeenCalledWith(expectedPath);
+      });
+    });
+
+    it("asserts an unmappable entity type is not clickable (no pointer cursor, no navigation)", async () => {
+      const unmappableTypes = ["audit_log", "company", "employee_document", "file_object", "user", "announcement"];
+      const unmappableItems: PlatformApi.NotificationItem[] = unmappableTypes.map((type) => ({
+        id: `notif-${type}`,
+        type: "AUDIT_NOTICE",
+        title: `Unmappable ${type}`,
+        message: `Details about ${type}`,
+        action_url: null,
+        entity_type: type,
+        entity_id: "entity-uuid",
+        is_read: true,
+        created_at: "2026-10-31T09:00:00Z",
+      }));
+
+      vi.mocked(PlatformApi.fetchNotifications).mockResolvedValue({
+        items: unmappableItems,
+        page: 1,
+        limit: 15,
+        total: unmappableItems.length,
+        pages: 1,
+        has_next: false,
+        unread_count: 0,
+      });
+
+      renderNotificationBell();
+      const bellBtn = screen.getByTitle("Notifications");
+      await userEvent.click(bellBtn);
+
+      for (const notif of unmappableItems) {
+        const titleEl = await screen.findByText(notif.title);
+        const rowEl = titleEl.closest("div[style*='display: flex']") as HTMLElement;
+        expect(rowEl).toBeInTheDocument();
+        expect(rowEl.style.cursor).toBe("default");
+
+        await userEvent.click(rowEl);
+        expect(mockNavigate).not.toHaveBeenCalled();
+      }
+    });
+  });
 });
