@@ -11,8 +11,11 @@ export interface RegisterCompanyInput {
   subdomain?: string;
   company_size?: string;
   password?: string;
-  industry?: string;
-  phone?: string;
+  industry: string;
+  phone: string;
+  address: string;
+  pan_number: string;
+  gst_number?: string;
 }
 
 export interface CompanyResponse {
@@ -83,6 +86,7 @@ export interface UserWorkspaceResponse {
   code: string;
   role: string;
   is_active: boolean;
+  logo_url?: string | null;
 }
 
 export interface CreateWorkspaceResponse {
@@ -196,8 +200,10 @@ export async function listCompanies(params?: {
   return data;
 }
 
-export async function getCompanyDetail(id: string): Promise<CompanyDetailResponse> {
-  const { data } = await apiClient.get<CompanyDetailResponse>(`/companies/${id}`);
+export async function getCompanyDetail(id: string, reveal: boolean = false): Promise<CompanyDetailResponse> {
+  const { data } = await apiClient.get<CompanyDetailResponse>(`/companies/${id}`, {
+    params: reveal ? { reveal: true } : undefined,
+  });
   return data;
 }
 

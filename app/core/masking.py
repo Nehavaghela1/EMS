@@ -12,3 +12,16 @@ def mask_tail(value: str | None, visible: int = 4) -> str | None:
     if len(value) <= visible:
         return "*" * len(value)
     return "*" * (len(value) - visible) + value[-visible:]
+
+
+def mask_tax_id(value: str | None, visible: int = 3) -> str | None:
+    """Return value with everything except the last `visible` characters
+    replaced by '•' (bullet).
+    """
+    if visible < 1:
+        raise ValueError("visible must be >= 1")
+    if value is None:
+        return None
+    if len(value) <= visible:
+        return "•" * len(value)
+    return "•" * (len(value) - visible) + value[-visible:]

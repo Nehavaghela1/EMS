@@ -73,6 +73,8 @@ export function AdminDashboardPage() {
   const [editSuccess, setEditSuccess] = useState<string | null>(null);
   const [companyDetail, setCompanyDetail] = useState<CompanyDetailResponse | null>(null);
   const [isEditingCompany, setIsEditingCompany] = useState(false);
+  const [revealingTaxIds, setRevealingTaxIds] = useState(false);
+  const [taxIdsRevealed, setTaxIdsRevealed] = useState(false);
 
   async function refreshCompanies() {
     await queryClient.invalidateQueries({ queryKey: ["companies"] });
@@ -86,6 +88,7 @@ export function AdminDashboardPage() {
     setEditLoading(true);
     setEditError(null);
     setEditSuccess(null);
+    setTaxIdsRevealed(false);
     try {
       const detail = await getCompanyDetail(company.id);
       setCompanyDetail(detail);
@@ -104,6 +107,20 @@ export function AdminDashboardPage() {
       setEditError(parseApiError(err).message);
     } finally {
       setEditLoading(false);
+    }
+  }
+
+  async function handleRevealTaxIds() {
+    if (!editTargetId) return;
+    setRevealingTaxIds(true);
+    try {
+      const fullDetail = await getCompanyDetail(editTargetId, true);
+      setCompanyDetail(fullDetail);
+      setTaxIdsRevealed(true);
+    } catch (err) {
+      setEditError(parseApiError(err).message);
+    } finally {
+      setRevealingTaxIds(false);
     }
   }
 
@@ -631,13 +648,53 @@ export function AdminDashboardPage() {
                       {/* Zoho Statutory & Identification Data */}
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                         <div style={{ background: "#ffffff", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
-                          <span className="text-xs text-muted block mb-1">GSTIN Number</span>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span className="text-xs text-muted block mb-1">GSTIN Number</span>
+                            {!taxIdsRevealed && companyDetail?.gst_number && (
+                              <button
+                                type="button"
+                                onClick={handleRevealTaxIds}
+                                disabled={revealingTaxIds}
+                                style={{
+                                  background: "none",
+                                  border: "none",
+                                  color: "var(--color-primary, #2563eb)",
+                                  fontSize: "11px",
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  padding: 0,
+                                }}
+                              >
+                                {revealingTaxIds ? "Revealing..." : "Show"}
+                              </button>
+                            )}
+                          </div>
                           <div style={{ fontFamily: "monospace", fontSize: "13px", fontWeight: 600, color: "#334155" }}>
                             {companyDetail?.gst_number || "—"}
                           </div>
                         </div>
                         <div style={{ background: "#ffffff", padding: "10px 12px", borderRadius: "8px", border: "1px solid #f1f5f9" }}>
-                          <span className="text-xs text-muted block mb-1">PAN Number</span>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span className="text-xs text-muted block mb-1">PAN Number</span>
+                            {!taxIdsRevealed && companyDetail?.pan_number && (
+                              <button
+                                type="button"
+                                onClick={handleRevealTaxIds}
+                                disabled={revealingTaxIds}
+                                style={{
+                                  background: "none",
+                                  border: "none",
+                                  color: "var(--color-primary, #2563eb)",
+                                  fontSize: "11px",
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  padding: 0,
+                                }}
+                              >
+                                {revealingTaxIds ? "Revealing..." : "Show"}
+                              </button>
+                            )}
+                          </div>
                           <div style={{ fontFamily: "monospace", fontSize: "13px", fontWeight: 600, color: "#334155" }}>
                             {companyDetail?.pan_number || "—"}
                           </div>

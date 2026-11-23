@@ -38,7 +38,7 @@ export function PlatformPayrollPage() {
 
   const stats = useQuery({
     queryKey: ["platform", "stats", "payroll", from, to],
-    queryFn: () => listPlatformPayrollStats({ from, to, limit: 500 }),
+    queryFn: () => listPlatformPayrollStats({ from, to, limit: 100 }),
     retry: false,
   });
 

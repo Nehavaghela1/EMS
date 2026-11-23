@@ -195,6 +195,7 @@ class UserRepository:
                 "code": company.code,
                 "role": user.role,
                 "is_active": user.is_active,
+                "logo_url": company.logo_url,
             }
             for user, company in memberships
         ]

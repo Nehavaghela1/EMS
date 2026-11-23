@@ -4,15 +4,8 @@ import "./shared/styles/global.css";
 import { AppProviders } from "./app/providers";
 import { AppRouter } from "./app/router";
 
-// Restore custom brand accent color immediately upon boot
-try {
-  const savedBrandColor = localStorage.getItem("ems_brand_accent_color");
-  if (savedBrandColor) {
-    document.documentElement.style.setProperty("--color-primary", savedBrandColor);
-  }
-} catch {
-  // Ignore localStorage access failures in restricted environments
-}
+// Brand accent color is managed dynamically per company session in AppLayout
+
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -707,6 +707,7 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
       document.documentElement.style.setProperty("--color-primary", brandColor);
       notify("Branding preferences and accent color saved successfully.", "success");
       await queryClient.invalidateQueries({ queryKey: ["company", "me"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-workspaces"] });
     } catch (err) {
       notify(parseApiError(err).message || "Failed to save branding preferences", "error");
     } finally {

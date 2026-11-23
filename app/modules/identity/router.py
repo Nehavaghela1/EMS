@@ -44,6 +44,7 @@ from app.modules.identity.schemas import (
     ResetPasswordRequest,
     SwitchWorkspaceRequest,
     TokenResponse,
+    UnmaskedCompanyDetailResponse,
     UsernameAvailabilityResponse,
     UserRoleUpdateRequest,
     UserRoleUpdateResponse,
@@ -55,6 +56,7 @@ from app.modules.identity.service import (
     LocationService,
     RoleChangeService,
 )
+from app.modules.platform.service import AuditService
 from app.workers.tasks.identity import process_password_reset_request
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -472,16 +474,70 @@ def set_head_office(
     return LocationService(db).set_head_office(user.company_id, location_id, actor=user)
 
 
-@companies_router.get("/{company_id}", response_model=CompanyDetailResponse)
+@companies_router.get("/{company_id}")
 def get_company_detail(
     company_id: uuid.UUID,
+    reveal: bool = False,
     db: Session = Depends(get_tenant_db),
     _admin: User = Depends(require_platform_role()),
 ):
     company, counts = CompanyService(db).get_company_detail(company_id)
-    base_data = CompanyResponse.model_validate(company).model_dump()
+    if reveal:
+        AuditService(db).record(
+            company_id=company_id,
+            actor=_admin,
+            action="COMPANY_TAX_ID_REVEALED",
+            entity_type="company",
+            entity_id=company_id,
+            details={"fields": ["pan_number", "gst_number"]},
+        )
+        return UnmaskedCompanyDetailResponse(
+            id=company.id,
+            name=company.name,
+            code=company.code,
+            email=company.email,
+            industry=company.industry,
+            country=company.country,
+            status=company.status,
+            subdomain=company.subdomain,
+            company_size=company.company_size,
+            phone=company.phone,
+            address=company.address,
+            city=company.city,
+            state=company.state,
+            pincode=company.pincode,
+            website=company.website,
+            logo_url=company.logo_url,
+            brand_color=company.brand_color,
+            gst_number=company.gst_number,
+            pan_number=company.pan_number,
+            created_at=company.created_at,
+            rejection_reason=company.rejection_reason,
+            approved_at=company.approved_at,
+            counts=counts,
+        )
+
     return CompanyDetailResponse(
-        **base_data,
+        id=company.id,
+        name=company.name,
+        code=company.code,
+        email=company.email,
+        industry=company.industry,
+        country=company.country,
+        status=company.status,
+        subdomain=company.subdomain,
+        company_size=company.company_size,
+        phone=company.phone,
+        address=company.address,
+        city=company.city,
+        state=company.state,
+        pincode=company.pincode,
+        website=company.website,
+        logo_url=company.logo_url,
+        brand_color=company.brand_color,
+        gst_number=company.gst_number,
+        pan_number=company.pan_number,
+        created_at=company.created_at,
         rejection_reason=company.rejection_reason,
         approved_at=company.approved_at,
         counts=counts,
