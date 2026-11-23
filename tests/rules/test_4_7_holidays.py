@@ -404,7 +404,8 @@ def test_R5_calendar_shows_mandatory_holiday_but_not_optional(
             == 201
         )
     cal = client.get(
-        f"/api/v1/attendance/calendar?month={monday.month}&year={monday.year}", headers=headers
+        f"/api/v1/attendance/calendar?month={mandatory_day.month}&year={mandatory_day.year}",
+        headers=headers,
     )
     assert cal.status_code == 200, cal.text
     by_date = {d["date"]: d for d in cal.json()["days"]}
