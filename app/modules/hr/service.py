@@ -28,6 +28,7 @@ from app.modules.hr.models import (
     Employee,
     EmploymentType,
     InvitationStatus,
+    ProbationDecision,
     ResignationStatus,
 )
 from app.modules.hr.repository import (
@@ -42,6 +43,7 @@ from app.modules.hr.schemas import (
     EmployeeUpdateRequest,
     FnFClearanceUpdateRequest,
     FnFSettlementResponse,
+    ProbationDecisionRequest,
     ResignationApproveRequest,
     ResignationSubmitRequest,
     TerminationRequest,
@@ -1554,6 +1556,88 @@ class EmployeeService:
 
         self.db.commit()
         return employee
+
+    def decide_probation(
+        self,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        data: ProbationDecisionRequest,
+        actor: User,
+    ) -> ProbationDecision:
+        """Q1-Q3: Record probation outcome on or after probation end date.
+        Confirmed -> employee probation_status = 'confirmed'.
+        Extended -> moves probation_end_date forward, requires reason.
+        Not confirmed -> leaves employee active, records outcome without exiting.
+        Employee with no probation_end_date -> 409.
+        """
+        employee = self.repo.get_by_id_any_status(employee_id, company_id)
+        if employee is None:
+            raise NotFoundError("Employee not found.")
+
+        if employee.probation_end_date is None:
+            raise ConflictError("Employee does not have a probation period configured.")
+
+        today = utcnow().date()
+        if today < employee.probation_end_date:
+            raise ConflictError(
+                f"Probation cannot be decided before the probation end date "
+                f"({employee.probation_end_date})."
+            )
+
+        outcome = data.outcome
+        reason = (data.reason or "").strip() or None
+        previous_end = employee.probation_end_date
+        new_end = data.new_end_date
+
+        if outcome == "extended":
+            if not new_end:
+                raise ValidationError(
+                    "A new probation end date is required when extending probation."
+                )
+            if new_end <= previous_end:
+                raise ValidationError(
+                    "Extended probation end date must be after current probation end date."
+                )
+            if not reason:
+                raise ValidationError("A reason is required when extending probation.")
+            employee.probation_end_date = new_end
+            employee.probation_status = "extended"
+        elif outcome == "confirmed":
+            employee.probation_status = "confirmed"
+        elif outcome == "not_confirmed":
+            employee.probation_status = "not_confirmed"
+            # Leaves employee active with no last_working_date, exactly as failed PIP
+
+        now = utcnow()
+        decision = ProbationDecision(
+            id=uuid.uuid4(),
+            company_id=company_id,
+            employee_id=employee.id,
+            outcome=outcome,
+            previous_end_date=previous_end,
+            new_end_date=new_end,
+            reason=reason,
+            decided_by=actor.id,
+            decided_at=now,
+        )
+        self.db.add(decision)
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PROBATION_DECIDED",
+            entity_type="employee",
+            entity_id=employee.id,
+            details={
+                "outcome": outcome,
+                "previous_end_date": str(previous_end),
+                "new_end_date": str(new_end) if new_end else None,
+                "reason": reason,
+                "employee_id": str(employee.id),
+            },
+        )
+        self.db.commit()
+        return decision
 
     def _calculate_fnf(
         self, company_id: uuid.UUID, employee_id: uuid.UUID

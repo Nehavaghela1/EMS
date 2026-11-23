@@ -91,6 +91,8 @@ from app.modules.payroll.schemas import (
     BankAccountRequest,
     BankAccountResponse,
     PayrollPaymentRecordRequest,
+    PayrollRunAttendanceRelockRequest,
+    PayrollRunAttendanceUnlockRequest,
     PayrollRunCreateRequest,
     PtSlabPutRequest,
     ReimbursementCreateRequest,
@@ -2191,6 +2193,86 @@ class PayrollRunService:
                 "run_id": str(run.id),
                 "item_ids": updated_item_ids,
                 "fields_changed": ["payment_status", "paid_on", "bank_reference"],
+            },
+        )
+        self.db.commit()
+        return run
+
+    def unlock_attendance(
+        self,
+        company_id: uuid.UUID,
+        run_id: uuid.UUID,
+        data: PayrollRunAttendanceUnlockRequest,
+        actor: User,
+    ) -> PayrollRun:
+        run = self.repo.get_by_id(run_id, company_id)
+        if run is None:
+            raise NotFoundError("Payroll run not found.")
+        if run.status != PayrollRunStatus.paid:
+            raise ConflictError("Only a paid payroll run can be unlocked for attendance.")
+
+        reason = (data.reason or "").strip()
+        if not reason or len(reason) > 500:
+            raise ValidationError("Reason must be between 1 and 500 characters.")
+
+        now = utcnow()
+        run.is_attendance_unlocked = True
+        run.attendance_unlocked_at = now
+        run.attendance_unlocked_by = actor.id
+        run.attendance_unlock_reason = reason
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PAYROLL_RUN_ATTENDANCE_UNLOCKED",
+            entity_type="payroll_run",
+            entity_id=run.id,
+            details={
+                "run_id": str(run.id),
+                "month": run.month,
+                "year": run.year,
+                "reason": reason,
+                "unlocked_at": now.isoformat(),
+            },
+        )
+        self.db.commit()
+        return run
+
+    def relock_attendance(
+        self,
+        company_id: uuid.UUID,
+        run_id: uuid.UUID,
+        data: PayrollRunAttendanceRelockRequest,
+        actor: User,
+    ) -> PayrollRun:
+        run = self.repo.get_by_id(run_id, company_id)
+        if run is None:
+            raise NotFoundError("Payroll run not found.")
+        if run.status != PayrollRunStatus.paid:
+            raise ConflictError("Only a paid payroll run can be relocked for attendance.")
+
+        reason = (data.reason or "").strip()
+        if not reason or len(reason) > 500:
+            raise ValidationError("Reason must be between 1 and 500 characters.")
+
+        now = utcnow()
+        run.is_attendance_unlocked = False
+        run.attendance_unlocked_at = None
+        run.attendance_unlocked_by = None
+        run.attendance_unlock_reason = reason
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PAYROLL_RUN_ATTENDANCE_RELOCKED",
+            entity_type="payroll_run",
+            entity_id=run.id,
+            details={
+                "run_id": str(run.id),
+                "month": run.month,
+                "year": run.year,
+                "reason": reason,
+                "relocked_at": now.isoformat(),
             },
         )
         self.db.commit()

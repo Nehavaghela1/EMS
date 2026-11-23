@@ -545,7 +545,23 @@ class DashboardRepository:
             )
             .group_by(Department.name)
         ).all()
-        return {name: count for name, count in rows}
+        result = {name: count for name, count in rows}
+
+        unassigned_count = (
+            self.db.scalar(
+                select(func.count(Employee.id)).where(
+                    Employee.company_id == company_id,
+                    Employee.department_id.is_(None),
+                    Employee.deleted_at.is_(None),
+                    Employee.is_active.is_(True),
+                )
+            )
+            or 0
+        )
+        if unassigned_count > 0:
+            result["Unassigned"] = unassigned_count
+
+        return result
 
     # ── manager (team-scoped, given the caller's direct reports) ──
     def team_headcount(self, company_id: uuid.UUID, employee_ids: list[uuid.UUID]) -> int:

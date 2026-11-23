@@ -62,6 +62,8 @@ COMPANY_ROUTES = {
     ("GET", f"{P}/runs"),
     ("GET", f"{P}/runs/{{id}}"),
     ("POST", f"{P}/runs/{{id}}/approve"),
+    ("POST", f"{P}/runs/{{id}}/unlock-attendance"),
+    ("POST", f"{P}/runs/{{id}}/lock-attendance"),
     ("POST", f"{P}/runs/{{id}}/send-payslips"),
     ("POST", f"{P}/runs/{{id}}/payments"),
     ("DELETE", f"{P}/runs/{{id}}"),

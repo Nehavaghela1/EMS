@@ -246,6 +246,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/employees/{employee_id}/toggle-active"): ROLES(
         UserRole.hr_admin, UserRole.owner
     ),
+    ("POST", "/api/v1/employees/{employee_id}/probation-decision"): ROLES(
+        UserRole.hr_admin, UserRole.owner
+    ),
     ("GET", "/api/v1/files/download/{file_id}"): PUBLIC,
     ("POST", "/api/v1/files/upload"): AUTHENTICATED,
     ("GET", "/api/v1/files/{file_id}/url"): AUTHENTICATED,
@@ -325,6 +328,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("DELETE", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin),
     ("POST", "/api/v1/payroll/runs/{id}/approve"): ROLES(UserRole.hr_admin),
+    ("POST", "/api/v1/payroll/runs/{id}/unlock-attendance"): ROLES(
+        UserRole.hr_admin, UserRole.owner
+    ),
+    ("POST", "/api/v1/payroll/runs/{id}/lock-attendance"): ROLES(UserRole.hr_admin, UserRole.owner),
     ("POST", "/api/v1/payroll/runs/{id}/send-payslips"): ROLES(UserRole.hr_admin),
     ("POST", "/api/v1/payroll/runs/{id}/payments"): ROLES(UserRole.hr_admin),
     # 5.8: owner and HR admin only (owner is added by the role dependency); the file is built

@@ -50,6 +50,8 @@ from app.modules.hr.schemas import (
     FnFITClearanceResponse,
     FnFSettlementResponse,
     ManagerSearchResponse,
+    ProbationDecisionRequest,
+    ProbationDecisionResponse,
     ResignationApproveRequest,
     ResignationSubmitRequest,
     TerminationRequest,
@@ -645,6 +647,21 @@ def terminate_employee(
 ):
     employee = EmployeeService(db).terminate_employee(user.company_id, employee_id, data, user)
     return _to_employee_response(employee)
+
+
+@employees_router.post(
+    "/{employee_id}/probation-decision", response_model=ProbationDecisionResponse
+)
+@limiter.limit("10/minute", key_func=get_user_or_ip_key)
+def decide_probation(
+    request: Request,
+    employee_id: uuid.UUID,
+    data: ProbationDecisionRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
+):
+    decision = EmployeeService(db).decide_probation(user.company_id, employee_id, data, user)
+    return ProbationDecisionResponse.model_validate(decision)
 
 
 FnFRouteResponse = (

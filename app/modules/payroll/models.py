@@ -433,6 +433,17 @@ class PayrollRun(TenantBase):
     # Employees left out of this run: [{"employee_id": ..., "reason": ...}]
     skipped_json: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
 
+    is_attendance_unlocked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    attendance_unlocked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    attendance_unlocked_by: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    attendance_unlock_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     items: Mapped[list["PayrollItem"]] = relationship(
         "PayrollItem",
         cascade="all, delete-orphan",

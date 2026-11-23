@@ -481,7 +481,7 @@ export function EmployeeListPage() {
       label: "DEPARTMENT",
       render: (e) => (
         <span style={{ color: "#475569", fontSize: "0.84rem" }}>
-          {departmentsQuery.data?.items.find((d) => d.id === e.department_id)?.name || e.company_name || "General"}
+          {departmentsQuery.data?.items.find((d) => d.id === e.department_id)?.name || "Unassigned"}
         </span>
       ),
     },

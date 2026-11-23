@@ -2019,7 +2019,7 @@ function ZohoOwnerDashboard({ data, user, role, announcements, generatedAt }: Zo
               <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "#1e293b" }}>Department Headcount</h3>
               <p style={{ margin: "2px 0 0", fontSize: "0.75rem", color: "#64748b" }}>Active employee distribution across teams</p>
             </div>
-            <Link to="/employees" style={{ fontSize: "0.78rem", color: "#2563eb", fontWeight: 600, textDecoration: "none" }}>
+            <Link to="/departments" style={{ fontSize: "0.78rem", color: "#2563eb", fontWeight: 600, textDecoration: "none" }}>
               Manage →
             </Link>
           </div>

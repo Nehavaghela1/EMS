@@ -199,6 +199,30 @@ class AttendanceService:
 
         self.location_repo = CompanyLocationRepository(db)
 
+    def _check_attendance_not_payroll_locked(
+        self, company_id: uuid.UUID, target_date: date
+    ) -> None:
+        """P2: Attendance cannot change after regular payroll is paid, unless unlocked."""
+        from app.modules.payroll.models import PayrollRun, PayrollRunStatus, PayrollRunType
+
+        run = (
+            self.db.query(PayrollRun)
+            .filter(
+                PayrollRun.company_id == company_id,
+                PayrollRun.month == target_date.month,
+                PayrollRun.year == target_date.year,
+                PayrollRun.status == PayrollRunStatus.paid,
+                PayrollRun.run_type == PayrollRunType.regular,
+                PayrollRun.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if run is not None and not run.is_attendance_unlocked:
+            raise ConflictError(
+                f"Attendance for {target_date} is locked by paid payroll run {run.id} "
+                f"for period {run.month:02d}/{run.year}."
+            )
+
     def _resolve_scope(self, company_id: uuid.UUID, current_user: User) -> list[uuid.UUID] | None:
         """None = unrestricted (HR/SA). A list = restricted to exactly these
         employee ids (self for an employee, self + direct reports for a manager)."""
@@ -227,6 +251,7 @@ class AttendanceService:
         if employee is None:
             raise NotFoundError("You do not have an employee record.")
         today = utcnow().date()
+        self._check_attendance_not_payroll_locked(company_id, today)
         existing_att = self.repo.get_by_employee_and_date(company_id, employee.id, today)
         if existing_att:
             if existing_att.status == AttendanceStatus.on_leave:
@@ -311,6 +336,7 @@ class AttendanceService:
                 raise AlreadyCheckedOutError()
             raise NoCheckInError()
         assert record.check_in is not None  # guaranteed by get_open_for_employee's own filter
+        self._check_attendance_not_payroll_locked(company_id, record.date)
         now = utcnow()
         if now <= record.check_in:
             raise InvalidCheckOutError()
@@ -404,6 +430,8 @@ class AttendanceService:
         record = self.repo.get_by_id(attendance_id, company_id)
         if record is None:
             raise NotFoundError("Attendance record not found.")
+
+        self._check_attendance_not_payroll_locked(company_id, record.date)
 
         previous = {
             "check_in": record.check_in.isoformat() if record.check_in else None,
@@ -784,6 +812,7 @@ class AttendanceService:
 
         record = self.repo.get_by_id(req.attendance_id, company_id)
         if data.status == "approved" and record is not None:
+            self._check_attendance_not_payroll_locked(company_id, record.date)
             eff_check_in = data.adjusted_check_in or req.requested_check_in
             eff_check_out = data.adjusted_check_out or req.requested_check_out
             if self.repo.has_approved_leave_on(company_id, record.employee_id, record.date):
@@ -849,6 +878,7 @@ class AttendanceService:
         record = self.repo.get_by_id(attendance_id, company_id)
         if record is None:
             raise NotFoundError("Attendance record not found.")
+        self._check_attendance_not_payroll_locked(company_id, record.date)
         self.audit.record(
             company_id=company_id,
             actor=actor,

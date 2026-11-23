@@ -13,6 +13,7 @@ from app.core.middleware import (
     SecurityHeadersMiddleware,
 )
 from app.core.rate_limit import limiter
+from app.core.sentry import init_sentry
 from app.db.session import SessionLocal
 from app.modules.hr.router import departments_router, employees_router
 from app.modules.identity.router import companies_router, users_router
@@ -53,6 +54,7 @@ from app.modules.time_leave.router import (
 )
 
 configure_logging()
+init_sentry()
 
 app = FastAPI(
     title=settings.APP_NAME,

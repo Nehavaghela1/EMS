@@ -510,9 +510,23 @@ class PayrollRunResponse(BaseModel):
     approved_at: datetime | None
     error_message: str | None
     skipped_json: list[dict] | None = None
+    is_attendance_unlocked: bool = False
+    attendance_unlocked_at: datetime | None = None
+    attendance_unlocked_by: uuid.UUID | None = None
+    attendance_unlock_reason: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PayrollRunAttendanceUnlockRequest(BaseModel):
+    unlocked: bool = True
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
+class PayrollRunAttendanceRelockRequest(BaseModel):
+    unlocked: bool = False
+    reason: str = Field(..., min_length=1, max_length=500)
 
 
 class PayrollItemResponse(BaseModel):

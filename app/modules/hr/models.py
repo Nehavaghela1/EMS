@@ -145,6 +145,9 @@ class Employee(TenantBase):
     )
     hire_date: Mapped[date] = mapped_column(Date, nullable=False)
     probation_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    probation_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending", server_default=text("'pending'")
+    )
     notice_period_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_attendance_exempt: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -329,3 +332,24 @@ class EmployeeExperience(TenantBase):
         PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ProbationDecision(TenantBase):
+    """HR Decision on Employee Probation. RLS: Yes."""
+
+    __tablename__ = "probation_decisions"
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    outcome: Mapped[str] = mapped_column(String(30), nullable=False)
+    previous_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    new_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    decided_by: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

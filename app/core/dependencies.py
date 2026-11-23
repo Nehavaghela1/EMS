@@ -47,6 +47,13 @@ def get_current_user(
     # path, query, or header (8.4).
     bind_tenant_to_session(db, company_id=company_id, is_platform_admin=is_platform_admin)
 
+    try:
+        import sentry_sdk
+
+        sentry_sdk.set_tag("company_id", str(company_id))
+    except Exception:
+        pass
+
     user = UserRepository(db).get_by_id(user_id, company_id)
     if user is None or not user.is_active:
         raise UnauthorizedError(INVALID_TOKEN_MESSAGE)
