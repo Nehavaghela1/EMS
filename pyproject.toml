@@ -27,6 +27,7 @@ dependencies = [
     "limits>=5.8.0,<6",
     # The scheduled rate-source page check (5.9) fetches government pages with it.
     "httpx==0.28.1",
+    "sentry-sdk>=2.0.0",
 ]
 
 [project.optional-dependencies]
