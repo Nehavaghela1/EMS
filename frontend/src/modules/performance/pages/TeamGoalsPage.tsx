@@ -234,7 +234,7 @@ export function TeamGoalsPage() {
           </p>
         </div>
         {activeCycle && selectedEmployeeId && (
-          <button className="btn btn-primary" onClick={openSetGoals}>
+          <button className="btn btn-sm btn-primary" onClick={openSetGoals}>
             + Add Goals
           </button>
         )}
@@ -404,18 +404,37 @@ export function TeamGoalsPage() {
                       <td>{g.target_value || "—"}</td>
                       <td className="fw-bold">{g.weightage}%</td>
                       <td onDoubleClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={5}
-                          aria-label={`Progress for ${g.title}`}
-                          defaultValue={g.progress ?? 0}
-                          disabled={Boolean(g.self_rating)}
-                          style={{ width: "64px" }}
-                          onBlur={(e) => handleProgressSave(g, e.currentTarget.value)}
-                        />
-                        %
+                        {Boolean(g.self_rating) ? (
+                          <span title="Locked: self-review submitted">
+                            {g.progress ?? 0}%
+                          </span>
+                        ) : (
+                          <span style={{ position: "relative", display: "inline-block" }}>
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={5}
+                              aria-label={`Progress for ${g.title}`}
+                              defaultValue={g.progress ?? 0}
+                              style={{ width: "80px", paddingRight: "22px" }}
+                              onBlur={(e) => handleProgressSave(g, e.currentTarget.value)}
+                            />
+                            <span
+                              style={{
+                                position: "absolute",
+                                right: "8px",
+                                top: "50%",
+                                transform: "translateY(-50%)",
+                                pointerEvents: "none",
+                                color: "var(--text-muted, #64748b)",
+                                fontSize: "0.85rem",
+                              }}
+                            >
+                              %
+                            </span>
+                          </span>
+                        )}
                       </td>
                       <td>
                         <span className="badge badge-outline">{g.status}</span>
