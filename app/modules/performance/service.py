@@ -83,7 +83,9 @@ class PerformanceService:
             company_id=company_id, start_date=data.start_date, end_date=data.end_date
         )
         if clash is not None:
-            raise ConflictError(f"Cycle dates clash with existing cycle '{clash.name}'.")
+            raise ConflictError(
+                f"Cycle dates clash with existing cycle '{clash.name}' ({clash.start_date} to {clash.end_date})."
+            )
 
         cycle = self.cycle_repo.create(
             company_id=company_id,

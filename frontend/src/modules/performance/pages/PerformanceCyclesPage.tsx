@@ -158,6 +158,19 @@ export function PerformanceCyclesPage() {
     }
   }
 
+  function handleCycleTypeChange(newType: CycleType) {
+    setCycleType(newType);
+    if (startDate) {
+      const start = new Date(startDate);
+      if (!isNaN(start.getTime())) {
+        const monthsToAdd = newType === "quarterly" ? 3 : newType === "half_yearly" ? 6 : 12;
+        const computedEnd = new Date(start);
+        computedEnd.setMonth(computedEnd.getMonth() + monthsToAdd);
+        setEndDate(computedEnd.toISOString().split("T")[0]);
+      }
+    }
+  }
+
   const CYCLE_TYPE_LABELS: Record<CycleType, string> = {
     annual: "Annual",
     half_yearly: "Half Yearly",
@@ -1287,7 +1300,7 @@ export function PerformanceCyclesPage() {
                   <label>Type</label>
                   <select
                     value={cycleType}
-                    onChange={(e) => setCycleType(e.target.value as CycleType)}
+                    onChange={(e) => handleCycleTypeChange(e.target.value as CycleType)}
                   >
                     <option value="annual">Annual</option>
                     <option value="half_yearly">Half Yearly</option>

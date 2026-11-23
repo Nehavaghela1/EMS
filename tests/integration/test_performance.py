@@ -73,6 +73,23 @@ def test_performance_cycle_lifecycle(client: TestClient, company_a: TenantContex
     assert act_res.status_code == 200
     assert act_res.json()["status"] == "active"
 
+    # 3. Create overlapping cycle (Tier 3 item I: clash message must include start and end dates)
+    clash_res = client.post(
+        "/api/v1/performance/cycles",
+        json={
+            "name": "Clashing Annual Cycle",
+            "cycle_type": "annual",
+            "start_date": "2026-06-01",
+            "end_date": "2027-05-31",
+        },
+        headers=company_a.hr_headers,
+    )
+    assert clash_res.status_code == 409
+    clash_msg = clash_res.json()["error"]["message"]
+    assert "Cycle dates clash with existing cycle 'FY 2026-27 Annual Review'" in clash_msg
+    assert "2026-04-01" in clash_msg
+    assert "2027-03-31" in clash_msg
+
 
 def test_goals_weightage_sum_gate_and_review_workflow(
     client: TestClient, company_a: TenantContext, db: Session

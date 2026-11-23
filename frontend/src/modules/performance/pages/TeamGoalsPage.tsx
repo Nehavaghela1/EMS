@@ -255,9 +255,21 @@ export function TeamGoalsPage() {
           </p>
         </div>
         {activeCycle && selectedEmployeeId && (
-          <button className="btn btn-sm btn-primary" onClick={openSetGoals}>
-            + Add Goals
-          </button>
+          <span
+            title={
+              totalWeightage >= 100
+                ? "Weightages already total 100%; lower an existing goal first."
+                : undefined
+            }
+          >
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={openSetGoals}
+              disabled={totalWeightage >= 100}
+            >
+              + Add Goals
+            </button>
+          </span>
         )}
       </div>
 
