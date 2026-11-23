@@ -41,10 +41,12 @@ import {
   getLeaveBalance,
   listHolidays,
   listLeaveTypes,
+  listLeaves,
   applyLeave,
   type LeaveBalance,
   type Holiday,
   type LeaveType,
+  type Leave,
 } from "../../time_leave/api";
 import { AttendanceCalendar } from "../../time_leave/components/AttendanceCalendar";
 import { apiClient } from "../../../app/api-client";
@@ -2861,96 +2863,263 @@ export function EmployeeProfilePage() {
 
 function EmployeeLeaveProfileTab({ employeeId }: { employeeId: string }) {
   const currentYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  const [activeLeaveSubTab, setActiveLeaveSubTab] = useState<"balances" | "history">("balances");
+
   const balancesQuery = useQuery({
-    queryKey: ["leave-balance", employeeId, currentYear],
-    queryFn: () => getLeaveBalance(employeeId, currentYear),
+    queryKey: ["leave-balance", employeeId, selectedYear],
+    queryFn: () => getLeaveBalance(employeeId, selectedYear),
+  });
+
+  const leaveTypesQuery = useQuery({
+    queryKey: ["leave-types"],
+    queryFn: listLeaveTypes,
+  });
+
+  const leaveHistoryQuery = useQuery({
+    queryKey: ["employee-leave-history", employeeId, selectedYear],
+    queryFn: () =>
+      listLeaves({
+        employee_id: employeeId,
+        date_from: `${selectedYear}-01-01`,
+        date_to: `${selectedYear}-12-31`,
+        page: 1,
+        limit: 100,
+      }),
   });
 
   const holidaysQuery = useQuery({
-    queryKey: ["holidays", currentYear],
-    queryFn: () => listHolidays(currentYear),
+    queryKey: ["holidays", selectedYear],
+    queryFn: () => listHolidays(selectedYear),
   });
+
+  const leaveTypeMap = new Map((leaveTypesQuery.data ?? []).map((lt) => [lt.id, lt.name]));
+
+  // Build a list of available years (e.g. current year - 2 to current year + 1)
+  const availableYears = [currentYear - 2, currentYear - 1, currentYear, currentYear + 1];
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: "20px", alignItems: "start" }}>
-      {/* Left Pane: Leave Balances Table */}
+      {/* Left Pane: Leave Balances Table & Leave History */}
       <div className="card" style={{ padding: "1.5rem", borderRadius: "10px", background: "#ffffff" }}>
         {/* Notice alert */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", background: "#fffbeb", border: "1px solid #fde68a", padding: "10px 14px", borderRadius: "8px", marginBottom: "16px", fontSize: "0.82rem", color: "#92400e" }}>
           <span>⚠️</span>
-          <span>View and manage your employee absences <a href="/leaves" style={{ color: "#2563eb", fontWeight: 600, textDecoration: "none" }}>View Details ›</a></span>
+          <span>
+            View and manage your employee absences{" "}
+            <button
+              type="button"
+              onClick={() => setActiveLeaveSubTab("history")}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#2563eb",
+                fontWeight: 600,
+                cursor: "pointer",
+                padding: 0,
+                font: "inherit",
+              }}
+            >
+              View Details ›
+            </button>
+          </span>
         </div>
 
         {/* Tab switcher: Leave Balance / Leave Requests */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
           <div style={{ display: "flex", gap: "6px" }}>
-            <span style={{ padding: "4px 14px", borderRadius: "20px", background: "#eff6ff", color: "#1d4ed8", fontWeight: 600, fontSize: "0.82rem", border: "1px solid #bfdbfe" }}>
+            <button
+              type="button"
+              onClick={() => setActiveLeaveSubTab("balances")}
+              style={{
+                padding: "4px 14px",
+                borderRadius: "20px",
+                background: activeLeaveSubTab === "balances" ? "#eff6ff" : "#f8fafc",
+                color: activeLeaveSubTab === "balances" ? "#1d4ed8" : "#64748b",
+                fontWeight: 600,
+                fontSize: "0.82rem",
+                border: activeLeaveSubTab === "balances" ? "1px solid #bfdbfe" : "1px solid #e2e8f0",
+                cursor: "pointer",
+              }}
+            >
               Leave Balance
-            </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveLeaveSubTab("history")}
+              style={{
+                padding: "4px 14px",
+                borderRadius: "20px",
+                background: activeLeaveSubTab === "history" ? "#eff6ff" : "#f8fafc",
+                color: activeLeaveSubTab === "history" ? "#1d4ed8" : "#64748b",
+                fontWeight: 600,
+                fontSize: "0.82rem",
+                border: activeLeaveSubTab === "history" ? "1px solid #bfdbfe" : "1px solid #e2e8f0",
+                cursor: "pointer",
+              }}
+            >
+              Leave Requests & History
+            </button>
           </div>
 
-          <div style={{ fontSize: "0.82rem", color: "#64748b" }}>
-            <span>Filter : <strong>{currentYear}</strong> ▾</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.82rem", color: "#64748b" }}>
+            <span>Year :</span>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              style={{
+                fontSize: "0.82rem",
+                padding: "2px 8px",
+                borderRadius: "6px",
+                border: "1px solid #cbd5e1",
+                background: "#ffffff",
+                fontWeight: 600,
+              }}
+            >
+              {availableYears.map((yr) => (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
-        {balancesQuery.isLoading ? (
-          <div className="row" style={{ padding: "1.5rem 0" }}>
-            <div className="spinner" />
-            <span className="text-muted">Loading leave balances…</span>
-          </div>
+        {activeLeaveSubTab === "balances" ? (
+          balancesQuery.isLoading ? (
+            <div className="row" style={{ padding: "1.5rem 0" }}>
+              <div className="spinner" />
+              <span className="text-muted">Loading leave balances…</span>
+            </div>
+          ) : (
+            <table className="table" style={{ width: "100%", fontSize: "0.86rem" }}>
+              <thead>
+                <tr style={{ color: "#64748b", fontSize: "0.75rem", textTransform: "uppercase" }}>
+                  <th style={{ paddingBottom: "10px" }}>Leave Type</th>
+                  <th style={{ paddingBottom: "10px", textAlign: "center" }}>Requested Leaves</th>
+                  <th style={{ paddingBottom: "10px", textAlign: "center" }}>Balance Leaves</th>
+                  <th style={{ paddingBottom: "10px", textAlign: "center" }}>Yearly Leave Projection</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(balancesQuery.data && balancesQuery.data.length > 0) ? (
+                  balancesQuery.data.map((b: LeaveBalance) => (
+                    <tr key={b.leave_type_id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>
+                        {b.leave_type_name}
+                      </td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>
+                        {b.used || "0"}
+                      </td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>
+                        {b.available || "0"}
+                      </td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>
+                        {b.allocated || "0"}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <>
+                    <tr style={{ borderTop: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>Casual Leave</td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>0</td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>11</td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>14</td>
+                    </tr>
+                    <tr style={{ borderTop: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>Medical Leave</td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>0</td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>10</td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>10</td>
+                    </tr>
+                    <tr style={{ borderTop: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>Paid Leave (Privilege)</td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>0</td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>15</td>
+                      <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>15</td>
+                    </tr>
+                  </>
+                )}
+              </tbody>
+            </table>
+          )
         ) : (
-          <table className="table" style={{ width: "100%", fontSize: "0.86rem" }}>
-            <thead>
-              <tr style={{ color: "#64748b", fontSize: "0.75rem", textTransform: "uppercase" }}>
-                <th style={{ paddingBottom: "10px" }}>Leave Type</th>
-                <th style={{ paddingBottom: "10px", textAlign: "center" }}>Requested Leaves</th>
-                <th style={{ paddingBottom: "10px", textAlign: "center" }}>Balance Leaves</th>
-                <th style={{ paddingBottom: "10px", textAlign: "center" }}>Yearly Leave Projection</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(balancesQuery.data && balancesQuery.data.length > 0) ? (
-                balancesQuery.data.map((b: LeaveBalance) => (
-                  <tr key={b.leave_type_id} style={{ borderTop: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>
-                      {b.leave_type_name}
-                    </td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>
-                      {b.used || "0"}
-                    </td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>
-                      {b.available || "0"}
-                    </td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>
-                      {b.allocated || "0"}
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <>
-                  <tr style={{ borderTop: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>Casual Leave</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>0</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>11</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>14</td>
-                  </tr>
-                  <tr style={{ borderTop: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>Medical Leave</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>0</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>10</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>10</td>
-                  </tr>
-                  <tr style={{ borderTop: "1px solid #f1f5f9" }}>
-                    <td style={{ padding: "12px 8px", color: "#2563eb", fontWeight: 500 }}>Paid Leave (Privilege)</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>0</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155", fontWeight: 600 }}>15</td>
-                    <td style={{ padding: "12px 8px", textAlign: "center", color: "#334155" }}>15</td>
-                  </tr>
-                </>
-              )}
-            </tbody>
-          </table>
+          /* Leave Requests & History Tab */
+          <div>
+            {leaveHistoryQuery.isLoading ? (
+              <div className="row" style={{ padding: "1.5rem 0" }}>
+                <div className="spinner" />
+                <span className="text-muted">Loading leave history…</span>
+              </div>
+            ) : (!leaveHistoryQuery.data?.items || leaveHistoryQuery.data.items.length === 0) ? (
+              <div style={{ padding: "2rem 1rem", textAlign: "center", color: "#64748b" }}>
+                <span>No leave requests found for {selectedYear}.</span>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="table" style={{ width: "100%", fontSize: "0.85rem" }}>
+                  <thead>
+                    <tr style={{ color: "#64748b", fontSize: "0.75rem", textTransform: "uppercase" }}>
+                      <th style={{ padding: "8px" }}>Dates</th>
+                      <th style={{ padding: "8px" }}>Type</th>
+                      <th style={{ padding: "8px", textAlign: "center" }}>Days</th>
+                      <th style={{ padding: "8px" }}>Status</th>
+                      <th style={{ padding: "8px" }}>Decision</th>
+                      <th style={{ padding: "8px" }}>Rejection Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leaveHistoryQuery.data.items.map((leave: Leave) => (
+                      <tr key={leave.id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>
+                          {formatDate(leave.start_date)} – {formatDate(leave.end_date)}
+                        </td>
+                        <td style={{ padding: "10px 8px" }}>
+                          <span className="badge badge-outline">
+                            {leaveTypeMap.get(leave.leave_type_id) || "Leave"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 600 }}>
+                          {leave.total_days}
+                        </td>
+                        <td style={{ padding: "10px 8px" }}>
+                          <span
+                            className={`badge ${
+                              leave.status === "approved"
+                                ? "badge-success"
+                                : leave.status === "rejected"
+                                ? "badge-danger"
+                                : "badge-warning"
+                            }`}
+                          >
+                            {leave.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: "10px 8px", fontSize: "0.8rem", color: "#475569" }}>
+                          {leave.approved_at ? (
+                            <div>
+                              <div>{formatDate(leave.approved_at)}</div>
+                              {leave.approved_by && (
+                                <div className="text-xs text-muted" title={leave.approved_by}>
+                                  By: {leave.approved_by.slice(0, 8)}…
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
+                        <td style={{ padding: "10px 8px", fontSize: "0.82rem", color: "#dc2626" }}>
+                          {leave.rejection_reason || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
