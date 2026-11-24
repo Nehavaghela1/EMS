@@ -1459,7 +1459,7 @@ export function PayrollRunPage() {
           >
             <span style={{ color: "#ea580c", fontSize: "1rem" }}>✨</span>
             <span>
-              Pay salaries from any bank account without switching to your bank portal using Payouts by Zoho Payments.{" "}
+              Pay salaries from any bank account without switching to your bank portal using Direct Banking Payouts.{" "}
               <button
                 type="button"
                 onClick={() => setShowPayoutSetupModal(true)}
@@ -1812,7 +1812,7 @@ export function PayrollRunPage() {
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <span style={{ fontSize: "1.2rem" }}>✨</span>
                   <h2 style={{ fontSize: "1.1rem", fontWeight: 700, margin: 0, color: "#ffffff" }}>
-                    Zoho Payments & Direct Banking Payout
+                    Direct Banking Payout & Gateway
                   </h2>
                 </div>
                 <p style={{ margin: "4px 0 0", fontSize: "0.78rem", color: "#94a3b8" }}>

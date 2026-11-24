@@ -841,7 +841,7 @@ export function PayrollSetupPage() {
 
               {/* Notice */}
               <div style={{ marginTop: "1.25rem", padding: "10px 12px", borderRadius: "6px", background: "#f8fafc", border: "1px solid #e2e8f0", fontSize: "0.78rem", color: "#64748b", lineHeight: 1.4 }}>
-                💡 <strong>Zoho Payroll standard:</strong> Keeping Basic Pay at 40-50% optimizes statutory contributions (EPF & ESI) while ensuring optimal take-home salary.
+                💡 <strong>Statutory Standard:</strong> Keeping Basic Pay at 40-50% optimizes statutory contributions (EPF & ESI) while ensuring optimal take-home salary.
               </div>
             </div>
 

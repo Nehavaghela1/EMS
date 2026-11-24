@@ -245,9 +245,21 @@ export function ProjectsListPage() {
                             background: "rgba(37, 99, 235, 0.1)",
                             color: "var(--color-primary, #2563eb)",
                             border: "1px solid rgba(37, 99, 235, 0.2)",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
                           }}
                         >
-                          🏢 {proj.company_name}
+                          {proj.company_logo_url ? (
+                            <img
+                              src={proj.company_logo_url}
+                              alt={proj.company_name}
+                              style={{ width: "13px", height: "13px", objectFit: "contain", borderRadius: "2px" }}
+                            />
+                          ) : (
+                            <span>🏢</span>
+                          )}
+                          <span>{proj.company_name}</span>
                         </span>
                       )}
                     </div>

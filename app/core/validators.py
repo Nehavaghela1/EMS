@@ -17,7 +17,10 @@ LOGO_URL_MAX_LENGTH = 2048
 # The branding screen stores small logos inline as base64 image data URLs.
 # 700,000 base64 characters is about 512 KB of image.
 LOGO_DATA_URL_MAX_LENGTH = 700_000
-_LOGO_DATA_URL = re.compile(r"^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$")
+_LOGO_DATA_URL = re.compile(
+    r"^data:image/(png|jpeg|jpg|webp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$",
+    re.IGNORECASE,
+)
 
 
 def clean_phone(v: str | None) -> str | None:
@@ -71,7 +74,20 @@ def clean_logo_url(v: str | None) -> str | None:
         if len(s) > LOGO_DATA_URL_MAX_LENGTH:
             raise ValueError("Logo image must be smaller than 512 KB.")
         if not _LOGO_DATA_URL.match(s):
-            raise ValueError("Logo image must be a PNG, JPEG or WebP picture.")
+            raise ValueError("Logo image must be a PNG, JPEG, WebP or SVG picture.")
+        if s.lower().startswith("data:image/svg+xml;base64,"):
+            import base64
+
+            try:
+                raw_bytes = base64.b64decode(s.split(",", 1)[1])
+                decoded = raw_bytes.decode("utf-8", errors="ignore").lower()
+                unsafe_terms = ("<script", "javascript:", "onload=", "onerror=")
+                if any(term in decoded for term in unsafe_terms):
+                    raise ValueError("SVG contains unsafe script or event handlers.")
+            except ValueError:
+                raise
+            except Exception as exc:
+                raise ValueError("Invalid SVG format.") from exc
         return s
     if len(s) > LOGO_URL_MAX_LENGTH:
         raise ValueError(f"Logo URL must be at most {LOGO_URL_MAX_LENGTH} characters.")
@@ -81,7 +97,7 @@ def clean_logo_url(v: str | None) -> str | None:
         return s
     if s.startswith("/") and not s.startswith("//") and "\\" not in s:
         return s
-    raise ValueError("Logo must be an https:// URL or a PNG, JPEG or WebP image.")
+    raise ValueError("Logo must be an https:// URL or a PNG, JPEG, WebP or SVG image.")
 
 
 def clean_hex_color(v: str | None) -> str | None:

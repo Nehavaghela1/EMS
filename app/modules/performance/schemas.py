@@ -256,6 +256,7 @@ class PerformancePIPResponse(BaseModel):
     outcome_notes: str | None
     evaluated_at: datetime | None
     evaluated_by: uuid.UUID | None
+    evaluated_by_name: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -1085,7 +1085,7 @@ export function MyPayslipPage() {
                 }}
               >
                 <div style={{ fontWeight: 600, color: "#1e40af", marginBottom: "4px" }}>
-                  📐 Zoho Standard Salary Proration Formula:
+                  📐 Standard Salary Proration Formula:
                 </div>
                 <code>Earned Gross = Monthly Fixed CTC × (Present Days ÷ Calendar Working Days)</code>
                 <div style={{ marginTop: "6px", color: "#334155", fontSize: "0.8rem" }}>

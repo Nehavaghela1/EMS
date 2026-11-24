@@ -777,7 +777,7 @@ export function ZohoOwnerDashboard({ data, user, role, announcements, generatedA
               One series, single axis, finalized runs only (last 12 months)
             </p>
           </div>
-          <Link to="/payroll/runs" className="btn btn-sm btn-ghost" style={{ fontSize: "0.75rem" }}>
+          <Link to="/payroll/run" className="btn btn-sm btn-ghost" style={{ fontSize: "0.75rem" }}>
             Payroll History →
           </Link>
         </div>

@@ -219,6 +219,7 @@ export interface PerformancePIP {
   outcome_notes?: string | null;
   evaluated_at?: string | null;
   evaluated_by?: string | null;
+  evaluated_by_name?: string | null;
   created_at: string;
 }
 

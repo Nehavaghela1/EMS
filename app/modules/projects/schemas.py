@@ -62,6 +62,7 @@ class ProjectResponse(ProjectBase):
     id: UUID
     company_id: UUID
     company_name: str | None = None
+    company_logo_url: str | None = None
     created_at: datetime
     updated_at: datetime
 

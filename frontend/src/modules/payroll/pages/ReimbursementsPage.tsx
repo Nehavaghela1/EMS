@@ -372,7 +372,7 @@ export function ReimbursementsPage() {
       {/* Modal: Submit Claim */}
       {showSubmitModal && (
         <div className="modal-backdrop" onClick={() => setShowSubmitModal(false)}>
-          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: "540px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Submit Reimbursement Claim</h2>
               <button
@@ -384,127 +384,129 @@ export function ReimbursementsPage() {
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSubmitClaim} className="stack gap-4 my-2">
-              <div className="grid-2">
-                <div className="field">
-                  <label>Expense Type</label>
-                  <select value={type} onChange={(e) => setType(e.target.value as ReimbursementType)}>
-                    <option value="travel">Travel</option>
-                    <option value="food">Food & Meals</option>
-                    <option value="medical">Medical</option>
-                    <option value="telephone">Telephone / Internet</option>
-                    <option value="other">Other</option>
-                  </select>
+            <form onSubmit={handleSubmitClaim} style={{ display: "flex", flexDirection: "column", height: "100%", margin: 0 }}>
+              <div className="modal-body stack gap-4">
+                <div className="grid-2">
+                  <div className="field">
+                    <label>Expense Type</label>
+                    <select value={type} onChange={(e) => setType(e.target.value as ReimbursementType)}>
+                      <option value="travel">Travel</option>
+                      <option value="food">Food & Meals</option>
+                      <option value="medical">Medical</option>
+                      <option value="telephone">Telephone / Internet</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Amount (₹) *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      required
+                    />
+                  </div>
                 </div>
+
                 <div className="field">
-                  <label>Amount (₹) *</label>
+                  <label>Expense Date *</label>
                   <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="0.00"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+                    type="date"
+                    value={expenseDate}
+                    onChange={(e) => setExpenseDate(e.target.value)}
                     required
                   />
                 </div>
-              </div>
 
-              <div className="field">
-                <label>Expense Date *</label>
-                <input
-                  type="date"
-                  value={expenseDate}
-                  onChange={(e) => setExpenseDate(e.target.value)}
-                  required
-                />
-              </div>
+                <div className="field">
+                  <label>Description & Purpose *</label>
+                  <textarea
+                    rows={3}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Explain the expense details..."
+                    required
+                  />
+                </div>
 
-              <div className="field">
-                <label>Description & Purpose *</label>
-                <textarea
-                  rows={3}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Explain the expense details..."
-                  required
-                />
-              </div>
-
-              {/* Receipt Drag & Drop Zone */}
-              <div className="field">
-                <label>Receipt / Invoice Attachment (PDF / PNG / JPG) <span style={{ color: "#dc2626" }}>*</span></label>
-                <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setIsDragging(true);
-                  }}
-                  onDragLeave={() => setIsDragging(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setIsDragging(false);
-                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                      setReceiptFile(e.dataTransfer.files[0]);
-                    }
-                  }}
-                  style={{
-                    border: `2px dashed ${isDragging ? "var(--color-primary, #2563eb)" : "var(--color-border, #d1d5db)"}`,
-                    borderRadius: "8px",
-                    padding: "1.25rem",
-                    textAlign: "center",
-                    backgroundColor: isDragging ? "rgba(37, 99, 235, 0.04)" : "var(--color-surface, #f9fafb)",
-                    cursor: "pointer",
-                    transition: "all 0.15s ease",
-                  }}
-                  onClick={() => document.getElementById("receipt-file-input")?.click()}
-                >
-                  <input
-                    id="receipt-file-input"
-                    type="file"
-                    accept=".pdf,image/png,image/jpeg,image/jpg"
-                    style={{ display: "none" }}
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        setReceiptFile(e.target.files[0]);
+                {/* Receipt Drag & Drop Zone */}
+                <div className="field">
+                  <label>Receipt / Invoice Attachment (PDF / PNG / JPG) <span style={{ color: "#dc2626" }}>*</span></label>
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDragging(true);
+                    }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDragging(false);
+                      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        setReceiptFile(e.dataTransfer.files[0]);
                       }
                     }}
-                  />
-                  {receiptFile ? (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-                      <span style={{ fontSize: "1.25rem" }}>📄</span>
-                      <div style={{ textAlign: "left" }}>
-                        <div style={{ fontWeight: 600, fontSize: "0.875rem" }}>{receiptFile.name}</div>
-                        <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)" }}>
-                          {(receiptFile.size / 1024).toFixed(1)} KB
+                    style={{
+                      border: `2px dashed ${isDragging ? "var(--color-primary, #2563eb)" : "var(--color-border, #d1d5db)"}`,
+                      borderRadius: "8px",
+                      padding: "1.25rem",
+                      textAlign: "center",
+                      backgroundColor: isDragging ? "rgba(37, 99, 235, 0.04)" : "var(--color-surface, #f9fafb)",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                    onClick={() => document.getElementById("receipt-file-input")?.click()}
+                  >
+                    <input
+                      id="receipt-file-input"
+                      type="file"
+                      accept=".pdf,image/png,image/jpeg,image/jpg"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          setReceiptFile(e.target.files[0]);
+                        }
+                      }}
+                    />
+                    {receiptFile ? (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+                        <span style={{ fontSize: "1.25rem" }}>📄</span>
+                        <div style={{ textAlign: "left" }}>
+                          <div style={{ fontWeight: 600, fontSize: "0.875rem" }}>{receiptFile.name}</div>
+                          <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)" }}>
+                            {(receiptFile.size / 1024).toFixed(1)} KB
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-xs btn-ghost"
+                          style={{ marginLeft: "8px", color: "#dc2626" }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setReceiptFile(null);
+                          }}
+                        >
+                          ✕ Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        <div style={{ fontSize: "1.5rem", marginBottom: "4px" }}>📎</div>
+                        <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>
+                          Drag & drop receipt here, or <span style={{ color: "var(--color-primary, #2563eb)" }}>browse files</span>
+                        </div>
+                        <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", marginTop: "2px" }}>
+                          Supports PDF, PNG, JPG up to 25MB
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        className="btn btn-xs btn-ghost"
-                        style={{ marginLeft: "8px", color: "#dc2626" }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setReceiptFile(null);
-                        }}
-                      >
-                        ✕ Remove
-                      </button>
-                    </div>
-                  ) : (
-                    <div>
-                      <div style={{ fontSize: "1.5rem", marginBottom: "4px" }}>📎</div>
-                      <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>
-                        Drag & drop receipt here, or <span style={{ color: "var(--color-primary, #2563eb)" }}>browse files</span>
-                      </div>
-                      <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", marginTop: "2px" }}>
-                        Supports PDF, PNG, JPG up to 25MB
-                      </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div className="flex gap-2 justify-end mt-4">
+              <div className="modal-footer">
                 <button type="button" className="btn btn-ghost" onClick={() => setShowSubmitModal(false)}>
                   Cancel
                 </button>
@@ -520,9 +522,11 @@ export function ReimbursementsPage() {
       {/* Modal: View Claim Details & Manager/HR Review */}
       {selectedClaim && (
         <div className="modal-backdrop" onClick={() => setSelectedClaim(null)}>
-          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ maxWidth: "520px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{canReview && selectedClaim.status === "pending" ? "Review Reimbursement Claim" : "Reimbursement Claim Details"}</h2>
+              <h2>
+                {canReview && selectedClaim.status === "pending" ? "Review Reimbursement Claim" : "Reimbursement Claim Details"}
+              </h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -532,25 +536,48 @@ export function ReimbursementsPage() {
                 ✕
               </button>
             </div>
-            <div className="stack gap-3 my-2">
-              <div className="p-3 bg-muted rounded border stack gap-2">
+            <div className="modal-body stack gap-4">
+              <div
+                style={{
+                  background: "#f8fafc",
+                  padding: "16px",
+                  borderRadius: "10px",
+                  border: "1px solid #e2e8f0",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "12px",
+                }}
+              >
                 <div>
-                  <span className="text-muted text-xs block">Expense Type & Amount</span>
-                  <strong className="text-base">
-                    {selectedClaim.type.toUpperCase()} — ₹{Number(selectedClaim.amount).toLocaleString()}
-                  </strong>
+                  <span style={{ fontSize: "0.75rem", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", display: "block", marginBottom: "4px" }}>
+                    Expense Type & Amount
+                  </span>
+                  <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#0f172a", display: "flex", alignItems: "baseline", gap: "8px" }}>
+                    <span>{selectedClaim.type.toUpperCase()}</span>
+                    <span style={{ color: "#94a3b8" }}>—</span>
+                    <span style={{ color: "#16a34a" }}>₹{Number(selectedClaim.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-muted text-xs block">Date & Description</span>
-                  <p className="text-sm mt-1">{formatDate(selectedClaim.expense_date)}: {selectedClaim.description}</p>
+
+                <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "10px" }}>
+                  <span style={{ fontSize: "0.75rem", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", display: "block", marginBottom: "4px" }}>
+                    Date & Description
+                  </span>
+                  <div style={{ fontSize: "0.875rem", color: "#334155", lineHeight: "1.4" }}>
+                    <span style={{ fontWeight: 600, color: "#0f172a" }}>{formatDate(selectedClaim.expense_date)}: </span>
+                    {selectedClaim.description}
+                  </div>
                 </div>
-                <div>
-                  <span className="text-muted text-xs block">Current Status</span>
-                  <span className="mt-1 inline-block">
+
+                <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "10px" }}>
+                  <span style={{ fontSize: "0.75rem", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", display: "block", marginBottom: "4px" }}>
+                    Current Status
+                  </span>
+                  <div>
                     {selectedClaim.status === "paid" ? (
                       <span className="badge badge-success">✅ Paid in Payroll</span>
                     ) : selectedClaim.status === "approved" ? (
-                      <span className="badge" style={{ backgroundColor: "#ecfdf5", color: "#065f46", border: "1px solid #6ee7b7" }}>
+                      <span className="badge" style={{ backgroundColor: "#ecfdf5", color: "#065f46", border: "1px solid #6ee7b7", fontWeight: 600 }}>
                         ⏳ Approved • Pending Payroll
                       </span>
                     ) : selectedClaim.status === "rejected" ? (
@@ -558,42 +585,43 @@ export function ReimbursementsPage() {
                     ) : selectedClaim.status === "withdrawn" ? (
                       <span className="badge">Withdrawn</span>
                     ) : (
-                      <span className="badge badge-warning">Pending Approval</span>
+                      <span className="badge badge-warning" style={{ backgroundColor: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", fontWeight: 600 }}>
+                        Pending Approval
+                      </span>
                     )}
-                  </span>
+                  </div>
                 </div>
               </div>
 
-              {selectedClaim.file_object_id && (
-                <div>
-                  <span className="text-muted text-xs block">Receipt</span>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-outline mt-1"
-                    disabled={openingReceipt}
-                    onClick={() => handleOpenReceipt(selectedClaim.id)}
-                  >
-                    {openingReceipt ? "Opening..." : "📄 View receipt"}
-                  </button>
-                </div>
-              )}
-
-              {selectedClaim.status === "pending" && selectedClaim.employee_id === user?.employee?.id && (
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: "4px" }}>
+                {selectedClaim.file_object_id ? (
                   <button
                     type="button"
                     className="btn btn-sm btn-outline"
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                    disabled={openingReceipt}
+                    onClick={() => handleOpenReceipt(selectedClaim.id)}
+                  >
+                    📄 {openingReceipt ? "Opening..." : "View receipt"}
+                  </button>
+                ) : <div />}
+
+                {selectedClaim.status === "pending" && selectedClaim.employee_id === user?.employee?.id && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline"
+                    style={{ color: "#dc2626", borderColor: "#fca5a5" }}
                     disabled={reviewing}
                     onClick={() => handleWithdraw(selectedClaim.id)}
                   >
                     Withdraw claim
                   </button>
-                </div>
-              )}
+                )}
+              </div>
 
               {canReview && selectedClaim.status === "pending" && isRejecting && (
-                <div className="field">
-                  <label>Rejection Reason <span className="text-danger">*</span></label>
+                <div className="field" style={{ marginTop: "4px" }}>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600 }}>Rejection Reason <span className="text-danger">*</span></label>
                   <input
                     type="text"
                     placeholder="Enter reason if rejecting..."
@@ -605,7 +633,7 @@ export function ReimbursementsPage() {
               )}
             </div>
 
-            <div className="flex gap-2 justify-end mt-4">
+            <div className="modal-footer">
               {canReview && selectedClaim.status === "pending" ? (
                 <>
                   <button
@@ -636,6 +664,7 @@ export function ReimbursementsPage() {
                       <button
                         type="button"
                         className="btn btn-primary"
+                        style={{ backgroundColor: "#16a34a", borderColor: "#15803d" }}
                         onClick={() => handleReview("approve")}
                         disabled={reviewing}
                       >

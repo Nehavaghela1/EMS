@@ -99,12 +99,14 @@ class ProjectService:
         resp = ProjectResponse.model_validate(project)
         if getattr(project, "company", None):
             resp.company_name = project.company.name
+            resp.company_logo_url = getattr(project.company, "logo_url", None)
         else:
             from app.modules.identity.models import Company
 
             comp = self.repo.db.query(Company).filter(Company.id == project.company_id).first()
             if comp:
                 resp.company_name = comp.name
+                resp.company_logo_url = comp.logo_url
         return resp
 
     # --- Projects ---
