@@ -4,6 +4,7 @@ import { PayrollRunPage } from "../pages/PayrollRunPage";
 import * as payrollApi from "../api";
 import * as hrApi from "../../hr/api";
 import * as identityApi from "../../identity/api";
+import * as AuthContextModule from "../../../app/auth-context";
 import { ToastProvider } from "../../../app/toast-context";
 
 vi.mock("../api");
@@ -109,6 +110,19 @@ function renderPage() {
 describe("Sub-feature 5.4: PayrollRunPage Frontend", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(AuthContextModule, "useAuth").mockReturnValue({
+      user: {
+        id: "user-1",
+        company_id: "cmp-1",
+        email: "hr@example.com",
+        role: "hr_admin",
+      } as any,
+      status: "authenticated",
+      login: vi.fn(),
+      logout: vi.fn(),
+      establishSession: vi.fn(),
+      sessionExpired: false,
+    });
     vi.mocked(payrollApi.listPayrollRuns).mockResolvedValue({
       items: mockRuns,
       total: 2,
@@ -525,6 +539,101 @@ describe("Sub-feature 5.4: PayrollRunPage Frontend", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeInTheDocument();
       expect(screen.getByText(/The email backend is configured to/i)).toBeInTheDocument();
+    });
+  });
+
+  it("unlocks attendance with reason for a paid payroll run and handles re-lock", async () => {
+    const paidRun: payrollApi.PayrollRun = {
+      id: "run-paid-1",
+      company_id: "cmp-1",
+      month: 10,
+      year: 2026,
+      status: "paid",
+      run_type: "regular",
+      idempotency_key: "key-paid-1",
+      total_employees: 2,
+      total_gross: "150000.00",
+      total_deductions: "18000.00",
+      total_net: "132000.00",
+      total_employer_cost: "165000.00",
+      approved_by: "user-1",
+      approved_at: "2026-10-31T10:00:00Z",
+      error_message: null,
+      created_at: "2026-10-01T10:00:00Z",
+      is_attendance_unlocked: false,
+    };
+
+    vi.mocked(payrollApi.listPayrollRuns).mockResolvedValue({
+      items: [paidRun],
+      total: 1,
+      page: 1,
+      limit: 20,
+      pages: 1,
+      has_next: false,
+    });
+
+    vi.mocked(payrollApi.getPayrollRunDetail).mockResolvedValue({
+      run: paidRun,
+      items: mockRunDetail.items,
+    });
+
+    const unlockMock = vi.mocked(payrollApi.unlockPayrollRunAttendance).mockResolvedValue({
+      ...paidRun,
+      is_attendance_unlocked: true,
+      attendance_unlocked_at: "2026-11-24T10:00:00Z",
+      attendance_unlock_reason: "Punch correction ticket #8942",
+    });
+
+    const relockMock = vi.mocked(payrollApi.relockPayrollRunAttendance).mockResolvedValue({
+      ...paidRun,
+      is_attendance_unlocked: false,
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /View & Process Pay Run/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /View & Process Pay Run/i }));
+
+    // Verify Attendance Locked banner is displayed
+    await waitFor(() => {
+      expect(screen.getByText("Attendance Locked")).toBeInTheDocument();
+    });
+
+    const unlockBtn = screen.getByRole("button", { name: /Unlock Attendance/i });
+    expect(unlockBtn).toBeInTheDocument();
+
+    // Click Unlock Attendance button to open modal
+    fireEvent.click(unlockBtn);
+
+    expect(screen.getByText("Unlock Attendance for Correction")).toBeInTheDocument();
+    const reasonInput = screen.getByPlaceholderText(/punch clock correction/i);
+    fireEvent.change(reasonInput, { target: { value: "Punch correction ticket #8942" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Confirm Unlock/i }));
+
+    await waitFor(() => {
+      expect(unlockMock).toHaveBeenCalledWith("run-paid-1", "Punch correction ticket #8942");
+    });
+
+    // Verify UI updates to unlocked state
+    await waitFor(() => {
+      expect(screen.getByText("Attendance Unlocked")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Re-lock Attendance/i })).toBeInTheDocument();
+    });
+
+    // Re-lock flow
+    fireEvent.click(screen.getByRole("button", { name: /Re-lock Attendance/i }));
+    expect(screen.getByRole("heading", { name: "Re-lock Attendance" })).toBeInTheDocument();
+    const relockReasonInput = screen.getByPlaceholderText(/sealing attendance again/i);
+    fireEvent.change(relockReasonInput, { target: { value: "Corrections completed, sealing again" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Confirm Re-lock/i }));
+
+    await waitFor(() => {
+      expect(relockMock).toHaveBeenCalledWith("run-paid-1", "Corrections completed, sealing again");
     });
   });
 });

@@ -142,7 +142,10 @@ export interface PayrollRun {
   total_employer_cost: string | null;
   approved_by: string | null;
   approved_at: string | null;
-  error_message: string | null;
+  is_attendance_unlocked?: boolean;
+  attendance_unlocked_at?: string | null;
+  attendance_unlocked_by?: string | null;
+  attendance_unlock_reason?: string | null;
   created_at: string;
 }
 
@@ -393,6 +396,28 @@ export async function approvePayrollRun(id: string): Promise<PayrollRun> {
 
 export async function deletePayrollRun(id: string): Promise<void> {
   await apiClient.delete(`/payroll/runs/${id}`);
+}
+
+export async function unlockPayrollRunAttendance(
+  id: string,
+  reason: string
+): Promise<PayrollRun> {
+  const res = await apiClient.post<PayrollRun>(`/payroll/runs/${id}/unlock-attendance`, {
+    unlocked: true,
+    reason,
+  });
+  return res.data;
+}
+
+export async function relockPayrollRunAttendance(
+  id: string,
+  reason: string
+): Promise<PayrollRun> {
+  const res = await apiClient.post<PayrollRun>(`/payroll/runs/${id}/lock-attendance`, {
+    unlocked: false,
+    reason,
+  });
+  return res.data;
 }
 
 export interface SendPayslipsRecipientResult {
