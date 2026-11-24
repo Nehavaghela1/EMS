@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -1703,7 +1703,7 @@ class PayrollRunService:
             # Salaried employees (full_time, part_time, intern) use project
             # timesheet hours for project-cost tracking and client billing only —
             # their paycheck is their fixed monthly CTC regardless of hours logged.
-            is_hourly = emp.employment_type == EmploymentType.contract
+            is_hourly = emp.employment_type in (EmploymentType.contract, EmploymentType.freelancer)
 
             approved_time_entries = self.project_repo.list_time_entries(
                 company_id=company_id,
@@ -1712,23 +1712,82 @@ class PayrollRunService:
                 start_date=month_start,
                 end_date=month_end,
             )
-            total_approved_project_hours = sum(
-                (Decimal(str(te.hours)) for te in approved_time_entries), Decimal("0.00")
-            )
 
-            # Hourly rate: use explicit hourly_rate if set, else fall back to
-            # monthly_ctc / 160 (standard Indian payroll convention).
-            if is_hourly and total_approved_project_hours > 0:
-                if salary_record.hourly_rate is not None:
-                    hourly_rate = salary_record.hourly_rate
-                else:
-                    monthly_ctc = _round(salary_record.ctc / Decimal("12"))
-                    hourly_rate = _round(monthly_ctc / Decimal("160.00"))
-                project_hours_pay = _round(total_approved_project_hours * hourly_rate)
-            else:
-                # Salaried: hours are for project tracking only — no pay impact
-                project_hours_pay = Decimal("0.00")
-                hourly_rate = Decimal("0.00")
+            # Project hours calculation with multi-tier rate resolution
+            project_hours_pay = Decimal("0.00")
+            hourly_lines: list[dict] = []
+
+            if is_hourly and approved_time_entries:
+                # Group approved time entries by project and resolve rate per entry date
+                # Key: (project_id, resolved_rate, is_fallback) -> total_hours
+                project_rate_hours: dict[tuple[uuid.UUID, Decimal, bool], Decimal] = {}
+                project_cache: dict[uuid.UUID, Any] = {}
+
+                for te in approved_time_entries:
+                    te_hours = Decimal(str(te.hours))
+                    if te_hours <= Decimal("0.00"):
+                        continue
+
+                    # Rate resolution hierarchy:
+                    # 1. ProjectMemberRate in effect for that project, employee, and date
+                    resolved_rate = self.project_repo.get_effective_member_rate(
+                        company_id=company_id,
+                        project_id=te.project_id,
+                        employee_id=emp.id,
+                        target_date=te.date,
+                    )
+                    is_fallback = False
+
+                    # 2. salary_record.hourly_rate
+                    if resolved_rate is None and salary_record.hourly_rate is not None:
+                        resolved_rate = salary_record.hourly_rate
+
+                    # 3. For contract only, (CTC / 12) / 160 fallback
+                    if resolved_rate is None and emp.employment_type == EmploymentType.contract:
+                        monthly_ctc = _round(salary_record.ctc / Decimal("12"))
+                        resolved_rate = _round(monthly_ctc / Decimal("160.00"))
+                        is_fallback = True
+
+                    # 4. For freelancer with no rate at either level: refuse the run
+                    if resolved_rate is None:
+                        emp_name = f"{emp.first_name} {emp.last_name or ''}".strip()
+                        raise ConflictError(
+                            f"Payroll run cannot be processed: Freelancer '{emp_name}' "
+                            f"({emp.employee_code}) has no hourly rate configured at project "
+                            "or salary level."
+                        )
+
+                    key = (te.project_id, resolved_rate, is_fallback)
+                    project_rate_hours[key] = (
+                        project_rate_hours.get(key, Decimal("0.00")) + te_hours
+                    )
+
+                # Calculate pay per (project, rate, fallback) bucket and construct payslip lines
+                for (p_id, r_rate, is_fb), p_hours in project_rate_hours.items():
+                    if p_id not in project_cache:
+                        project_cache[p_id] = self.project_repo.get_project_by_id(company_id, p_id)
+                    p_obj = project_cache[p_id]
+                    p_name = p_obj.name if p_obj else "Project"
+
+                    line_amount = _round(p_hours * r_rate)
+                    project_hours_pay += line_amount
+
+                    fallback_note = " [Fallback Rate Used]" if is_fb else ""
+                    line_name = (
+                        f"Hourly Pay — {p_name}: {p_hours} hrs @ ₹{r_rate}/hr{fallback_note}"
+                    )
+                    hourly_lines.append(
+                        {
+                            "code": "PROJECT_HOURS",
+                            "name": line_name,
+                            "amount": str(line_amount),
+                            "project_id": str(p_id),
+                            "project_name": p_name,
+                            "hours": str(p_hours),
+                            "rate": str(r_rate),
+                            "is_fallback": is_fb,
+                        }
+                    )
 
             # ── Year-to-date gross & TDS in the financial year so far ─────────
             # Computed from approved/paid runs in the same FY, excluding the current run
@@ -1801,17 +1860,8 @@ class PayrollRunService:
                 {"code": e.code, "name": e.name, "amount": str(e.amount)}
                 for e in payslip_out.earnings
             ]
-            if is_hourly and project_hours_pay > Decimal("0.00"):
-                earnings_json.append(
-                    {
-                        "code": "PROJECT_HOURS",
-                        "name": (
-                            f"Hourly Pay — {total_approved_project_hours} hrs"
-                            f" @ ₹{hourly_rate}/hr (approved project timesheets)"
-                        ),
-                        "amount": str(project_hours_pay),
-                    }
-                )
+            if is_hourly and hourly_lines:
+                earnings_json.extend(hourly_lines)
 
             # deductions_json: statutory lines only (EPF, ESI, PT, TDS, LWF).
             # LOP is NOT a subtracted deduction line — it is already reflected in
