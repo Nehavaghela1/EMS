@@ -68,6 +68,7 @@ class EmploymentType(str, enum.Enum):
     part_time = "part_time"
     contract = "contract"
     intern = "intern"
+    freelancer = "freelancer"
 
 
 class InvitationStatus(str, enum.Enum):

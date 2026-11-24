@@ -1,7 +1,7 @@
 import { apiClient } from "../../app/api-client";
 import type { Page } from "../../shared/api/pagination";
 
-export type EmploymentType = "full_time" | "part_time" | "contract" | "intern";
+export type EmploymentType = "full_time" | "part_time" | "contract" | "intern" | "freelancer";
 export type InvitationStatus = "not_sent" | "sent" | "activated" | "expired";
 
 export interface Department {

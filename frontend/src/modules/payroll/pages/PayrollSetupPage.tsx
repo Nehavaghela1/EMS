@@ -119,6 +119,7 @@ export function PayrollSetupPage() {
   const [selectedEmpId, setSelectedEmpId] = useState("");
   const [selectedStructId, setSelectedStructId] = useState("");
   const [assignCtc, setAssignCtc] = useState("600000.00");
+  const [assignHourlyRate, setAssignHourlyRate] = useState("");
   const [assignReason, setAssignReason] = useState("");
   const [assignEffectiveFrom, setAssignEffectiveFrom] = useState(
     new Date().toISOString().split("T")[0]
@@ -325,6 +326,9 @@ export function PayrollSetupPage() {
       notify("Please select employee and structure", "error");
       return;
     }
+    const selectedEmp = employees.find((e) => e.id === selectedEmpId);
+    const isHourlyEmp = selectedEmp?.employment_type === "contract" || selectedEmp?.employment_type === "freelancer";
+
     setAssigning(true);
     try {
       await assignEmployeeSalary(selectedEmpId, {
@@ -333,9 +337,11 @@ export function PayrollSetupPage() {
         effective_from: assignEffectiveFrom,
         // Required by the server when the employee already has a salary (a revision).
         revision_reason: assignReason.trim() || undefined,
+        hourly_rate: isHourlyEmp && assignHourlyRate.trim() ? assignHourlyRate.trim() : undefined,
       });
       notify("Salary assigned successfully", "success");
       setAssignReason("");
+      setAssignHourlyRate("");
       setShowAssignModal(false);
     } catch (err: unknown) {
       const parsed = parseApiError(err);
@@ -1274,35 +1280,58 @@ export function PayrollSetupPage() {
                 </select>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                <div>
-                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
-                    Annual CTC (₹) <span style={{ color: "#ef4444" }}>*</span>
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="e.g. 1200000"
-                    value={assignCtc}
-                    onChange={(e) => setAssignCtc(e.target.value)}
-                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
-                    required
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
-                    Effective From <span style={{ color: "#ef4444" }}>*</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={assignEffectiveFrom}
-                    onChange={(e) => setAssignEffectiveFrom(e.target.value)}
-                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
-                    required
-                  />
-                </div>
-              </div>
+              {(() => {
+                const selectedEmp = employees.find((e) => e.id === selectedEmpId);
+                const isHourlyEmp = selectedEmp?.employment_type === "contract" || selectedEmp?.employment_type === "freelancer";
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: isHourlyEmp ? "1fr 1fr 1fr" : "1fr 1fr", gap: "12px" }}>
+                    <div>
+                      <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                        Annual CTC (₹) <span style={{ color: "#ef4444" }}>*</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="e.g. 1200000"
+                        value={assignCtc}
+                        onChange={(e) => setAssignCtc(e.target.value)}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                        required
+                      />
+                    </div>
+                    {isHourlyEmp && (
+                      <div>
+                        <label htmlFor="assign-hourly-rate" style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                          Hourly Rate (₹/hr)
+                        </label>
+                        <input
+                          id="assign-hourly-rate"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="e.g. 500.00"
+                          value={assignHourlyRate}
+                          onChange={(e) => setAssignHourlyRate(e.target.value)}
+                          style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                        />
+                      </div>
+                    )}
+                    <div>
+                      <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                        Effective From <span style={{ color: "#ef4444" }}>*</span>
+                      </label>
+                      <input
+                        type="date"
+                        value={assignEffectiveFrom}
+                        onChange={(e) => setAssignEffectiveFrom(e.target.value)}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
+                        required
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
               <div style={{ marginTop: "12px" }}>
                 <label
                   htmlFor="assign-revision-reason"

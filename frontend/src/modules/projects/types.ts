@@ -54,6 +54,7 @@ export interface ProjectMember {
   project_id: string;
   employee_id: string;
   role: MemberRole;
+  hourly_rate?: string | null;
   joined_at: string;
   left_at?: string;
   created_at: string;

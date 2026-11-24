@@ -9,13 +9,18 @@ import {
   getStatutoryConfig,
   updateStatutoryConfig,
   sendPayrollRunPayslips,
+  unlockPayrollRunAttendance,
+  relockPayrollRunAttendance,
+  getPayrollRunPayments,
   type SendPayslipsResponse,
   type PayrollRun,
   type PayrollRunDetail,
   type PayrollItem,
+  type PayrollPaymentRecord,
 } from "../api";
 import { listEmployees, type Employee } from "../../hr/api";
 import { getMyCompany, type CompanyResponse } from "../../identity/api";
+import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { parseApiError } from "../../../shared/api/errors";
 import { ConfirmDialog } from "../../../shared/components/ConfirmDialog";
@@ -28,6 +33,7 @@ function daysInMonth(year: number, month: number): number {
 }
 
 export function PayrollRunPage() {
+  const { user } = useAuth();
   const { notify } = useToast();
   const [runs, setRuns] = useState<PayrollRun[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -39,6 +45,12 @@ export function PayrollRunPage() {
   const [runYear, setRunYear] = useState<number>(new Date().getFullYear());
   const [runType, setRunType] = useState<string>("regular");
   const [startingRun, setStartingRun] = useState(false);
+
+  // Attendance Unlock / Relock Modal
+  const [showAttendanceModal, setShowAttendanceModal] = useState(false);
+  const [attendanceModalMode, setAttendanceModalMode] = useState<"unlock" | "relock">("unlock");
+  const [attendanceReason, setAttendanceReason] = useState("");
+  const [submittingAttendance, setSubmittingAttendance] = useState(false);
 
   // Detail View Modal
   const [selectedRunDetail, setSelectedRunDetail] = useState<PayrollRunDetail | null>(null);
@@ -138,13 +150,24 @@ export function PayrollRunPage() {
 
   async function handleViewDetail(runId: string) {
     setLoadingDetail(true);
+    setRunPayments([]);
+    setLoadingPayments(true);
     try {
       const detail = await getPayrollRunDetail(runId);
       setSelectedRunDetail(detail);
+      // Fetch payments for this run
+      try {
+        const payments = await getPayrollRunPayments(runId);
+        setRunPayments(payments);
+      } catch {
+        // Payments might not be recorded yet or non-critical error
+        setRunPayments([]);
+      }
     } catch {
       notify("Failed to load run details", "error");
     } finally {
       setLoadingDetail(false);
+      setLoadingPayments(false);
     }
   }
 
@@ -193,6 +216,35 @@ export function PayrollRunPage() {
     }
   }
 
+  async function handleAttendanceAction(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedRunDetail) return;
+    const trimmed = attendanceReason.trim();
+    if (!trimmed) {
+      notify("A valid reason between 1 and 500 characters is required.", "error");
+      return;
+    }
+    setSubmittingAttendance(true);
+    try {
+      let updatedRun: PayrollRun;
+      if (attendanceModalMode === "unlock") {
+        updatedRun = await unlockPayrollRunAttendance(selectedRunDetail.run.id, trimmed);
+        notify("Attendance successfully unlocked for this period.", "success");
+      } else {
+        updatedRun = await relockPayrollRunAttendance(selectedRunDetail.run.id, trimmed);
+        notify("Attendance successfully re-locked for this period.", "success");
+      }
+      setSelectedRunDetail({ ...selectedRunDetail, run: updatedRun });
+      setShowAttendanceModal(false);
+      setAttendanceReason("");
+      fetchRuns();
+    } catch (err) {
+      notify(parseApiError(err).message || "Failed to update attendance lock state", "error");
+    } finally {
+      setSubmittingAttendance(false);
+    }
+  }
+
 
   // Navigation sub-tab in Pay Runs: "run_payroll" (Screen 1) vs "payroll_history" (Screen 2)
   const [subTab, setSubTab] = useState<"run_payroll" | "payroll_history">("run_payroll");
@@ -200,12 +252,16 @@ export function PayrollRunPage() {
   // Filter in Payroll History (Screen 2): "All", "regular", "off_cycle", "final_settlement"
   const [payrollTypeFilter, setPayrollTypeFilter] = useState<string>("All");
 
-  // Run detail internal tabs (Screen 3): "employee_summary"
-  const [detailSubTab, setDetailSubTab] = useState<"employee_summary">("employee_summary");
+  // Run detail internal tabs (Screen 3): "employee_summary" vs "payments"
+  const [detailSubTab, setDetailSubTab] = useState<"employee_summary" | "payments">("employee_summary");
   const [employeeSearchTerm, setEmployeeSearchTerm] = useState("");
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [payslipModalItem, setPayslipModalItem] = useState<{ item: PayrollItem; empName: string } | null>(null);
+
+  // Payment records state (Part 7)
+  const [runPayments, setRunPayments] = useState<PayrollPaymentRecord[]>([]);
+  const [loadingPayments, setLoadingPayments] = useState(false);
 
   const MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
@@ -271,6 +327,7 @@ export function PayrollRunPage() {
     const r = selectedRunDetail.run;
     const monthName = MONTH_NAMES[r.month - 1];
     const isPaid = r.status === "approved" || r.status === "paid";
+    const isHrOrOwner = user?.role === "hr_admin" || user?.role === "owner" || user?.role === "super_admin";
 
     return (
       <div style={{ background: "#f8fafc", minHeight: "100vh", padding: "1.5rem 2rem" }}>
@@ -450,6 +507,36 @@ export function PayrollRunPage() {
                     <span>Download Bank Advice</span>
                   </button>
 
+                  {isPaid && isHrOrOwner && (
+                    <button
+                      type="button"
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        background: "transparent",
+                        border: "none",
+                        padding: "10px 14px",
+                        fontSize: "0.84rem",
+                        color: r.is_attendance_unlocked ? "#d97706" : "#2563eb",
+                        borderTop: "1px solid #f1f5f9",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      onClick={() => {
+                        setAttendanceModalMode(r.is_attendance_unlocked ? "relock" : "unlock");
+                        setAttendanceReason("");
+                        setShowAttendanceModal(true);
+                      }}
+                    >
+                      <span>{r.is_attendance_unlocked ? "🔒" : "🔓"}</span>
+                      <span>{r.is_attendance_unlocked ? "Re-lock Attendance" : "Unlock Attendance"}</span>
+                    </button>
+                  )}
+
                   {!isPaid && (
                     <button
                       type="button"
@@ -480,6 +567,68 @@ export function PayrollRunPage() {
             </div>
           </div>
         </div>
+
+        {/* Attendance Lock / Unlock Banner for Paid Runs */}
+        {isPaid && (
+          <div
+            style={{
+              background: r.is_attendance_unlocked ? "#fffbeb" : "#f8fafc",
+              border: `1px solid ${r.is_attendance_unlocked ? "#fef3c7" : "#e2e8f0"}`,
+              borderRadius: "10px",
+              padding: "1rem 1.25rem",
+              marginBottom: "1.25rem",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "1rem",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "1.25rem" }}>{r.is_attendance_unlocked ? "🔓" : "🔒"}</span>
+              <div>
+                <div style={{ fontSize: "0.88rem", fontWeight: 700, color: r.is_attendance_unlocked ? "#b45309" : "#334155" }}>
+                  {r.is_attendance_unlocked ? "Attendance Unlocked" : "Attendance Locked"}
+                </div>
+                <div style={{ fontSize: "0.8rem", color: "#64748b", marginTop: "2px" }}>
+                  {r.is_attendance_unlocked ? (
+                    <span>
+                      Unlocked on {r.attendance_unlocked_at ? new Date(r.attendance_unlocked_at).toLocaleString() : "recently"}
+                      {r.attendance_unlocked_by && ` by ${employeeMap.get(r.attendance_unlocked_by)?.first_name || "Admin"}`}.
+                      {r.attendance_unlock_reason && ` Reason: "${r.attendance_unlock_reason}"`}
+                    </span>
+                  ) : (
+                    <span>Attendance for this period was sealed when payroll was paid.</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {isHrOrOwner && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  setAttendanceModalMode(r.is_attendance_unlocked ? "relock" : "unlock");
+                  setAttendanceReason("");
+                  setShowAttendanceModal(true);
+                }}
+                style={{
+                  background: r.is_attendance_unlocked ? "#fef3c7" : "#ffffff",
+                  color: r.is_attendance_unlocked ? "#b45309" : "#2563eb",
+                  border: `1px solid ${r.is_attendance_unlocked ? "#fde68a" : "#cbd5e1"}`,
+                  padding: "6px 14px",
+                  borderRadius: "6px",
+                  fontWeight: 600,
+                  fontSize: "0.82rem",
+                  cursor: "pointer",
+                }}
+              >
+                {r.is_attendance_unlocked ? "Re-lock Attendance" : "Unlock Attendance"}
+              </button>
+            )}
+          </div>
+        )}
 
         {/* 3-Column Summary Card (Screen 3) */}
         <div
@@ -569,10 +718,11 @@ export function PayrollRunPage() {
           </div>
         </div>
 
-        {/* Sub-tabs below Hero (Screen 3): Employee Summary */}
+        {/* Sub-tabs below Hero (Screen 3): Employee Summary & Payment Records */}
         <div style={{ display: "flex", gap: "2rem", borderBottom: "1px solid #e2e8f0", marginBottom: "1.25rem" }}>
           {[
             { id: "employee_summary", label: "Employee Summary" },
+            { id: "payments", label: `Payment Records (${runPayments?.length || 0})` },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -731,7 +881,103 @@ export function PayrollRunPage() {
           </div>
         )}
 
+        {/* Tab 2 Content: Payment Records Table (Part 7) */}
+        {detailSubTab === "payments" && (
+          <div style={{ background: "#ffffff", borderRadius: "10px", border: "1px solid #e2e8f0", padding: "1.25rem", boxShadow: "0 1px 3px rgba(0, 0, 0, 0.04)" }}>
+            <div className="border-b pb-3 mb-4">
+              <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
+                Disbursement & Payment Records
+              </h3>
+              <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+                Itemized payment rows for this payroll run (Read-only)
+              </p>
+            </div>
 
+            {loadingPayments ? (
+              <div className="row p-4">
+                <div className="spinner" />
+                <span className="text-muted text-sm ml-2">Loading payment records...</span>
+              </div>
+            ) : !runPayments || runPayments.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "2.5rem 1rem" }}>
+                <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>💳</div>
+                <h4 style={{ margin: "0 0 0.5rem" }}>No Payment Records Found</h4>
+                <p className="text-muted text-sm" style={{ maxWidth: 420, margin: "0 auto" }}>
+                  Payment records are generated and populated once payment lines are recorded or processed for this run.
+                </p>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="table text-sm" style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>
+                        Employee
+                      </th>
+                      <th style={{ padding: "10px 12px", textAlign: "right", fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>
+                        Net Amount (₹)
+                      </th>
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>
+                        Payment Status
+                      </th>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>
+                        Bank Reference
+                      </th>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>
+                        Payment Date
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runPayments.map((pay) => (
+                      <tr key={pay.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px" }}>
+                          <div style={{ fontWeight: 600, color: "#0f172a" }}>{pay.employee_name}</div>
+                          <div className="text-muted text-xs">{pay.employee_code}</div>
+                        </td>
+                        <td style={{ padding: "12px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>
+                          ₹{Number(pay.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td style={{ padding: "12px", textAlign: "center" }}>
+                          <span
+                            className="badge"
+                            style={{
+                              padding: "2px 8px",
+                              borderRadius: "4px",
+                              fontSize: "0.75rem",
+                              fontWeight: 600,
+                              textTransform: "capitalize",
+                              backgroundColor:
+                                pay.status.toLowerCase() === "paid"
+                                  ? "#dcfce7"
+                                  : pay.status.toLowerCase() === "failed"
+                                  ? "#fee2e2"
+                                  : "#fef3c7",
+                              color:
+                                pay.status.toLowerCase() === "paid"
+                                  ? "#15803d"
+                                  : pay.status.toLowerCase() === "failed"
+                                  ? "#b91c1c"
+                                  : "#b45309",
+                            }}
+                          >
+                            {pay.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px", color: pay.bank_reference ? "#0f172a" : "#94a3b8", fontFamily: pay.bank_reference ? "monospace" : "inherit" }}>
+                          {pay.bank_reference || "—"}
+                        </td>
+                        <td style={{ padding: "12px", color: pay.paid_on ? "#0f172a" : "#94a3b8" }}>
+                          {pay.paid_on || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Zoho Standard Payslip Document Viewer Modal */}
         {payslipModalItem && (
@@ -1009,6 +1255,143 @@ export function PayrollRunPage() {
                   </>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Attendance Unlock / Relock Modal */}
+        {showAttendanceModal && (
+          <div
+            className="modal-backdrop"
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(15, 23, 42, 0.5)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "20px",
+            }}
+          >
+            <div
+              className="modal-dialog"
+              style={{
+                background: "#ffffff",
+                borderRadius: "12px",
+                width: "100%",
+                maxWidth: "520px",
+                boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+                overflow: "hidden",
+              }}
+            >
+              <form onSubmit={handleAttendanceAction}>
+                <div
+                  className="modal-header"
+                  style={{
+                    padding: "1.25rem 1.5rem",
+                    borderBottom: "1px solid #e2e8f0",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 700, color: "#0f172a" }}>
+                    {attendanceModalMode === "unlock" ? "Unlock Attendance for Correction" : "Re-lock Attendance"}
+                  </h3>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => setShowAttendanceModal(false)}
+                    style={{ border: "none", background: "transparent", fontSize: "1.2rem", cursor: "pointer", color: "#64748b" }}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div style={{ padding: "1.5rem" }}>
+                  <p style={{ margin: "0 0 1rem 0", fontSize: "0.85rem", color: "#475569", lineHeight: 1.5 }}>
+                    {attendanceModalMode === "unlock"
+                      ? "Unlocking attendance allows HR and managers to modify attendance and regularization records for this paid payroll period. This action is audited."
+                      : "Re-locking attendance prevents any further modifications to attendance records for this payroll period. This action is audited."}
+                  </p>
+
+                  <div style={{ marginBottom: "1rem" }}>
+                    <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#334155", marginBottom: "6px" }}>
+                      Reason for {attendanceModalMode === "unlock" ? "Unlocking" : "Re-locking"} *
+                    </label>
+                    <textarea
+                      required
+                      rows={3}
+                      value={attendanceReason}
+                      onChange={(e) => setAttendanceReason(e.target.value)}
+                      placeholder={
+                        attendanceModalMode === "unlock"
+                          ? "e.g., HR audit ticket #8942: punch clock correction"
+                          : "e.g., Audit correction completed, sealing attendance again"
+                      }
+                      maxLength={500}
+                      style={{
+                        width: "100%",
+                        padding: "8px 12px",
+                        fontSize: "0.85rem",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: "6px",
+                        outline: "none",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                    <div style={{ fontSize: "0.72rem", color: "#94a3b8", textAlign: "right", marginTop: "4px" }}>
+                      {attendanceReason.length}/500
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  className="modal-footer"
+                  style={{
+                    padding: "1rem 1.5rem",
+                    background: "#f8fafc",
+                    borderTop: "1px solid #e2e8f0",
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: "10px",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setShowAttendanceModal(false)}
+                    disabled={submittingAttendance}
+                    style={{ border: "1px solid #cbd5e1", borderRadius: "6px", padding: "6px 14px", cursor: "pointer" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={submittingAttendance || !attendanceReason.trim()}
+                    style={{
+                      background: attendanceModalMode === "unlock" ? "#2563eb" : "#d97706",
+                      borderColor: attendanceModalMode === "unlock" ? "#2563eb" : "#d97706",
+                      borderRadius: "6px",
+                      padding: "6px 18px",
+                      fontWeight: 600,
+                      color: "#ffffff",
+                      cursor: submittingAttendance || !attendanceReason.trim() ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {submittingAttendance
+                      ? "Saving…"
+                      : attendanceModalMode === "unlock"
+                        ? "Confirm Unlock"
+                        : "Confirm Re-lock"}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
