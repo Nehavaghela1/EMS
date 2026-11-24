@@ -1340,7 +1340,7 @@ class PerformanceService:
         from app.core.approval_authority import can_approve_for
 
         try:
-            return bool(can_approve_for(self.db, actor, employee))
+            return can_approve_for(self.db, actor, employee)
         except ForbiddenError:
             return False
 
