@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { useToast } from "../../../app/toast-context";
@@ -248,6 +248,28 @@ export function PlatformStatutoryPage() {
   const [deletingRateId, setDeletingRateId] = useState<string | null>(null);
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
   const [modalMode, setModalMode] = useState<"create" | "revise">("create");
+
+  // Close dropdown on click outside or Escape
+  useEffect(() => {
+    if (!openActionMenuId) return;
+    const handleDocumentClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-action-menu]")) {
+        setOpenActionMenuId(null);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpenActionMenuId(null);
+      }
+    };
+    document.addEventListener("mousedown", handleDocumentClick);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentClick);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openActionMenuId]);
 
   // Modal Form State
   const [formData, setFormData] = useState<StatutoryRateCreateInput>({
@@ -713,20 +735,21 @@ export function PlatformStatutoryPage() {
                           </div>
                         </td>
                         <td style={{ padding: "12px 14px", textAlign: "right", position: "relative" }}>
-                          <div style={{ display: "inline-block", position: "relative" }}>
+                          <div data-action-menu style={{ display: "inline-block", position: "relative" }}>
                             <button
                               type="button"
                               className="btn btn-xs"
                               style={{
-                                background: "#f8fafc",
+                                background: openActionMenuId === rate.id ? "#e2e8f0" : "#f8fafc",
                                 border: "1px solid #cbd5e1",
                                 borderRadius: "4px",
                                 color: "#334155",
-                                padding: "4px 8px",
-                                fontSize: "0.82rem",
+                                padding: "3px 7px",
+                                fontSize: "0.78rem",
                                 fontWeight: 700,
                                 cursor: "pointer",
                                 letterSpacing: "1px",
+                                lineHeight: 1,
                               }}
                               title="Actions"
                               onClick={(e) => {
@@ -742,14 +765,14 @@ export function PlatformStatutoryPage() {
                                 style={{
                                   position: "absolute",
                                   right: 0,
-                                  top: "calc(100% + 4px)",
+                                  top: "calc(100% + 2px)",
                                   background: "#ffffff",
                                   border: "1px solid #e2e8f0",
                                   borderRadius: "6px",
-                                  boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+                                  boxShadow: "0 4px 12px rgba(0, 0, 0, 0.12)",
                                   zIndex: 50,
-                                  minWidth: "170px",
-                                  padding: "4px 0",
+                                  minWidth: "110px",
+                                  padding: "3px 0",
                                   textAlign: "left",
                                 }}
                                 onClick={(e) => e.stopPropagation()}
@@ -759,17 +782,19 @@ export function PlatformStatutoryPage() {
                                   style={{
                                     width: "100%",
                                     textAlign: "left",
-                                    padding: "7px 12px",
+                                    padding: "5px 10px",
                                     border: "none",
                                     background: "transparent",
-                                    fontSize: "0.82rem",
+                                    fontSize: "0.78rem",
                                     fontWeight: 500,
                                     color: "#1e293b",
                                     cursor: "pointer",
                                     display: "flex",
                                     alignItems: "center",
-                                    gap: "8px",
+                                    gap: "6px",
                                   }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                                   onClick={() => {
                                     setOpenActionMenuId(null);
                                     setModalMode("revise");
@@ -796,35 +821,37 @@ export function PlatformStatutoryPage() {
                                     setShowAddModal(true);
                                   }}
                                 >
-                                  <span>✏️</span> <span>Revise / Update Rate</span>
+                                  <span>✏️</span> <span>Revise</span>
                                 </button>
-                                <div style={{ height: "1px", background: "#f1f5f9", margin: "4px 0" }} />
+                                <div style={{ height: "1px", background: "#f1f5f9", margin: "2px 0" }} />
                                 <button
                                   type="button"
                                   style={{
                                     width: "100%",
                                     textAlign: "left",
-                                    padding: "7px 12px",
+                                    padding: "5px 10px",
                                     border: "none",
                                     background: "transparent",
-                                    fontSize: "0.82rem",
+                                    fontSize: "0.78rem",
                                     fontWeight: 500,
                                     color: "#b91c1c",
                                     cursor: "pointer",
                                     display: "flex",
                                     alignItems: "center",
-                                    gap: "8px",
+                                    gap: "6px",
                                   }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.background = "#fef2f2")}
+                                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                                   disabled={deleteMutation.isPending && deletingRateId === rate.id}
                                   onClick={() => {
                                     setOpenActionMenuId(null);
-                                    if (window.confirm(`Are you sure you want to cancel and remove the ${rate.country} ${rate.scheme.toUpperCase()} statutory rate?`)) {
+                                    if (window.confirm(`Are you sure you want to remove the ${rate.country} ${rate.scheme.toUpperCase()} statutory rate?`)) {
                                       setDeletingRateId(rate.id);
                                       deleteMutation.mutate(rate.id);
                                     }
                                   }}
                                 >
-                                  <span>✕</span> <span>Cancel / Remove Rate</span>
+                                  <span>✕</span> <span>Remove</span>
                                 </button>
                               </div>
                             )}
