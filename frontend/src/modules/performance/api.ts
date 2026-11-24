@@ -81,13 +81,27 @@ export interface PerformanceReview {
 export interface PerformanceSummary {
   id: string;
   employee_id: string;
+  employee_name?: string | null;
+  employee_code?: string | null;
   cycle_id: string;
   final_rating: string;
   overall_comments: string | null;
   salary_revision_recommended: boolean;
   recommended_increment_percent: string | null;
   reviewed_by: string;
+  reviewed_by_name?: string | null;
   finalized_at: string;
+}
+
+export interface ListSummariesParams {
+  cycle_id: string;
+  page?: number;
+  limit?: number;
+}
+
+export async function listPerformanceSummaries(params: ListSummariesParams): Promise<Page<PerformanceSummary>> {
+  const res = await apiClient.get<Page<PerformanceSummary>>("/performance/summaries", { params });
+  return res.data;
 }
 
 export interface SummaryFinalizeInput {

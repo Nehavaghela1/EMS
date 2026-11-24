@@ -27,6 +27,7 @@ import { PerformanceCyclesPage } from "../modules/performance/pages/PerformanceC
 import { MyGoalsPage } from "../modules/performance/pages/MyGoalsPage";
 import { TeamGoalsPage } from "../modules/performance/pages/TeamGoalsPage";
 import { PerformanceReviewPage } from "../modules/performance/pages/PerformanceReviewPage";
+import { PerformanceSummariesPage } from "../modules/performance/pages/PerformanceSummariesPage";
 import { ProjectsListPage } from "../modules/projects/pages/ProjectsListPage";
 import { ProjectDetailPage } from "../modules/projects/pages/ProjectDetailPage";
 import { TimesheetsPage } from "../modules/projects/pages/TimesheetsPage";
@@ -270,6 +271,14 @@ export function AppRouter() {
         element={
           <Protected roles={["hr_admin", "manager", "owner"]}>
             <TeamGoalsPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/performance/summaries"
+        element={
+          <Protected roles={["hr_admin", "owner"]}>
+            <PerformanceSummariesPage />
           </Protected>
         }
       />
