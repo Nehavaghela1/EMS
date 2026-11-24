@@ -563,3 +563,19 @@ export async function saveEmployeeBankAccount(
   const res = await apiClient.put<BankAccountResponse>(`/payroll/employees/${employeeId}/bank-account`, data);
   return res.data;
 }
+
+export interface PayrollPaymentRecord {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  employee_code: string;
+  amount: string;
+  status: string;
+  bank_reference?: string | null;
+  paid_on?: string | null;
+}
+
+export async function getPayrollRunPayments(runId: string): Promise<PayrollPaymentRecord[]> {
+  const res = await apiClient.get<PayrollPaymentRecord[]>(`/payroll/runs/${runId}/payments`);
+  return res.data;
+}

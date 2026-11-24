@@ -11,10 +11,12 @@ import {
   sendPayrollRunPayslips,
   unlockPayrollRunAttendance,
   relockPayrollRunAttendance,
+  getPayrollRunPayments,
   type SendPayslipsResponse,
   type PayrollRun,
   type PayrollRunDetail,
   type PayrollItem,
+  type PayrollPaymentRecord,
 } from "../api";
 import { listEmployees, type Employee } from "../../hr/api";
 import { getMyCompany, type CompanyResponse } from "../../identity/api";
@@ -148,13 +150,24 @@ export function PayrollRunPage() {
 
   async function handleViewDetail(runId: string) {
     setLoadingDetail(true);
+    setRunPayments([]);
+    setLoadingPayments(true);
     try {
       const detail = await getPayrollRunDetail(runId);
       setSelectedRunDetail(detail);
+      // Fetch payments for this run
+      try {
+        const payments = await getPayrollRunPayments(runId);
+        setRunPayments(payments);
+      } catch {
+        // Payments might not be recorded yet or non-critical error
+        setRunPayments([]);
+      }
     } catch {
       notify("Failed to load run details", "error");
     } finally {
       setLoadingDetail(false);
+      setLoadingPayments(false);
     }
   }
 
@@ -239,12 +252,16 @@ export function PayrollRunPage() {
   // Filter in Payroll History (Screen 2): "All", "regular", "off_cycle", "final_settlement"
   const [payrollTypeFilter, setPayrollTypeFilter] = useState<string>("All");
 
-  // Run detail internal tabs (Screen 3): "employee_summary"
-  const [detailSubTab, setDetailSubTab] = useState<"employee_summary">("employee_summary");
+  // Run detail internal tabs (Screen 3): "employee_summary" vs "payments"
+  const [detailSubTab, setDetailSubTab] = useState<"employee_summary" | "payments">("employee_summary");
   const [employeeSearchTerm, setEmployeeSearchTerm] = useState("");
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [payslipModalItem, setPayslipModalItem] = useState<{ item: PayrollItem; empName: string } | null>(null);
+
+  // Payment records state (Part 7)
+  const [runPayments, setRunPayments] = useState<PayrollPaymentRecord[]>([]);
+  const [loadingPayments, setLoadingPayments] = useState(false);
 
   const MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
@@ -701,10 +718,11 @@ export function PayrollRunPage() {
           </div>
         </div>
 
-        {/* Sub-tabs below Hero (Screen 3): Employee Summary */}
+        {/* Sub-tabs below Hero (Screen 3): Employee Summary & Payment Records */}
         <div style={{ display: "flex", gap: "2rem", borderBottom: "1px solid #e2e8f0", marginBottom: "1.25rem" }}>
           {[
             { id: "employee_summary", label: "Employee Summary" },
+            { id: "payments", label: `Payment Records (${runPayments?.length || 0})` },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -863,7 +881,103 @@ export function PayrollRunPage() {
           </div>
         )}
 
+        {/* Tab 2 Content: Payment Records Table (Part 7) */}
+        {detailSubTab === "payments" && (
+          <div style={{ background: "#ffffff", borderRadius: "10px", border: "1px solid #e2e8f0", padding: "1.25rem", boxShadow: "0 1px 3px rgba(0, 0, 0, 0.04)" }}>
+            <div className="border-b pb-3 mb-4">
+              <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
+                Disbursement & Payment Records
+              </h3>
+              <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+                Itemized payment rows for this payroll run (Read-only)
+              </p>
+            </div>
 
+            {loadingPayments ? (
+              <div className="row p-4">
+                <div className="spinner" />
+                <span className="text-muted text-sm ml-2">Loading payment records...</span>
+              </div>
+            ) : !runPayments || runPayments.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "2.5rem 1rem" }}>
+                <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>💳</div>
+                <h4 style={{ margin: "0 0 0.5rem" }}>No Payment Records Found</h4>
+                <p className="text-muted text-sm" style={{ maxWidth: 420, margin: "0 auto" }}>
+                  Payment records are generated and populated once payment lines are recorded or processed for this run.
+                </p>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="table text-sm" style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>
+                        Employee
+                      </th>
+                      <th style={{ padding: "10px 12px", textAlign: "right", fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>
+                        Net Amount (₹)
+                      </th>
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>
+                        Payment Status
+                      </th>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>
+                        Bank Reference
+                      </th>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontSize: "0.78rem", fontWeight: 700, color: "#475569" }}>
+                        Payment Date
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runPayments.map((pay) => (
+                      <tr key={pay.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "12px" }}>
+                          <div style={{ fontWeight: 600, color: "#0f172a" }}>{pay.employee_name}</div>
+                          <div className="text-muted text-xs">{pay.employee_code}</div>
+                        </td>
+                        <td style={{ padding: "12px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>
+                          ₹{Number(pay.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                        <td style={{ padding: "12px", textAlign: "center" }}>
+                          <span
+                            className="badge"
+                            style={{
+                              padding: "2px 8px",
+                              borderRadius: "4px",
+                              fontSize: "0.75rem",
+                              fontWeight: 600,
+                              textTransform: "capitalize",
+                              backgroundColor:
+                                pay.status.toLowerCase() === "paid"
+                                  ? "#dcfce7"
+                                  : pay.status.toLowerCase() === "failed"
+                                  ? "#fee2e2"
+                                  : "#fef3c7",
+                              color:
+                                pay.status.toLowerCase() === "paid"
+                                  ? "#15803d"
+                                  : pay.status.toLowerCase() === "failed"
+                                  ? "#b91c1c"
+                                  : "#b45309",
+                            }}
+                          >
+                            {pay.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px", color: pay.bank_reference ? "#0f172a" : "#94a3b8", fontFamily: pay.bank_reference ? "monospace" : "inherit" }}>
+                          {pay.bank_reference || "—"}
+                        </td>
+                        <td style={{ padding: "12px", color: pay.paid_on ? "#0f172a" : "#94a3b8" }}>
+                          {pay.paid_on || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Zoho Standard Payslip Document Viewer Modal */}
         {payslipModalItem && (

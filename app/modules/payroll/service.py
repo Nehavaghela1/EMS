@@ -2249,6 +2249,56 @@ class PayrollRunService:
         self.db.commit()
         return run
 
+    def list_run_payments(
+        self,
+        company_id: uuid.UUID,
+        run_id: uuid.UUID,
+    ) -> list[dict[str, Any]]:
+        """Return payment rows for run: employee, amount, status, bank reference, date."""
+        run = self.repo.get_by_id(run_id, company_id)
+        if run is None:
+            raise NotFoundError("Payroll run not found.")
+
+        items = self.item_repo.list_by_run_id(run.id, company_id)
+        if not items:
+            return []
+
+        employee_ids = [item.employee_id for item in items]
+        emp_rows = list(
+            self.db.scalars(
+                select(Employee).where(
+                    Employee.company_id == company_id,
+                    Employee.id.in_(employee_ids),
+                )
+            ).all()
+        )
+        emp_map = {emp.id: emp for emp in emp_rows}
+
+        def _sort_key(it: PayrollItem) -> str:
+            emp = emp_map.get(it.employee_id)
+            return emp.employee_code if emp else ""
+
+        results: list[dict[str, Any]] = []
+        for item in sorted(items, key=_sort_key):
+            emp = emp_map.get(item.employee_id)
+            code = emp.employee_code if emp else ""
+            first = emp.first_name if emp else ""
+            last = emp.last_name if emp and emp.last_name else ""
+            name = f"{first} {last}".strip() or "Unknown"
+            results.append(
+                {
+                    "id": item.id,
+                    "employee_id": item.employee_id,
+                    "employee_name": name,
+                    "employee_code": code,
+                    "amount": item.net_salary,
+                    "status": item.payment_status or "pending",
+                    "bank_reference": item.bank_reference,
+                    "paid_on": item.paid_on,
+                }
+            )
+        return results
+
     def unlock_attendance(
         self,
         company_id: uuid.UUID,

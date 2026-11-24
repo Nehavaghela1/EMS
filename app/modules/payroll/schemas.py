@@ -594,6 +594,19 @@ class PayrollRunDetailResponse(BaseModel):
     payment_exclusions: list[PaymentExclusion] | None = None
 
 
+class PayrollPaymentRecordResponse(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    employee_name: str
+    employee_code: str
+    amount: Decimal
+    status: str
+    bank_reference: str | None = None
+    paid_on: date | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class BankAccountRequest(BaseModel):
     """`PUT` of an employee's bank details (5.8). Every field is required; a client that
     re-submits the masked account number keeps the stored one."""

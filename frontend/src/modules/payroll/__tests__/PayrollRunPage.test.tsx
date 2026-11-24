@@ -167,6 +167,7 @@ describe("Sub-feature 5.4: PayrollRunPage Frontend", () => {
       payout_ifsc_code: "ICIC0000412",
       payout_enabled: true,
     });
+    vi.mocked(payrollApi.getPayrollRunPayments).mockResolvedValue([]);
   });
 
   it("5.4 F1: loads and displays active and past payroll runs", async () => {
