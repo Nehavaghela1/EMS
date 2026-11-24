@@ -1139,6 +1139,12 @@ class PerformanceService:
             if pip.mentor_id
             else None
         )
+        evaluator_name = None
+        if pip.evaluated_by:
+            eval_emp = self.employee_repo.get_by_user_id(company_id, pip.evaluated_by)
+            if eval_emp:
+                evaluator_name = f"{eval_emp.first_name} {eval_emp.last_name or ''}".strip()
+
         return PerformancePIPResponse(
             id=pip.id,
             employee_id=pip.employee_id,
@@ -1157,6 +1163,7 @@ class PerformanceService:
             outcome_notes=pip.outcome_notes,
             evaluated_at=pip.evaluated_at,
             evaluated_by=pip.evaluated_by,
+            evaluated_by_name=evaluator_name,
             created_at=pip.created_at,
         )
 

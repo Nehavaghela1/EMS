@@ -612,7 +612,8 @@ export function ReimbursementsPage() {
                 <>
                   <button
                     type="button"
-                    className="btn btn-outline"
+                    className="btn btn-outline btn-sm"
+                    style={{ padding: "8px 18px", borderRadius: "6px" }}
                     onClick={() => {
                       if (isRejecting) {
                         setIsRejecting(false);
@@ -629,7 +630,8 @@ export function ReimbursementsPage() {
                     <>
                       <button
                         type="button"
-                        className="btn btn-danger"
+                        className="btn btn-danger btn-sm"
+                        style={{ padding: "8px 20px", borderRadius: "6px" }}
                         onClick={() => setIsRejecting(true)}
                         disabled={reviewing}
                       >
@@ -637,8 +639,8 @@ export function ReimbursementsPage() {
                       </button>
                       <button
                         type="button"
-                        className="btn btn-primary"
-                        style={{ backgroundColor: "#16a34a", borderColor: "#15803d" }}
+                        className="btn btn-primary btn-sm"
+                        style={{ backgroundColor: "#16a34a", borderColor: "#15803d", padding: "8px 22px", borderRadius: "6px", fontWeight: 600 }}
                         onClick={() => handleReview("approve")}
                         disabled={reviewing}
                       >
@@ -648,7 +650,8 @@ export function ReimbursementsPage() {
                   ) : (
                     <button
                       type="button"
-                      className="btn btn-danger"
+                      className="btn btn-danger btn-sm"
+                      style={{ padding: "8px 20px", borderRadius: "6px", fontWeight: 600 }}
                       onClick={() => handleReview("reject")}
                       disabled={reviewing || !rejectionReason.trim()}
                     >
@@ -659,7 +662,8 @@ export function ReimbursementsPage() {
               ) : (
                 <button
                   type="button"
-                  className="btn btn-primary"
+                  className="btn btn-primary btn-sm"
+                  style={{ padding: "8px 24px", borderRadius: "6px", fontWeight: 600 }}
                   onClick={() => setSelectedClaim(null)}
                 >
                   Close

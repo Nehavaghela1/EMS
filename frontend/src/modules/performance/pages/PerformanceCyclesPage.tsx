@@ -733,12 +733,12 @@ export function PerformanceCyclesPage() {
       {viewTab === "pips" && (
         <div className="stack gap-4 mt-2">
           <div className="p-4 rounded border" style={{ background: "#fffbeb", borderColor: "#fde68a" }}>
-            <div className="flex justify-between items-center" style={{ flexWrap: "wrap", gap: "10px" }}>
-              <div>
-                <h3 style={{ margin: "0 0 4px 0", color: "#92400e", fontSize: "1rem" }}>
+            <div className="flex justify-between items-center" style={{ flexWrap: "wrap", gap: "14px" }}>
+              <div style={{ flex: 1, minWidth: "280px" }}>
+                <h3 style={{ margin: "0 0 4px 0", color: "#92400e", fontSize: "0.95rem" }}>
                   ⚠️ Performance Improvement & Warning Lifecycle
                 </h3>
-                <p className="text-xs" style={{ margin: 0, color: "#b45309", maxWidth: "780px" }}>
+                <p className="text-xs" style={{ margin: 0, color: "#b45309", maxWidth: "780px", lineHeight: 1.45 }}>
                   When an employee underperforms, a formal documented PIP warning period (30, 60, or 90 days) defines measurable KPIs and assigns a dedicated mentor.
                   Employees view an amber warning banner. At the conclusion, HR marks the outcome as <b>Passed</b> (regular status retained) or <b>Failed</b>. A failed PIP records the outcome and places the employee in Separations pending decision, where an HR administrator other than the evaluator chooses to separate, extend or retain; no employee is exited automatically.
                 </p>
@@ -746,7 +746,7 @@ export function PerformanceCyclesPage() {
               <button
                 type="button"
                 className="btn btn-primary btn-sm"
-                style={{ backgroundColor: "#d97706", borderColor: "#b45309" }}
+                style={{ backgroundColor: "#d97706", borderColor: "#b45309", whiteSpace: "nowrap", alignSelf: "center", padding: "6px 14px", fontSize: "0.82rem" }}
                 onClick={() => setShowPipCreateModal(true)}
               >
                 + Put Employee on PIP
@@ -935,7 +935,7 @@ export function PerformanceCyclesPage() {
                             </span>
                           </td>
                           <td>
-                            <span className="text-sm">{pip.evaluated_by || "Manager"}</span>
+                            <span className="text-sm">{pip.evaluated_by_name || pip.evaluated_by || "Manager"}</span>
                           </td>
                           <td>
                             <span className="text-sm">{pip.evaluated_at ? formatDate(pip.evaluated_at) : "Recently"}</span>
@@ -946,46 +946,72 @@ export function PerformanceCyclesPage() {
                             </span>
                           </td>
                           <td style={{ textAlign: "right" }}>
-                            <div className="flex gap-2 justify-end" style={{ flexWrap: "wrap" }}>
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-danger"
-                                onClick={() => {
-                                  setDecisionPip(pip);
-                                  setDecisionAction("separate");
-                                  setDecisionLwd(new Date().toISOString().split("T")[0]);
-                                  setDecisionNoticeChoice("served");
-                                  setDecisionReason("");
-                                }}
-                              >
-                                Separate
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-outline"
-                                onClick={() => {
-                                  setDecisionPip(pip);
-                                  setDecisionAction("extend");
-                                  const currentEnd = new Date(pip.end_date);
-                                  const extended = new Date(currentEnd.getTime() + 30 * 86400000);
-                                  setDecisionNewEndDate(extended.toISOString().split("T")[0]);
-                                  setDecisionReason("");
-                                }}
-                              >
-                                Extend
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-sm btn-success"
-                                onClick={() => {
-                                  setDecisionPip(pip);
-                                  setDecisionAction("retain");
-                                  setDecisionReason("");
-                                }}
-                              >
-                                Retain
-                              </button>
-                            </div>
+                            {(() => {
+                              const isEvaluator = pip.evaluated_by === user?.id && user?.role !== "owner";
+                              if (isEvaluator) {
+                                return (
+                                  <div style={{ textAlign: "right" }}>
+                                    <span
+                                      className="badge"
+                                      style={{
+                                        backgroundColor: "#fef3c7",
+                                        color: "#92400e",
+                                        border: "1px solid #fde68a",
+                                        padding: "4px 8px",
+                                        fontSize: "0.75rem",
+                                        display: "inline-block",
+                                        borderRadius: "4px",
+                                      }}
+                                      title="Under the maker-checker policy, the evaluator cannot decide separation. Another HR admin or the Owner must take action."
+                                    >
+                                      Requires 2nd Approver (Owner / Other HR)
+                                    </span>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div className="flex gap-2 justify-end" style={{ flexWrap: "wrap" }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-danger"
+                                    onClick={() => {
+                                      setDecisionPip(pip);
+                                      setDecisionAction("separate");
+                                      setDecisionLwd(new Date().toISOString().split("T")[0]);
+                                      setDecisionNoticeChoice("served");
+                                      setDecisionReason("");
+                                    }}
+                                  >
+                                    Separate
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-outline"
+                                    onClick={() => {
+                                      setDecisionPip(pip);
+                                      setDecisionAction("extend");
+                                      const currentEnd = new Date(pip.end_date);
+                                      const extended = new Date(currentEnd.getTime() + 30 * 86400000);
+                                      setDecisionNewEndDate(extended.toISOString().split("T")[0]);
+                                      setDecisionReason("");
+                                    }}
+                                  >
+                                    Extend
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-success"
+                                    onClick={() => {
+                                      setDecisionPip(pip);
+                                      setDecisionAction("retain");
+                                      setDecisionReason("");
+                                    }}
+                                  >
+                                    Retain
+                                  </button>
+                                </div>
+                              );
+                            })()}
                           </td>
                         </tr>
                       ))}
