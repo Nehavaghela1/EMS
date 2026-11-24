@@ -15,6 +15,16 @@ import {
   type RegionStateItem,
 } from "../../payroll/api";
 
+const DEFAULT_COUNTRIES: RegionStateItem[] = [
+  { code: "IN", name: "India", states: [] },
+  { code: "US", name: "United States", states: [] },
+  { code: "GB", name: "United Kingdom", states: [] },
+  { code: "AE", name: "United Arab Emirates", states: [] },
+  { code: "SG", name: "Singapore", states: [] },
+  { code: "CA", name: "Canada", states: [] },
+  { code: "AU", name: "Australia", states: [] },
+];
+
 export function PlatformStatutoryPage() {
   const { notify } = useToast();
   const queryClient = useQueryClient();
@@ -116,7 +126,12 @@ export function PlatformStatutoryPage() {
     });
   };
 
-  const countries = useMemo<RegionStateItem[]>(() => regionsQuery.data || [], [regionsQuery.data]);
+  const countries = useMemo<RegionStateItem[]>(() => {
+    if (regionsQuery.data && regionsQuery.data.length > 0) {
+      return regionsQuery.data;
+    }
+    return DEFAULT_COUNTRIES;
+  }, [regionsQuery.data]);
 
   return (
     <div className="container" style={{ paddingBottom: "3rem" }}>
