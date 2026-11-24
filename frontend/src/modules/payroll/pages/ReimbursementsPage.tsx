@@ -520,9 +520,11 @@ export function ReimbursementsPage() {
       {/* Modal: View Claim Details & Manager/HR Review */}
       {selectedClaim && (
         <div className="modal-backdrop" onClick={() => setSelectedClaim(null)}>
-          <div className="modal card max-w-md" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>{canReview && selectedClaim.status === "pending" ? "Review Reimbursement Claim" : "Reimbursement Claim Details"}</h2>
+          <div className="modal card" style={{ maxWidth: "480px", width: "100%", padding: "24px" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ marginBottom: "16px", paddingBottom: "12px", borderBottom: "1px solid var(--color-border, #e2e8f0)" }}>
+              <h2 style={{ fontSize: "1.1rem", fontWeight: 700, margin: 0 }}>
+                {canReview && selectedClaim.status === "pending" ? "Review Reimbursement Claim" : "Reimbursement Claim Details"}
+              </h2>
               <button
                 type="button"
                 className="modal-close-btn"
@@ -533,19 +535,19 @@ export function ReimbursementsPage() {
               </button>
             </div>
             <div className="stack gap-3 my-2">
-              <div className="p-3 bg-muted rounded border stack gap-2">
+              <div className="p-3 bg-muted rounded border stack gap-3" style={{ background: "#f8fafc", padding: "14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
                 <div>
-                  <span className="text-muted text-xs block">Expense Type & Amount</span>
-                  <strong className="text-base">
+                  <span className="text-muted text-xs block" style={{ fontSize: "0.75rem", color: "#64748b" }}>Expense Type & Amount</span>
+                  <strong className="text-base" style={{ fontSize: "1.05rem", color: "#0f172a" }}>
                     {selectedClaim.type.toUpperCase()} — ₹{Number(selectedClaim.amount).toLocaleString()}
                   </strong>
                 </div>
                 <div>
-                  <span className="text-muted text-xs block">Date & Description</span>
-                  <p className="text-sm mt-1">{formatDate(selectedClaim.expense_date)}: {selectedClaim.description}</p>
+                  <span className="text-muted text-xs block" style={{ fontSize: "0.75rem", color: "#64748b" }}>Date & Description</span>
+                  <p className="text-sm mt-1" style={{ margin: "3px 0 0", color: "#334155" }}>{formatDate(selectedClaim.expense_date)}: {selectedClaim.description}</p>
                 </div>
                 <div>
-                  <span className="text-muted text-xs block">Current Status</span>
+                  <span className="text-muted text-xs block" style={{ fontSize: "0.75rem", color: "#64748b" }}>Current Status</span>
                   <span className="mt-1 inline-block">
                     {selectedClaim.status === "paid" ? (
                       <span className="badge badge-success">✅ Paid in Payroll</span>
@@ -564,36 +566,36 @@ export function ReimbursementsPage() {
                 </div>
               </div>
 
-              {selectedClaim.file_object_id && (
-                <div>
-                  <span className="text-muted text-xs block">Receipt</span>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-outline mt-1"
-                    disabled={openingReceipt}
-                    onClick={() => handleOpenReceipt(selectedClaim.id)}
-                  >
-                    {openingReceipt ? "Opening..." : "📄 View receipt"}
-                  </button>
-                </div>
-              )}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", minHeight: "36px" }}>
+                {selectedClaim.file_object_id ? (
+                  <div>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline"
+                      disabled={openingReceipt}
+                      onClick={() => handleOpenReceipt(selectedClaim.id)}
+                    >
+                      {openingReceipt ? "Opening..." : "📄 View receipt"}
+                    </button>
+                  </div>
+                ) : <div />}
 
-              {selectedClaim.status === "pending" && selectedClaim.employee_id === user?.employee?.id && (
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                {selectedClaim.status === "pending" && selectedClaim.employee_id === user?.employee?.id && (
                   <button
                     type="button"
                     className="btn btn-sm btn-outline"
+                    style={{ color: "#dc2626", borderColor: "#fca5a5" }}
                     disabled={reviewing}
                     onClick={() => handleWithdraw(selectedClaim.id)}
                   >
                     Withdraw claim
                   </button>
-                </div>
-              )}
+                )}
+              </div>
 
               {canReview && selectedClaim.status === "pending" && isRejecting && (
-                <div className="field">
-                  <label>Rejection Reason <span className="text-danger">*</span></label>
+                <div className="field" style={{ marginTop: "8px" }}>
+                  <label style={{ fontSize: "0.82rem", fontWeight: 600 }}>Rejection Reason <span className="text-danger">*</span></label>
                   <input
                     type="text"
                     placeholder="Enter reason if rejecting..."
@@ -605,7 +607,7 @@ export function ReimbursementsPage() {
               )}
             </div>
 
-            <div className="flex gap-2 justify-end mt-4">
+            <div className="flex gap-2 justify-end" style={{ marginTop: "20px", paddingTop: "14px", borderTop: "1px solid var(--color-border, #e2e8f0)" }}>
               {canReview && selectedClaim.status === "pending" ? (
                 <>
                   <button
@@ -636,6 +638,7 @@ export function ReimbursementsPage() {
                       <button
                         type="button"
                         className="btn btn-primary"
+                        style={{ backgroundColor: "#16a34a", borderColor: "#15803d" }}
                         onClick={() => handleReview("approve")}
                         disabled={reviewing}
                       >
