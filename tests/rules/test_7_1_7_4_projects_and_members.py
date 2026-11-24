@@ -64,7 +64,7 @@ def p1_setup(db: Session) -> dict[str, Any]:
             id=uuid.uuid4(),
             company_id=company_id,
             user_id=u.id,
-            employee_code=f"EMP{uuid.uuid4().hex[:4].upper()}",
+            employee_code=f"EMP{uuid.uuid4().hex[:8].upper()}",
             first_name="First",
             last_name="Last",
             email=u.email,
