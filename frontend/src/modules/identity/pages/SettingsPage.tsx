@@ -89,11 +89,6 @@ export function SettingsPage() {
 
       <ChangePasswordSection notify={notify} />
 
-      {/* Enterprise Security Policies & Multi-Tenancy (Owner, HR Admin, Super Admin only) */}
-      {(user?.role === "owner" || user?.role === "hr_admin" || user?.role === "super_admin") && (
-        <EnterpriseSecuritySection notify={notify} />
-      )}
-
       {/* Enterprise Branding & Theme Settings (Owner, HR Admin, Super Admin only) */}
       {(user?.role === "owner" || user?.role === "hr_admin" || user?.role === "super_admin") && (
         <EnterpriseBrandingSection notify={notify} />
@@ -601,76 +596,6 @@ function AdminDelegationSection() {
         </div>
       )}
     </>
-  );
-}
-
-function EnterpriseSecuritySection({ notify }: { notify: (msg: string, type?: "success" | "error" | "info") => void }) {
-  const [mfaEnforced, setMfaEnforced] = useState(false);
-  const [ssoProvider, setSsoProvider] = useState<"disabled" | "google" | "azure" | "okta">("disabled");
-  const [saving, setSaving] = useState(false);
-
-  return (
-    <div className="card stack mb-6" style={{ marginTop: "1.5rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div>
-          <h3 style={{ margin: 0 }}>Enterprise Security & Authentication</h3>
-          <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
-            Enforce Single Sign-On (SSO) and Multi-Factor Authentication (MFA) policies across tenant users.
-          </p>
-        </div>
-        <span
-          className="badge"
-          style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", fontWeight: 600 }}
-        >
-          🛡️ Compliance Mode
-        </span>
-      </div>
-
-      <div className="stack gap-4 mt-2">
-        <label className="flex gap-2 align-center" style={{ cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={mfaEnforced}
-            onChange={(e) => setMfaEnforced(e.target.checked)}
-            style={{ width: "16px", height: "16px" }}
-          />
-          <div>
-            <strong style={{ fontSize: "0.9rem" }}>Enforce Multi-Factor Authentication (MFA / TOTP)</strong>
-            <div className="text-muted text-xs">Require all employees to verify one-time passwords upon logging in.</div>
-          </div>
-        </label>
-
-        <div className="field">
-          <label>Enterprise Single Sign-On (SSO) Provider</label>
-          <select
-            value={ssoProvider}
-            onChange={(e) => setSsoProvider(e.target.value as typeof ssoProvider)}
-            style={{ maxWidth: "360px" }}
-          >
-            <option value="disabled">Disabled (Standard Email & Password)</option>
-            <option value="google">Google Workspace SAML / OAuth 2.0</option>
-            <option value="azure">Microsoft Entra ID (Azure AD)</option>
-            <option value="okta">Okta Workforce Identity</option>
-          </select>
-        </div>
-
-        <button
-          type="button"
-          className="btn btn-primary"
-          style={{ width: "fit-content" }}
-          disabled={saving}
-          onClick={() => {
-            setSaving(true);
-            setTimeout(() => {
-              setSaving(false);
-              notify("Enterprise security policies updated successfully.", "success");
-            }, 300);
-          }}
-        >
-          {saving ? "Updating Policies..." : "Save Security Policies"}
-        </button>
-      </div>
-    </div>
   );
 }
 
