@@ -543,7 +543,11 @@ export function TimesheetsPage() {
                                     <button
                                       type="button"
                                       style={{ width: "100%", textAlign: "left", padding: "8px 14px", border: "none", background: "transparent", fontSize: "0.84rem", fontWeight: 500, color: "#334155", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
-                                      onClick={(evt) => { evt.stopPropagation(); notify("Audit history placeholder"); setActionMenuOpen(null); }}
+                                      onClick={(evt) => {
+                                        evt.stopPropagation();
+                                        setDrawerEntry(entry);
+                                        setActionMenuOpen(null);
+                                      }}
                                     >
                                       <span>🔍</span> <span>View Audit History</span>
                                     </button>

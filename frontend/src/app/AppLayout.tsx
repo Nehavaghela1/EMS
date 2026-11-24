@@ -1797,7 +1797,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   {/* Settings */}
                   {[
                     { label: "My Profile & Settings", icon: "👤", to: "/settings" },
-                    ...(["owner", "hr_admin", "super_admin"].includes(role)
+                    ...(["owner", "super_admin"].includes(role)
                       ? [{ label: "Manage Admins", icon: "🛡️", to: "/settings" }]
                       : []),
                   ].map((item) => (

@@ -533,43 +533,43 @@ export function PerformanceSummariesPage() {
         </div>
 
         <div style={{ overflowX: "auto" }}>
-          <table className="table" style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table className="table" style={{ width: "100%", tableLayout: "auto", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--color-border, #e2e8f0)", textAlign: "left" }}>
                 <th
-                  style={{ padding: "10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
+                  style={{ width: "220px", maxWidth: "260px", padding: "10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
                   onClick={() => handleSort("employee_name")}
                 >
                   Employee {sortField === "employee_name" ? (sortOrder === "asc" ? "▲" : "▼") : ""}
                 </th>
                 <th
-                  style={{ padding: "10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
+                  style={{ width: "110px", padding: "10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
                   onClick={() => handleSort("final_rating")}
                 >
                   Final Rating {sortField === "final_rating" ? (sortOrder === "asc" ? "▲" : "▼") : ""}
                 </th>
                 <th
-                  style={{ padding: "10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
+                  style={{ width: "150px", padding: "10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
                   onClick={() => handleSort("salary_revision_recommended")}
                 >
                   Revision Recommended {sortField === "salary_revision_recommended" ? (sortOrder === "asc" ? "▲" : "▼") : ""}
                 </th>
                 <th
-                  style={{ padding: "10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
+                  style={{ width: "110px", padding: "10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
                   onClick={() => handleSort("recommended_increment_percent")}
                 >
                   Increment % {sortField === "recommended_increment_percent" ? (sortOrder === "asc" ? "▲" : "▼") : ""}
                 </th>
                 <th
-                  style={{ padding: "10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
+                  style={{ width: "120px", padding: "10px", cursor: "pointer", fontSize: "0.8rem", color: "var(--color-text-muted)" }}
                   onClick={() => handleSort("finalized_at")}
                 >
                   Finalised Date {sortField === "finalized_at" ? (sortOrder === "asc" ? "▲" : "▼") : ""}
                 </th>
-                <th style={{ padding: "10px", fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                <th style={{ width: "140px", padding: "10px", fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
                   Reviewed By
                 </th>
-                <th style={{ padding: "10px", fontSize: "0.8rem", color: "var(--color-text-muted)", textAlign: "right" }}>
+                <th style={{ width: "120px", padding: "10px", fontSize: "0.8rem", color: "var(--color-text-muted)", textAlign: "right" }}>
                   Action
                 </th>
               </tr>
@@ -577,8 +577,10 @@ export function PerformanceSummariesPage() {
             <tbody>
               {tableRows.map((row) => (
                 <tr key={row.employee_id} style={{ borderBottom: "1px solid var(--color-border, #f1f5f9)" }}>
-                  <td style={{ padding: "10px" }}>
-                    <div style={{ fontWeight: 600, color: "var(--color-text)" }}>{row.employee_name}</div>
+                  <td style={{ width: "220px", maxWidth: "260px", padding: "10px" }}>
+                    <div style={{ fontWeight: 600, color: "var(--color-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {row.employee_name}
+                    </div>
                     {row.employee_code && (
                       <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>{row.employee_code}</div>
                     )}

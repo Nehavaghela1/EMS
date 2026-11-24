@@ -9,6 +9,7 @@ export interface Project {
   id: string;
   company_id: string;
   company_name?: string;
+  company_logo_url?: string | null;
   name: string;
   code: string;
   description?: string;
