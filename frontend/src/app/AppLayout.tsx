@@ -30,6 +30,7 @@ const NAV_SECTIONS: NavSection[] = [
     // empty. These four are the pages a platform operator opens, in the order
     // they open them: what is broken, who is paying, who is using it, the list.
     children: [
+      { to: "/admin/statutory", label: "Statutory Rates", roles: ["super_admin"] },
       { to: "/admin/health", label: "Health", roles: ["super_admin"] },
       { to: "/admin/payroll", label: "Payroll", roles: ["super_admin"] },
       { to: "/admin/activity", label: "Activity", roles: ["super_admin"] },

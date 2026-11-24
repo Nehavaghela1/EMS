@@ -15,6 +15,7 @@ import { DepartmentListPage } from "../modules/hr/pages/DepartmentListPage";
 import { PlatformActivityPage } from "../modules/platform/pages/PlatformActivityPage";
 import { PlatformHealthPage } from "../modules/platform/pages/PlatformHealthPage";
 import { PlatformPayrollPage } from "../modules/platform/pages/PlatformPayrollPage";
+import { PlatformStatutoryPage } from "../modules/platform/pages/PlatformStatutoryPage";
 import { AttendancePage } from "../modules/time_leave/pages/AttendancePage";
 import { LeavePage } from "../modules/time_leave/pages/LeavePage";
 import { ShiftsPage } from "../modules/time_leave/pages/ShiftsPage";
@@ -115,6 +116,14 @@ export function AppRouter() {
       />
       {/* Platform statistics the console never surfaced. Super admin only:
           these are aggregates across companies, never a company's own data. */}
+      <Route
+        path="/admin/statutory"
+        element={
+          <Protected roles={["super_admin"]}>
+            <PlatformStatutoryPage />
+          </Protected>
+        }
+      />
       <Route
         path="/admin/payroll"
         element={
