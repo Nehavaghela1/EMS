@@ -323,7 +323,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/payroll/reimbursements/{id}/withdraw"): AUTHENTICATED,
     # Claimant, approvers (reporting chain) and HR-level: decided in the service.
     ("GET", "/api/v1/payroll/reimbursements/{id}/receipt"): AUTHENTICATED,
-    ("GET", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin, UserRole.owner),
     ("POST", "/api/v1/payroll/runs"): ROLES(UserRole.hr_admin),
     ("DELETE", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/payroll/runs/{id}"): ROLES(UserRole.hr_admin),
@@ -382,7 +382,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/api/v1/performance/summary/{employee_id}"): ROLES(
         UserRole.hr_admin, UserRole.manager, UserRole.employee
     ),
-    ("GET", "/api/v1/performance/summaries"): ROLES(UserRole.hr_admin, UserRole.manager),
+    ("GET", "/api/v1/performance/summaries"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.manager
+    ),
     ("POST", "/api/v1/performance/summary/{employee_id}"): ROLES(UserRole.hr_admin),
     ("GET", "/api/v1/projects"): AUTHENTICATED,
     ("POST", "/api/v1/projects"): ROLES(UserRole.owner, UserRole.hr_admin, UserRole.manager),
