@@ -9,8 +9,8 @@ This document is the single source of truth for all EMS frontend pages, role per
 | Role Code (`UserRole`) | Role Name | Scope & Authority | Primary Dashboard Route & Component |
 | :--- | :--- | :--- | :--- |
 | `super_admin` | Platform Super Administrator | Multi-tenant governance: approves/rejects new tenant companies, platform health, global configuration, compliance enforcement across all companies. | `/admin`<br>`frontend/src/modules/identity/pages/AdminDashboardPage.tsx` |
-| `owner` | Primary Workspace Owner / Org Head | Company root authority: full control over company profile, branding, administrators, billing, departments, employees, shifts, leave policies, payroll, performance, and projects. Can edit own profile including First Name, Phone, and Company Contact details. Company unique code and employee code are immutable. | `/dashboard`<br>`frontend/src/modules/platform/pages/DashboardPage.tsx` |
-| `hr_admin` | HR Administrator | Workspace administration: manages employee lifecycle (add, edit, invitations, terminations), departments, leave policies & approvals, shift scheduling, payroll setup & processing, expense reimbursements, and performance cycles. | `/dashboard`<br>`frontend/src/modules/platform/pages/DashboardPage.tsx` |
+| `owner` | Primary Workspace Owner / Org Head | Company root authority: full control over company profile, branding, administrators, billing, departments, employees, shifts, leave policies, payroll, performance, and projects. Can edit own profile including First Name, Phone, and Company Contact details. Company unique code and employee code are immutable. | `/dashboard`<br>`frontend/src/modules/platform/pages/DashboardPage.tsx` (extracted to `frontend/src/modules/platform/pages/OwnerHrDashboard.tsx`) |
+| `hr_admin` | HR Administrator | Workspace administration: manages employee lifecycle (add, edit, invitations, terminations), departments, leave policies & approvals, shift scheduling, payroll setup & processing, expense reimbursements, and performance cycles. | `/dashboard`<br>`frontend/src/modules/platform/pages/DashboardPage.tsx` (extracted to `frontend/src/modules/platform/pages/OwnerHrDashboard.tsx`) |
 | `manager` | Department / Team Manager | People & Project leadership: manages project boards, tasks, milestones, logs/approves timesheets, conducts employee performance appraisals & PIPs, reviews team attendance and leave requests. | `/dashboard`<br>`frontend/src/modules/platform/pages/DashboardPage.tsx` |
 | `employee` | Standard Employee | Self-service portal: punch-in/out attendance, apply for leaves, regularize attendance, view payslips, claim expense reimbursements, manage self-goals, log project timesheet hours, update personal contact details, and voluntary resignation. | `/dashboard`<br>`frontend/src/modules/platform/pages/DashboardPage.tsx` |
 
@@ -22,10 +22,10 @@ When a user logs in, the platform navigates them based on their authenticated ro
 
 | Authenticated Role | Landed Route | Frontend Page Component File | Backend Router & Endpoints |
 | :--- | :--- | :--- | :--- |
-| `super_admin` | `/admin` | `frontend/src/modules/identity/pages/AdminDashboardPage.tsx` | `app/modules/identity/router.py`<br>`GET /api/v1/companies` (list all tenant companies)<br>`POST /api/v1/companies/{id}/approve`<br>`POST /api/v1/companies/{id}/reject`<br>`GET /health` |
-| `owner` | `/dashboard` | `frontend/src/modules/platform/pages/DashboardPage.tsx` | `app/modules/platform/router.py`<br>`GET /api/v1/search`<br>`GET /api/v1/announcements`<br>`app/modules/time_leave/router.py`<br>`GET /api/v1/attendance/today`<br>`app/modules/hr/router.py`<br>`GET /api/v1/employees/me` |
-| `hr_admin` | `/dashboard` | `frontend/src/modules/platform/pages/DashboardPage.tsx` | Same as above with full administrative quick links (Employees, Payroll Runs, Leave Requests). |
-| `manager` | `/dashboard` | `frontend/src/modules/platform/pages/DashboardPage.tsx` | Same as above with Manager approval metrics (Pending Leaves, Timesheet reviews). |
+| `super_admin` | `/admin` | `frontend/src/modules/identity/pages/AdminDashboardPage.tsx` | `app/modules/identity/router.py`<br>`GET /api/v1/companies`<br>`POST /api/v1/companies/{id}/approve`<br>`POST /api/v1/companies/{id}/reject`<br>`GET /health` |
+| `owner` | `/dashboard` | `frontend/src/modules/platform/pages/DashboardPage.tsx`<br>-> `frontend/src/modules/platform/pages/OwnerHrDashboard.tsx` | `app/modules/platform/router.py`<br>`GET /api/v1/dashboard`<br>`GET /api/v1/announcements`<br>`GET /api/v1/payroll/runs`<br>`GET /api/v1/leaves`<br>`GET /api/v1/payroll/reimbursements`<br>`GET /api/v1/employees` |
+| `hr_admin` | `/dashboard` | `frontend/src/modules/platform/pages/DashboardPage.tsx`<br>-> `frontend/src/modules/platform/pages/OwnerHrDashboard.tsx` | Same as above with full administrative quick links (Employees, Payroll Runs, Leave Requests, Probations, Separations). |
+| `manager` | `/dashboard` | `frontend/src/modules/platform/pages/DashboardPage.tsx` | Same as above with Manager approval metrics (Pending Leaves, Timesheet reviews, Team Headcount). |
 | `employee` | `/dashboard` | `frontend/src/modules/platform/pages/DashboardPage.tsx` | Self-service view: Today's punch card (Check-in/Check-out), quick leave balance, active announcements, and assigned tasks. |
 
 ---
@@ -40,7 +40,10 @@ When a user logs in, the platform navigates them based on their authenticated ro
 | **Forgot / Reset Password Page** (Password recovery request) | `/forgot-password` | Public | `frontend/src/modules/identity/pages/ForgotPasswordPage.tsx` | `app/modules/identity/router.py`<br>`POST /api/v1/auth/forgot-password`<br>`POST /api/v1/auth/reset-password` |
 | **Create Additional Workspace Page** (Multi-tenant company addition) | `/workspaces/new` | Logged-in Users | `frontend/src/modules/identity/pages/CreateWorkspacePage.tsx` | `app/modules/identity/router.py`<br>`POST /api/v1/auth/create-workspace` |
 | **Super Admin Platform Dashboard** (Tenant review & approval hub) | `/admin` | `super_admin` | `frontend/src/modules/identity/pages/AdminDashboardPage.tsx` | `app/modules/identity/router.py`<br>`GET /api/v1/companies`<br>`POST /api/v1/companies/{id}/approve`<br>`POST /api/v1/companies/{id}/reject` |
-| **Main Platform Dashboard** (Punch card, metrics, announcements, tasks) | `/dashboard` | `owner`, `hr_admin`, `manager`, `employee` | `frontend/src/modules/platform/pages/DashboardPage.tsx` | `app/modules/platform/router.py`<br>`app/modules/time_leave/router.py`<br>`POST /api/v1/attendance/punch` |
+| **Platform Payroll Overview** (Super admin tenant payroll stats) | `/admin/payroll` | `super_admin` | `frontend/src/modules/platform/pages/PlatformPayrollPage.tsx` | `app/modules/platform/router.py`<br>`GET /api/v1/platform/stats/payroll`<br>`GET /api/v1/platform/payroll-stats` |
+| **Platform Activity Overview** (Super admin tenant activity stream) | `/admin/activity` | `super_admin` | `frontend/src/modules/platform/pages/PlatformActivityPage.tsx` | `app/modules/platform/router.py`<br>`GET /api/v1/platform/stats/activity` |
+| **Platform Health Overview** (Super admin platform service health) | `/admin/health` | `super_admin` | `frontend/src/modules/platform/pages/PlatformHealthPage.tsx` | `app/modules/platform/router.py`<br>`GET /api/v1/platform/stats/platform-health`<br>`GET /api/v1/platform/stats/overview` |
+| **Main Platform Dashboard** (Punch card, metrics, announcements, tasks) | `/dashboard` | `owner`, `hr_admin`, `manager`, `employee` | `frontend/src/modules/platform/pages/DashboardPage.tsx`<br>`frontend/src/modules/platform/pages/OwnerHrDashboard.tsx` | `app/modules/platform/router.py`<br>`GET /api/v1/dashboard`<br>`GET /api/v1/announcements`<br>`app/modules/time_leave/router.py`<br>`POST /api/v1/attendance/punch` |
 | **Employee Directory** (Employee list, status filters, search, bulk export/actions) | `/employees` | `owner`, `hr_admin`, `manager`, `employee` | `frontend/src/modules/hr/pages/EmployeeListPage.tsx` | `app/modules/hr/router.py`<br>`GET /api/v1/employees`<br>`POST /api/v1/employees/export` |
 | **Add Employee Page** (Multi-step new hire onboarding form) | `/employees/new` | `owner`, `hr_admin` | `frontend/src/modules/hr/pages/EmployeeFormPage.tsx` | `app/modules/hr/router.py`<br>`POST /api/v1/employees` |
 | **Edit Employee Page** (Update existing employee information) | `/employees/:id/edit` | `owner`, `hr_admin` | `frontend/src/modules/hr/pages/EmployeeFormPage.tsx` | `app/modules/hr/router.py`<br>`GET /api/v1/employees/{id}`<br>`PUT /api/v1/employees/{id}` |
@@ -55,8 +58,10 @@ When a user logs in, the platform navigates them based on their authenticated ro
 | **My Payslips** (Employee self-service payslip history & PDF print view) | `/payroll/payslip` | All authenticated | `frontend/src/modules/payroll/pages/MyPayslipPage.tsx` | `app/modules/payroll/router.py`<br>`GET /api/v1/payroll/payslips/me` |
 | **Reimbursements & Expense Claims** (Submit expense claims, receipts & manager approval) | `/payroll/reimbursements` | All authenticated (`approve`: `owner`/`hr_admin`/`manager`) | `frontend/src/modules/payroll/pages/ReimbursementsPage.tsx` | `app/modules/payroll/router.py`<br>`GET /api/v1/payroll/reimbursements`<br>`POST /api/v1/payroll/reimbursements` |
 | **Performance Appraisal Cycles** (Annual / quarterly review cycles & PIP dashboard) | `/performance` | `owner`, `hr_admin`, `manager` | `frontend/src/modules/performance/pages/PerformanceCyclesPage.tsx` | `app/modules/performance/router.py`<br>`GET /api/v1/performance/cycles`<br>`POST /api/v1/performance/cycles` |
+| **Performance Summaries** (End-of-year ratings distribution, salary revisions & roster) | `/performance/summaries` | `owner`, `hr_admin` | `frontend/src/modules/performance/pages/PerformanceSummariesPage.tsx` | `app/modules/performance/router.py`<br>`GET /api/v1/performance/summaries`<br>`GET /api/v1/performance/cycles` |
 | **My Performance Goals (KRAs & KPIs)** (Self-goals, quarterly targets & self-appraisal) | `/performance/goals` | All authenticated | `frontend/src/modules/performance/pages/MyGoalsPage.tsx` | `app/modules/performance/router.py`<br>`GET /api/v1/performance/goals`<br>`POST /api/v1/performance/goals` |
-| **Employee Performance Review** (Manager appraisal rating, scoring & promotion summary) | `/performance/review/:employeeId` | `owner`, `hr_admin`, `manager` | `frontend/src/modules/performance/pages/PerformanceReviewPage.tsx` | `app/modules/performance/router.py`<br>`GET /api/v1/performance/reviews/{id}`<br>`POST /api/v1/performance/reviews` |
+| **Team Performance Goals** (Department & direct report goal tracking) | `/performance/team-goals` | `owner`, `hr_admin`, `manager` | `frontend/src/modules/performance/pages/TeamGoalsPage.tsx` | `app/modules/performance/router.py`<br>`GET /api/v1/performance/goals/{employee_id}` |
+| **Employee Performance Review** (Manager appraisal rating, scoring & promotion summary) | `/performance/review/:employeeId` | `owner`, `hr_admin`, `manager` | `frontend/src/modules/performance/pages/PerformanceReviewPage.tsx` | `app/modules/performance/router.py`<br>`GET /api/v1/performance/reviews/{id}`<br>`POST /api/v1/performance/reviews`<br>`GET /api/v1/performance/summary/{employee_id}` |
 | **Projects Overview** (Project directory, health status, budgets & client info) | `/projects` | All authenticated | `frontend/src/modules/projects/pages/ProjectsListPage.tsx` | `app/modules/projects/router.py`<br>`GET /api/v1/projects`<br>`POST /api/v1/projects` |
 | **Project Workspace & Details** (Kanban tasks, milestones, project files, team & hours) | `/projects/:id` | All authenticated | `frontend/src/modules/projects/pages/ProjectDetailPage.tsx` | `app/modules/projects/router.py`<br>`GET /api/v1/projects/{id}`<br>`POST /api/v1/projects/{id}/tasks` |
 | **Timesheets & Time Tracking** (Weekly timesheet grid, task hour logging & approval) | `/timesheets` | All authenticated (`approve`: `owner`/`hr_admin`/`manager`) | `frontend/src/modules/projects/pages/TimesheetsPage.tsx` | `app/modules/projects/router.py`<br>`GET /api/v1/projects/time-entries`<br>`POST /api/v1/projects/time-entries` |
@@ -78,7 +83,7 @@ When a user logs in, the platform navigates them based on their authenticated ro
 | **Voluntary Resignation Modal** | "+ Request Resignation" on `/settings` | `employee`, `manager`, `hr_admin` (Non-owner) | `frontend/src/modules/identity/pages/SettingsPage.tsx` | `POST /api/v1/employees/me/resignation` |
 | **Involuntary Termination Modal** | Exit / Terminate button on `/employees/:id` | `owner`, `hr_admin` | `frontend/src/modules/hr/pages/EmployeeProfilePage.tsx` | `POST /api/v1/employees/{id}/terminate` |
 | **Salary Revision Modal** | "Revise Salary" button on `/employees/:id` | `owner`, `hr_admin` | `frontend/src/modules/hr/pages/EmployeeProfilePage.tsx` | `POST /api/v1/payroll/employees/{id}/assign` |
-| **Payslip Document Viewer Modal** | "View Payslip" on `/payroll/payslip` or `/employees/:id` | All permitted | `frontend/src/modules/payroll/components/PayslipDocumentModal.tsx` | `GET /api/v1/payroll/payslips/{id}` |
+| **Payslip Document Viewer Modal / Dialog** | "View Payslip" on `/payroll/payslip` or `/employees/:id` | All permitted | `frontend/src/modules/payroll/components/PayslipDocumentModal.tsx` | `GET /api/v1/payroll/payslips/{id}` |
 | **Attendance Regularization Modal** | "Regularize" button on `/attendance` or `/dashboard` | All authenticated | `frontend/src/modules/time_leave/components/RegularizeAttendanceModal.tsx` | `POST /api/v1/attendance/regularize` |
 | **Leave Approval / Rejection Modal** | Review action on `/leaves` | `owner`, `hr_admin`, `manager` | `frontend/src/modules/time_leave/pages/LeavePage.tsx` | `PUT /api/v1/leaves/{id}/action` |
 | **Assign Shift Modal** | "Assign Shift" button on `/shifts` | `owner`, `hr_admin` | `frontend/src/modules/time_leave/pages/ShiftsPage.tsx` | `POST /api/v1/shifts/assign` |
@@ -92,16 +97,26 @@ When a user logs in, the platform navigates them based on their authenticated ro
 
 1. **Super Admin Platform Features:**
    - Look at `frontend/src/modules/identity/pages/AdminDashboardPage.tsx`.
-   - Backend logic lives in `app/modules/identity/router.py` (Companies CRUD, platform admin queries).
+   - Platform stats pages: `frontend/src/modules/platform/pages/PlatformPayrollPage.tsx`, `PlatformActivityPage.tsx`, `PlatformHealthPage.tsx`.
+   - Backend logic lives in `app/modules/identity/router.py` (Companies CRUD, platform admin queries) and `app/modules/platform/router.py`.
 
 2. **Owner & HR Workspace Administration:**
+   - Executive & HR Dashboard: `frontend/src/modules/platform/pages/OwnerHrDashboard.tsx`.
+   - Performance Summaries: `frontend/src/modules/performance/pages/PerformanceSummariesPage.tsx`.
    - Employee lifecycle: `frontend/src/modules/hr/pages/EmployeeListPage.tsx` & `EmployeeFormPage.tsx`.
    - Settings & Admin Delegation: `frontend/src/modules/identity/pages/SettingsPage.tsx`.
    - Payroll Setup & Execution: `frontend/src/modules/payroll/pages/PayrollSetupPage.tsx` & `PayrollRunPage.tsx`.
-   - Backend logic lives in `app/modules/hr/router.py`, `app/modules/payroll/router.py`, `app/modules/identity/router.py`.
+   - Backend logic lives in `app/modules/hr/router.py`, `app/modules/payroll/router.py`, `app/modules/identity/router.py`, `app/modules/performance/router.py`.
 
-3. **Employee Self-Service Features:**
+3. **Manager People & Projects Portal:**
+   - Team Goals: `frontend/src/modules/performance/pages/TeamGoalsPage.tsx`.
+   - Performance Reviews: `frontend/src/modules/performance/pages/PerformanceReviewPage.tsx`.
+   - Manager Dashboard content: `frontend/src/modules/platform/pages/DashboardPage.tsx` (`ManagerDashboardContent`).
+   - Project & Timesheet approvals: `frontend/src/modules/projects/pages/ProjectDetailPage.tsx` & `TimesheetsPage.tsx`.
+
+4. **Employee Self-Service Features:**
    - Attendance & Punch: `frontend/src/modules/time_leave/pages/AttendancePage.tsx` and `TodayAttendanceCard.tsx`.
    - Personal Profile & Password: `frontend/src/modules/identity/pages/SettingsPage.tsx` (`ProfileSection`).
    - Payslips: `frontend/src/modules/payroll/pages/MyPayslipPage.tsx`.
    - Leaves: `frontend/src/modules/time_leave/pages/LeavePage.tsx`.
+   - My Goals: `frontend/src/modules/performance/pages/MyGoalsPage.tsx`.

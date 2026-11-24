@@ -517,7 +517,7 @@ def list_payroll_runs(
     status_filter: PayrollRunStatus | None = None,
     params: PageParams = Depends(page_params),
     db: Session = Depends(get_tenant_db),
-    user: User = Depends(require_company_role(UserRole.hr_admin)),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
 ):
     service = PayrollRunService(db)
     runs, total, pages = service.list_runs(user.company_id, params, status_filter)
