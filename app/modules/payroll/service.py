@@ -895,7 +895,7 @@ class StatutoryConfigService:
         if config.payout_account_number_enc is None:
             return None
         return decrypt_field(
-            bytes(config.payout_account_number_enc),
+            config.payout_account_number_enc,
             company_id=config.company_id,
             column=PAYOUT_ACCOUNT_COLUMN,
         )
@@ -2055,7 +2055,7 @@ class PayrollRunService:
             else:
                 try:
                     number = decrypt_field(
-                        bytes(bank.account_number_enc),
+                        bank.account_number_enc,
                         company_id=company_id,
                         column=BANK_ACCOUNT_COLUMN,
                     )
@@ -2681,7 +2681,7 @@ class EmployeeBankAccountService:
         if not reveal:
             return self._response(account)
         number = decrypt_field(
-            bytes(account.account_number_enc),
+            account.account_number_enc,
             company_id=actor.company_id,
             column=BANK_ACCOUNT_COLUMN,
         )
@@ -2773,18 +2773,18 @@ class EmployeeBankAccountService:
                     "The masked account number does not match the stored one.",
                     details={"field": "account_number"},
                 )
-            return bytes(current.account_number_enc), False
+            return current.account_number_enc, False
         if current is not None and current.account_last4 == submitted[-4:]:
             try:
                 stored = decrypt_field(
-                    bytes(current.account_number_enc),
+                    current.account_number_enc,
                     company_id=company_id,
                     column=BANK_ACCOUNT_COLUMN,
                 )
             except DecryptionFailedError:
                 stored = None  # a damaged stored value is replaced by the number just entered
             if stored == submitted:
-                return bytes(current.account_number_enc), False
+                return current.account_number_enc, False
         return encrypt_field(submitted, company_id=company_id, column=BANK_ACCOUNT_COLUMN), True
 
     def _notify_change(self, actor: User, employee: Employee) -> None:
@@ -2868,7 +2868,7 @@ class PaymentFileService:
                 account_holder=line.account_holder or "",
                 bank_name=line.bank_name or "",
                 account_number=decrypt_field(
-                    bytes(line.account_number_enc or b""),
+                    line.account_number_enc or b"",
                     company_id=company_id,
                     column=PAYMENT_ACCOUNT_COLUMN,
                 ),
