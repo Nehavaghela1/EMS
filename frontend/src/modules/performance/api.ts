@@ -159,7 +159,7 @@ export async function listPerformanceGoals(employeeId: string): Promise<Performa
 
 export async function updatePerformanceGoal(
   id: string,
-  data: Partial<GoalCreateItem & { status: GoalStatus }>
+  data: Partial<GoalCreateItem & { status: GoalStatus; reason: string }>
 ): Promise<PerformanceGoal> {
   const res = await apiClient.put<PerformanceGoal>(`/performance/goals/${id}`, data);
   return res.data;

@@ -59,6 +59,7 @@ export function MyGoalsPage() {
   const [editTargetValue, setEditTargetValue] = useState("");
   const [editStatus, setEditStatus] = useState<GoalStatus>("in_progress");
   const [editWeightage, setEditWeightage] = useState("");
+  const [editReason, setEditReason] = useState("");
   const [submittingEdit, setSubmittingEdit] = useState(false);
 
   // Self Review Modal state
@@ -214,11 +215,16 @@ export function MyGoalsPage() {
     setEditTargetValue(g.target_value || "");
     setEditStatus(g.status);
     setEditWeightage(String(g.weightage));
+    setEditReason("");
   }
 
   async function handleUpdateGoal(e: React.FormEvent) {
     e.preventDefault();
     if (!editingGoal) return;
+    if (editingGoal.status === "completed" && !editReason.trim()) {
+      notify("A reason is required to modify a completed goal.", "warning");
+      return;
+    }
     setSubmittingEdit(true);
     try {
       await updatePerformanceGoal(editingGoal.id, {
@@ -227,6 +233,7 @@ export function MyGoalsPage() {
         target_value: editTargetValue,
         status: editStatus,
         weightage: editWeightage,
+        ...(editingGoal.status === "completed" ? { reason: editReason } : {}),
       });
       notify("Goal updated successfully", "success");
       setEditingGoal(null);
@@ -747,6 +754,23 @@ export function MyGoalsPage() {
                   required
                 />
               </div>
+
+              {editingGoal.status === "completed" && (
+                <div className="field" style={{ background: "#fffbeb", padding: "12px", borderRadius: "8px", border: "1px solid #fde68a" }}>
+                  <label style={{ color: "#92400e", fontWeight: 600 }}>Reason for Modifying Completed Goal <span style={{ color: "#dc2626" }}>*</span></label>
+                  <input
+                    type="text"
+                    value={editReason}
+                    onChange={(e) => setEditReason(e.target.value)}
+                    placeholder="Explain why this completed goal is being modified..."
+                    required
+                    style={{ borderColor: "#f59e0b" }}
+                  />
+                  <span className="field-hint" style={{ fontSize: "0.75rem", color: "#b45309" }}>
+                    Company policy requires a reason when updating goals that were already marked completed.
+                  </span>
+                </div>
+              )}
 
               <div className="flex gap-2 justify-end mt-4">
                 <button type="button" className="btn btn-ghost" onClick={() => setEditingGoal(null)}>

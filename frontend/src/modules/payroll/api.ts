@@ -306,6 +306,81 @@ export async function listTaxSlabs(
   return res.data;
 }
 
+// ── Global Statutory Rates & Compliance (Platform Super Admin API) ─────────────
+export interface StatutoryRate {
+  id: string;
+  country: string;
+  scheme: "epf" | "esi";
+  employee_rate: string;
+  employer_rate: string;
+  wage_ceiling: string;
+  employer_epf_rate: string | null;
+  employer_eps_rate: string | null;
+  edli_rate: string | null;
+  admin_charge_rate: string | null;
+  employee_exempt_daily_wage: string | null;
+  effective_from: string;
+  effective_to: string | null;
+  source_url: string;
+  source_title: string;
+  source_note: string | null;
+  verified_on: string;
+  created_at?: string;
+}
+
+export interface StatutoryRateCreateInput {
+  country: string;
+  scheme: "epf" | "esi";
+  employee_rate: number | string;
+  employer_rate: number | string;
+  wage_ceiling: number | string;
+  employer_epf_rate?: number | string | null;
+  employer_eps_rate?: number | string | null;
+  edli_rate?: number | string | null;
+  admin_charge_rate?: number | string | null;
+  employee_exempt_daily_wage?: number | string | null;
+  effective_from: string;
+  source_url: string;
+  source_title: string;
+  verified_on: string;
+  source_note?: string | null;
+}
+
+export async function listStatutoryRates(params?: {
+  country?: string;
+  scheme?: "epf" | "esi";
+  on_date?: string;
+  page?: number;
+  limit?: number;
+}): Promise<Page<StatutoryRate>> {
+  const res = await apiClient.get<Page<StatutoryRate>>("/payroll/statutory-rates", {
+    params: {
+      country: params?.country || undefined,
+      scheme: params?.scheme || undefined,
+      on_date: params?.on_date || undefined,
+      page: params?.page ?? 1,
+      limit: params?.limit ?? 50,
+    },
+  });
+  return res.data;
+}
+
+export async function createStatutoryRate(data: StatutoryRateCreateInput): Promise<StatutoryRate> {
+  const res = await apiClient.post<StatutoryRate>("/payroll/statutory-rates", data);
+  return res.data;
+}
+
+export interface RegionStateItem {
+  code: string;
+  name: string;
+  states: string[];
+}
+
+export async function listSupportedRegions(): Promise<RegionStateItem[]> {
+  const res = await apiClient.get<RegionStateItem[]>("/regions");
+  return res.data;
+}
+
 // 3. Payroll Runs
 export async function createPayrollRun(
   month: number,
