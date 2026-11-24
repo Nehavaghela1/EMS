@@ -7,6 +7,7 @@ import { usePagination } from "../../../shared/hooks/usePagination";
 import { parseApiError } from "../../../shared/api/errors";
 import { TodayAttendanceCard } from "../../time_leave/components/TodayAttendanceCard";
 import { ZohoOwnerDashboard } from "./OwnerHrDashboard";
+import { ManagerDashboard } from "./ManagerDashboard";
 import { fetchDashboard, fetchAnnouncements, type EmployeeDashboardData } from "../api";
 import {
   listHolidays,
@@ -14,7 +15,6 @@ import {
   getAssignedShift,
   checkIn,
   checkOut,
-  listLeaves,
 } from "../../time_leave/api";
 import {
   listCompanies,
@@ -24,9 +24,7 @@ import {
   type CompanyDetailResponse,
   type AdminCompanyUpdateInput,
 } from "../../identity/api";
-import { getActivePIP, listPIPs, listPerformanceCycles, getPerformanceSummary } from "../../performance/api";
-import { fetchTimeEntries } from "../../projects/api";
-import { listEmployees } from "../../hr/api";
+import { getActivePIP } from "../../performance/api";
 import { useAuth } from "../../../app/auth-context";
 import { formatDate } from "../../../shared/utils/date";
 
@@ -180,7 +178,7 @@ export function DashboardPage() {
           )}
 
           {data.role === "manager" && (
-            <ManagerDashboardContent data={data.data} user={user} />
+            <ManagerDashboard data={data.data} user={user} />
           )}
 
           {data.role === "employee" && (
@@ -192,142 +190,6 @@ export function DashboardPage() {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-interface ManagerDashboardContentProps {
-  data: {
-    team_headcount: number;
-    team_present_today: number;
-    team_leave_requests_awaiting: number;
-  };
-  user: any;
-}
-
-function ManagerDashboardContent({ data, user }: ManagerDashboardContentProps) {
-  const todayStr = new Date().toISOString().slice(0, 10);
-
-  // 1. Leave requests awaiting my approval (from /dashboard or listLeaves)
-  const leaveAwaitingCount = data.team_leave_requests_awaiting;
-
-  // 2. Timesheet entries awaiting my approval (submitted status)
-  const timesheetsQuery = useQuery({
-    queryKey: ["manager_dashboard_timesheets", user?.company_id],
-    queryFn: () => fetchTimeEntries({ status: "submitted" }),
-    enabled: Boolean(user),
-  });
-  const pendingTimesheetsCount = timesheetsQuery.data?.length ?? 0;
-
-  // 3. Team members on leave today
-  const leavesTodayQuery = useQuery({
-    queryKey: ["manager_dashboard_leaves_today", user?.company_id, todayStr],
-    queryFn: () =>
-      listLeaves({
-        status: "approved",
-        date_from: todayStr,
-        date_to: todayStr,
-        page: 1,
-        limit: 100,
-      }),
-    enabled: Boolean(user),
-  });
-  const teamOnLeaveTodayCount = leavesTodayQuery.data?.total ?? leavesTodayQuery.data?.items?.length ?? 0;
-
-  // 4. Open PIPs on my team
-  const pipsQuery = useQuery({
-    queryKey: ["manager_dashboard_pips", user?.company_id],
-    queryFn: () => listPIPs({ status: "active" }),
-    enabled: Boolean(user),
-  });
-  const openPipsCount = pipsQuery.data?.length ?? 0;
-
-  // 5. Reviews I still owe this cycle
-  const reviewsOwedQuery = useQuery({
-    queryKey: ["manager_dashboard_reviews_owed", user?.company_id],
-    queryFn: async () => {
-      try {
-        const cyclesRes = await listPerformanceCycles("active");
-        if (!cyclesRes.items || cyclesRes.items.length === 0) return 0;
-        const employeesRes = await listEmployees({ page: 1, limit: 100 });
-        const directReports = employeesRes.items.filter(
-          (emp) => emp.reporting_manager_id === user?.employee?.id && emp.id !== user?.employee?.id
-        );
-        if (directReports.length === 0) return 0;
-        let count = 0;
-        for (const rep of directReports) {
-          try {
-            const summary = await getPerformanceSummary(rep.id);
-            if (!summary) {
-              count += 1;
-            }
-          } catch {
-            // Non-critical per employee
-          }
-        }
-        return count;
-      } catch {
-        return 0;
-      }
-    },
-    enabled: Boolean(user?.employee?.id),
-  });
-  const reviewsOwedCount = reviewsOwedQuery.data ?? 0;
-
-  function renderValue(val: number) {
-    if (val === 0) {
-      return <span style={{ color: "var(--color-text-muted, #64748b)" }}>Nothing waiting</span>;
-    }
-    return val;
-  }
-
-  return (
-    <div>
-      <div className="section-title mt-2 mb-3">
-        <h3>What Needs Me Today</h3>
-        <p className="text-muted text-sm">Actionable pending approvals and team status items</p>
-      </div>
-
-      <div className="stat-grid mb-4">
-        <Stat
-          label="Leave requests awaiting my approval"
-          value={renderValue(leaveAwaitingCount)}
-          to="/leaves"
-          subtitle={leaveAwaitingCount > 0 ? "Requires review" : undefined}
-        />
-        <Stat
-          label="Timesheet entries awaiting my approval"
-          value={timesheetsQuery.isLoading ? "..." : renderValue(pendingTimesheetsCount)}
-          to="/timesheets"
-          subtitle={pendingTimesheetsCount > 0 ? "Pending review" : undefined}
-        />
-        <Stat
-          label="Team members on leave today"
-          value={leavesTodayQuery.isLoading ? "..." : renderValue(teamOnLeaveTodayCount)}
-          to="/leaves"
-          subtitle={teamOnLeaveTodayCount > 0 ? "Absent today" : undefined}
-        />
-        <Stat
-          label="Open PIPs on my team"
-          value={pipsQuery.isLoading ? "..." : renderValue(openPipsCount)}
-          to="/performance"
-          subtitle={openPipsCount > 0 ? "Active PIPs" : undefined}
-        />
-        <Stat
-          label="Reviews I still owe this cycle"
-          value={reviewsOwedQuery.isLoading ? "..." : renderValue(reviewsOwedCount)}
-          to="/performance/team-goals"
-          subtitle={reviewsOwedCount > 0 ? "Goals awaiting evaluation" : undefined}
-        />
-      </div>
-
-      <div className="section-title mt-4 mb-3">
-        <h3>Team Overview</h3>
-      </div>
-      <div className="stat-grid">
-        <Stat label="Team headcount" value={data.team_headcount} />
-        <Stat label="Team present today" value={data.team_present_today} />
-      </div>
     </div>
   );
 }
