@@ -1032,6 +1032,16 @@ class StatutoryRateService:
     ) -> tuple[list[StatutoryRate], int, int]:
         if country is not None:
             country = _listed_country(country)
+        if scheme is not None:
+            scheme = scheme.strip().lower()
+            target_country = country or "IN"
+            from app.core.regions import COUNTRY_STATUTORY_SCHEMES_MAP
+            valid_schemes = set(COUNTRY_STATUTORY_SCHEMES_MAP.get(target_country, ["epf", "esi"]))
+            if target_country == "IN" and scheme not in valid_schemes:
+                raise ValidationError(
+                    f"Scheme for {target_country} must be one of: {', '.join(sorted(valid_schemes))}.",
+                    details={"field": "scheme", "allowed": sorted(valid_schemes)},
+                )
         return self.repo.list_rates(page_params, scheme, on_date, country)
 
     def add_rate(
@@ -1041,6 +1051,13 @@ class StatutoryRateService:
         a scheme in one country never overlap: checked here (naming the dates) and by the
         database."""
         country = _listed_country(data.country)
+        from app.core.regions import COUNTRY_STATUTORY_SCHEMES_MAP
+        valid_schemes = set(COUNTRY_STATUTORY_SCHEMES_MAP.get(country, []))
+        if country == "IN" and data.scheme not in valid_schemes:
+            raise ValidationError(
+                f"Scheme for {country} must be one of: {', '.join(sorted(valid_schemes))}.",
+                details={"field": "scheme", "allowed": sorted(valid_schemes)},
+            )
         rows = self.repo.list_for_scheme_locked(country, data.scheme)
         start = data.effective_from
         open_row = next((r for r in rows if r.effective_to is None), None)
@@ -1097,6 +1114,26 @@ class StatutoryRateService:
         )
         _save(self.db, commit)
         return rate
+
+    def delete_rate(self, rate_id: uuid.UUID, actor: User, *, commit: bool = True) -> None:
+        """Super admin soft-deletes / cancels a published statutory rate."""
+        rate = self.repo.get_by_id(rate_id)
+        if rate is None:
+            raise NotFoundError("Statutory rate not found.")
+        self.repo.soft_delete(rate)
+        self.audit.record(
+            company_id=actor.company_id,
+            actor=actor,
+            action="STATUTORY_RATE_DELETED",
+            entity_type="statutory_rate",
+            entity_id=rate.id,
+            details={
+                "country": rate.country,
+                "scheme": rate.scheme,
+                "rate_id": str(rate.id),
+            },
+        )
+        _save(self.db, commit)
 
 
 class PtSlabService:

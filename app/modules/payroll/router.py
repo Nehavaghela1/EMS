@@ -333,7 +333,7 @@ def add_statutory_rate(
 @limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def list_statutory_rates(
     request: Request,
-    scheme: Literal["epf", "esi"] | None = None,
+    scheme: str | None = None,
     on_date: date | None = None,
     country: str | None = None,
     params: PageParams = Depends(page_params),
@@ -349,6 +349,19 @@ def list_statutory_rates(
         pages=pages,
         has_next=params.page < pages,
     )
+
+
+@statutory_rates_router.delete("/{rate_id}", status_code=204)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def delete_statutory_rate(
+    rate_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_platform_role()),
+):
+    StatutoryRateService(db).delete_rate(rate_id, user)
+    return None
+
 
 
 # --- Routes 87-88: PT slabs -----------------------------------------------

@@ -330,7 +330,7 @@ export interface StatutoryRate {
 
 export interface StatutoryRateCreateInput {
   country: string;
-  scheme: "epf" | "esi";
+  scheme: string;
   employee_rate: number | string;
   employer_rate: number | string;
   wage_ceiling: number | string;
@@ -348,7 +348,7 @@ export interface StatutoryRateCreateInput {
 
 export async function listStatutoryRates(params?: {
   country?: string;
-  scheme?: "epf" | "esi";
+  scheme?: string;
   on_date?: string;
   page?: number;
   limit?: number;
@@ -368,6 +368,10 @@ export async function listStatutoryRates(params?: {
 export async function createStatutoryRate(data: StatutoryRateCreateInput): Promise<StatutoryRate> {
   const res = await apiClient.post<StatutoryRate>("/payroll/statutory-rates", data);
   return res.data;
+}
+
+export async function deleteStatutoryRate(rateId: string): Promise<void> {
+  await apiClient.delete(`/payroll/statutory-rates/${rateId}`);
 }
 
 export interface RegionStateItem {

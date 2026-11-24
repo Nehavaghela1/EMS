@@ -539,6 +539,19 @@ class StatutoryRateRepository:
         rate.effective_to = effective_to
         self.db.flush()
 
+    def get_by_id(self, rate_id: uuid.UUID) -> StatutoryRate | None:
+        return self.db.scalar(
+            select(StatutoryRate).where(
+                StatutoryRate.id == rate_id,
+                StatutoryRate.deleted_at.is_(None),
+            )
+        )
+
+    def soft_delete(self, rate: StatutoryRate) -> None:
+        from app.core.time import utcnow
+        rate.deleted_at = utcnow()
+        self.db.flush()
+
 
 class PayrollRunRepository:
     def __init__(self, db: Session):

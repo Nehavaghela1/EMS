@@ -7,6 +7,7 @@ import { formatDate } from "../../../shared/utils/date";
 import {
   listStatutoryRates,
   createStatutoryRate,
+  deleteStatutoryRate,
   listSupportedRegions,
   listPtSlabs,
   listTaxSlabs,
@@ -14,6 +15,216 @@ import {
   type StatutoryRateCreateInput,
   type RegionStateItem,
 } from "../../payroll/api";
+
+export interface SchemeConfigOption {
+  code: string;
+  name: string;
+  employeeRate: string;
+  employerRate: string;
+  wageCeiling: string;
+  sourceUrl: string;
+  sourceTitle: string;
+  hasBreakdown?: boolean;
+  employerEpfRate?: string;
+  employerEpsRate?: string;
+}
+
+export interface CountryMeta {
+  currencySymbol: string;
+  currencyCode: string;
+  defaultSourceUrl: string;
+  schemes: SchemeConfigOption[];
+}
+
+export const COUNTRY_SCHEMES_CATALOG: Record<string, CountryMeta> = {
+  IN: {
+    currencySymbol: "₹",
+    currencyCode: "INR",
+    defaultSourceUrl: "https://epfindia.gov.in",
+    schemes: [
+      {
+        code: "epf",
+        name: "EPF (Employee Provident Fund)",
+        employeeRate: "12.000",
+        employerRate: "12.000",
+        wageCeiling: "15000.00",
+        sourceUrl: "https://epfindia.gov.in",
+        sourceTitle: "EPFO Official Gazette Notification",
+        hasBreakdown: true,
+        employerEpfRate: "3.670",
+        employerEpsRate: "8.330",
+      },
+      {
+        code: "esi",
+        name: "ESI (Employee State Insurance)",
+        employeeRate: "0.750",
+        employerRate: "3.250",
+        wageCeiling: "21000.00",
+        sourceUrl: "https://esic.gov.in",
+        sourceTitle: "ESIC Official Gazette Notification",
+      },
+    ],
+  },
+  US: {
+    currencySymbol: "$",
+    currencyCode: "USD",
+    defaultSourceUrl: "https://www.ssa.gov",
+    schemes: [
+      {
+        code: "fica_ss",
+        name: "FICA - Social Security (OASDI)",
+        employeeRate: "6.200",
+        employerRate: "6.200",
+        wageCeiling: "168600.00",
+        sourceUrl: "https://www.ssa.gov",
+        sourceTitle: "Social Security Contribution and Benefit Base",
+      },
+      {
+        code: "fica_med",
+        name: "FICA - Medicare (Hospital Insurance)",
+        employeeRate: "1.450",
+        employerRate: "1.450",
+        wageCeiling: "99999999.00",
+        sourceUrl: "https://www.ssa.gov",
+        sourceTitle: "Medicare Contribution Schedule",
+      },
+      {
+        code: "futa",
+        name: "FUTA (Federal Unemployment Tax)",
+        employeeRate: "0.000",
+        employerRate: "0.600",
+        wageCeiling: "7000.00",
+        sourceUrl: "https://www.ssa.gov",
+        sourceTitle: "Federal Unemployment Tax Act Regulations",
+      },
+    ],
+  },
+  GB: {
+    currencySymbol: "£",
+    currencyCode: "GBP",
+    defaultSourceUrl: "https://www.gov.uk",
+    schemes: [
+      {
+        code: "nic",
+        name: "NIC (National Insurance Contributions)",
+        employeeRate: "8.000",
+        employerRate: "13.800",
+        wageCeiling: "50270.00",
+        sourceUrl: "https://www.gov.uk",
+        sourceTitle: "HMRC National Insurance Rates and Categories",
+      },
+      {
+        code: "ae_pension",
+        name: "Workplace Pension (Auto-Enrolment)",
+        employeeRate: "5.000",
+        employerRate: "3.000",
+        wageCeiling: "50270.00",
+        sourceUrl: "https://www.gov.uk",
+        sourceTitle: "The Pensions Regulator Auto-Enrolment Thresholds",
+      },
+    ],
+  },
+  AE: {
+    currencySymbol: "AED ",
+    currencyCode: "AED",
+    defaultSourceUrl: "https://www.dubai.ae",
+    schemes: [
+      {
+        code: "gpssa",
+        name: "GPSSA (General Pension & Social Security Authority)",
+        employeeRate: "5.000",
+        employerRate: "12.500",
+        wageCeiling: "50000.00",
+        sourceUrl: "https://www.dubai.ae",
+        sourceTitle: "GPSSA Federal Law No. 7 on Pension and Social Security",
+      },
+      {
+        code: "eosb",
+        name: "EOSB (End of Service Gratuity Fund)",
+        employeeRate: "0.000",
+        employerRate: "5.830",
+        wageCeiling: "99999999.00",
+        sourceUrl: "https://www.dubai.ae",
+        sourceTitle: "UAE Labour Law End of Service Benefits Scheme",
+      },
+    ],
+  },
+  SG: {
+    currencySymbol: "S$",
+    currencyCode: "SGD",
+    defaultSourceUrl: "https://www.cpf.gov.sg",
+    schemes: [
+      {
+        code: "cpf",
+        name: "CPF (Central Provident Fund)",
+        employeeRate: "20.000",
+        employerRate: "17.000",
+        wageCeiling: "6800.00",
+        sourceUrl: "https://www.cpf.gov.sg",
+        sourceTitle: "CPF Board Contribution Rates Table",
+      },
+      {
+        code: "shg",
+        name: "Self-Help Groups Fund (CDAC/SINDA/MBMF)",
+        employeeRate: "1.000",
+        employerRate: "0.000",
+        wageCeiling: "10000.00",
+        sourceUrl: "https://www.cpf.gov.sg",
+        sourceTitle: "Community Fund Statutory Contributions",
+      },
+    ],
+  },
+  CA: {
+    currencySymbol: "CA$",
+    currencyCode: "CAD",
+    defaultSourceUrl: "https://www.canada.ca",
+    schemes: [
+      {
+        code: "cpp",
+        name: "CPP (Canada Pension Plan)",
+        employeeRate: "5.950",
+        employerRate: "5.950",
+        wageCeiling: "68500.00",
+        sourceUrl: "https://www.canada.ca",
+        sourceTitle: "CRA Canada Pension Plan Contributions Schedule",
+      },
+      {
+        code: "ei",
+        name: "EI (Employment Insurance)",
+        employeeRate: "1.660",
+        employerRate: "2.320",
+        wageCeiling: "63200.00",
+        sourceUrl: "https://www.canada.ca",
+        sourceTitle: "CRA Employment Insurance Premium Rates",
+      },
+    ],
+  },
+  AU: {
+    currencySymbol: "A$",
+    currencyCode: "AUD",
+    defaultSourceUrl: "https://www.ato.gov.au",
+    schemes: [
+      {
+        code: "super",
+        name: "Superannuation Guarantee (SG)",
+        employeeRate: "0.000",
+        employerRate: "11.500",
+        wageCeiling: "62270.00",
+        sourceUrl: "https://www.ato.gov.au",
+        sourceTitle: "ATO Superannuation Guarantee Percentage and Thresholds",
+      },
+      {
+        code: "medicare",
+        name: "Medicare Levy Withholding",
+        employeeRate: "2.000",
+        employerRate: "0.000",
+        wageCeiling: "99999999.00",
+        sourceUrl: "https://www.ato.gov.au",
+        sourceTitle: "ATO Medicare Levy Rates and Thresholds",
+      },
+    ],
+  },
+};
 
 const DEFAULT_COUNTRIES: RegionStateItem[] = [
   { code: "IN", name: "India", states: [] },
@@ -31,8 +242,10 @@ export function PlatformStatutoryPage() {
 
   const [activeTab, setActiveTab] = useState<"rates" | "pt_slabs" | "tax_slabs">("rates");
   const [countryFilter, setCountryFilter] = useState("all");
-  const [schemeFilter, setSchemeFilter] = useState<"all" | "epf" | "esi">("all");
+  const [schemeFilter, setSchemeFilter] = useState("all");
   const [showAddModal, setShowAddModal] = useState(false);
+  const [isCustomScheme, setIsCustomScheme] = useState(false);
+  const [deletingRateId, setDeletingRateId] = useState<string | null>(null);
 
   // Modal Form State
   const [formData, setFormData] = useState<StatutoryRateCreateInput>({
@@ -96,10 +309,79 @@ export function PlatformStatutoryPage() {
     },
   });
 
+  // Delete Mutation
+  const deleteMutation = useMutation({
+    mutationFn: (rateId: string) => deleteStatutoryRate(rateId),
+    onSuccess: () => {
+      notify("Statutory rate cancelled and removed.", "success");
+      setDeletingRateId(null);
+      queryClient.invalidateQueries({ queryKey: ["platform", "statutory-rates"] });
+    },
+    onError: (err) => {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to remove statutory rate", "error");
+      setDeletingRateId(null);
+    },
+  });
+
+  const currentCountryMeta = useMemo(() => {
+    return COUNTRY_SCHEMES_CATALOG[formData.country] || COUNTRY_SCHEMES_CATALOG.IN;
+  }, [formData.country]);
+
+  const handleCountryChange = (newCountry: string) => {
+    const meta = COUNTRY_SCHEMES_CATALOG[newCountry] || COUNTRY_SCHEMES_CATALOG.IN;
+    const defaultScheme = meta.schemes[0];
+    setIsCustomScheme(false);
+    setFormData({
+      ...formData,
+      country: newCountry,
+      scheme: defaultScheme ? defaultScheme.code : "custom",
+      employee_rate: defaultScheme ? defaultScheme.employeeRate : "0.000",
+      employer_rate: defaultScheme ? defaultScheme.employerRate : "0.000",
+      wage_ceiling: defaultScheme ? defaultScheme.wageCeiling : "10000.00",
+      employer_epf_rate: defaultScheme?.employerEpfRate || null,
+      employer_eps_rate: defaultScheme?.employerEpsRate || null,
+      source_url: defaultScheme ? defaultScheme.sourceUrl : meta.defaultSourceUrl,
+      source_title: defaultScheme ? defaultScheme.sourceTitle : `${newCountry} Official Gazette Notification`,
+      employee_exempt_daily_wage: null,
+    });
+  };
+
+  const handleSchemeChange = (schemeCode: string) => {
+    if (schemeCode === "custom") {
+      setIsCustomScheme(true);
+      setFormData({
+        ...formData,
+        scheme: "",
+        source_url: currentCountryMeta.defaultSourceUrl,
+      });
+      return;
+    }
+    setIsCustomScheme(false);
+    const matched = currentCountryMeta.schemes.find((s) => s.code === schemeCode);
+    if (matched) {
+      setFormData({
+        ...formData,
+        scheme: matched.code,
+        employee_rate: matched.employeeRate,
+        employer_rate: matched.employerRate,
+        wage_ceiling: matched.wageCeiling,
+        employer_epf_rate: matched.employerEpfRate || null,
+        employer_eps_rate: matched.employerEpsRate || null,
+        source_url: matched.sourceUrl,
+        source_title: matched.sourceTitle,
+        employee_exempt_daily_wage: null,
+      });
+    } else {
+      setFormData({ ...formData, scheme: schemeCode });
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     createMutation.mutate({
       ...formData,
+      scheme: formData.scheme.trim().toLowerCase(),
       employee_rate: Number(formData.employee_rate),
       employer_rate: Number(formData.employer_rate),
       wage_ceiling: Number(formData.wage_ceiling),
@@ -151,23 +433,7 @@ export function PlatformStatutoryPage() {
                 borderRadius: "6px",
               }}
               onClick={() => {
-                setFormData({
-                  country: "IN",
-                  scheme: "epf",
-                  employee_rate: "12.000",
-                  employer_rate: "12.000",
-                  wage_ceiling: "15000.00",
-                  employer_epf_rate: "3.670",
-                  employer_eps_rate: "8.330",
-                  edli_rate: "0.500",
-                  admin_charge_rate: "0.500",
-                  employee_exempt_daily_wage: null,
-                  effective_from: new Date().toISOString().split("T")[0],
-                  source_url: "https://epfindia.gov.in",
-                  source_title: "EPFO Official Gazette Notification",
-                  verified_on: new Date().toISOString().split("T")[0],
-                  source_note: "",
-                });
+                handleCountryChange("IN");
                 setShowAddModal(true);
               }}
             >
@@ -177,9 +443,8 @@ export function PlatformStatutoryPage() {
         }
       />
 
-      {/* Subtitle description */}
       <p className="text-muted" style={{ marginTop: "-0.5rem", marginBottom: "1.5rem", fontSize: "0.9rem" }}>
-        Manage government statutory schemes (EPF, ESI), state PT slabs, and tax schedules across countries.
+        Manage national statutory schemes (EPF, ESI, FICA, NIC, CPF, CPP, Superannuation), state PT slabs, and tax schedules across all jurisdictions.
       </p>
 
       {/* Overview Stat Cards */}
@@ -199,7 +464,7 @@ export function PlatformStatutoryPage() {
             {countries.length || 7} Countries
           </div>
           <div style={{ fontSize: "0.75rem", color: "#16a34a", marginTop: "4px" }}>
-            ✓ Multi-currency & regional calendars
+            ✓ Multi-currency & regional statutory rules
           </div>
         </div>
 
@@ -211,7 +476,7 @@ export function PlatformStatutoryPage() {
             {ratesQuery.data?.items?.filter((r: StatutoryRate) => !r.effective_to).length ?? "—"} Schemes
           </div>
           <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "4px" }}>
-            EPF & ESI currently active
+            Official schemes in force
           </div>
         </div>
 
@@ -245,7 +510,7 @@ export function PlatformStatutoryPage() {
             cursor: "pointer",
           }}
         >
-          📜 Statutory Schemes (EPF / ESI)
+          📜 Statutory Schemes (Global Rates)
         </button>
         <button
           type="button"
@@ -292,7 +557,10 @@ export function PlatformStatutoryPage() {
               <label style={{ fontSize: "0.85rem", fontWeight: 600, color: "#475569" }}>Country:</label>
               <select
                 value={countryFilter}
-                onChange={(e) => setCountryFilter(e.target.value)}
+                onChange={(e) => {
+                  setCountryFilter(e.target.value);
+                  setSchemeFilter("all");
+                }}
                 style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.85rem" }}
               >
                 <option value="all">All Countries</option>
@@ -306,12 +574,29 @@ export function PlatformStatutoryPage() {
               <label style={{ fontSize: "0.85rem", fontWeight: 600, color: "#475569", marginLeft: "10px" }}>Scheme:</label>
               <select
                 value={schemeFilter}
-                onChange={(e) => setSchemeFilter(e.target.value as typeof schemeFilter)}
+                onChange={(e) => setSchemeFilter(e.target.value)}
                 style={{ padding: "6px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.85rem" }}
               >
                 <option value="all">All Schemes</option>
-                <option value="epf">EPF (Employee Provident Fund)</option>
-                <option value="esi">ESI (State Insurance)</option>
+                {countryFilter !== "all" &&
+                  COUNTRY_SCHEMES_CATALOG[countryFilter]?.schemes.map((s) => (
+                    <option key={s.code} value={s.code}>
+                      {s.name}
+                    </option>
+                  ))}
+                {countryFilter === "all" && (
+                  <>
+                    <option value="epf">EPF (India)</option>
+                    <option value="esi">ESI (India)</option>
+                    <option value="fica_ss">FICA Social Security (US)</option>
+                    <option value="fica_med">FICA Medicare (US)</option>
+                    <option value="nic">NIC (UK)</option>
+                    <option value="cpf">CPF (Singapore)</option>
+                    <option value="cpp">CPP (Canada)</option>
+                    <option value="super">Superannuation (Australia)</option>
+                    <option value="gpssa">GPSSA (UAE)</option>
+                  </>
+                )}
               </select>
             </div>
 
@@ -339,11 +624,13 @@ export function PlatformStatutoryPage() {
                     <th style={{ padding: "10px 14px" }}>Effective Period</th>
                     <th style={{ padding: "10px 14px" }}>Status</th>
                     <th style={{ padding: "10px 14px" }}>Official Source</th>
+                    <th style={{ padding: "10px 14px", textAlign: "right" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {ratesQuery.data?.items?.map((rate: StatutoryRate) => {
                     const isActive = !rate.effective_to;
+                    const cMeta = COUNTRY_SCHEMES_CATALOG[rate.country] || COUNTRY_SCHEMES_CATALOG.IN;
                     return (
                       <tr key={rate.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
                         <td style={{ padding: "12px 14px" }}>
@@ -353,8 +640,8 @@ export function PlatformStatutoryPage() {
                           <span
                             className="badge"
                             style={{
-                              backgroundColor: rate.scheme === "epf" ? "#dbeafe" : "#fef3c7",
-                              color: rate.scheme === "epf" ? "#1e40af" : "#b45309",
+                              backgroundColor: rate.scheme === "epf" ? "#dbeafe" : rate.scheme === "esi" ? "#fef3c7" : "#e0e7ff",
+                              color: rate.scheme === "epf" ? "#1e40af" : rate.scheme === "esi" ? "#b45309" : "#3730a3",
                               textTransform: "uppercase",
                               fontWeight: 700,
                               fontSize: "0.75rem",
@@ -377,7 +664,7 @@ export function PlatformStatutoryPage() {
                           )}
                         </td>
                         <td style={{ padding: "12px 14px", fontWeight: 500 }}>
-                          ₹{Number(rate.wage_ceiling).toLocaleString("en-IN")}
+                          {cMeta.currencySymbol}{Number(rate.wage_ceiling).toLocaleString()}
                         </td>
                         <td style={{ padding: "12px 14px", color: "#334155" }}>
                           <div>From: <strong>{formatDate(rate.effective_from)}</strong></div>
@@ -421,6 +708,28 @@ export function PlatformStatutoryPage() {
                           <div style={{ fontSize: "0.7rem", color: "#94a3b8" }}>
                             Verified on {formatDate(rate.verified_on)}
                           </div>
+                        </td>
+                        <td style={{ padding: "12px 14px", textAlign: "right" }}>
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-outline"
+                            style={{
+                              color: "#dc2626",
+                              borderColor: "#fecaca",
+                              fontSize: "0.75rem",
+                              padding: "3px 8px",
+                            }}
+                            title="Remove or cancel this published statutory rate"
+                            disabled={deleteMutation.isPending && deletingRateId === rate.id}
+                            onClick={() => {
+                              if (window.confirm(`Are you sure you want to remove the ${rate.country} ${rate.scheme.toUpperCase()} statutory rate?`)) {
+                                setDeletingRateId(rate.id);
+                                deleteMutation.mutate(rate.id);
+                              }
+                            }}
+                          >
+                            {deleteMutation.isPending && deletingRateId === rate.id ? "…" : "✕ Remove"}
+                          </button>
                         </td>
                       </tr>
                     );
@@ -531,7 +840,7 @@ export function PlatformStatutoryPage() {
         <div className="modal-backdrop" onClick={() => setShowAddModal(false)}>
           <div
             className="modal card"
-            style={{ maxWidth: "640px", width: "95%", maxHeight: "90vh", overflowY: "auto" }}
+            style={{ maxWidth: "660px", width: "95%", maxHeight: "90vh", overflowY: "auto" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
@@ -552,7 +861,7 @@ export function PlatformStatutoryPage() {
                   <label>Country *</label>
                   <select
                     value={formData.country}
-                    onChange={(e) => setFormData({ ...formData, country: e.target.value })}
+                    onChange={(e) => handleCountryChange(e.target.value)}
                     required
                   >
                     {countries.map((c: RegionStateItem) => (
@@ -566,29 +875,33 @@ export function PlatformStatutoryPage() {
                 <div className="field">
                   <label>Statutory Scheme *</label>
                   <select
-                    value={formData.scheme}
-                    onChange={(e) => {
-                      const scheme = e.target.value as "epf" | "esi";
-                      setFormData({
-                        ...formData,
-                        scheme,
-                        employee_rate: scheme === "epf" ? "12.000" : "0.750",
-                        employer_rate: scheme === "epf" ? "12.000" : "3.250",
-                        wage_ceiling: scheme === "epf" ? "15000.00" : "21000.00",
-                        source_url: scheme === "epf" ? "https://epfindia.gov.in" : "https://esic.gov.in",
-                        source_title:
-                          scheme === "epf"
-                            ? "EPFO Official Gazette Notification"
-                            : "ESIC Official Gazette Notification",
-                      });
-                    }}
+                    value={isCustomScheme ? "custom" : formData.scheme}
+                    onChange={(e) => handleSchemeChange(e.target.value)}
                     required
                   >
-                    <option value="epf">EPF (Employee Provident Fund)</option>
-                    <option value="esi">ESI (Employee State Insurance)</option>
+                    {currentCountryMeta.schemes.map((s) => (
+                      <option key={s.code} value={s.code}>
+                        {s.name}
+                      </option>
+                    ))}
+                    <option value="custom">+ Other / Custom Scheme...</option>
                   </select>
                 </div>
               </div>
+
+              {isCustomScheme && (
+                <div className="field">
+                  <label>Custom Scheme Code *</label>
+                  <input
+                    type="text"
+                    value={formData.scheme}
+                    onChange={(e) => setFormData({ ...formData, scheme: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") })}
+                    placeholder="e.g. state_disability, provident_fund, socso"
+                    required
+                  />
+                  <span className="text-xs text-muted">Use lowercase alphanumeric identifier (e.g. disability_fund).</span>
+                </div>
+              )}
 
               <div className="grid grid-3 gap-3">
                 <div className="field">
@@ -618,7 +931,7 @@ export function PlatformStatutoryPage() {
                 </div>
 
                 <div className="field">
-                  <label>Wage Ceiling (₹) *</label>
+                  <label>Wage Ceiling ({currentCountryMeta.currencySymbol}) *</label>
                   <input
                     type="number"
                     step="0.01"
@@ -630,7 +943,7 @@ export function PlatformStatutoryPage() {
                 </div>
               </div>
 
-              {formData.scheme === "epf" && (
+              {formData.scheme === "epf" && formData.country === "IN" && (
                 <div className="p-3 rounded border" style={{ background: "#f8fafc" }}>
                   <div style={{ fontWeight: 600, fontSize: "0.82rem", color: "#334155", marginBottom: "8px" }}>
                     EPF Sub-Components Breakdown (Optional)
@@ -660,9 +973,9 @@ export function PlatformStatutoryPage() {
                 </div>
               )}
 
-              {formData.scheme === "esi" && (
+              {formData.scheme === "esi" && formData.country === "IN" && (
                 <div className="field">
-                  <label>Exempt Average Daily Wage (₹)</label>
+                  <label>Exempt Average Daily Wage ({currentCountryMeta.currencySymbol})</label>
                   <input
                     type="number"
                     step="0.01"
@@ -702,10 +1015,10 @@ export function PlatformStatutoryPage() {
                   type="url"
                   value={formData.source_url}
                   onChange={(e) => setFormData({ ...formData, source_url: e.target.value })}
-                  placeholder="https://epfindia.gov.in/..."
+                  placeholder="https://..."
                   required
                 />
-                <span className="text-xs text-muted">Must be an official government domain (e.g. epfindia.gov.in, esic.gov.in, gov.uk).</span>
+                <span className="text-xs text-muted">Must be an official government domain (e.g. epfindia.gov.in, esic.gov.in, ssa.gov, gov.uk, cpf.gov.sg, canada.ca, ato.gov.au, dubai.ae).</span>
               </div>
 
               <div className="field">

@@ -298,7 +298,7 @@ class StatutoryRate(TimeStampedBase):
 
     __tablename__ = "statutory_rates"
     __table_args__ = (
-        CheckConstraint("scheme IN ('epf', 'esi')", name="ck_statutory_rates_scheme"),
+        CheckConstraint("length(scheme) >= 2 AND scheme = lower(scheme)", name="ck_statutory_rates_scheme"),
         ExcludeConstraint(
             ("country", "="),
             ("scheme", "="),
@@ -315,7 +315,7 @@ class StatutoryRate(TimeStampedBase):
     country: Mapped[str] = mapped_column(
         String(2), nullable=False, default="IN", server_default="IN"
     )
-    scheme: Mapped[str] = mapped_column(String(10), nullable=False)
+    scheme: Mapped[str] = mapped_column(String(30), nullable=False)
     employee_rate: Mapped[Decimal] = mapped_column(SANumeric(6, 3), nullable=False)
     employer_rate: Mapped[Decimal] = mapped_column(SANumeric(6, 3), nullable=False)
     wage_ceiling: Mapped[Decimal] = mapped_column(SANumeric(14, 2), nullable=False)

@@ -182,6 +182,15 @@ COUNTRY_REGIONS_MAP: dict[str, dict[str, Any]] = {
 # payroll run or employee bank details for it are refused until it is ready.
 PAYROLL_READY_COUNTRIES: frozenset[str] = frozenset({"IN"})
 
+COUNTRY_STATUTORY_SCHEMES_MAP: dict[str, list[str]] = {
+    "IN": ["epf", "esi"],
+    "US": ["fica_ss", "fica_med", "futa"],
+    "GB": ["nic", "ae_pension"],
+    "SG": ["cpf", "shg"],
+    "CA": ["cpp", "ei"],
+    "AU": ["super", "medicare"],
+    "AE": ["gpssa", "eosb"],
+}
 
 DEFAULT_COUNTRY = "IN"
 
