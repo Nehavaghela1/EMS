@@ -20,7 +20,13 @@ import { employeeFormSchema } from "../schemas";
 import { getPositionsForDepartment, toTitleCase } from "../constants/departmentPositions";
 import { ManagerCombobox } from "../components/ManagerCombobox";
 
-const EMPLOYMENT_TYPES: EmploymentType[] = ["full_time", "part_time", "contract", "intern"];
+const EMPLOYMENT_TYPES: EmploymentType[] = [
+  "full_time",
+  "part_time",
+  "contract",
+  "intern",
+  "freelancer",
+];
 
 interface FormState {
   first_name: string;
