@@ -232,6 +232,10 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/payroll/runs"
+        element={<Navigate to="/payroll/run" replace />}
+      />
+      <Route
         path="/payroll/payslip"
         element={
           <Protected roles={ALL_COMPANY_ROLES}>
