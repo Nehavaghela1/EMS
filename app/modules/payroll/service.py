@@ -1036,10 +1036,12 @@ class StatutoryRateService:
             scheme = scheme.strip().lower()
             target_country = country or "IN"
             from app.core.regions import COUNTRY_STATUTORY_SCHEMES_MAP
+
             valid_schemes = set(COUNTRY_STATUTORY_SCHEMES_MAP.get(target_country, ["epf", "esi"]))
             if target_country == "IN" and scheme not in valid_schemes:
+                allowed_str = ", ".join(sorted(valid_schemes))
                 raise ValidationError(
-                    f"Scheme for {target_country} must be one of: {', '.join(sorted(valid_schemes))}.",
+                    f"Scheme for {target_country} must be one of: {allowed_str}.",
                     details={"field": "scheme", "allowed": sorted(valid_schemes)},
                 )
         return self.repo.list_rates(page_params, scheme, on_date, country)
@@ -1052,6 +1054,7 @@ class StatutoryRateService:
         database."""
         country = _listed_country(data.country)
         from app.core.regions import COUNTRY_STATUTORY_SCHEMES_MAP
+
         valid_schemes = set(COUNTRY_STATUTORY_SCHEMES_MAP.get(country, []))
         if country == "IN" and data.scheme not in valid_schemes:
             raise ValidationError(

@@ -687,16 +687,16 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
             <div>
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                accept="image/png,image/jpeg,image/jpg,image/webp"
                 id="tenant-logo-input"
                 style={{ display: "none" }}
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
                     const file = e.target.files[0];
                     e.target.value = "";
-                    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg+xml"];
+                    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
                     if (!allowedTypes.includes(file.type)) {
-                      notify("Logo must be a PNG, JPEG, WebP or SVG image.", "error");
+                      notify("Logo must be a PNG, JPEG or WebP image.", "error");
                       return;
                     }
                     if (file.size > 500 * 1024) {
@@ -735,7 +735,7 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
                   </button>
                 )}
               </div>
-              <div className="text-muted text-xs mt-1">Accepts PNG, JPG, or SVG. Displays in top navigation header and on payslip PDFs.</div>
+              <div className="text-muted text-xs mt-1">Accepts PNG, JPG, or WebP. Displays in top navigation header and on payslip PDFs.</div>
             </div>
           </div>
 

@@ -1,6 +1,6 @@
 import uuid
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.responses import FileResponse
@@ -361,7 +361,6 @@ def delete_statutory_rate(
 ):
     StatutoryRateService(db).delete_rate(rate_id, user)
     return None
-
 
 
 # --- Routes 87-88: PT slabs -----------------------------------------------

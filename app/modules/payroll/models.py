@@ -298,7 +298,9 @@ class StatutoryRate(TimeStampedBase):
 
     __tablename__ = "statutory_rates"
     __table_args__ = (
-        CheckConstraint("length(scheme) >= 2 AND scheme = lower(scheme)", name="ck_statutory_rates_scheme"),
+        CheckConstraint(
+            "length(scheme) >= 2 AND scheme = lower(scheme)", name="ck_statutory_rates_scheme"
+        ),
         ExcludeConstraint(
             ("country", "="),
             ("scheme", "="),

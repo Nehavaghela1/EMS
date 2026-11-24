@@ -398,7 +398,12 @@ class StatutoryRateCreateRequest(_SourcedWrite):
 
     # Checked against the shared country list by the service (422 naming the allowed codes).
     country: _COUNTRY_CODE = "IN"
-    scheme: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=30, pattern=r"^[a-z0-9_]+$")]
+    scheme: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True, min_length=2, max_length=30, pattern=r"^[a-z0-9_]+$"
+        ),
+    ]
     employee_rate: _RATE
     employer_rate: _RATE
     wage_ceiling: _CEILING
