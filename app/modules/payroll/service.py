@@ -627,6 +627,7 @@ class EmployeeSalaryService:
                 employee_id=employee_id,
                 structure_id=data.structure_id,
                 ctc=data.ctc,
+                hourly_rate=data.hourly_rate,
                 effective_from=data.effective_from,
                 revision_reason=data.revision_reason,
                 created_by=actor.id,

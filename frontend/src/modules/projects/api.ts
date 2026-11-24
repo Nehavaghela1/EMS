@@ -57,6 +57,18 @@ export async function removeProjectMember(projectId: string, employeeId: string)
   await apiClient.delete<void>(`/projects/${projectId}/members/${employeeId}`);
 }
 
+export async function updateProjectMemberRate(
+  projectId: string,
+  employeeId: string,
+  data: { hourly_rate: string | number; effective_from: string }
+): Promise<ProjectMember> {
+  const res = await apiClient.put<ProjectMember>(
+    `/projects/${projectId}/members/${employeeId}/rate`,
+    data
+  );
+  return res.data;
+}
+
 // Tasks
 export async function fetchTasks(projectId: string, status?: string): Promise<Task[]> {
   const query = status ? `?status=${status}` : "";

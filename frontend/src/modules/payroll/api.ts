@@ -69,6 +69,7 @@ export interface SalaryAssignInput {
   ctc: string;
   effective_from: string;
   revision_reason?: string | null;
+  hourly_rate?: string | null;
 }
 
 export interface EmployeeSalaryResponse {
@@ -76,6 +77,7 @@ export interface EmployeeSalaryResponse {
   employee_id: string;
   structure_id: string;
   ctc: string;
+  hourly_rate?: string | null;
   effective_from: string;
   created_at: string;
 }
@@ -142,6 +144,7 @@ export interface PayrollRun {
   total_employer_cost: string | null;
   approved_by: string | null;
   approved_at: string | null;
+  error_message?: string | null;
   is_attendance_unlocked?: boolean;
   attendance_unlocked_at?: string | null;
   attendance_unlocked_by?: string | null;
@@ -153,6 +156,11 @@ export interface PayrollItemLine {
   code: string;
   name: string;
   amount: string;
+  project_id?: string;
+  project_name?: string;
+  hours?: string;
+  rate?: string;
+  is_fallback?: boolean;
 }
 
 export interface PayrollItem {

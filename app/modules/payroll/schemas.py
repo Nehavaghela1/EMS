@@ -169,6 +169,7 @@ class SalaryAssignRequest(BaseModel):
     ctc: Decimal = Field(gt=0, le=_MAX_MONEY, decimal_places=2)
     effective_from: date
     revision_reason: _REASON | None = None
+    hourly_rate: Decimal | None = Field(default=None, gt=0, le=_MAX_MONEY, decimal_places=2)
 
     @field_validator("effective_from")
     @classmethod
@@ -208,6 +209,7 @@ class EmployeeSalaryResponse(BaseModel):
     structure_id: uuid.UUID
     structure_name: str
     ctc: Decimal
+    hourly_rate: Decimal | None = None
     effective_from: date
     effective_to: date | None
     revision_reason: str | None

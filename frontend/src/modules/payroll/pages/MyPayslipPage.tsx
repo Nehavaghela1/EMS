@@ -688,8 +688,15 @@ export function MyPayslipPage() {
                     <tbody>
                       {selectedPayslip.earnings_json.map((e, idx) => (
                         <tr key={idx}>
-                          <td>{e.name}</td>
-                          <td className="text-right font-mono">₹{Number(e.amount).toLocaleString()}</td>
+                          <td>
+                            <div>{e.name}</div>
+                            {e.is_fallback && (
+                              <div className="text-xs text-amber-700 mt-1">
+                                ⚠️ Fallback rate applied (Annual CTC ÷ 12 ÷ 160)
+                              </div>
+                            )}
+                          </td>
+                          <td className="text-right font-mono" style={{ verticalAlign: "top" }}>₹{Number(e.amount).toLocaleString()}</td>
                         </tr>
                       ))}
                       <tr className="fw-bold border-t">
