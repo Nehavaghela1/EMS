@@ -503,3 +503,63 @@ export async function reviewReimbursement(
   const res = await apiClient.put<Reimbursement>(`/payroll/reimbursements/${id}`, data);
   return res.data;
 }
+
+export interface SalaryHistoryItem {
+  id: string;
+  structure_id: string;
+  structure_name: string;
+  ctc: string;
+  effective_from: string;
+  effective_to?: string | null;
+  revision_reason?: string | null;
+  created_at: string;
+}
+
+export async function getEmployeeSalaryHistory(
+  employeeId: string,
+  params?: { page?: number; limit?: number; from_date?: string; to_date?: string }
+): Promise<Page<SalaryHistoryItem>> {
+  const res = await apiClient.get<Page<SalaryHistoryItem>>(`/payroll/employees/${employeeId}/salary-history`, {
+    params,
+  });
+  return res.data;
+}
+
+export interface BankAccountRequest {
+  account_holder: string;
+  bank_name: string;
+  account_number: string;
+  ifsc_code: string;
+}
+
+export interface BankAccountResponse {
+  employee_id: string;
+  account_holder: string;
+  bank_name: string;
+  account_number: string;
+  ifsc_code: string;
+  updated_at: string;
+}
+
+export async function getMyBankAccount(): Promise<BankAccountResponse> {
+  const res = await apiClient.get<BankAccountResponse>("/payroll/bank-account/me");
+  return res.data;
+}
+
+export async function saveMyBankAccount(data: BankAccountRequest): Promise<BankAccountResponse> {
+  const res = await apiClient.put<BankAccountResponse>("/payroll/bank-account/me", data);
+  return res.data;
+}
+
+export async function getEmployeeBankAccount(employeeId: string): Promise<BankAccountResponse> {
+  const res = await apiClient.get<BankAccountResponse>(`/payroll/employees/${employeeId}/bank-account`);
+  return res.data;
+}
+
+export async function saveEmployeeBankAccount(
+  employeeId: string,
+  data: BankAccountRequest
+): Promise<BankAccountResponse> {
+  const res = await apiClient.put<BankAccountResponse>(`/payroll/employees/${employeeId}/bank-account`, data);
+  return res.data;
+}

@@ -626,6 +626,8 @@ class BankAccountRequest(BaseModel):
     def _number(cls, value: str) -> str:
         # Never put the submitted value in the message: it is an account number.
         value = value.strip()
+        if "•" in value or "\u2022" in value:
+            raise ValueError("Account number cannot contain bullet characters.")
         if is_masked_account_number(value) or _ACCOUNT_NUMBER.fullmatch(value):
             return value
         raise ValueError("Account number must be 9 to 18 digits.")

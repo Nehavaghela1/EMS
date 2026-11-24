@@ -31,6 +31,11 @@ import {
   assignEmployeeSalary,
   getStatutoryConfig,
   updateStatutoryConfig,
+  getEmployeeBankAccount,
+  saveEmployeeBankAccount,
+  getEmployeeSalaryHistory,
+  type BankAccountResponse,
+  type SalaryHistoryItem,
   type PayrollItem,
   type SalaryStructureListItem,
   type SalaryStructure,
@@ -4522,6 +4527,7 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
   const queryClient = useQueryClient();
 
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showBankModal, setShowBankModal] = useState(false);
   const [selectedStructId, setSelectedStructId] = useState("");
   const [assignCtc, setAssignCtc] = useState("600000.00");
   const [assignEffectiveFrom, setAssignEffectiveFrom] = useState(
@@ -4529,6 +4535,58 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
   );
   const [revisionReason, setRevisionReason] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Bank details form state
+  const [bankHolder, setBankHolder] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [bankNumber, setBankNumber] = useState("");
+  const [bankIfsc, setBankIfsc] = useState("");
+  const [savingBank, setSavingBank] = useState(false);
+
+  const bankQuery = useQuery<BankAccountResponse | null>({
+    queryKey: ["employee_bank_account", employeeId],
+    queryFn: async () => {
+      try {
+        return await getEmployeeBankAccount(employeeId);
+      } catch (err: unknown) {
+        const parsed = parseApiError(err);
+        if (parsed.status === 404) return null;
+        throw err;
+      }
+    },
+    enabled: isHr,
+  });
+
+  const salaryHistoryQuery = useQuery({
+    queryKey: ["employee_salary_history", employeeId],
+    queryFn: () => getEmployeeSalaryHistory(employeeId, { limit: 50 }),
+    enabled: isHr,
+  });
+
+  async function handleBankSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (bankNumber.includes("•")) {
+      notify("Account number cannot contain bullet characters.", "error");
+      return;
+    }
+    setSavingBank(true);
+    try {
+      await saveEmployeeBankAccount(employeeId, {
+        account_holder: bankHolder.trim(),
+        bank_name: bankName.trim(),
+        account_number: bankNumber.trim(),
+        ifsc_code: bankIfsc.trim().toUpperCase(),
+      });
+      notify("Bank account details saved successfully", "success");
+      setShowBankModal(false);
+      setBankNumber("");
+      await queryClient.invalidateQueries({ queryKey: ["employee_bank_account", employeeId] });
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setSavingBank(false);
+    }
+  }
 
   const salaryQuery = useQuery<EmployeeSalaryData | null>({
     queryKey: ["employee_salary", employeeId],
@@ -4726,6 +4784,232 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
           </div>
         )}
       </div>
+
+      {/* Bank Account Section (Masked end to end) */}
+      <div className="card">
+        <div className="flex justify-between items-center border-b pb-3 mb-4">
+          <div>
+            <h3 style={{ margin: 0, fontSize: "1.1rem" }}>Bank Account Details</h3>
+            <p className="text-muted text-sm" style={{ margin: "2px 0 0" }}>
+              Disbursement account details for payroll and reimbursements (masked for security)
+            </p>
+          </div>
+          {isHr && (
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={() => {
+                if (bankQuery.data) {
+                  setBankHolder(bankQuery.data.account_holder);
+                  setBankName(bankQuery.data.bank_name);
+                  setBankIfsc(bankQuery.data.ifsc_code);
+                }
+                setBankNumber("");
+                setShowBankModal(true);
+              }}
+            >
+              {bankQuery.data ? "Update Bank Account" : "+ Add Bank Account"}
+            </button>
+          )}
+        </div>
+
+        {bankQuery.isLoading ? (
+          <div className="row" style={{ padding: "1rem" }}>
+            <div className="spinner" />
+            <span className="text-muted text-sm" style={{ marginLeft: "8px" }}>Loading bank details...</span>
+          </div>
+        ) : !bankQuery.data ? (
+          <div style={{ textAlign: "center", padding: "1.5rem 1rem" }}>
+            <div style={{ fontSize: "1.5rem", marginBottom: "0.25rem" }}>🏦</div>
+            <p className="text-muted text-sm" style={{ margin: 0 }}>
+              No bank account on record for this employee.
+            </p>
+          </div>
+        ) : (
+          <div className="grid-3" style={{ gap: "1rem" }}>
+            <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
+              <div className="text-muted text-xs font-semibold uppercase">Account Holder</div>
+              <div className="text-md font-semibold" style={{ marginTop: "4px" }}>
+                {bankQuery.data.account_holder}
+              </div>
+            </div>
+            <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
+              <div className="text-muted text-xs font-semibold uppercase">Bank Name & IFSC</div>
+              <div className="text-md font-semibold" style={{ marginTop: "4px" }}>
+                {bankQuery.data.bank_name}
+              </div>
+              <div className="text-muted text-xs" style={{ marginTop: "2px" }}>
+                IFSC: <strong>{bankQuery.data.ifsc_code}</strong>
+              </div>
+            </div>
+            <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
+              <div className="text-muted text-xs font-semibold uppercase">Account Number</div>
+              <div className="text-md font-bold font-mono" style={{ marginTop: "4px" }}>
+                {bankQuery.data.account_number}
+              </div>
+              <div className="text-muted text-xs" style={{ marginTop: "2px" }}>
+                Updated: {formatDate(bankQuery.data.updated_at)}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Salary Revision History Table (Part 6) */}
+      <div className="card">
+        <div className="border-b pb-3 mb-4">
+          <h3 style={{ margin: 0, fontSize: "1.1rem" }}>Salary Revision History</h3>
+          <p className="text-muted text-sm" style={{ margin: "2px 0 0" }}>
+            Complete audit trail of salary assignments and revisions (Read-only)
+          </p>
+        </div>
+
+        {salaryHistoryQuery.isLoading ? (
+          <div className="row" style={{ padding: "1rem" }}>
+            <div className="spinner" />
+            <span className="text-muted text-sm" style={{ marginLeft: "8px" }}>Loading salary history...</span>
+          </div>
+        ) : !salaryHistoryQuery.data?.items?.length ? (
+          <p className="text-muted text-sm" style={{ margin: "1rem 0" }}>
+            No salary revisions on record.
+          </p>
+        ) : (
+          <table className="table text-sm" style={{ width: "100%" }}>
+            <thead>
+              <tr>
+                <th>Effective Period</th>
+                <th>Structure</th>
+                <th style={{ textAlign: "right" }}>Annual CTC (₹)</th>
+                <th>Revision Reason</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {salaryHistoryQuery.data.items.map((hist: SalaryHistoryItem) => (
+                <tr key={hist.id}>
+                  <td>
+                    <strong>{formatDate(hist.effective_from)}</strong>
+                    {" to "}
+                    {hist.effective_to ? formatDate(hist.effective_to) : <span className="badge badge-success">Present</span>}
+                  </td>
+                  <td>{hist.structure_name}</td>
+                  <td style={{ textAlign: "right", fontWeight: 600 }}>
+                    ₹{Number(hist.ctc).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </td>
+                  <td>{hist.revision_reason || "Initial assignment"}</td>
+                  <td className="text-muted text-xs">{formatDateTime(hist.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Update Bank Details Modal */}
+      {showBankModal && (
+        <div className="modal-backdrop" onClick={() => setShowBankModal(false)}>
+          <div
+            className="modal card"
+            style={{ maxWidth: "520px", width: "100%", padding: "1.5rem", borderRadius: "12px" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center border-b pb-3 mb-4">
+              <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 700 }}>
+                {bankQuery.data ? "Update Bank Account Details" : "Add Bank Account Details"}
+              </h3>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setShowBankModal(false)}
+                style={{ fontSize: "1.2rem", padding: "0 6px" }}
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleBankSubmit} className="stack gap-3">
+              <div className="field">
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                  Account Holder Name <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={bankHolder}
+                  onChange={(e) => setBankHolder(e.target.value)}
+                  placeholder="e.g. John Doe"
+                  required
+                  maxLength={100}
+                  style={{ height: "38px", borderRadius: "6px" }}
+                />
+              </div>
+
+              <div className="field">
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                  Bank Name <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  placeholder="e.g. HDFC Bank"
+                  required
+                  maxLength={100}
+                  style={{ height: "38px", borderRadius: "6px" }}
+                />
+              </div>
+
+              <div className="field">
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                  Account Number <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  type="password"
+                  value={bankNumber}
+                  onChange={(e) => setBankNumber(e.target.value)}
+                  placeholder="Enter full 9-18 digit account number"
+                  required
+                  minLength={9}
+                  maxLength={18}
+                  style={{ height: "38px", borderRadius: "6px" }}
+                />
+                <span className="field-hint" style={{ fontSize: "0.75rem", color: "#64748b" }}>
+                  Enter the full account number. It will be encrypted immediately and never shown back in plain text.
+                </span>
+              </div>
+
+              <div className="field">
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                  IFSC Code <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={bankIfsc}
+                  onChange={(e) => setBankIfsc(e.target.value.toUpperCase())}
+                  placeholder="e.g. HDFC0001234"
+                  required
+                  maxLength={11}
+                  style={{ height: "38px", borderRadius: "6px" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "1rem" }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setShowBankModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={savingBank}
+                >
+                  {savingBank ? "Saving..." : "Save Bank Details"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Zoho Payroll Style Salary Revision Modal (Images 3 & 4) */}
       {showAssignModal && (
