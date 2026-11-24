@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { listMyPayslips, type PayrollItem } from "../api";
+import { listMyPayslips, getMyBankAccount, saveMyBankAccount, type PayrollItem, type BankAccountResponse } from "../api";
 import { getMyCompany, type CompanyResponse } from "../../identity/api";
 import { getFnFSettlement, type FnFSettlement } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
@@ -8,7 +8,7 @@ import { parseApiError } from "../../../shared/api/errors";
 
 export function MyPayslipPage() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<"payslips" | "fnf">("payslips");
+  const [activeTab, setActiveTab] = useState<"payslips" | "fnf" | "bank">("payslips");
   const [payslips, setPayslips] = useState<PayrollItem[]>([]);
   const [fnfData, setFnfData] = useState<FnFSettlement | null>(null);
   const [company, setCompany] = useState<CompanyResponse | null>(null);
@@ -18,13 +18,74 @@ export function MyPayslipPage() {
   const [showDaysAuditModal, setShowDaysAuditModal] = useState(false);
   const [showFnfFormulaModal, setShowFnfFormulaModal] = useState(false);
 
+  // Bank account self-service state
+  const [bankAccount, setBankAccount] = useState<BankAccountResponse | null>(null);
+  const [bankLoading, setBankLoading] = useState(false);
+  const [bankError, setBankError] = useState<string | null>(null);
+  const [bankSuccess, setBankSuccess] = useState<string | null>(null);
+  const [bankHolder, setBankHolder] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [bankNumber, setBankNumber] = useState("");
+  const [bankIfsc, setBankIfsc] = useState("");
+  const [savingBank, setSavingBank] = useState(false);
+  const [isEditingBank, setIsEditingBank] = useState(false);
+
   useEffect(() => {
     fetchPayslips();
     fetchCompany();
+    fetchBankAccount();
     if (user?.employee?.id) {
       fetchFnF();
     }
   }, [user?.employee?.id]);
+
+  async function fetchBankAccount() {
+    setBankLoading(true);
+    setBankError(null);
+    try {
+      const acc = await getMyBankAccount();
+      setBankAccount(acc);
+      setBankHolder(acc.account_holder);
+      setBankName(acc.bank_name);
+      setBankIfsc(acc.ifsc_code);
+    } catch (err: unknown) {
+      const parsed = parseApiError(err);
+      if (parsed.status !== 404) {
+        setBankError(parsed.message);
+      } else {
+        setBankAccount(null);
+      }
+    } finally {
+      setBankLoading(false);
+    }
+  }
+
+  async function handleSaveBank(e: React.FormEvent) {
+    e.preventDefault();
+    setBankError(null);
+    setBankSuccess(null);
+    if (bankNumber.includes("•")) {
+      setBankError("Account number cannot contain bullet characters.");
+      return;
+    }
+    setSavingBank(true);
+    try {
+      const updated = await saveMyBankAccount({
+        account_holder: bankHolder.trim(),
+        bank_name: bankName.trim(),
+        account_number: bankNumber.trim(),
+        ifsc_code: bankIfsc.trim().toUpperCase(),
+      });
+      setBankAccount(updated);
+      setBankNumber("");
+      setIsEditingBank(false);
+      setBankSuccess("Bank details updated successfully.");
+    } catch (err) {
+      setBankError(parseApiError(err).message);
+    } finally {
+      setSavingBank(false);
+    }
+  }
 
   async function fetchCompany() {
     try {
@@ -119,6 +180,21 @@ export function MyPayslipPage() {
           📄 Monthly Payslips ({payslips.length})
         </button>
 
+        <button
+          type="button"
+          className="btn-ghost"
+          style={{
+            padding: "0.5rem 1rem",
+            fontWeight: activeTab === "bank" ? 600 : 400,
+            borderBottom: activeTab === "bank" ? "2px solid var(--color-primary, #2563eb)" : "2px solid transparent",
+            color: activeTab === "bank" ? "var(--color-primary, #2563eb)" : "var(--color-text-muted)",
+            cursor: "pointer",
+          }}
+          onClick={() => setActiveTab("bank")}
+        >
+          🏦 Bank Account
+        </button>
+
         {hasSeparationOrFnF ? (
           <button
             type="button"
@@ -152,7 +228,158 @@ export function MyPayslipPage() {
         ) : null}
       </div>
 
-      {activeTab === "fnf" ? (
+      {activeTab === "bank" ? (
+        <div className="card p-6 mt-4" style={{ maxWidth: 720 }}>
+          <div className="border-b pb-3 mb-4">
+            <h3 style={{ margin: 0, fontSize: "1.2rem" }}>🏦 Direct Deposit Bank Account</h3>
+            <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
+              Your bank account for salary disbursals and reimbursements. For security, your account number is encrypted and always masked.
+            </p>
+          </div>
+
+          {bankSuccess && (
+            <div className="notice notice-success mb-4" style={{ padding: "0.75rem 1rem", borderRadius: "6px" }}>
+              ✓ {bankSuccess}
+            </div>
+          )}
+          {bankError && (
+            <div className="notice notice-error mb-4" style={{ padding: "0.75rem 1rem", borderRadius: "6px" }}>
+              ✕ {bankError}
+            </div>
+          )}
+
+          {bankLoading ? (
+            <div className="row p-4">
+              <div className="spinner" />
+              <span className="text-muted text-sm ml-2">Loading bank details...</span>
+            </div>
+          ) : !isEditingBank && bankAccount ? (
+            <div className="stack gap-4">
+              <div className="grid-2" style={{ gap: "1rem" }}>
+                <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
+                  <div className="text-muted text-xs font-semibold uppercase">Account Holder</div>
+                  <div className="text-md font-semibold mt-1">{bankAccount.account_holder}</div>
+                </div>
+                <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
+                  <div className="text-muted text-xs font-semibold uppercase">Bank Name</div>
+                  <div className="text-md font-semibold mt-1">{bankAccount.bank_name}</div>
+                </div>
+                <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
+                  <div className="text-muted text-xs font-semibold uppercase">Account Number</div>
+                  <div className="text-md font-bold font-mono mt-1">{bankAccount.account_number}</div>
+                  <div className="text-muted text-xs mt-1">Masked for security</div>
+                </div>
+                <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
+                  <div className="text-muted text-xs font-semibold uppercase">IFSC Code</div>
+                  <div className="text-md font-semibold font-mono mt-1">{bankAccount.ifsc_code}</div>
+                </div>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => {
+                    setBankError(null);
+                    setBankSuccess(null);
+                    setBankNumber("");
+                    setIsEditingBank(true);
+                  }}
+                >
+                  Update Bank Account
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleSaveBank} className="stack gap-3" style={{ maxWidth: 480 }}>
+              <div className="field">
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                  Account Holder Name <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={bankHolder}
+                  onChange={(e) => setBankHolder(e.target.value)}
+                  placeholder="e.g. John Doe"
+                  required
+                  maxLength={100}
+                  style={{ height: "38px", borderRadius: "6px" }}
+                />
+              </div>
+
+              <div className="field">
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                  Bank Name <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  placeholder="e.g. HDFC Bank"
+                  required
+                  maxLength={100}
+                  style={{ height: "38px", borderRadius: "6px" }}
+                />
+              </div>
+
+              <div className="field">
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                  Account Number <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  type="password"
+                  value={bankNumber}
+                  onChange={(e) => setBankNumber(e.target.value)}
+                  placeholder="Enter full 9-18 digit account number"
+                  required
+                  minLength={9}
+                  maxLength={18}
+                  style={{ height: "38px", borderRadius: "6px" }}
+                />
+                <span className="field-hint" style={{ fontSize: "0.75rem", color: "#64748b" }}>
+                  Enter the full account number. It will be encrypted immediately and never returned in responses.
+                </span>
+              </div>
+
+              <div className="field">
+                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
+                  IFSC Code <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  type="text"
+                  value={bankIfsc}
+                  onChange={(e) => setBankIfsc(e.target.value.toUpperCase())}
+                  placeholder="e.g. HDFC0001234"
+                  required
+                  maxLength={11}
+                  style={{ height: "38px", borderRadius: "6px" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: "10px", marginTop: "0.5rem" }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={savingBank}
+                >
+                  {savingBank ? "Saving..." : "Save Bank Details"}
+                </button>
+                {bankAccount && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setIsEditingBank(false);
+                      setBankError(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
+        </div>
+      ) : activeTab === "fnf" ? (
         <div
           id="print-section"
           data-print-content="true"
@@ -688,8 +915,15 @@ export function MyPayslipPage() {
                     <tbody>
                       {selectedPayslip.earnings_json.map((e, idx) => (
                         <tr key={idx}>
-                          <td>{e.name}</td>
-                          <td className="text-right font-mono">₹{Number(e.amount).toLocaleString()}</td>
+                          <td>
+                            <div>{e.name}</div>
+                            {e.is_fallback && (
+                              <div className="text-xs text-amber-700 mt-1">
+                                ⚠️ Fallback rate applied (Annual CTC ÷ 12 ÷ 160)
+                              </div>
+                            )}
+                          </td>
+                          <td className="text-right font-mono" style={{ verticalAlign: "top" }}>₹{Number(e.amount).toLocaleString()}</td>
                         </tr>
                       ))}
                       <tr className="fw-bold border-t">

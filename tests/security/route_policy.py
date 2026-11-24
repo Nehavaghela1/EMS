@@ -333,6 +333,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ),
     ("POST", "/api/v1/payroll/runs/{id}/lock-attendance"): ROLES(UserRole.hr_admin, UserRole.owner),
     ("POST", "/api/v1/payroll/runs/{id}/send-payslips"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/payroll/runs/{id}/payments"): ROLES(UserRole.hr_admin),
     ("POST", "/api/v1/payroll/runs/{id}/payments"): ROLES(UserRole.hr_admin),
     # 5.8: owner and HR admin only (owner is added by the role dependency); the file is built
     # from the payment lines saved at approval.

@@ -34,6 +34,7 @@ from app.modules.payroll.schemas import (
     PaymentExclusion,
     PayrollItemResponse,
     PayrollPaymentRecordRequest,
+    PayrollPaymentRecordResponse,
     PayrollRunAttendanceRelockRequest,
     PayrollRunAttendanceUnlockRequest,
     PayrollRunCreateRequest,
@@ -205,6 +206,7 @@ def assign_salary(
         structure_id=salary.structure_id,
         structure_name=structure.name,
         ctc=salary.ctc,
+        hourly_rate=salary.hourly_rate,
         effective_from=salary.effective_from,
         effective_to=salary.effective_to,
         revision_reason=salary.revision_reason,
@@ -231,6 +233,7 @@ def get_employee_salary(
         structure_id=salary.structure_id,
         structure_name=structure.name,
         ctc=salary.ctc,
+        hourly_rate=salary.hourly_rate,
         effective_from=salary.effective_from,
         effective_to=salary.effective_to,
         revision_reason=salary.revision_reason,
@@ -604,6 +607,18 @@ def send_payroll_run_payslips(
     service = PayrollRunService(db)
     employee_ids = data.employee_ids if data else []
     return service.send_payslips(user.company_id, id, employee_ids, user)
+
+
+@payroll_runs_router.get("/{id}/payments", response_model=list[PayrollPaymentRecordResponse])
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_payroll_run_payments(
+    request: Request,
+    id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
+):
+    service = PayrollRunService(db)
+    return service.list_run_payments(user.company_id, id)
 
 
 @payroll_runs_router.post("/{id}/payments", response_model=PayrollRunResponse)

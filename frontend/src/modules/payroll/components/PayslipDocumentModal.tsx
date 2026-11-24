@@ -324,8 +324,15 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                   {item.earnings_json && item.earnings_json.length > 0 ? (
                     item.earnings_json.map((e, idx) => (
                       <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                        <td style={{ padding: "8px 0", color: "#334155" }}>{e.name}</td>
-                        <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
+                        <td style={{ padding: "8px 0", color: "#334155" }}>
+                          <div>{e.name}</div>
+                          {e.is_fallback && (
+                            <div style={{ fontSize: "0.72rem", color: "#b45309", marginTop: "2px" }}>
+                              ⚠️ Calculated using fallback formula (CTC ÷ 12 ÷ 160 hrs)
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#0f172a", verticalAlign: "top" }}>
                           ₹{Number(e.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
                       </tr>

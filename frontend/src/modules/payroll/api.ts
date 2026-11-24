@@ -69,6 +69,7 @@ export interface SalaryAssignInput {
   ctc: string;
   effective_from: string;
   revision_reason?: string | null;
+  hourly_rate?: string | null;
 }
 
 export interface EmployeeSalaryResponse {
@@ -76,6 +77,7 @@ export interface EmployeeSalaryResponse {
   employee_id: string;
   structure_id: string;
   ctc: string;
+  hourly_rate?: string | null;
   effective_from: string;
   created_at: string;
 }
@@ -142,7 +144,11 @@ export interface PayrollRun {
   total_employer_cost: string | null;
   approved_by: string | null;
   approved_at: string | null;
-  error_message: string | null;
+  error_message?: string | null;
+  is_attendance_unlocked?: boolean;
+  attendance_unlocked_at?: string | null;
+  attendance_unlocked_by?: string | null;
+  attendance_unlock_reason?: string | null;
   created_at: string;
 }
 
@@ -150,6 +156,11 @@ export interface PayrollItemLine {
   code: string;
   name: string;
   amount: string;
+  project_id?: string;
+  project_name?: string;
+  hours?: string;
+  rate?: string;
+  is_fallback?: boolean;
 }
 
 export interface PayrollItem {
@@ -395,6 +406,28 @@ export async function deletePayrollRun(id: string): Promise<void> {
   await apiClient.delete(`/payroll/runs/${id}`);
 }
 
+export async function unlockPayrollRunAttendance(
+  id: string,
+  reason: string
+): Promise<PayrollRun> {
+  const res = await apiClient.post<PayrollRun>(`/payroll/runs/${id}/unlock-attendance`, {
+    unlocked: true,
+    reason,
+  });
+  return res.data;
+}
+
+export async function relockPayrollRunAttendance(
+  id: string,
+  reason: string
+): Promise<PayrollRun> {
+  const res = await apiClient.post<PayrollRun>(`/payroll/runs/${id}/lock-attendance`, {
+    unlocked: false,
+    reason,
+  });
+  return res.data;
+}
+
 export interface SendPayslipsRecipientResult {
   employee_id: string;
   status: "queued" | "skipped";
@@ -468,5 +501,81 @@ export async function reviewReimbursement(
   data: ReimbursementReviewInput
 ): Promise<Reimbursement> {
   const res = await apiClient.put<Reimbursement>(`/payroll/reimbursements/${id}`, data);
+  return res.data;
+}
+
+export interface SalaryHistoryItem {
+  id: string;
+  structure_id: string;
+  structure_name: string;
+  ctc: string;
+  effective_from: string;
+  effective_to?: string | null;
+  revision_reason?: string | null;
+  created_at: string;
+}
+
+export async function getEmployeeSalaryHistory(
+  employeeId: string,
+  params?: { page?: number; limit?: number; from_date?: string; to_date?: string }
+): Promise<Page<SalaryHistoryItem>> {
+  const res = await apiClient.get<Page<SalaryHistoryItem>>(`/payroll/employees/${employeeId}/salary-history`, {
+    params,
+  });
+  return res.data;
+}
+
+export interface BankAccountRequest {
+  account_holder: string;
+  bank_name: string;
+  account_number: string;
+  ifsc_code: string;
+}
+
+export interface BankAccountResponse {
+  employee_id: string;
+  account_holder: string;
+  bank_name: string;
+  account_number: string;
+  ifsc_code: string;
+  updated_at: string;
+}
+
+export async function getMyBankAccount(): Promise<BankAccountResponse> {
+  const res = await apiClient.get<BankAccountResponse>("/payroll/bank-account/me");
+  return res.data;
+}
+
+export async function saveMyBankAccount(data: BankAccountRequest): Promise<BankAccountResponse> {
+  const res = await apiClient.put<BankAccountResponse>("/payroll/bank-account/me", data);
+  return res.data;
+}
+
+export async function getEmployeeBankAccount(employeeId: string): Promise<BankAccountResponse> {
+  const res = await apiClient.get<BankAccountResponse>(`/payroll/employees/${employeeId}/bank-account`);
+  return res.data;
+}
+
+export async function saveEmployeeBankAccount(
+  employeeId: string,
+  data: BankAccountRequest
+): Promise<BankAccountResponse> {
+  const res = await apiClient.put<BankAccountResponse>(`/payroll/employees/${employeeId}/bank-account`, data);
+  return res.data;
+}
+
+export interface PayrollPaymentRecord {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  employee_code: string;
+  amount: string;
+  status: string;
+  bank_reference?: string | null;
+  paid_on?: string | null;
+}
+
+export async function getPayrollRunPayments(runId: string): Promise<PayrollPaymentRecord[]> {
+  const res = await apiClient.get<PayrollPaymentRecord[]>(`/payroll/runs/${runId}/payments`);
   return res.data;
 }

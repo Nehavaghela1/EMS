@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   fetchProjectSummary, fetchTasks, createTask, updateTask,
-  fetchProjectMembers, addProjectMember, removeProjectMember,
+  fetchProjectMembers, addProjectMember, removeProjectMember, updateProjectMemberRate,
   fetchMilestones, createMilestone, updateMilestone, updateProject,
   fetchTaskComments, addTaskComment,
   fetchTimeEntries, createTimeEntry,
@@ -117,6 +117,15 @@ export function ProjectDetailPage() {
   const [memberEmployeeId, setMemberEmployeeId] = useState("");
   const [memberRole, setMemberRole] = useState<"lead" | "member">("member");
   const [submittingMember, setSubmittingMember] = useState(false);
+
+  // Member Rate Modal State
+  const [showRateModal, setShowRateModal] = useState(false);
+  const [rateMember, setRateMember] = useState<ProjectMember | null>(null);
+  const [memberRateValue, setMemberRateValue] = useState("");
+  const [memberRateEffectiveFrom, setMemberRateEffectiveFrom] = useState(
+    new Date().toISOString().slice(0, 10)
+  );
+  const [submittingRate, setSubmittingRate] = useState(false);
 
   // Comment Modal
   const [activeCommentTask, setActiveCommentTask] = useState<Task | null>(null);
@@ -400,6 +409,36 @@ export function ProjectDetailPage() {
       loadData();
     } catch (err: any) {
       notify(err?.response?.data?.error?.message || err?.message || "Failed to remove member", "error");
+    }
+  }
+
+  function openRateModal(m: ProjectMember) {
+    setRateMember(m);
+    setMemberRateValue(m.hourly_rate ? String(m.hourly_rate) : "");
+    setMemberRateEffectiveFrom(new Date().toISOString().slice(0, 10));
+    setShowRateModal(true);
+  }
+
+  async function handleSaveMemberRate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!id || !rateMember || !memberRateValue || !memberRateEffectiveFrom) {
+      notify("Please provide rate and effective date", "error");
+      return;
+    }
+    try {
+      setSubmittingRate(true);
+      await updateProjectMemberRate(id, rateMember.employee_id, {
+        hourly_rate: memberRateValue,
+        effective_from: memberRateEffectiveFrom,
+      });
+      notify("Member hourly rate updated successfully!", "success");
+      setShowRateModal(false);
+      setRateMember(null);
+      loadData();
+    } catch (err: any) {
+      notify(err?.response?.data?.error?.message || err?.message || "Failed to update member rate", "error");
+    } finally {
+      setSubmittingRate(false);
     }
   }
 
@@ -1287,6 +1326,7 @@ export function ProjectDetailPage() {
                   <th>Team Member</th>
                   <th>Role</th>
                   <th>Department</th>
+                  <th>Rate (₹/hr)</th>
                   <th>Assigned On</th>
                   {canManage && <th style={{ textAlign: "right" }}>Actions</th>}
                 </tr>
@@ -1294,7 +1334,7 @@ export function ProjectDetailPage() {
               <tbody>
                 {members.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="text-center text-muted p-4">
+                    <td colSpan={6} className="text-center text-muted p-4">
                       No members assigned to this project yet.
                     </td>
                   </tr>
@@ -1358,16 +1398,35 @@ export function ProjectDetailPage() {
                           </div>
                         </td>
                         <td>{empDept}</td>
+                        <td>
+                          {m.hourly_rate ? (
+                            <span style={{ fontWeight: 600, color: "#0f172a" }}>
+                              ₹{Number(m.hourly_rate).toLocaleString("en-IN", { minimumFractionDigits: 2 })}/hr
+                            </span>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
                         <td>{formatDate(m.joined_at)}</td>
                         {canManage && (
                           <td style={{ textAlign: "right" }}>
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm text-danger"
-                              onClick={() => handleRemoveMember(m.employee_id)}
-                            >
-                              Remove
-                            </button>
+                            <div className="flex justify-end gap-1">
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => openRateModal(m)}
+                                title="Set or update member rate"
+                              >
+                                Set Rate
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm text-danger"
+                                onClick={() => handleRemoveMember(m.employee_id)}
+                              >
+                                Remove
+                              </button>
+                            </div>
                           </td>
                         )}
                       </tr>
@@ -2158,6 +2217,70 @@ export function ProjectDetailPage() {
                 <button type="button" className="btn btn-ghost" onClick={() => setShowMemberModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={submittingMember}>
                   {submittingMember ? "Saving..." : "Assign Member"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MEMBER RATE MODAL */}
+      {showRateModal && rateMember && (
+        <div className="modal-backdrop" onClick={() => setShowRateModal(false)}>
+          <div className="modal" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Set Member Billing Rate</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowRateModal(false)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleSaveMemberRate} className="stack gap-4">
+              <div>
+                <p className="text-sm text-muted" style={{ margin: "0 0 1rem" }}>
+                  Configure the effective-dated hourly billing rate for{" "}
+                  <strong>{rateMember.employee_name || "this member"}</strong> on this project.
+                </p>
+              </div>
+              <div className="field">
+                <label>Hourly Rate (₹/hr) *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="e.g. 750.00"
+                  value={memberRateValue}
+                  onChange={(e) => setMemberRateValue(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="field">
+                <label>Effective From *</label>
+                <input
+                  type="date"
+                  value={memberRateEffectiveFrom}
+                  onChange={(e) => setMemberRateEffectiveFrom(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="flex gap-2 justify-end mt-4">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setShowRateModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={submittingRate}
+                >
+                  {submittingRate ? "Saving..." : "Save Rate"}
                 </button>
               </div>
             </form>

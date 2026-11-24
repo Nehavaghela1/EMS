@@ -169,6 +169,7 @@ class SalaryAssignRequest(BaseModel):
     ctc: Decimal = Field(gt=0, le=_MAX_MONEY, decimal_places=2)
     effective_from: date
     revision_reason: _REASON | None = None
+    hourly_rate: Decimal | None = Field(default=None, gt=0, le=_MAX_MONEY, decimal_places=2)
 
     @field_validator("effective_from")
     @classmethod
@@ -208,6 +209,7 @@ class EmployeeSalaryResponse(BaseModel):
     structure_id: uuid.UUID
     structure_name: str
     ctc: Decimal
+    hourly_rate: Decimal | None = None
     effective_from: date
     effective_to: date | None
     revision_reason: str | None
@@ -592,6 +594,19 @@ class PayrollRunDetailResponse(BaseModel):
     payment_exclusions: list[PaymentExclusion] | None = None
 
 
+class PayrollPaymentRecordResponse(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    employee_name: str
+    employee_code: str
+    amount: Decimal
+    status: str
+    bank_reference: str | None = None
+    paid_on: date | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class BankAccountRequest(BaseModel):
     """`PUT` of an employee's bank details (5.8). Every field is required; a client that
     re-submits the masked account number keeps the stored one."""
@@ -624,6 +639,8 @@ class BankAccountRequest(BaseModel):
     def _number(cls, value: str) -> str:
         # Never put the submitted value in the message: it is an account number.
         value = value.strip()
+        if "•" in value or "\u2022" in value:
+            raise ValueError("Account number cannot contain bullet characters.")
         if is_masked_account_number(value) or _ACCOUNT_NUMBER.fullmatch(value):
             return value
         raise ValueError("Account number must be 9 to 18 digits.")
