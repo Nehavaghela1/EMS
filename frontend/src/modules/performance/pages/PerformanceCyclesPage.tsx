@@ -71,10 +71,23 @@ export function PerformanceCyclesPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [name, setName] = useState("");
   const [cycleType, setCycleType] = useState<CycleType>("annual");
-  const [startDate, setStartDate] = useState(new Date().toISOString().split("T")[0]);
-  const [endDate, setEndDate] = useState("2027-03-31");
-  const [selfDeadline, setSelfDeadline] = useState("2027-03-15");
-  const [mgrDeadline, setMgrDeadline] = useState("2027-03-25");
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    return d.toISOString().split("T")[0];
+  });
+  const [selfDeadline, setSelfDeadline] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 11);
+    return d.toISOString().split("T")[0];
+  });
+  const [mgrDeadline, setMgrDeadline] = useState(() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().split("T")[0];
+  });
   const [submitting, setSubmitting] = useState(false);
 
   // Edit Deadlines Modal State
@@ -164,17 +177,69 @@ export function PerformanceCyclesPage() {
     }
   }
 
+  function calculateCycleDates(startStr: string, type: CycleType) {
+    const start = new Date(startStr);
+    if (isNaN(start.getTime())) return null;
+
+    const monthsToAdd = type === "quarterly" ? 3 : type === "half_yearly" ? 6 : 12;
+    const computedEnd = new Date(start);
+    computedEnd.setMonth(computedEnd.getMonth() + monthsToAdd);
+
+    // Self review deadline is 1 month before end date (or 2 weeks before end date for quarterly)
+    const computedSelf = new Date(computedEnd);
+    if (type === "quarterly") {
+      computedSelf.setDate(computedSelf.getDate() - 14);
+    } else {
+      computedSelf.setMonth(computedSelf.getMonth() - 1);
+    }
+
+    // Manager review deadline is ~1 week before end date
+    const computedMgr = new Date(computedEnd);
+    computedMgr.setDate(computedMgr.getDate() - 7);
+
+    return {
+      endDate: computedEnd.toISOString().split("T")[0],
+      selfDeadline: computedSelf.toISOString().split("T")[0],
+      mgrDeadline: computedMgr.toISOString().split("T")[0],
+    };
+  }
+
   function handleCycleTypeChange(newType: CycleType) {
     setCycleType(newType);
     if (startDate) {
-      const start = new Date(startDate);
-      if (!isNaN(start.getTime())) {
-        const monthsToAdd = newType === "quarterly" ? 3 : newType === "half_yearly" ? 6 : 12;
-        const computedEnd = new Date(start);
-        computedEnd.setMonth(computedEnd.getMonth() + monthsToAdd);
-        setEndDate(computedEnd.toISOString().split("T")[0]);
+      const dates = calculateCycleDates(startDate, newType);
+      if (dates) {
+        setEndDate(dates.endDate);
+        setSelfDeadline(dates.selfDeadline);
+        setMgrDeadline(dates.mgrDeadline);
       }
     }
+  }
+
+  function handleStartDateChange(newStartDate: string) {
+    setStartDate(newStartDate);
+    if (newStartDate) {
+      const dates = calculateCycleDates(newStartDate, cycleType);
+      if (dates) {
+        setEndDate(dates.endDate);
+        setSelfDeadline(dates.selfDeadline);
+        setMgrDeadline(dates.mgrDeadline);
+      }
+    }
+  }
+
+  function openCreateCycleModal() {
+    const today = new Date().toISOString().split("T")[0];
+    setStartDate(today);
+    setCycleType("annual");
+    setName("");
+    const dates = calculateCycleDates(today, "annual");
+    if (dates) {
+      setEndDate(dates.endDate);
+      setSelfDeadline(dates.selfDeadline);
+      setMgrDeadline(dates.mgrDeadline);
+    }
+    setShowCreateModal(true);
   }
 
   const CYCLE_TYPE_LABELS: Record<CycleType, string> = {
@@ -434,7 +499,7 @@ export function PerformanceCyclesPage() {
         </div>
         <div className="flex gap-2" style={{ flexWrap: "wrap", width: "100%" }}>
           {viewTab === "cycles" && canSeeCycles ? (
-            <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
+            <button className="btn btn-primary" onClick={openCreateCycleModal}>
               + Create Cycle
             </button>
           ) : (
@@ -1369,7 +1434,7 @@ export function PerformanceCyclesPage() {
                   <input
                     type="date"
                     value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    onChange={(e) => handleStartDateChange(e.target.value)}
                     required
                   />
                 </div>

@@ -48,15 +48,15 @@ export async function getMyCompany(): Promise<CompanyResponse> {
 
 export interface UpdateMyCompanyInput {
   name?: string;
-  phone?: string;
-  industry?: string;
-  address?: string;
-  city?: string;
-  state?: string;
-  pincode?: string;
-  website?: string;
-  logo_url?: string;
-  brand_color?: string;
+  phone?: string | null;
+  industry?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+  website?: string | null;
+  logo_url?: string | null;
+  brand_color?: string | null;
 }
 
 export async function updateMyCompany(input: UpdateMyCompanyInput): Promise<CompanyResponse> {

@@ -683,10 +683,7 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
 
   useEffect(() => {
     getMyCompany().then((comp) => {
-      if (comp.logo_url) {
-        setLogoPreview(comp.logo_url);
-      }
-      // The colour is stored for the company, so every user and browser sees it.
+      setLogoPreview(comp.logo_url || null);
       if (comp.brand_color) {
         setBrandColor(comp.brand_color);
         document.documentElement.style.setProperty("--color-primary", comp.brand_color);
@@ -699,7 +696,10 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
   async function handleSaveBranding() {
     setSaving(true);
     try {
-      await updateMyCompany({ brand_color: brandColor, ...(logoPreview ? { logo_url: logoPreview } : {}) });
+      await updateMyCompany({
+        brand_color: brandColor,
+        logo_url: logoPreview !== undefined ? logoPreview : null,
+      });
       localStorage.setItem("ems_brand_logo_width", String(logoWidth));
       document.documentElement.style.setProperty("--color-primary", brandColor);
       notify("Branding preferences and accent color saved successfully.", "success");
@@ -762,15 +762,16 @@ function EnterpriseBrandingSection({ notify }: { notify: (msg: string, type?: "s
             <div>
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/webp"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
                 id="tenant-logo-input"
                 style={{ display: "none" }}
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
                     const file = e.target.files[0];
                     e.target.value = "";
-                    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
-                      notify("Logo must be a PNG, JPEG or WebP image.", "error");
+                    const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg+xml"];
+                    if (!allowedTypes.includes(file.type)) {
+                      notify("Logo must be a PNG, JPEG, WebP or SVG image.", "error");
                       return;
                     }
                     if (file.size > 500 * 1024) {

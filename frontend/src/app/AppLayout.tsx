@@ -155,10 +155,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const workspaceDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (user?.company_id && !selectedWorkspace) {
+    if (user?.company_id) {
       setSelectedWorkspace(user.company_id);
     }
-  }, [user?.company_id, selectedWorkspace]);
+  }, [user?.company_id]);
 
   // Close workspace dropdown on click outside
   useEffect(() => {
@@ -570,9 +570,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   <div style={{ maxHeight: "200px", overflowY: "auto", padding: "4px" }}>
                     {/* Active / Current Company */}
                     <div
-                      onClick={() => {
-                        setSelectedWorkspace(user.company_id);
+                      onClick={async () => {
                         setIsWorkspaceDropdownOpen(false);
+                        if (selectedWorkspace !== user.company_id) {
+                          setSelectedWorkspace(user.company_id);
+                          try {
+                            const tokenData = await switchWorkspace(user.company_id);
+                            await establishSession(tokenData.access_token);
+                            navigate("/dashboard");
+                          } catch (e) {
+                            console.error(e);
+                            alert("Failed to switch workspace.");
+                          }
+                        }
                       }}
                       style={{
                         display: "flex",
@@ -1097,6 +1107,55 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 <line x1="3" y1="18" x2="21" y2="18" />
               </svg>
             </button>
+
+            {/* Upper Topbar Company Brand Logo & Name */}
+            {activeCompanyLogo && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  paddingRight: "12px",
+                  borderRight: "1px solid #e2e8f0",
+                  flexShrink: 0,
+                }}
+                title={activeCompanyName}
+              >
+                <div
+                  style={{
+                    width: "28px",
+                    height: "28px",
+                    borderRadius: "6px",
+                    background: "#ffffff",
+                    border: "1px solid #e2e8f0",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    overflow: "hidden",
+                    padding: "2px",
+                  }}
+                >
+                  <img
+                    src={activeCompanyLogo}
+                    alt={activeCompanyName}
+                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                  />
+                </div>
+                <span
+                  style={{
+                    fontSize: "0.82rem",
+                    fontWeight: 600,
+                    color: "#334155",
+                    maxWidth: "140px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {activeCompanyName}
+                </span>
+              </div>
+            )}
 
             {/* Top Navbar: Employee Search (Only visible to HR, Manager, and Owners who have access to employee directory) */}
             {["hr_admin", "manager", "super_admin", "owner"].includes(role) && (
