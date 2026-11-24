@@ -112,7 +112,21 @@ export function AttendancePage() {
 
   const [regularizing, setRegularizing] = useState<Attendance | null>(null);
   const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+  const viewParam = searchParams.get("view");
+  const [viewMode, setViewMode] = useState<"list" | "calendar">(viewParam === "calendar" ? "calendar" : "list");
+
+  function handleViewModeChange(mode: "list" | "calendar") {
+    setViewMode(mode);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (mode === "calendar") {
+        next.set("view", "calendar");
+      } else {
+        next.delete("view");
+      }
+      return next;
+    });
+  }
 
   function handleSelectEmployee(empId: string, empName: string) {
     setFilterEmployee({ id: empId, name: empName });
@@ -423,7 +437,7 @@ export function AttendancePage() {
           >
             <button
               type="button"
-              onClick={() => setViewMode("list")}
+              onClick={() => handleViewModeChange("list")}
               style={{
                 padding: "4px 10px",
                 fontSize: "0.8rem",
@@ -440,7 +454,7 @@ export function AttendancePage() {
             </button>
             <button
               type="button"
-              onClick={() => setViewMode("calendar")}
+              onClick={() => handleViewModeChange("calendar")}
               style={{
                 padding: "4px 10px",
                 fontSize: "0.8rem",

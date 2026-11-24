@@ -957,7 +957,7 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
                   This Month's Work Overview
                 </h3>
               </div>
-              <Link to="/attendance" style={{ fontSize: "0.8rem", color: "#2563eb", fontWeight: 600, textDecoration: "none" }}>
+              <Link to="/attendance?view=calendar" style={{ fontSize: "0.8rem", color: "#2563eb", fontWeight: 600, textDecoration: "none" }}>
                 Full Calendar →
               </Link>
             </div>
