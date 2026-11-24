@@ -246,6 +246,8 @@ export function PlatformStatutoryPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [isCustomScheme, setIsCustomScheme] = useState(false);
   const [deletingRateId, setDeletingRateId] = useState<string | null>(null);
+  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
+  const [modalMode, setModalMode] = useState<"create" | "revise">("create");
 
   // Modal Form State
   const [formData, setFormData] = useState<StatutoryRateCreateInput>({
@@ -433,6 +435,7 @@ export function PlatformStatutoryPage() {
                 borderRadius: "6px",
               }}
               onClick={() => {
+                setModalMode("create");
                 handleCountryChange("IN");
                 setShowAddModal(true);
               }}
@@ -709,27 +712,123 @@ export function PlatformStatutoryPage() {
                             Verified on {formatDate(rate.verified_on)}
                           </div>
                         </td>
-                        <td style={{ padding: "12px 14px", textAlign: "right" }}>
-                          <button
-                            type="button"
-                            className="btn btn-xs btn-outline"
-                            style={{
-                              color: "#dc2626",
-                              borderColor: "#fecaca",
-                              fontSize: "0.75rem",
-                              padding: "3px 8px",
-                            }}
-                            title="Remove or cancel this published statutory rate"
-                            disabled={deleteMutation.isPending && deletingRateId === rate.id}
-                            onClick={() => {
-                              if (window.confirm(`Are you sure you want to remove the ${rate.country} ${rate.scheme.toUpperCase()} statutory rate?`)) {
-                                setDeletingRateId(rate.id);
-                                deleteMutation.mutate(rate.id);
-                              }
-                            }}
-                          >
-                            {deleteMutation.isPending && deletingRateId === rate.id ? "…" : "✕ Remove"}
-                          </button>
+                        <td style={{ padding: "12px 14px", textAlign: "right", position: "relative" }}>
+                          <div style={{ display: "inline-block", position: "relative" }}>
+                            <button
+                              type="button"
+                              className="btn btn-xs"
+                              style={{
+                                background: "#f8fafc",
+                                border: "1px solid #cbd5e1",
+                                borderRadius: "4px",
+                                color: "#334155",
+                                padding: "4px 8px",
+                                fontSize: "0.82rem",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                letterSpacing: "1px",
+                              }}
+                              title="Actions"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenActionMenuId(openActionMenuId === rate.id ? null : rate.id);
+                              }}
+                            >
+                              •••
+                            </button>
+
+                            {openActionMenuId === rate.id && (
+                              <div
+                                style={{
+                                  position: "absolute",
+                                  right: 0,
+                                  top: "calc(100% + 4px)",
+                                  background: "#ffffff",
+                                  border: "1px solid #e2e8f0",
+                                  borderRadius: "6px",
+                                  boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+                                  zIndex: 50,
+                                  minWidth: "170px",
+                                  padding: "4px 0",
+                                  textAlign: "left",
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  style={{
+                                    width: "100%",
+                                    textAlign: "left",
+                                    padding: "7px 12px",
+                                    border: "none",
+                                    background: "transparent",
+                                    fontSize: "0.82rem",
+                                    fontWeight: 500,
+                                    color: "#1e293b",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "8px",
+                                  }}
+                                  onClick={() => {
+                                    setOpenActionMenuId(null);
+                                    setModalMode("revise");
+                                    const meta = COUNTRY_SCHEMES_CATALOG[rate.country] || COUNTRY_SCHEMES_CATALOG.IN;
+                                    const matched = meta.schemes.find((s) => s.code === rate.scheme);
+                                    setIsCustomScheme(!matched);
+                                    setFormData({
+                                      country: rate.country,
+                                      scheme: rate.scheme,
+                                      employee_rate: String(rate.employee_rate),
+                                      employer_rate: String(rate.employer_rate),
+                                      wage_ceiling: String(rate.wage_ceiling),
+                                      employer_epf_rate: rate.employer_epf_rate ? String(rate.employer_epf_rate) : null,
+                                      employer_eps_rate: rate.employer_eps_rate ? String(rate.employer_eps_rate) : null,
+                                      edli_rate: rate.edli_rate ? String(rate.edli_rate) : null,
+                                      admin_charge_rate: rate.admin_charge_rate ? String(rate.admin_charge_rate) : null,
+                                      employee_exempt_daily_wage: rate.employee_exempt_daily_wage ? String(rate.employee_exempt_daily_wage) : null,
+                                      effective_from: new Date().toISOString().split("T")[0],
+                                      source_url: rate.source_url,
+                                      source_title: rate.source_title,
+                                      verified_on: new Date().toISOString().split("T")[0],
+                                      source_note: rate.source_note || "",
+                                    });
+                                    setShowAddModal(true);
+                                  }}
+                                >
+                                  <span>✏️</span> <span>Revise / Update Rate</span>
+                                </button>
+                                <div style={{ height: "1px", background: "#f1f5f9", margin: "4px 0" }} />
+                                <button
+                                  type="button"
+                                  style={{
+                                    width: "100%",
+                                    textAlign: "left",
+                                    padding: "7px 12px",
+                                    border: "none",
+                                    background: "transparent",
+                                    fontSize: "0.82rem",
+                                    fontWeight: 500,
+                                    color: "#b91c1c",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "8px",
+                                  }}
+                                  disabled={deleteMutation.isPending && deletingRateId === rate.id}
+                                  onClick={() => {
+                                    setOpenActionMenuId(null);
+                                    if (window.confirm(`Are you sure you want to cancel and remove the ${rate.country} ${rate.scheme.toUpperCase()} statutory rate?`)) {
+                                      setDeletingRateId(rate.id);
+                                      deleteMutation.mutate(rate.id);
+                                    }
+                                  }}
+                                >
+                                  <span>✕</span> <span>Cancel / Remove Rate</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -844,7 +943,9 @@ export function PlatformStatutoryPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h3 style={{ margin: 0 }}>Add / Publish Global Statutory Rate</h3>
+              <h3 style={{ margin: 0 }}>
+                {modalMode === "revise" ? "Revise / Update Statutory Rate" : "Add / Publish Global Statutory Rate"}
+              </h3>
               <button type="button" className="modal-close-btn" onClick={() => setShowAddModal(false)}>
                 ✕
               </button>
