@@ -157,4 +157,29 @@ describe("Sub-feature 4.4: Monthly Attendance Calendar Frontend (AttendanceCalen
       expect(screen.getByText(/Company Holiday Schedule/)).toBeInTheDocument();
     });
   });
+
+  it("renders error state with retry button when query fails", async () => {
+    vi.mocked(timeLeaveApi.getAttendanceCalendar).mockRejectedValueOnce(new Error("Network error"));
+    renderCalendar();
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load attendance calendar.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    });
+  });
+
+  it("renders empty state message when days array is empty", async () => {
+    vi.mocked(timeLeaveApi.getAttendanceCalendar).mockResolvedValueOnce({
+      employee_id: "emp-1",
+      month: 7,
+      year: 2021,
+      days: [],
+      summary: {},
+    });
+    renderCalendar();
+
+    await waitFor(() => {
+      expect(screen.getByText("No attendance data available for this month.")).toBeInTheDocument();
+    });
+  });
 });

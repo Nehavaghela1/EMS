@@ -357,6 +357,30 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
           <div style={{ padding: "48px", textAlign: "center", color: "#64748b" }}>
             Loading attendance calendar...
           </div>
+        ) : calendarQuery.isError ? (
+          <div style={{ padding: "48px 24px", textAlign: "center" }}>
+            <p style={{ color: "#ef4444", fontWeight: 600, marginBottom: "12px" }}>
+              Failed to load attendance calendar.
+            </p>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              onClick={() => calendarQuery.refetch()}
+              style={{
+                border: "1px solid #cbd5e1",
+                padding: "6px 14px",
+                borderRadius: "6px",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : days.length === 0 ? (
+          <div style={{ padding: "48px 24px", textAlign: "center", color: "#64748b" }}>
+            No attendance data available for this month.
+          </div>
         ) : (
           <div
             className="attendance-calendar-grid"
