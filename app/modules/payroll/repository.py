@@ -6,6 +6,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.pagination import PageParams, paginate
+from app.core.time import utcnow
 from app.modules.hr.models import Employee
 from app.modules.payroll.models import (
     EmployeeBankAccount,
@@ -548,8 +549,6 @@ class StatutoryRateRepository:
         )
 
     def soft_delete(self, rate: StatutoryRate) -> None:
-        from app.core.time import utcnow
-
         rate.deleted_at = utcnow()
         self.db.flush()
 
