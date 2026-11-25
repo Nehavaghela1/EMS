@@ -337,7 +337,14 @@ export function LeavePage() {
                     </div>
                     <div className="stat-value">{b.available}</div>
                     <div className="text-xs text-muted" style={{ marginTop: "2px" }}>
-                      {b.allocated} allocated · {b.used} used
+                      {[
+                        Number(b.opening_balance || 0) !== 0 ? `${b.opening_balance} carried forward` : null,
+                        Number(b.allocated || 0) !== 0 ? `${b.allocated} allocated` : null,
+                        Number(b.used || 0) !== 0 ? `${b.used} used` : null,
+                        Number(b.encashed || 0) !== 0 ? `${b.encashed} encashed` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || `${b.allocated} allocated · ${b.used} used`}
                     </div>
                   </div>
                 );
