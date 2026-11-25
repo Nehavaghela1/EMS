@@ -208,7 +208,7 @@ def test_part5_bank_account_reveal_rules(
     reveal_self = client.post("/api/v1/payroll/bank-account/me/reveal", headers=emp1_headers)
     assert reveal_self.status_code == 200
     assert reveal_self.json()["account_number"] == ACCOUNT
-    assert reveal_self.headers.get("cache-control") == "no-store"
+    assert reveal_self.headers.get("cache-control") == "private, no-store"
 
     # 3. An hr_admin reveals one of their employees' numbers and gets the full value
     reveal_hr = client.post(
@@ -216,7 +216,7 @@ def test_part5_bank_account_reveal_rules(
     )
     assert reveal_hr.status_code == 200
     assert reveal_hr.json()["account_number"] == ACCOUNT
-    assert reveal_hr.headers.get("cache-control") == "no-store"
+    assert reveal_hr.headers.get("cache-control") == "private, no-store"
 
     # 4. An owner can do the same
     reveal_owner = client.post(
@@ -224,7 +224,7 @@ def test_part5_bank_account_reveal_rules(
     )
     assert reveal_owner.status_code == 200
     assert reveal_owner.json()["account_number"] == ACCOUNT
-    assert reveal_owner.headers.get("cache-control") == "no-store"
+    assert reveal_owner.headers.get("cache-control") == "private, no-store"
 
     # 5. A plain employee revealing a DIFFERENT employee's number gets 404
     reveal_other = client.post(

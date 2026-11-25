@@ -482,7 +482,7 @@ def test_R4_reveal_returns_the_number_with_no_store_and_one_audit_row_each_time(
     for resp in (first, second):
         assert resp.status_code == 200, resp.text
         assert resp.json()["account_number"] == ACCOUNT, f"R4: reveal shows the number: {resp.text}"
-        assert resp.headers.get("cache-control") in ("no-store", "private, no-store"), (
+        assert resp.headers.get("cache-control") == "private, no-store", (
             f"R4: reveal must not be cached: {resp.headers.get('cache-control')}"
         )
     rows = _audit(db, cid, "BANK_ACCOUNT_REVEALED")

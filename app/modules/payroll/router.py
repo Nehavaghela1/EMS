@@ -461,8 +461,8 @@ def reveal_my_bank_account(
     user: User = Depends(get_company_user),
 ):
     """Return the full decrypted account number for the caller's own record.
-    Rate-limited to 5/minute. Audited. Cache-Control: no-store."""
-    response.headers["Cache-Control"] = "no-store"
+    Rate-limited to 5/minute. Audited. Cache-Control: private, no-store."""
+    response.headers["Cache-Control"] = "private, no-store"
     return EmployeeBankAccountService(db).reveal(user, None)
 
 
@@ -507,8 +507,8 @@ def reveal_employee_bank_account(
     user: User = Depends(get_company_user),
 ):
     """Return the full decrypted account number for a specific employee.
-    hr_admin and owner only. Rate-limited 5/minute. Audited. Cache-Control: no-store."""
-    response.headers["Cache-Control"] = "no-store"
+    hr_admin and owner only. Rate-limited 5/minute. Audited. Cache-Control: private, no-store."""
+    response.headers["Cache-Control"] = "private, no-store"
     return EmployeeBankAccountService(db).reveal(user, employee_id)
 
 
