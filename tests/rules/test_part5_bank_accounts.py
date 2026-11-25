@@ -211,42 +211,57 @@ def test_part5_bank_account_reveal_rules(
     assert reveal_self.headers.get("cache-control") == "no-store"
 
     # 3. An hr_admin reveals one of their employees' numbers and gets the full value
-    reveal_hr = client.post(f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=hr_headers)
+    reveal_hr = client.post(
+        f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=hr_headers
+    )
     assert reveal_hr.status_code == 200
     assert reveal_hr.json()["account_number"] == ACCOUNT
     assert reveal_hr.headers.get("cache-control") == "no-store"
 
     # 4. An owner can do the same
-    reveal_owner = client.post(f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=owner_headers)
+    reveal_owner = client.post(
+        f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=owner_headers
+    )
     assert reveal_owner.status_code == 200
     assert reveal_owner.json()["account_number"] == ACCOUNT
     assert reveal_owner.headers.get("cache-control") == "no-store"
 
     # 5. A plain employee revealing a DIFFERENT employee's number gets 404
-    reveal_other = client.post(f"/api/v1/payroll/employees/{emp2_id}/bank-account/reveal", headers=emp1_headers)
+    reveal_other = client.post(
+        f"/api/v1/payroll/employees/{emp2_id}/bank-account/reveal", headers=emp1_headers
+    )
     assert reveal_other.status_code == 404
 
     # 6. super_admin is refused (403 forbidden - no company context)
-    reveal_sa_me = client.post("/api/v1/payroll/bank-account/me/reveal", headers=super_admin_headers)
+    reveal_sa_me = client.post(
+        "/api/v1/payroll/bank-account/me/reveal", headers=super_admin_headers
+    )
     assert reveal_sa_me.status_code == 403
 
-    reveal_sa_emp = client.post(f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=super_admin_headers)
+    reveal_sa_emp = client.post(
+        f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=super_admin_headers
+    )
     assert reveal_sa_emp.status_code == 403
 
     # 7. Cross-company access returns 404 (nobody may reveal another company's account)
     hr_b_headers = company_b.hr_headers
-    reveal_cross = client.post(f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=hr_b_headers)
+    reveal_cross = client.post(
+        f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=hr_b_headers
+    )
     assert reveal_cross.status_code == 404
 
     # 8. An audit row is written and contains ONLY the last four (never full number)
     bind_tenant_to_session(db, company_id=company_id, is_platform_admin=False)
-    audit_rows = db.query(AuditLog).filter(
-        AuditLog.company_id == company_id,
-        AuditLog.action == "BANK_ACCOUNT_REVEALED",
-    ).all()
+    audit_rows = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.company_id == company_id,
+            AuditLog.action == "BANK_ACCOUNT_REVEALED",
+        )
+        .all()
+    )
     assert len(audit_rows) >= 3  # self, hr, owner
     for row in audit_rows:
         details = str(row.details)
         assert ACCOUNT not in details
         assert LAST4 in details
-

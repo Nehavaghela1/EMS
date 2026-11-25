@@ -2621,7 +2621,7 @@ class PayslipService:
         self, company_id: uuid.UUID, items: list[PayrollItem]
     ) -> list[PayrollItem]:
         """Attach the masked payout_account_number to each item without touching the ORM model.
-        Returns the same list (items are mutated with a transient attribute; SQLAlchemy ignores it)."""
+        Returns the same list (items are mutated with a transient attribute)."""
         if not items:
             return items
         employee_ids = list({i.employee_id for i in items})
@@ -2760,9 +2760,7 @@ class EmployeeBankAccountService:
         self.db.commit()
         return self._response(account, number)
 
-    def reveal(
-        self, actor: User, employee_id: uuid.UUID | None
-    ) -> BankAccountResponse:
+    def reveal(self, actor: User, employee_id: uuid.UUID | None) -> BankAccountResponse:
         """Reveal the full decrypted account number.
 
         Who may call:

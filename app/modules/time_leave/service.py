@@ -1899,8 +1899,9 @@ class LeaveService:
                 "Cannot apply for leave in the past.", details={"field": "start_date"}
             )
 
-        # 5b. Employees on active notice period (resignation submitted or pending separation) cannot apply for leave unless HR approves/overrides.
-        # If resignation is approved with a last working date, leave cannot start after that last working date.
+        # 5b. Employees on active notice period (resignation submitted or pending separation)
+        # cannot apply for leave unless HR approves/overrides. If resignation is approved with
+        # a last working date, leave cannot start after that last working date.
         if not is_hr and (
             getattr(employee, "pending_separation", False)
             or (

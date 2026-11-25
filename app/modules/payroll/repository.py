@@ -549,6 +549,7 @@ class StatutoryRateRepository:
 
     def soft_delete(self, rate: StatutoryRate) -> None:
         from app.core.time import utcnow
+
         rate.deleted_at = utcnow()
         self.db.flush()
 
