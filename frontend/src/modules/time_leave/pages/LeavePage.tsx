@@ -7,7 +7,7 @@ import { usePagination } from "../../../shared/hooks/usePagination";
 import { parseApiError } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
-import { listEmployees } from "../../hr/api";
+import { listEmployees, getMyEmployee } from "../../hr/api";
 import {
   applyLeave,
   cancelLeave,
@@ -498,6 +498,19 @@ function ApplyLeaveForm({
   onApplied: () => void;
 }) {
   const { notify } = useToast();
+
+  const myEmployeeQuery = useQuery({
+    queryKey: ["employee", "me", "leave-form"],
+    queryFn: getMyEmployee,
+    enabled: Boolean(currentUser?.employee?.id),
+  });
+  const myEmployee = myEmployeeQuery.data;
+  const isOnNoticePeriod = Boolean(
+    myEmployee?.pending_separation ||
+    myEmployee?.resignation_status === "submitted" ||
+    myEmployee?.resignation_status === "approved"
+  );
+
   // If user is admin without employee record, default to requiring selecting an employee
   const hasLinkedEmployee = Boolean(currentUser?.employee?.id);
   const [targetType, setTargetType] = useState<"myself" | "other">(hasLinkedEmployee ? "myself" : "other");
@@ -588,7 +601,31 @@ function ApplyLeaveForm({
 
   return (
     <form id="apply-leave-form" className="card stack mb-6" onSubmit={handleSubmit}>
-      <h3>Apply for leave</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ margin: 0 }}>Apply for leave</h3>
+        {targetType === "myself" && isOnNoticePeriod && (
+          <span
+            style={{
+              padding: "3px 10px",
+              borderRadius: "12px",
+              background: "#fef2f2",
+              color: "#dc2626",
+              border: "1px solid #fecaca",
+              fontSize: "0.75rem",
+              fontWeight: 700,
+            }}
+          >
+            ⚠️ Notice Period Active (Leave Locked)
+          </span>
+        )}
+      </div>
+
+      {targetType === "myself" && isOnNoticePeriod && (
+        <div className="alert alert-error" style={{ margin: 0, fontSize: "0.82rem" }}>
+          Employees currently serving a notice period or pending resignation are not permitted to apply for regular leaves. Contact HR for special exemptions.
+        </div>
+      )}
+
       {error && <div className="alert alert-error">{error}</div>}
       <div className="form-grid">
         {canPickEmployee && (
@@ -761,8 +798,13 @@ function ApplyLeaveForm({
       <button
         className="btn btn-primary"
         type="submit"
-        disabled={submitting}
-        style={{ width: "fit-content" }}
+        disabled={submitting || (targetType === "myself" && isOnNoticePeriod)}
+        style={{
+          width: "fit-content",
+          opacity: targetType === "myself" && isOnNoticePeriod ? 0.6 : 1,
+          cursor: targetType === "myself" && isOnNoticePeriod ? "not-allowed" : "pointer",
+        }}
+        title={targetType === "myself" && isOnNoticePeriod ? "Leave applications are restricted during notice period" : undefined}
       >
         {submitting ? "Submitting…" : "Apply"}
       </button>
