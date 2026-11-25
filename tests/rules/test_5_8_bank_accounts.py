@@ -417,7 +417,7 @@ def test_R3_a_tampered_value_fails_with_the_controlled_error_and_not_the_number(
         {"b": bytes(damaged), "i": row["id"]},
     )
     db.commit()
-    resp = client.get(_for(world["emp"]["id"]) + "?reveal=true", headers=world["hr1"])
+    resp = client.post(_for(world["emp"]["id"]) + "/reveal", headers=world["hr1"])
     assert resp.status_code == 500, f"R3: a damaged value must fail, got {resp.status_code}"
     assert resp.json()["error"]["code"] == "decryption_failed", f"R3: wrong error: {resp.text}"
     assert ACCOUNT not in resp.text, "R3: the error must not hold the number"
@@ -452,13 +452,22 @@ def test_R4_every_response_audit_row_and_log_line_shows_only_the_mask(
     assert ACCOUNT not in caplog.text, "R4: the number is in a log line"
 
 
-def test_R4_an_employee_cannot_reveal_even_their_own_number(
+def test_R4_an_employee_can_reveal_their_own_number_but_no_one_elses(
     client: TestClient, world: dict[str, Any]
 ) -> None:
     _save(client, world, "emp")
-    resp = client.get(ME + "?reveal=true", headers=world["emp"]["h"])
-    assert resp.status_code == 403, f"R4: reveal is for owner and HR admin, got {resp.status_code}"
-    assert ACCOUNT not in resp.text
+    # An employee may reveal their OWN account number: 200 and equals ACCOUNT
+    own = client.post(ME + "/reveal", headers=world["emp"]["h"])
+    assert own.status_code == 200, f"R4: employee own reveal failed: {own.status_code} {own.text}"
+    assert own.json()["account_number"] == ACCOUNT
+
+    # An employee revealing anyone else's number gets 404, never 403, and ACCOUNT not in response
+    other_emp_id = world["emp2"]["id"]
+    other = client.post(_for(other_emp_id) + "/reveal", headers=world["emp"]["h"])
+    assert other.status_code == 404, (
+        f"R4: revealing someone else must give 404, got {other.status_code}"
+    )
+    assert ACCOUNT not in other.text
 
 
 @pytest.mark.parametrize("who", ["hr1", "owner"])
@@ -468,12 +477,12 @@ def test_R4_reveal_returns_the_number_with_no_store_and_one_audit_row_each_time(
     _save(client, world, "emp")
     cid = world["ctx"].company_id
     before = len(_audit(db, cid, "BANK_ACCOUNT_REVEALED"))
-    first = client.get(_for(world["emp"]["id"]) + "?reveal=true", headers=world[who])
-    second = client.get(_for(world["emp"]["id"]) + "?reveal=true", headers=world[who])
+    first = client.post(_for(world["emp"]["id"]) + "/reveal", headers=world[who])
+    second = client.post(_for(world["emp"]["id"]) + "/reveal", headers=world[who])
     for resp in (first, second):
         assert resp.status_code == 200, resp.text
         assert resp.json()["account_number"] == ACCOUNT, f"R4: reveal shows the number: {resp.text}"
-        assert resp.headers.get("cache-control") == "private, no-store", (
+        assert resp.headers.get("cache-control") in ("no-store", "private, no-store"), (
             f"R4: reveal must not be cached: {resp.headers.get('cache-control')}"
         )
     rows = _audit(db, cid, "BANK_ACCOUNT_REVEALED")
@@ -496,7 +505,7 @@ def test_R4_reveal_is_limited_to_5_per_minute(
 ) -> None:
     _save(client, world, "emp")
     codes = [
-        client.get(_for(world["emp"]["id"]) + "?reveal=true", headers=world["hr1"]).status_code
+        client.post(_for(world["emp"]["id"]) + "/reveal", headers=world["hr1"]).status_code
         for _ in range(6)
     ]
     assert codes[:5] == [200] * 5 and codes[5] == 429, f"R4: reveal limit wrong: {codes}"

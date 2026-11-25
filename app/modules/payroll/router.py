@@ -428,17 +428,13 @@ bank_accounts_router = APIRouter(prefix="/payroll", tags=["Payroll — Bank Acco
 
 
 def _bank_view(
-    request: Request,
     response: Response,
     db: Session,
     user: User,
     employee_id: uuid.UUID | None,
-    reveal: bool,
 ) -> BankAccountResponse:
-    if reveal:
-        enforce_user_limit(request, "5/minute", scope="bank_reveal")
     response.headers["Cache-Control"] = "private, no-store"
-    return EmployeeBankAccountService(db).view(user, employee_id, reveal=reveal)
+    return EmployeeBankAccountService(db).view(user, employee_id)
 
 
 @bank_accounts_router.get("/bank-account/me", response_model=BankAccountResponse)
@@ -446,11 +442,10 @@ def _bank_view(
 def get_my_bank_account(
     request: Request,
     response: Response,
-    reveal: bool = False,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_company_user),
 ):
-    return _bank_view(request, response, db, user, None, reveal)
+    return _bank_view(response, db, user, None)
 
 
 @bank_accounts_router.post(
@@ -492,11 +487,10 @@ def get_employee_bank_account(
     request: Request,
     response: Response,
     employee_id: uuid.UUID,
-    reveal: bool = False,
     db: Session = Depends(get_tenant_db),
     user: User = Depends(get_company_user),
 ):
-    return _bank_view(request, response, db, user, employee_id, reveal)
+    return _bank_view(response, db, user, employee_id)
 
 
 @bank_accounts_router.post(
