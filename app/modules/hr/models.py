@@ -128,6 +128,13 @@ class Employee(TenantBase):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     personal_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    avatar_raw_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    avatar_crop_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    avatar_visibility: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="company", server_default=text("'company'")
+    )
     department_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("departments.id"), nullable=True
     )

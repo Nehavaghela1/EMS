@@ -227,11 +227,10 @@ class DepartmentService:
         self.db.commit()
 
 
-# The two fields an "Own" caller may change on their own employee record
-# (Spec 10.3 route 23: "employees may edit only contact fields; department,
-# level, manager and dates are HR-only"). `email` is treated as the
-# administrative work-email field, HR-only alongside those.
-CONTACT_FIELDS = {"last_name", "personal_email", "phone"}
+# The fields an "Own" caller may change on their own employee record
+# (Spec 10.3 route 23: contact fields, first_name, gender, avatar).
+# Administrative fields like department, level, manager, salary and dates remain HR-only.
+CONTACT_FIELDS = {"first_name", "last_name", "personal_email", "phone", "gender", "avatar_url", "avatar_raw_url", "avatar_crop_data", "avatar_visibility"}
 
 
 def get_policy_notice_days(

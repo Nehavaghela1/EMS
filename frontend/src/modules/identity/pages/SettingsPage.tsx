@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, useRef, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "../../../shared/components/PageHeader";
 import { PasswordInput } from "../../../shared/components/PasswordInput";
@@ -930,6 +930,458 @@ function OwnerProfileSection({
   );
 }
 
+// User Profile Photo Modal (Zoho Style)
+function ProfilePhotoModal({
+  isOpen,
+  onClose,
+  imageSrc,
+  initialScale = 1,
+  initialRotate = 0,
+  initialPos = { x: 0, y: 0 },
+  currentVisibility,
+  onSave,
+  onChooseNewImage,
+  saving,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  imageSrc: string;
+  initialScale?: number;
+  initialRotate?: number;
+  initialPos?: { x: number; y: number };
+  currentVisibility: string;
+  onSave: (croppedDataUrl: string, rawDataUrl: string, cropData: { scale: number; rotate: number; pos: { x: number; y: number } }, visibility: string) => Promise<void>;
+  onChooseNewImage?: () => void;
+  saving: boolean;
+}) {
+  const [scale, setScale] = useState(initialScale);
+  const [rotate, setRotate] = useState(initialRotate);
+  const [pos, setPos] = useState(initialPos);
+  const [visibility, setVisibility] = useState(currentVisibility || "only_me");
+  const [isDragging, setIsDragging] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const dragStartRef = useRef<{ startX: number; startY: number; initialPosX: number; initialPosY: number }>({
+    startX: 0,
+    startY: 0,
+    initialPosX: 0,
+    initialPosY: 0,
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      setScale(initialScale ?? 1);
+      setRotate(initialRotate ?? 0);
+      setPos(initialPos ?? { x: 0, y: 0 });
+      setVisibility(currentVisibility || "only_me");
+    }
+  }, [isOpen, initialScale, initialRotate, initialPos, currentVisibility]);
+
+  if (!isOpen || !imageSrc) return null;
+
+  function handleMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    setIsDragging(true);
+    dragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initialPosX: pos.x,
+      initialPosY: pos.y,
+    };
+  }
+
+  function handleMouseMove(e: React.MouseEvent) {
+    if (!isDragging) return;
+    e.preventDefault();
+    const dx = e.clientX - dragStartRef.current.startX;
+    const dy = e.clientY - dragStartRef.current.startY;
+    setPos({
+      x: dragStartRef.current.initialPosX + dx,
+      y: dragStartRef.current.initialPosY + dy,
+    });
+  }
+
+  function handleMouseUp() {
+    setIsDragging(false);
+  }
+
+  async function handleUpdate() {
+    try {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = reject;
+        img.src = imageSrc;
+      });
+
+      // Target canvas dimensions for highest fidelity
+      const targetSize = 400;
+      const canvas = document.createElement("canvas");
+      canvas.width = targetSize;
+      canvas.height = targetSize;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      // Draw circular clip path matching the 260px circle in modal
+      ctx.beginPath();
+      ctx.arc(targetSize / 2, targetSize / 2, targetSize / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+
+      // The circular mask inside viewport is 260px in diameter (280px container with 10px margins)
+      const circleDiameterInView = 260;
+      const ratio = targetSize / circleDiameterInView;
+
+      // Rendered unscaled size of image inside the 280x280 viewport container
+      const renderedW = imgRef.current?.offsetWidth || 280;
+      const renderedH = imgRef.current?.offsetHeight || 280;
+
+      ctx.save();
+      // Translate to canvas center, apply scaled user pan offset, rotate, then scale
+      ctx.translate(targetSize / 2 + pos.x * ratio, targetSize / 2 + pos.y * ratio);
+      ctx.rotate((rotate * Math.PI) / 180);
+      ctx.scale(scale, scale);
+
+      // Draw image precisely matching its displayed proportions
+      const drawW = renderedW * ratio;
+      const drawH = renderedH * ratio;
+      ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.restore();
+
+      const cropped = canvas.toDataURL("image/png");
+      await onSave(cropped, imageSrc, { scale, rotate, pos }, visibility);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: "rgba(15, 23, 42, 0.45)",
+        backdropFilter: "blur(4px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 9999,
+        padding: "16px",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        style={{
+          background: "#ffffff",
+          borderRadius: "16px",
+          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+          width: "100%",
+          maxWidth: "460px",
+          padding: "24px 28px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "20px",
+          position: "relative",
+          userSelect: isDragging ? "none" : "auto",
+        }}
+      >
+        {/* Title & Change Photo Button */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <h3 style={{ margin: 0, fontSize: "1.2rem", fontWeight: 700, color: "#1e293b" }}>
+              User Profile Photo
+            </h3>
+            {onChooseNewImage && (
+              <button
+                type="button"
+                onClick={onChooseNewImage}
+                style={{
+                  background: "#f1f5f9",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: "6px",
+                  padding: "4px 10px",
+                  fontSize: "0.76rem",
+                  fontWeight: 600,
+                  color: "#0284c7",
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                }}
+                title="Choose a new photo from gallery/computer"
+              >
+                📁 Choose from gallery
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: "none",
+              border: "none",
+              fontSize: "1.2rem",
+              color: "#94a3b8",
+              cursor: "pointer",
+              padding: "4px",
+              lineHeight: 1,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Viewport with circular mask */}
+        <div
+          style={{
+            position: "relative",
+            width: "280px",
+            height: "280px",
+            margin: "0 auto",
+            borderRadius: "12px",
+            overflow: "hidden",
+            background: "#f1f5f9",
+            cursor: isDragging ? "grabbing" : "grab",
+          }}
+          onMouseDown={handleMouseDown}
+        >
+          {/* Underlying movable image */}
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transform: `translate(${pos.x}px, ${pos.y}px) rotate(${rotate}deg) scale(${scale})`,
+              transformOrigin: "center center",
+              transition: isDragging ? "none" : "transform 0.05s ease-out",
+            }}
+          >
+            <img
+              ref={imgRef}
+              src={imageSrc}
+              alt="Profile crop preview"
+              draggable={false}
+              style={{
+                maxWidth: "100%",
+                maxHeight: "100%",
+                objectFit: "contain",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
+
+          {/* Zoho circular mask overlay */}
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              pointerEvents: "none",
+              boxShadow: "0 0 0 9999px rgba(255, 255, 255, 0.72)",
+              borderRadius: "50%",
+              margin: "10px",
+              border: "2px solid #00b374",
+            }}
+          />
+        </div>
+
+        {/* Controls row: Rotate CCW, - (zoom out), Slider, + (zoom in), Rotate CW */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "12px",
+            width: "100%",
+          }}
+        >
+          {/* Rotate CCW */}
+          <button
+            type="button"
+            onClick={() => setRotate((prev) => (prev - 90) % 360)}
+            style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "50%",
+              border: "1px solid #e2e8f0",
+              background: "#ffffff",
+              color: "#64748b",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              fontSize: "1.1rem",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+            }}
+            title="Rotate counter-clockwise"
+          >
+            ↺
+          </button>
+
+          {/* Zoom Slider container with - and + */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              flex: 1,
+              background: "#ffffff",
+              border: "1px solid #e2e8f0",
+              borderRadius: "24px",
+              padding: "4px 12px",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setScale((prev) => Math.max(0.5, Number((prev - 0.1).toFixed(2))))}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#94a3b8",
+                fontSize: "1.2rem",
+                cursor: "pointer",
+                padding: "0 4px",
+                lineHeight: 1,
+              }}
+              title="Zoom out"
+            >
+              −
+            </button>
+            <input
+              type="range"
+              min="0.5"
+              max="3"
+              step="0.05"
+              value={scale}
+              onChange={(e) => setScale(parseFloat(e.target.value))}
+              style={{
+                flex: 1,
+                accentColor: "#00b374",
+                cursor: "pointer",
+                height: "4px",
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setScale((prev) => Math.min(3, Number((prev + 0.1).toFixed(2))))}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#94a3b8",
+                fontSize: "1.2rem",
+                cursor: "pointer",
+                padding: "0 4px",
+                lineHeight: 1,
+              }}
+              title="Zoom in"
+            >
+              +
+            </button>
+          </div>
+
+          {/* Rotate CW */}
+          <button
+            type="button"
+            onClick={() => setRotate((prev) => (prev + 90) % 360)}
+            style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "50%",
+              border: "1px solid #e2e8f0",
+              background: "#ffffff",
+              color: "#64748b",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              fontSize: "1.1rem",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+            }}
+            title="Rotate clockwise"
+          >
+            ↻
+          </button>
+        </div>
+
+        {/* Who can view your profile picture? */}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.85rem", color: "#475569" }}>
+          <span>Who can view your profile picture?</span>
+          <select
+            value={visibility}
+            onChange={(e) => setVisibility(e.target.value)}
+            style={{
+              border: "none",
+              color: "#0284c7",
+              fontWeight: 600,
+              background: "transparent",
+              cursor: "pointer",
+              outline: "none",
+              padding: "2px 4px",
+              fontSize: "0.85rem",
+            }}
+          >
+            <option value="only_me">Only myself ▾</option>
+            <option value="company">Employees of my organization ▾</option>
+            <option value="everyone">Anyone ▾</option>
+          </select>
+        </div>
+
+        {/* Action Buttons: Green Update and Cancel */}
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "4px" }}>
+          <button
+            type="button"
+            onClick={handleUpdate}
+            disabled={saving}
+            style={{
+              background: "#00b374",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 24px",
+              fontWeight: 600,
+              fontSize: "0.88rem",
+              cursor: saving ? "not-allowed" : "pointer",
+              opacity: saving ? 0.7 : 1,
+              boxShadow: "0 2px 4px rgba(0, 179, 116, 0.25)",
+            }}
+          >
+            {saving ? "Updating…" : "Update"}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            style={{
+              background: "#f1f5f9",
+              color: "#475569",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 20px",
+              fontWeight: 600,
+              fontSize: "0.88rem",
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProfileSection({
   employee,
   departmentName,
@@ -939,13 +1391,27 @@ function ProfileSection({
   departmentName: string | undefined;
   onSaved: () => void;
 }) {
-  const { user } = useAuth();
+  const { user, refreshMe } = useAuth();
   const { notify } = useToast();
-  const isPrivileged = user?.role === "owner" || user?.role === "hr_admin";
+  const [isEditing, setIsEditing] = useState(false);
   const [firstName, setFirstName] = useState(employee.first_name ?? "");
   const [lastName, setLastName] = useState(employee.last_name ?? "");
   const [personalEmail, setPersonalEmail] = useState(employee.personal_email ?? "");
   const [phone, setPhone] = useState(employee.phone ?? "");
+  const [gender, setGender] = useState(employee.gender ?? "I'd prefer not to say");
+  const [avatarUrl, setAvatarUrl] = useState(employee.avatar_url ?? "");
+  const [avatarRawUrl, setAvatarRawUrl] = useState(employee.avatar_raw_url ?? employee.avatar_url ?? "");
+  const [avatarCropData, setAvatarCropData] = useState<{ scale: number; rotate: number; pos: { x: number; y: number } } | null>(
+    employee.avatar_crop_data ?? null
+  );
+  const [avatarVisibility, setAvatarVisibility] = useState(employee.avatar_visibility ?? "company");
+
+  // Zoho Photo Modal state
+  const [photoModalOpen, setPhotoModalOpen] = useState(false);
+  const [editingImageSrc, setEditingImageSrc] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [savingPhoto, setSavingPhoto] = useState(false);
+
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -954,25 +1420,112 @@ function ProfileSection({
     setLastName(employee.last_name ?? "");
     setPersonalEmail(employee.personal_email ?? "");
     setPhone(employee.phone ?? "");
+    setGender(employee.gender ?? "I'd prefer not to say");
+    setAvatarUrl(employee.avatar_url ?? "");
+    setAvatarRawUrl(employee.avatar_raw_url ?? employee.avatar_url ?? "");
+    setAvatarCropData(employee.avatar_crop_data ?? null);
+    setAvatarVisibility(employee.avatar_visibility ?? "company");
   }, [employee]);
+
+  // Handle ESC key to cancel edit mode or photo modal
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (photoModalOpen) {
+          setPhotoModalOpen(false);
+        } else if (isEditing) {
+          setIsEditing(false);
+          setFirstName(employee.first_name ?? "");
+          setLastName(employee.last_name ?? "");
+          setPersonalEmail(employee.personal_email ?? "");
+          setPhone(employee.phone ?? "");
+          setGender(employee.gender ?? "I'd prefer not to say");
+          setAvatarUrl(employee.avatar_url ?? "");
+          setAvatarRawUrl(employee.avatar_raw_url ?? employee.avatar_url ?? "");
+          setAvatarCropData(employee.avatar_crop_data ?? null);
+          setAvatarVisibility(employee.avatar_visibility ?? "company");
+          setFormError(null);
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isEditing, photoModalOpen, employee]);
+
+  function openPhotoEditor(imageSrc: string) {
+    setEditingImageSrc(imageSrc);
+    setPhotoModalOpen(true);
+  }
+
+  function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      notify("Image size should be less than 5 MB.", "error");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      // When a new image file is chosen, reset crop data
+      setAvatarCropData(null);
+      openPhotoEditor(base64);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }
+
+  async function handleSavePhoto(
+    croppedDataUrl: string,
+    rawDataUrl: string,
+    cropData: { scale: number; rotate: number; pos: { x: number; y: number } },
+    visibility: string
+  ) {
+    setSavingPhoto(true);
+    try {
+      await updateEmployee(employee.id, {
+        avatar_url: croppedDataUrl,
+        avatar_raw_url: rawDataUrl,
+        avatar_crop_data: cropData,
+        avatar_visibility: visibility,
+      });
+      setAvatarUrl(croppedDataUrl);
+      setAvatarRawUrl(rawDataUrl);
+      setAvatarCropData(cropData);
+      setAvatarVisibility(visibility);
+      setPhotoModalOpen(false);
+      notify("Profile photo updated successfully.");
+      if (refreshMe) {
+        await refreshMe();
+      }
+      onSaved();
+    } catch (err) {
+      notify(parseApiError(err).message, "error");
+    } finally {
+      setSavingPhoto(false);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
     setSubmitting(true);
     try {
-      // Owners & HR admins can update first_name as well; regular employees
-      // update contact details (last_name, personal_email, phone)
       const payload: Record<string, any> = {
+        first_name: firstName.trim() || employee.first_name,
         last_name: lastName.trim() || null,
         personal_email: personalEmail.trim() || null,
         phone: phone.trim() || null,
+        gender: gender || null,
+        avatar_url: avatarUrl || null,
+        avatar_visibility: avatarVisibility || "company",
       };
-      if (isPrivileged) {
-        payload.first_name = firstName.trim() || employee.first_name;
-      }
       await updateEmployee(employee.id, payload);
       notify("Profile updated successfully.");
+      setIsEditing(false);
+      if (refreshMe) {
+        await refreshMe();
+      }
       onSaved();
     } catch (err) {
       setFormError(parseApiError(err).message);
@@ -981,111 +1534,681 @@ function ProfileSection({
     }
   }
 
+  // Calculate remaining notice period days if on notice period
+  const isOnNotice = employee.resignation_status === "submitted" || employee.resignation_status === "approved" || employee.pending_separation;
+  const noticeDaysRemaining = employee.last_working_date
+    ? Math.max(0, Math.ceil((new Date(employee.last_working_date).getTime() - new Date().setHours(0,0,0,0)) / (1000 * 60 * 60 * 24)))
+    : employee.notice_period_days ?? null;
+
   return (
-    <form className="card stack mb-6" onSubmit={handleSubmit}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ margin: 0 }}>My profile</h3>
-        {user?.role === "owner" && (
-          <span
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem", marginBottom: "1.5rem" }}>
+      {/* ── Main Zoho-style Profile Card ────────────────────────────── */}
+      <div
+        style={{
+          background: "#ffffff",
+          borderRadius: "14px",
+          border: "1px solid #e2e8f0",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          padding: "24px",
+          position: "relative",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "20px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            {/* Avatar with click to open editor and upload */}
+            <div style={{ position: "relative" }}>
+              <div
+                onClick={() => {
+                  if (avatarRawUrl || avatarUrl) {
+                    openPhotoEditor(avatarRawUrl || avatarUrl);
+                  } else {
+                    fileInputRef.current?.click();
+                  }
+                }}
+                style={{
+                  width: "64px",
+                  height: "64px",
+                  borderRadius: "50%",
+                  background: avatarUrl ? "transparent" : "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                  color: "#ffffff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1.5rem",
+                  fontWeight: 700,
+                  boxShadow: "0 2px 8px rgba(37,99,235,0.2)",
+                  overflow: "hidden",
+                  border: "2px solid #e2e8f0",
+                  cursor: "pointer",
+                  transition: "transform 0.15s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "scale(1.05)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+                title={avatarUrl ? "Click to view / adjust profile photo" : "Click to upload photo"}
+              >
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt={employee.first_name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : (
+                  `${employee.first_name.charAt(0).toUpperCase()}${(employee.last_name || "").charAt(0).toUpperCase()}`
+                )}
+              </div>
+              <label
+                style={{
+                  position: "absolute",
+                  bottom: "-2px",
+                  right: "-2px",
+                  background: "#0f172a",
+                  color: "#ffffff",
+                  borderRadius: "50%",
+                  width: "24px",
+                  height: "24px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  fontSize: "0.72rem",
+                  border: "2px solid #ffffff",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }}
+                title="Upload new profile picture"
+              >
+                📷
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={handleImageUpload}
+                  style={{ display: "none" }}
+                />
+              </label>
+            </div>
+
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 700, color: "#0f172a" }}>
+                  {employee.first_name} {employee.last_name || ""}
+                </h3>
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    fontFamily: "monospace",
+                    background: "#f1f5f9",
+                    padding: "2px 6px",
+                    borderRadius: "4px",
+                    color: "#475569",
+                  }}
+                >
+                  {employee.employee_code}
+                </span>
+
+                {/* Status Badges */}
+                <span
+                  style={{
+                    fontSize: "0.72rem",
+                    fontWeight: 600,
+                    padding: "2px 8px",
+                    borderRadius: "12px",
+                    background: employee.is_active ? "#ecfdf5" : "#f1f5f9",
+                    color: employee.is_active ? "#059669" : "#64748b",
+                    border: `1px solid ${employee.is_active ? "#a7f3d0" : "#cbd5e1"}`,
+                  }}
+                >
+                  {employee.is_active ? "● Active" : "Inactive"}
+                </span>
+
+                {isOnNotice && (
+                  <span
+                    style={{
+                      fontSize: "0.72rem",
+                      fontWeight: 700,
+                      padding: "2px 8px",
+                      borderRadius: "12px",
+                      background: "#fef2f2",
+                      color: "#dc2626",
+                      border: "1px solid #fecaca",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                    }}
+                  >
+                    ⚠️ On Notice Period
+                    {noticeDaysRemaining !== null && (
+                      <span>({noticeDaysRemaining} days remaining)</span>
+                    )}
+                  </span>
+                )}
+
+                {user?.role === "owner" && (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      padding: "2px 8px",
+                      borderRadius: "12px",
+                      fontSize: "0.72rem",
+                      fontWeight: 700,
+                      background: "#fffbeb",
+                      color: "#b45309",
+                      border: "1px solid #fde68a",
+                    }}
+                  >
+                    👑 Primary Owner
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: "0.82rem", color: "#64748b", marginTop: "4px" }}>
+                {employee.position || "Staff"} • {departmentName || "General"} • {employee.email}
+              </div>
+            </div>
+          </div>
+
+          {/* Zoho-style Edit / Pencil Button */}
+          {!isEditing ? (
+            <button
+              type="button"
+              onClick={() => setIsEditing(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "6px 14px",
+                borderRadius: "8px",
+                background: "#00b374",
+                border: "none",
+                fontSize: "0.8rem",
+                fontWeight: 600,
+                color: "#ffffff",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+                boxShadow: "0 2px 4px rgba(0, 179, 116, 0.25)",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#059669")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "#00b374")}
+              title="Click or double-click fields to edit"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+              </svg>
+              Edit
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditing(false);
+                  setFirstName(employee.first_name ?? "");
+                  setLastName(employee.last_name ?? "");
+                  setPersonalEmail(employee.personal_email ?? "");
+                  setPhone(employee.phone ?? "");
+                  setGender(employee.gender ?? "I'd prefer not to say");
+                  setAvatarUrl(employee.avatar_url ?? "");
+                  setAvatarVisibility(employee.avatar_visibility ?? "company");
+                }}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: "8px",
+                  background: "#f8fafc",
+                  border: "1px solid #cbd5e1",
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                  color: "#64748b",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={submitting}
+                style={{
+                  padding: "6px 16px",
+                  borderRadius: "8px",
+                  background: "#00b374",
+                  border: "none",
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                  color: "#ffffff",
+                  cursor: "pointer",
+                  boxShadow: "0 2px 4px rgba(0, 179, 116, 0.25)",
+                }}
+              >
+                {submitting ? "Saving…" : "Save"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {formError && <div className="alert alert-error mb-4">{formError}</div>}
+
+        {/* Profile Info Grid: Double-click enabled */}
+        <div
+          onDoubleClick={() => {
+            if (!isEditing) setIsEditing(true);
+          }}
+          title={!isEditing ? "Double-click any field to edit" : undefined}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: "16px 24px",
+            fontSize: "0.83rem",
+          }}
+        >
+          {/* First Name */}
+          <div>
+            <label style={{ display: "block", color: "#64748b", fontSize: "0.74rem", fontWeight: 600, textTransform: "uppercase", marginBottom: "4px" }}>
+              First Name *
+            </label>
+            {isEditing ? (
+              <input
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                style={{ width: "100%", padding: "6px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.83rem" }}
+                required
+              />
+            ) : (
+              <div style={{ fontWeight: 600, color: "#1e293b" }}>{employee.first_name}</div>
+            )}
+          </div>
+
+          {/* Last Name */}
+          <div>
+            <label style={{ display: "block", color: "#64748b", fontSize: "0.74rem", fontWeight: 600, textTransform: "uppercase", marginBottom: "4px" }}>
+              Last Name
+            </label>
+            {isEditing ? (
+              <input
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                style={{ width: "100%", padding: "6px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.83rem" }}
+              />
+            ) : (
+              <div style={{ fontWeight: 600, color: "#1e293b" }}>{employee.last_name || "—"}</div>
+            )}
+          </div>
+
+          {/* Gender */}
+          <div>
+            <label style={{ display: "block", color: "#64748b", fontSize: "0.74rem", fontWeight: 600, textTransform: "uppercase", marginBottom: "4px" }}>
+              Gender
+            </label>
+            {isEditing ? (
+              <select
+                value={gender}
+                onChange={(e) => setGender(e.target.value)}
+                style={{ width: "100%", padding: "6px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.83rem" }}
+              >
+                <option value="I'd prefer not to say">I'd prefer not to say</option>
+                <option value="Female">Female</option>
+                <option value="Male">Male</option>
+                <option value="Non-binary">Non-binary</option>
+              </select>
+            ) : (
+              <div style={{ fontWeight: 600, color: "#1e293b" }}>{gender || "—"}</div>
+            )}
+          </div>
+
+          {/* Photo Visibility */}
+          <div>
+            <label style={{ display: "block", color: "#64748b", fontSize: "0.74rem", fontWeight: 600, textTransform: "uppercase", marginBottom: "4px" }}>
+              Profile Photo Visibility
+            </label>
+            {isEditing ? (
+              <select
+                value={avatarVisibility}
+                onChange={(e) => setAvatarVisibility(e.target.value)}
+                style={{ width: "100%", padding: "6px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.83rem" }}
+              >
+                <option value="company">Employees of my organization</option>
+                <option value="everyone">Everyone (Public)</option>
+                <option value="only_me">Only myself</option>
+              </select>
+            ) : (
+              <div style={{ fontWeight: 600, color: "#1e293b" }}>
+                {avatarVisibility === "everyone"
+                  ? "Anyone"
+                  : avatarVisibility === "only_me"
+                  ? "Only myself"
+                  : "Employees of my organization"}
+              </div>
+            )}
+          </div>
+
+          {/* Department */}
+          <div>
+            <label style={{ display: "block", color: "#64748b", fontSize: "0.74rem", fontWeight: 600, textTransform: "uppercase", marginBottom: "4px" }}>
+              Department
+            </label>
+            <div style={{ fontWeight: 600, color: "#1e293b" }}>{departmentName || "—"}</div>
+          </div>
+
+          {/* Position */}
+          <div>
+            <label style={{ display: "block", color: "#64748b", fontSize: "0.74rem", fontWeight: 600, textTransform: "uppercase", marginBottom: "4px" }}>
+              Position / Role
+            </label>
+            <div style={{ fontWeight: 600, color: "#1e293b" }}>{employee.position || "—"}</div>
+          </div>
+
+          {/* Employment Type */}
+          <div>
+            <label style={{ display: "block", color: "#64748b", fontSize: "0.74rem", fontWeight: 600, textTransform: "uppercase", marginBottom: "4px" }}>
+              Employment Type
+            </label>
+            <div style={{ fontWeight: 600, color: "#1e293b", textTransform: "capitalize" }}>
+              {employee.employment_type.replace("_", " ")}
+            </div>
+          </div>
+
+          {/* Date of Joining */}
+          <div>
+            <label style={{ display: "block", color: "#64748b", fontSize: "0.74rem", fontWeight: 600, textTransform: "uppercase", marginBottom: "4px" }}>
+              Date of Joining (DOJ)
+            </label>
+            <div style={{ fontWeight: 600, color: "#1e293b" }}>{employee.hire_date}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Zoho Card 2: My Email Addresses ─────────────────────────── */}
+      <div
+        style={{
+          background: "#ffffff",
+          borderRadius: "14px",
+          border: "1px solid #e2e8f0",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          padding: "20px 24px",
+        }}
+      >
+        <h4 style={{ margin: "0 0 4px", fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>
+          My Email Addresses
+        </h4>
+        <p style={{ margin: "0 0 16px", fontSize: "0.76rem", color: "#64748b" }}>
+          View and manage the email addresses associated with your account.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          {/* Work Email (Primary) */}
+          <div
             style={{
-              display: "inline-flex",
+              display: "flex",
               alignItems: "center",
-              gap: "4px",
-              padding: "2px 8px",
-              borderRadius: "12px",
-              fontSize: "0.72rem",
-              fontWeight: 700,
-              background: "#fffbeb",
-              color: "#b45309",
-              border: "1px solid #fde68a",
+              justifyContent: "space-between",
+              padding: "10px 14px",
+              borderRadius: "8px",
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
             }}
           >
-            👑 Primary Owner
-          </span>
-        )}
-      </div>
-      {formError && <div className="alert alert-error">{formError}</div>}
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <div
+                style={{
+                  width: "32px",
+                  height: "32px",
+                  borderRadius: "50%",
+                  background: "#eff6ff",
+                  color: "#2563eb",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1rem",
+                }}
+              >
+                ✉️
+              </div>
+              <div>
+                <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#0f172a" }}>
+                  {employee.email}
+                </div>
+                <div style={{ fontSize: "0.72rem", color: "#64748b" }}>Work Email (Primary identity)</div>
+              </div>
+            </div>
+            <span
+              style={{
+                fontSize: "0.72rem",
+                fontWeight: 600,
+                color: "#2563eb",
+                background: "#eff6ff",
+                padding: "2px 8px",
+                borderRadius: "12px",
+                border: "1px solid #bfdbfe",
+              }}
+            >
+              Primary
+            </span>
+          </div>
 
-      <div className="form-grid">
-        <div className="field">
-          <label htmlFor="first_name">First name</label>
-          {isPrivileged ? (
-            <input
-              id="first_name"
-              value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
-              placeholder="First name"
-            />
-          ) : (
-            <div>{employee.first_name}</div>
-          )}
-          {!isPrivileged && <span className="field-hint">Managed by HR.</span>}
-        </div>
-        <div className="field">
-          <label>Employee code</label>
-          <div>{employee.employee_code}</div>
-          <span className="field-hint">Unique system identifier.</span>
-        </div>
-        <div className="field">
-          <label>Work email</label>
-          <div>{employee.email}</div>
-          <span className="field-hint">Primary account identity.</span>
-        </div>
-        <div className="field">
-          <label>Position</label>
-          <div>{employee.position ?? "—"}</div>
-        </div>
-        <div className="field">
-          <label>Level</label>
-          <div>{employee.level ?? "—"}</div>
-        </div>
-        <div className="field">
-          <label>Department</label>
-          <div>{departmentName ?? "—"}</div>
-        </div>
-        <div className="field">
-          <label>Employment type</label>
-          <div>{employee.employment_type.replace("_", " ")}</div>
-        </div>
-        <div className="field">
-          <label>Hire date</label>
-          <div>{employee.hire_date}</div>
+          {/* Personal Email */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "10px 14px",
+              borderRadius: "8px",
+              background: "#ffffff",
+              border: "1px solid #e2e8f0",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: 1 }}>
+              <div
+                style={{
+                  width: "32px",
+                  height: "32px",
+                  borderRadius: "50%",
+                  background: "#f1f5f9",
+                  color: "#64748b",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1rem",
+                }}
+              >
+                ✉️
+              </div>
+              <div style={{ flex: 1 }}>
+                {isEditing ? (
+                  <input
+                    type="email"
+                    value={personalEmail}
+                    onChange={(e) => setPersonalEmail(e.target.value)}
+                    placeholder="Enter personal email address"
+                    style={{ width: "100%", maxWidth: "340px", padding: "6px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.83rem" }}
+                  />
+                ) : (
+                  <>
+                    <div style={{ fontSize: "0.85rem", fontWeight: 600, color: personalEmail ? "#0f172a" : "#94a3b8" }}>
+                      {personalEmail || "No personal email added"}
+                    </div>
+                    <div style={{ fontSize: "0.72rem", color: "#64748b" }}>Personal Email</div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Hover Delete Action Icon (Zoho style) */}
+            {personalEmail && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (confirm("Remove personal email?")) {
+                    setPersonalEmail("");
+                    try {
+                      await updateEmployee(employee.id, { personal_email: null });
+                      notify("Personal email removed.");
+                      onSaved();
+                    } catch (err) {
+                      notify(parseApiError(err).message, "error");
+                    }
+                  }
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#94a3b8",
+                  cursor: "pointer",
+                  padding: "6px",
+                  borderRadius: "4px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "all 0.15s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "#ef4444";
+                  e.currentTarget.style.background = "#fee2e2";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = "#94a3b8";
+                  e.currentTarget.style.background = "none";
+                }}
+                title="Remove personal email"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
       </div>
-      {!isPrivileged && (
-        <p className="field-hint mt-0 mb-0">
-          The fields above are managed by HR — contact them if any of this needs to change.
+
+      {/* ── Zoho Card 3: My Mobile Numbers ───────────────────────────── */}
+      <div
+        style={{
+          background: "#ffffff",
+          borderRadius: "14px",
+          border: "1px solid #e2e8f0",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          padding: "20px 24px",
+        }}
+      >
+        <h4 style={{ margin: "0 0 4px", fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>
+          My Mobile Numbers
+        </h4>
+        <p style={{ margin: "0 0 16px", fontSize: "0.76rem", color: "#64748b" }}>
+          View and manage contact numbers associated with your account.
         </p>
-      )}
 
-      <div className="form-grid">
-        <div className="field">
-          <label htmlFor="last_name">Last name</label>
-          <input id="last_name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label htmlFor="personal_email">Personal email</label>
-          <input
-            id="personal_email"
-            type="email"
-            value={personalEmail}
-            onChange={(e) => setPersonalEmail(e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="phone">Phone</label>
-          <input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "10px 14px",
+            borderRadius: "8px",
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: 1 }}>
+            <div
+              style={{
+                width: "32px",
+                height: "32px",
+                borderRadius: "50%",
+                background: "#fff7ed",
+                color: "#ea580c",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "1rem",
+              }}
+            >
+              📞
+            </div>
+            <div style={{ flex: 1 }}>
+              {isEditing ? (
+                <input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="Enter phone number"
+                  style={{ width: "100%", maxWidth: "340px", padding: "6px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.83rem" }}
+                />
+              ) : (
+                <>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 600, color: phone ? "#0f172a" : "#94a3b8" }}>
+                    {phone || "No mobile number added"}
+                  </div>
+                  <div style={{ fontSize: "0.72rem", color: "#64748b" }}>Primary contact number</div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Hover Delete Action Icon (Zoho style) */}
+          {phone && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (confirm("Remove phone number?")) {
+                  setPhone("");
+                  try {
+                    await updateEmployee(employee.id, { phone: null });
+                    notify("Phone number removed.");
+                    onSaved();
+                  } catch (err) {
+                    notify(parseApiError(err).message, "error");
+                  }
+                }
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#94a3b8",
+                cursor: "pointer",
+                padding: "6px",
+                borderRadius: "4px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "all 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "#ef4444";
+                e.currentTarget.style.background = "#fee2e2";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "#94a3b8";
+                e.currentTarget.style.background = "none";
+              }}
+              title="Remove phone number"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="row">
-        <button className="btn btn-primary" type="submit" disabled={submitting}>
-          {submitting ? "Saving…" : "Save changes"}
-        </button>
-      </div>
-    </form>
+      {/* Zoho User Profile Photo Modal */}
+      <ProfilePhotoModal
+        isOpen={photoModalOpen}
+        onClose={() => setPhotoModalOpen(false)}
+        imageSrc={editingImageSrc}
+        initialScale={avatarCropData?.scale ?? 1}
+        initialRotate={avatarCropData?.rotate ?? 0}
+        initialPos={avatarCropData?.pos ?? { x: 0, y: 0 }}
+        currentVisibility={avatarVisibility}
+        onSave={handleSavePhoto}
+        onChooseNewImage={() => fileInputRef.current?.click()}
+        saving={savingPhoto}
+      />
+    </div>
   );
 }
+
 
 function ChangePasswordSection({ notify }: { notify: (message: string, kind?: "success" | "error") => void }) {
   const [currentPassword, setCurrentPassword] = useState("");

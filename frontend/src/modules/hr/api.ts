@@ -34,6 +34,11 @@ export interface Employee {
   email: string;
   personal_email: string | null;
   phone: string | null;
+  gender?: string | null;
+  avatar_url?: string | null;
+  avatar_raw_url?: string | null;
+  avatar_crop_data?: { scale: number; rotate: number; pos: { x: number; y: number } } | null;
+  avatar_visibility?: string;
   department_id: string | null;
   location_id: string | null;
   department_name: string | null;
@@ -77,6 +82,11 @@ export interface EmployeeCreateInput {
   email: string;
   personal_email?: string | null;
   phone?: string | null;
+  gender?: string | null;
+  avatar_url?: string | null;
+  avatar_raw_url?: string | null;
+  avatar_crop_data?: { scale: number; rotate: number; pos: { x: number; y: number } } | null;
+  avatar_visibility?: string;
   department_id?: string | null;
   location_id?: string | null;
   position?: string | null;
@@ -96,6 +106,11 @@ export interface EmployeeUpdateInput {
   email?: string | null;
   personal_email?: string | null;
   phone?: string | null;
+  gender?: string | null;
+  avatar_url?: string | null;
+  avatar_raw_url?: string | null;
+  avatar_crop_data?: { scale: number; rotate: number; pos: { x: number; y: number } } | null;
+  avatar_visibility?: string;
   department_id?: string | null;
   location_id?: string | null;
   position?: string | null;

@@ -78,6 +78,11 @@ class EmployeeCreateRequest(BaseModel):
     email: EmailStr
     personal_email: EmailStr | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=20)
+    gender: str | None = Field(default=None, max_length=50)
+    avatar_url: str | None = None
+    avatar_raw_url: str | None = None
+    avatar_crop_data: dict | None = None
+    avatar_visibility: Literal["everyone", "company", "only_me"] | None = "company"
     department_id: uuid.UUID | None = None
     location_id: uuid.UUID | None = None
     position: str | None = Field(default=None, max_length=150)
@@ -163,6 +168,11 @@ class EmployeeUpdateRequest(BaseModel):
     email: str | None = Field(default=None, max_length=255)
     personal_email: EmailStr | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=20)
+    gender: str | None = Field(default=None, max_length=50)
+    avatar_url: str | None = None
+    avatar_raw_url: str | None = None
+    avatar_crop_data: dict | None = None
+    avatar_visibility: Literal["everyone", "company", "only_me"] | None = "company"
     department_id: uuid.UUID | None = None
     location_id: uuid.UUID | None = None
     position: str | None = Field(default=None, max_length=150)
@@ -267,6 +277,11 @@ class EmployeeResponse(BaseModel):
     email: str
     personal_email: str | None
     phone: str | None
+    gender: str | None = None
+    avatar_url: str | None = None
+    avatar_raw_url: str | None = None
+    avatar_crop_data: dict | None = None
+    avatar_visibility: str = "company"
     department_id: uuid.UUID | None
     location_id: uuid.UUID | None
     department: DepartmentResponse | None = None

@@ -521,6 +521,11 @@ class EmployeeSummary(BaseModel):
     last_name: str | None
     department_id: uuid.UUID | None
     position: str | None
+    avatar_url: str | None = None
+    avatar_raw_url: str | None = None
+    avatar_crop_data: dict | None = None
+    avatar_visibility: str = "company"
+    gender: str | None = None
 
     model_config = {"from_attributes": True}
 

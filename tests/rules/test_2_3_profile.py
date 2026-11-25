@@ -269,9 +269,18 @@ def test_r01_employee_edits_own_contact_fields_only(
     assert res_edit_p_email.status_code == 200
     assert res_edit_p_email.json()["personal_email"] == "staff.personal@example.com"
 
+    res_edit_first = client.put(
+        f"/api/v1/employees/{staff_emp.id}",
+        headers=staff_headers,
+        json={"first_name": "UpdatedFirst"},
+    )
+    assert res_edit_first.status_code == 200
+    assert res_edit_first.json()["first_name"] == "UpdatedFirst"
+
     # Refresh DB and assert contact fields are persisted
     bind_tenant_to_session(db, company_id=profile_company["company"].id, is_platform_admin=True)
     db.refresh(staff_emp)
+    assert staff_emp.first_name == "UpdatedFirst"
     assert staff_emp.last_name == "UpdatedLast"
     assert staff_emp.phone == "+1234567890"
     assert staff_emp.personal_email == "staff.personal@example.com"
@@ -284,7 +293,6 @@ def test_r01_employee_edits_own_contact_fields_only(
         {"level": "L2"},
         {"hire_date": "2024-02-01"},
         {"email": "newworkemail@example.com"},
-        {"first_name": "NewFirst"},
     ]
     for hr_payload in hr_only_payloads:
         res_hr_field = client.put(
@@ -301,7 +309,7 @@ def test_r01_employee_edits_own_contact_fields_only(
 
         # DB row unchanged
         db.refresh(staff_emp)
-        assert staff_emp.first_name == "Staff"
+        assert staff_emp.first_name == "UpdatedFirst"
         assert staff_emp.email == staff_user.email
 
     # 5. Unknown field gives 422 for employee and for HR

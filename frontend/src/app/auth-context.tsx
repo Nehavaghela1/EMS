@@ -11,6 +11,11 @@ export interface EmployeeSummary {
   last_name: string | null;
   department_id: string | null;
   position: string | null;
+  avatar_url?: string | null;
+  avatar_raw_url?: string | null;
+  avatar_crop_data?: { scale: number; rotate: number; pos: { x: number; y: number } } | null;
+  avatar_visibility?: string;
+  gender?: string | null;
 }
 
 export interface CurrentUser {
@@ -42,6 +47,7 @@ export interface AuthContextValue {
    * an access token already obtained elsewhere instead of calling
    * `/auth/login` a second time. */
   establishSession: (accessToken: string) => Promise<void>;
+  refreshMe?: () => Promise<CurrentUser | null>;
   logout: () => Promise<void>;
   /** True only when the API interceptor's refresh-and-retry both failed on
    * an already-in-flight request (a session that was good, then wasn't) —
@@ -139,6 +145,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSessionExpired(false);
   }, []);
 
+  const refreshMe = useCallback(async () => {
+    try {
+      const me = await fetchMe();
+      setUser(me);
+      return me;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const login = useCallback(
     async (email: string, password: string, companyCode?: string) => {
       const { data } = await apiClient.post<TokenResponse>("/auth/login", {
@@ -168,8 +184,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearSession, queryClient]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, user, login, establishSession, logout, sessionExpired }),
-    [status, user, login, establishSession, logout, sessionExpired],
+    () => ({ status, user, login, establishSession, refreshMe, logout, sessionExpired }),
+    [status, user, login, establishSession, refreshMe, logout, sessionExpired],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

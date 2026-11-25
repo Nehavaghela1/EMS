@@ -495,7 +495,7 @@ export function EmployeeProfilePage() {
                     width: "68px",
                     height: "68px",
                     borderRadius: "14px",
-                    background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
+                    background: e.avatar_url ? "transparent" : "linear-gradient(135deg, #2563eb, #1d4ed8)",
                     color: "#ffffff",
                     display: "flex",
                     alignItems: "center",
@@ -504,10 +504,21 @@ export function EmployeeProfilePage() {
                     fontWeight: 700,
                     boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)",
                     flexShrink: 0,
+                    overflow: "hidden",
                   }}
                 >
-                  {e.first_name.charAt(0).toUpperCase()}
-                  {(e.last_name || "").charAt(0).toUpperCase()}
+                  {e.avatar_url ? (
+                    <img
+                      src={e.avatar_url}
+                      alt={e.first_name}
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    <>
+                      {e.first_name.charAt(0).toUpperCase()}
+                      {(e.last_name || "").charAt(0).toUpperCase()}
+                    </>
+                  )}
                 </div>
                 <div>
                   <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
@@ -544,6 +555,47 @@ export function EmployeeProfilePage() {
                     ) : (
                       <span className={"badge " + (e.is_active ? "badge-success" : "badge-muted")}>
                         {e.is_active ? "● Active" : "Inactive"}
+                      </span>
+                    )}
+                    {/* Notice Period / Resignation Badge & Days Count */}
+                    {(e.resignation_status === "submitted" || e.resignation_status === "approved" || e.pending_separation) && (
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor: "#fef2f2",
+                          color: "#dc2626",
+                          border: "1px solid #fecaca",
+                          fontWeight: 700,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                        }}
+                      >
+                        ⚠️ Notice Period
+                        {e.last_working_date ? (
+                          <span style={{ fontWeight: 600, fontSize: "0.74rem", color: "#b91c1c" }}>
+                            (LWD: {formatDate(e.last_working_date)} • {Math.max(0, Math.ceil((new Date(e.last_working_date).getTime() - new Date().setHours(0,0,0,0)) / (1000 * 60 * 60 * 24)))} days left)
+                          </span>
+                        ) : e.notice_period_days ? (
+                          <span style={{ fontWeight: 600, fontSize: "0.74rem", color: "#b91c1c" }}>
+                            ({e.notice_period_days} days notice)
+                          </span>
+                        ) : null}
+                      </span>
+                    )}
+                    {/* Gender badge if specified */}
+                    {e.gender && (
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor: "#f8fafc",
+                          color: "#475569",
+                          border: "1px solid #e2e8f0",
+                          textTransform: "capitalize",
+                          fontSize: "0.74rem",
+                        }}
+                      >
+                        ⚧ {e.gender}
                       </span>
                     )}
                     {/* Security Role Badge — Zoho/Keka style; purely additive, never replaces job title */}
