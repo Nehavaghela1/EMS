@@ -2614,28 +2614,7 @@ class PayslipService:
         self.db = db
         self.item_repo = PayrollItemRepository(db)
         self.employee_repo = EmployeeRepository(db)
-        self.bank_repo = EmployeeBankAccountRepository(db)
         self.audit = AuditService(db)
-
-    def _attach_masked_account(
-        self, company_id: uuid.UUID, items: list[PayrollItem]
-    ) -> list[PayrollItem]:
-        """Attach the masked payout_account_number to each item without touching the ORM model.
-        Returns the same list (items are mutated with a transient attribute)."""
-        if not items:
-            return items
-        employee_ids = list({i.employee_id for i in items})
-        bank_map = self.bank_repo.active_by_employee(company_id, employee_ids)
-        for item in items:
-            bank = bank_map.get(item.employee_id)
-            # payout_account_number is not a DB column; set it as a plain Python attribute so
-            # PayrollItemResponse.model_validate picks it up via __dict__ / from_attributes.
-            object.__setattr__(
-                item,
-                "payout_account_number",
-                mask_payout_account_number(bank.account_last4) if bank is not None else None,
-            )
-        return items
 
     def list_own(
         self, actor: User, page_params: PageParams, year: int | None, month: int | None
@@ -2651,7 +2630,6 @@ class PayslipService:
             year=year,
             month=month,
         )
-        self._attach_masked_account(actor.company_id, items)
         return items, total, pages
 
     def list_for_employee(
@@ -2685,7 +2663,6 @@ class PayslipService:
                 details={"employee_id": str(employee.id), "run_count": total},
             )
             self.db.commit()
-        self._attach_masked_account(company_id, items)
         return items, total, pages
 
 

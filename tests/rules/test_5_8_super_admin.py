@@ -42,6 +42,7 @@ EMPLOYEE_403 = "You do not have permission to perform this action."
 PLATFORM_ROUTES = {
     ("GET", f"{P}/statutory-rates"),
     ("POST", f"{P}/statutory-rates"),
+    ("DELETE", f"{P}/statutory-rates/{{rate_id}}"),
     ("GET", f"{P}/pt-slabs"),
     ("PUT", f"{P}/pt-slabs"),
     ("GET", f"{P}/tax-slabs"),
@@ -77,8 +78,10 @@ COMPANY_ROUTES = {
     ("POST", f"{P}/reimbursements/{{id}}/withdraw"),
     ("GET", f"{P}/bank-account/me"),
     ("PUT", f"{P}/bank-account/me"),
+    ("POST", f"{P}/bank-account/me/reveal"),
     ("GET", f"{P}/employees/{{employee_id}}/bank-account"),
     ("PUT", f"{P}/employees/{{employee_id}}/bank-account"),
+    ("POST", f"{P}/employees/{{employee_id}}/bank-account/reveal"),
     ("GET", f"{P}/runs/{{id}}/payment-file"),
 }
 
