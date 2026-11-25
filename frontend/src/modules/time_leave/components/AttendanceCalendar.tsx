@@ -89,6 +89,13 @@ const STATUS_CONFIG: Record<
     text: "#94a3b8",
     dot: "#cbd5e1",
   },
+  pre_joining: {
+    label: "Before Joining",
+    bg: "#f1f5f9",
+    border: "#e2e8f0",
+    text: "#94a3b8",
+    dot: "#cbd5e1",
+  },
 };
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -249,10 +256,12 @@ export function AttendanceCalendar({ employeeId, employeeName }: AttendanceCalen
             "mispunch",
             "pending_regularization",
             "no_record",
+            "pre_joining",
           ];
 
           return displayOrder
             .filter((key) => summary[key] !== undefined || ["present", "in_progress", "half_day", "on_leave", "holiday", "absent"].includes(key))
+            .filter((key) => ["present", "in_progress", "half_day", "on_leave", "holiday", "absent"].includes(key) || (summary[key] || 0) > 0)
             .map((statusKey) => {
               const count = summary[statusKey] || 0;
               const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.no_record;

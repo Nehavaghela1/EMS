@@ -1102,7 +1102,17 @@ class AttendanceService:
                 holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
-            # Priority 5: Weekly Off / Weekend
+            # Priority 5: Prior to Joining Date
+            elif emp and emp.hire_date and d < emp.hire_date:
+                status = "pre_joining"
+                work_hours = None
+                check_in_val = None
+                check_out_val = None
+                badge = None
+                holiday_name = None
+                leave_type_name = None
+
+            # Priority 6: Weekly Off / Weekend
             elif dow in weekend_days:
                 status = "weekend"
                 work_hours = None
@@ -1112,8 +1122,8 @@ class AttendanceService:
                 holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
-            # Priority 6: Prior to Joining Date or Future Work Days
-            elif (emp and emp.hire_date and d < emp.hire_date) or is_future:
+            # Priority 7: Future Work Days
+            elif is_future:
                 status = "no_record"
                 work_hours = None
                 check_in_val = None
@@ -1122,7 +1132,7 @@ class AttendanceService:
                 holiday_name = hol.name if (hol and hol.is_optional) else None
                 leave_type_name = None
 
-            # Priority 7: Past or Today Unpunched Working Day -> Absent
+            # Priority 8: Past or Today Unpunched Working Day -> Absent
             # (with optional holiday badge if applicable)
             else:
                 status = "absent"
