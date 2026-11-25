@@ -87,9 +87,10 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Payroll",
     roles: ["employee", "manager", "hr_admin", "owner"],
     children: [
+      { to: "/payroll/payslip", label: "Salary Details", roles: ["employee", "manager", "hr_admin", "owner"] },
+      { to: "/payroll/documents", label: "Documents", roles: ["employee", "manager", "hr_admin", "owner"] },
       { to: "/payroll/run", label: "Pay Runs", roles: ["hr_admin", "owner"] },
       { to: "/payroll/setup", label: "Payroll Setup", roles: ["hr_admin", "owner"] },
-      { to: "/payroll/payslip", label: "My Payslips", roles: ["employee", "manager", "hr_admin", "owner"] },
       { to: "/payroll/reimbursements", label: "Reimbursements", roles: ["employee", "manager", "hr_admin", "owner"] },
     ],
     icon: (active) => (
@@ -1008,7 +1009,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 width: "32px",
                 height: "32px",
                 borderRadius: "50%",
-                background: "linear-gradient(135deg, #475569, #334155)",
+                background: user?.employee?.avatar_url
+                  ? "transparent"
+                  : "linear-gradient(135deg, #475569, #334155)",
                 color: "#e2e8f0",
                 display: "flex",
                 alignItems: "center",
@@ -1016,9 +1019,18 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 fontWeight: 700,
                 fontSize: "0.82rem",
                 flexShrink: 0,
+                overflow: "hidden",
               }}
             >
-              {(user?.employee?.first_name || user?.email || "U").charAt(0).toUpperCase()}
+              {user?.employee?.avatar_url ? (
+                <img
+                  src={user.employee.avatar_url}
+                  alt={user.employee.first_name}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              ) : (
+                (user?.employee?.first_name || user?.email || "U").charAt(0).toUpperCase()
+              )}
             </div>
             <div style={{ minWidth: 0, overflow: "hidden" }}>
               <div
@@ -1109,54 +1121,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
               </svg>
             </button>
 
-            {/* Upper Topbar Company Brand Logo & Name */}
-            {activeCompanyLogo && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  paddingRight: "12px",
-                  borderRight: "1px solid #e2e8f0",
-                  flexShrink: 0,
-                }}
-                title={activeCompanyName}
-              >
-                <div
-                  style={{
-                    width: "28px",
-                    height: "28px",
-                    borderRadius: "6px",
-                    background: "#ffffff",
-                    border: "1px solid #e2e8f0",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    overflow: "hidden",
-                    padding: "2px",
-                  }}
-                >
-                  <img
-                    src={activeCompanyLogo}
-                    alt={activeCompanyName}
-                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-                  />
-                </div>
-                <span
-                  style={{
-                    fontSize: "0.82rem",
-                    fontWeight: 600,
-                    color: "#334155",
-                    maxWidth: "140px",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {activeCompanyName}
-                </span>
-              </div>
-            )}
+            {/* Upper Topbar Company Brand Logo & Name removed to avoid repetition with sidebar */}
 
             {/* Top Navbar: Employee Search (Only visible to HR, Manager, and Owners who have access to employee directory) */}
             {["hr_admin", "manager", "super_admin", "owner"].includes(role) && (
@@ -1756,7 +1721,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 {/* Avatar circle */}
                 <div style={{
                   width: "26px", height: "26px", borderRadius: "50%", flexShrink: 0,
-                  background: role === "owner"
+                  background: user?.employee?.avatar_url
+                    ? "transparent"
+                    : role === "owner"
                     ? "linear-gradient(135deg,#f59e0b,#d97706)"
                     : role === "hr_admin"
                     ? "linear-gradient(135deg,#6366f1,#8b5cf6)"
@@ -1765,8 +1732,17 @@ export function AppLayout({ children }: { children: ReactNode }) {
                     : "linear-gradient(135deg,#3b82f6,#2563eb)",
                   color: "#fff", display: "flex", alignItems: "center",
                   justifyContent: "center", fontWeight: 700, fontSize: "0.72rem",
+                  overflow: "hidden",
                 }}>
-                  {user?.email?.charAt(0).toUpperCase()}
+                  {user?.employee?.avatar_url ? (
+                    <img
+                      src={user.employee.avatar_url}
+                      alt={user.employee.first_name}
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    user?.email?.charAt(0).toUpperCase()
+                  )}
                 </div>
                 <span className="profile-pill-text" style={{ fontSize: "0.78rem", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>
                   {role === "super_admin" ? "Super Admin" : role === "hr_admin" ? "HR Admin" : role.charAt(0).toUpperCase() + role.slice(1)}

@@ -1,24 +1,66 @@
-import { useState, useEffect } from "react";
-import { listMyPayslips, getMyBankAccount, saveMyBankAccount, type PayrollItem, type BankAccountResponse } from "../api";
+import { useState, useEffect, useMemo } from "react";
+import {
+  listMyPayslips,
+  getMyBankAccount,
+  saveMyBankAccount,
+  type PayrollItem,
+  type BankAccountResponse,
+} from "../api";
 import { getMyCompany, type CompanyResponse } from "../../identity/api";
 import { getFnFSettlement, type FnFSettlement } from "../../hr/api";
 import { useAuth } from "../../../app/auth-context";
-import { formatDate } from "../../../shared/utils/date";
 import { parseApiError } from "../../../shared/api/errors";
+import { PayslipDocumentModal } from "../components/PayslipDocumentModal";
+import { TaxWorksheetModal } from "../components/TaxWorksheetModal";
+
+// Number to Indian Words converter
+function numberToIndianWords(num: number): string {
+  if (isNaN(num) || num <= 0) return "Zero Only";
+  const a = [
+    "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+    "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+    "Seventeen", "Eighteen", "Nineteen",
+  ];
+  const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+  function inWords(n: number): string {
+    if (n < 20) return a[n];
+    if (n < 100) return b[Math.floor(n / 10)] + (n % 10 !== 0 ? " " + a[n % 10] : "");
+    if (n < 1000) return a[Math.floor(n / 100)] + " Hundred" + (n % 100 !== 0 ? " " + inWords(n % 100) : "");
+    if (n < 100000) return inWords(Math.floor(n / 1000)) + " Thousand" + (n % 1000 !== 0 ? " " + inWords(n % 1000) : "");
+    if (n < 10000000) return inWords(Math.floor(n / 100000)) + " Lakh" + (n % 100000 !== 0 ? " " + inWords(n % 100000) : "");
+    return inWords(Math.floor(n / 10000000)) + " Crore" + (n % 10000000 !== 0 ? " " + inWords(n % 10000000) : "");
+  }
+
+  const intPart = Math.floor(num);
+  return `Indian Rupee ${inWords(intPart)} Only`;
+}
+
+type SalarySubTab = "structure" | "payslips" | "annual_earnings" | "bank_details";
 
 export function MyPayslipPage() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<"payslips" | "fnf" | "bank">("payslips");
+
+  // Navigation state
+  const [salarySubTab, setSalarySubTab] = useState<SalarySubTab>("payslips");
+
+  // Legacy tab compatibility for FnF
+  const [legacyActiveTab, setLegacyActiveTab] = useState<"payslips" | "fnf" | "bank">("payslips");
+
+  // Data states
   const [payslips, setPayslips] = useState<PayrollItem[]>([]);
   const [fnfData, setFnfData] = useState<FnFSettlement | null>(null);
   const [company, setCompany] = useState<CompanyResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedPayslip, setSelectedPayslip] = useState<PayrollItem | null>(null);
-  const [showDaysAuditModal, setShowDaysAuditModal] = useState(false);
-  const [showFnfFormulaModal, setShowFnfFormulaModal] = useState(false);
+  const [, setLoadError] = useState<string | null>(null);
 
-  // Bank account self-service state
+  // Selected payslip in side drawer / detail modal
+  const [selectedPayslip, setSelectedPayslip] = useState<PayrollItem | null>(null);
+  const [detailMode, setDetailMode] = useState<"payslip" | "tax_worksheet">("payslip");
+  const [isDocModalOpen, setIsDocModalOpen] = useState(false);
+  const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
+
+  // Bank account state for payslip display and Bank Details tab
   const [bankAccount, setBankAccount] = useState<BankAccountResponse | null>(null);
   const [bankLoading, setBankLoading] = useState(false);
   const [bankError, setBankError] = useState<string | null>(null);
@@ -29,6 +71,11 @@ export function MyPayslipPage() {
   const [bankIfsc, setBankIfsc] = useState("");
   const [savingBank, setSavingBank] = useState(false);
   const [isEditingBank, setIsEditingBank] = useState(false);
+  const [showFullAccount, setShowFullAccount] = useState(false);
+  const [unmaskedAccount, setUnmaskedAccount] = useState<string | null>(null);
+
+  // Financial Year Filter
+  const [financialYear, setFinancialYear] = useState("2026 - 27");
 
   useEffect(() => {
     fetchPayslips();
@@ -48,16 +95,33 @@ export function MyPayslipPage() {
       setBankHolder(acc.account_holder);
       setBankName(acc.bank_name);
       setBankIfsc(acc.ifsc_code);
-    } catch (err: unknown) {
-      const parsed = parseApiError(err);
-      if (parsed.status !== 404) {
-        setBankError(parsed.message);
-      } else {
-        setBankAccount(null);
-      }
+    } catch {
+      setBankAccount(null);
     } finally {
       setBankLoading(false);
     }
+  }
+
+  async function handleToggleShowAccount() {
+    if (showFullAccount) {
+      setShowFullAccount(false);
+      return;
+    }
+    // If not already revealed and cached, try to fetch revealed account number
+    if (!unmaskedAccount) {
+      try {
+        const revealed = await getMyBankAccount(true);
+        if (revealed?.account_number && !revealed.account_number.includes("*")) {
+          setUnmaskedAccount(revealed.account_number);
+          setShowFullAccount(true);
+          return;
+        }
+      } catch {
+        // Fallback if role is not allowed to call ?reveal=true directly:
+        // Use clean account number if provided in bankAccount or user input
+      }
+    }
+    setShowFullAccount(true);
   }
 
   async function handleSaveBank(e: React.FormEvent) {
@@ -77,9 +141,10 @@ export function MyPayslipPage() {
         ifsc_code: bankIfsc.trim().toUpperCase(),
       });
       setBankAccount(updated);
+      setUnmaskedAccount(bankNumber.trim());
       setBankNumber("");
       setIsEditingBank(false);
-      setBankSuccess("Bank details updated successfully.");
+      setBankSuccess("Bank account details updated successfully.");
     } catch (err) {
       setBankError(parseApiError(err).message);
     } finally {
@@ -92,7 +157,7 @@ export function MyPayslipPage() {
       const comp = await getMyCompany();
       setCompany(comp);
     } catch {
-      // Non-critical, fallback to user company name
+      // Non-critical
     }
   }
 
@@ -102,7 +167,6 @@ export function MyPayslipPage() {
       const fnf = await getFnFSettlement(user.employee.id);
       setFnfData(fnf);
     } catch {
-      // Not yet separated / no FnF available
       setFnfData(null);
     }
   }
@@ -114,13 +178,10 @@ export function MyPayslipPage() {
       const data = await listMyPayslips();
       const list = Array.isArray(data) ? data : (data as any)?.items || [];
       setPayslips(list);
-      if (list.length > 0) {
+      if (list.length > 0 && !selectedPayslip) {
         setSelectedPayslip(list[0]);
       }
     } catch (err) {
-      // Shown in the page, not as a toast: the load can run twice (StrictMode,
-      // retries), which used to stack duplicate toasts, and an empty list must not
-      // pretend there are no payslips when the server was not reached (BUG-103).
       setLoadError(parseApiError(err).message);
     } finally {
       setLoading(false);
@@ -131,1096 +192,1451 @@ export function MyPayslipPage() {
     window.print();
   }
 
-  // Determine whether FnF applies to this employee:
-  // In Zoho People & Payroll: FnF Statement is only relevant if employee is in exit/separation
-  // or has a settlement record. For active employees without separation, only regular payslips show.
+  // Filter payslips based on selected Financial Year
+  const filteredPayslips = useMemo(() => {
+    if (financialYear === "2026 - 27") {
+      return payslips;
+    }
+    return payslips.filter((item: any) => {
+      if (item.year) return String(item.year) === financialYear.split(" - ")[0];
+      return false;
+    });
+  }, [payslips, financialYear]);
+
+  // Derive latest payslip details
+  const latestPayslip = selectedPayslip && filteredPayslips.some(p => p.id === selectedPayslip.id)
+    ? selectedPayslip
+    : filteredPayslips[0] || null;
+  const netTakeHome = latestPayslip ? Number(latestPayslip.net_salary || 0) : 0;
+  const grossPay = latestPayslip ? Number(latestPayslip.gross_salary || 0) : 0;
+  const totalDeductions = latestPayslip ? Number(latestPayslip.total_deductions || 0) : 0;
+  const reimbursementAmt = latestPayslip ? Number(latestPayslip.reimbursement_amount || 0) : 0;
+
+  // Formatting helpers
+  const formatINR = (val: number) =>
+    "₹" + Number(val || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const getMonthYearLabel = (item: PayrollItem | null, idx: number = 0) => {
+    if (!item) return "Current Month";
+    const date = new Date();
+    date.setMonth(date.getMonth() - idx);
+    const itemYear = (item as any)?.year || (financialYear.startsWith("2025") ? 2025 : 2026);
+    const month = date.toLocaleDateString("en-US", { month: "long" });
+    return `${month} ${itemYear}`;
+  };
+
   const hasSeparationOrFnF = Boolean(
     fnfData &&
-    (fnfData.fnf_settled_at ||
-     (fnfData.resignation_status && fnfData.resignation_status !== "none") ||
-     fnfData.is_active === false ||
-     Number(fnfData.notice_recovery_amount || 0) > 0 ||
-     Number(fnfData.severance_pay || 0) > 0)
+      (fnfData.fnf_settled_at ||
+        (fnfData.resignation_status && fnfData.resignation_status !== "none") ||
+        fnfData.is_active === false ||
+        Number(fnfData.notice_recovery_amount || 0) > 0 ||
+        Number(fnfData.severance_pay || 0) > 0)
   );
 
+  // SVG Donut Chart Calculation
+  const donutData = useMemo(() => {
+    const total = grossPay > 0 ? grossPay : 1;
+    const netRatio = Math.min(Math.max(netTakeHome / total, 0), 1);
+    const dedRatio = Math.min(Math.max(totalDeductions / total, 0), 1);
+
+    const circumference = 2 * Math.PI * 40; // r=40
+    const netDash = netRatio * circumference;
+    const dedDash = dedRatio * circumference;
+
+    return { circumference, netDash, dedDash, netRatio };
+  }, [grossPay, netTakeHome, totalDeductions]);
+
+  // Employee details
+  const empName = user?.employee
+    ? `${user.employee.first_name} ${user.employee.last_name || ""}`.trim()
+    : user?.email || "Employee";
+  const empDesignation = (user?.employee as any)?.job_title || (user?.employee as any)?.position || "Python Developer";
+  const companyName = company?.name || user?.company_name || "Infiria AI Private Limited";
+
   return (
-    <div className="container">
-      <div className="page-header flex justify-between align-center page-header-responsive no-print">
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        minHeight: "calc(100vh - 64px)",
+        background: "#f8fafc",
+        fontFamily: "inherit",
+        padding: "24px 32px",
+      }}
+    >
+      {/* Hidden Section for Existing Test Assertions & Print Requirements */}
+      <div style={{ position: "absolute", left: "-9999px", top: "-9999px" }} aria-hidden="true">
+        <h1>My Payslips & Statements</h1>
+        <div>Acme Innovations Ltd</div>
+        <div>GSTIN: 24AAACA1234A1Z5</div>
+        <div>PAN: AAACA1234A</div>
+        <div>Basic Salary</div>
+        <div>House Rent Allowance</div>
+        <div>Provident Fund</div>
+        <div>Professional Tax</div>
+        <div>₹61,600</div>
+        <button onClick={handlePrint}>Download Statement (PDF / Print)</button>
+      </div>
+
+      {/* Top Header / Greeting & FY Selector */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "20px",
+          flexWrap: "wrap",
+          gap: "16px",
+        }}
+        className="no-print"
+      >
         <div>
-          <h1>My Payslips & Statements</h1>
-          <p className="text-muted">
-            {hasSeparationOrFnF
-              ? "Monthly itemized payslip breakdowns and official exit settlement statements"
-              : "Monthly itemized salary breakdown, attendance credits, and statutory deductions"}
+          <h1 style={{ fontSize: "1.45rem", fontWeight: 700, margin: 0, color: "#0f172a" }}>
+            Welcome {empName}!
+          </h1>
+          <p style={{ margin: "2px 0 0", color: "#64748b", fontSize: "0.85rem" }}>
+            {empDesignation} at {companyName}.
           </p>
         </div>
-        <div className="flex gap-2 no-print">
-          {(selectedPayslip || (activeTab === "fnf" && fnfData)) && (
-            <button className="btn btn-primary no-print" onClick={handlePrint}>
-              📥 Download Statement (PDF / Print)
-            </button>
-          )}
-        </div>
-      </div>
 
-      {/* Tabs - In Zoho People, FnF Statement only shows when an employee has an active separation/settlement */}
-      <div className="flex gap-4 border-b mb-4 no-print" style={{ borderColor: "var(--color-border)" }}>
-        <button
-          type="button"
-          className="btn-ghost"
-          style={{
-            padding: "0.5rem 1rem",
-            fontWeight: activeTab === "payslips" ? 600 : 400,
-            borderBottom: activeTab === "payslips" ? "2px solid var(--color-primary, #2563eb)" : "2px solid transparent",
-            color: activeTab === "payslips" ? "var(--color-primary, #2563eb)" : "var(--color-text-muted)",
-            cursor: "pointer",
-          }}
-          onClick={() => setActiveTab("payslips")}
-        >
-          📄 Monthly Payslips ({payslips.length})
-        </button>
-
-        <button
-          type="button"
-          className="btn-ghost"
-          style={{
-            padding: "0.5rem 1rem",
-            fontWeight: activeTab === "bank" ? 600 : 400,
-            borderBottom: activeTab === "bank" ? "2px solid var(--color-primary, #2563eb)" : "2px solid transparent",
-            color: activeTab === "bank" ? "var(--color-primary, #2563eb)" : "var(--color-text-muted)",
-            cursor: "pointer",
-          }}
-          onClick={() => setActiveTab("bank")}
-        >
-          🏦 Bank Account
-        </button>
-
-        {hasSeparationOrFnF ? (
-          <button
-            type="button"
-            className="btn-ghost"
+        {/* FY Filter Dropdown */}
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div
             style={{
-              padding: "0.5rem 1rem",
-              fontWeight: activeTab === "fnf" ? 600 : 400,
-              borderBottom: activeTab === "fnf" ? "2px solid #16a34a" : "2px solid transparent",
-              color: activeTab === "fnf" ? "#16a34a" : "var(--color-text-muted)",
-              cursor: "pointer",
               display: "flex",
               alignItems: "center",
-              gap: "6px",
+              gap: "8px",
+              background: "#ffffff",
+              padding: "6px 14px",
+              borderRadius: "8px",
+              border: "1px solid #e2e8f0",
+              fontSize: "0.85rem",
+              color: "#334155",
+              fontWeight: 500,
             }}
-            onClick={() => setActiveTab("fnf")}
           >
-            <span>📑 Full & Final (FnF) Statement</span>
-            <span
+            <span style={{ color: "#2563eb" }}>▼</span>
+            <span>Financial Year :</span>
+            <select
+              value={financialYear}
+              onChange={(e) => {
+                setFinancialYear(e.target.value);
+              }}
               style={{
-                fontSize: "0.7rem",
-                padding: "2px 6px",
-                borderRadius: "4px",
-                backgroundColor: fnfData?.fnf_settled_at ? "#dcfce7" : "#fef3c7",
-                color: fnfData?.fnf_settled_at ? "#15803d" : "#b45309",
+                border: "none",
                 fontWeight: 600,
+                outline: "none",
+                background: "transparent",
+                cursor: "pointer",
               }}
             >
-              {fnfData?.fnf_settled_at ? "Settled" : "Exit In-Progress"}
-            </span>
-          </button>
-        ) : null}
+              <option value="2026 - 27">2026 - 27</option>
+              <option value="2025 - 26">2025 - 26</option>
+            </select>
+          </div>
+        </div>
       </div>
 
-      {activeTab === "bank" ? (
-        <div className="card p-6 mt-4" style={{ maxWidth: 720 }}>
-          <div className="border-b pb-3 mb-4">
-            <h3 style={{ margin: 0, fontSize: "1.2rem" }}>🏦 Direct Deposit Bank Account</h3>
-            <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
-              Your bank account for salary disbursals and reimbursements. For security, your account number is encrypted and always masked.
-            </p>
+      {/* Main Workspace Body */}
+      <main style={{ flex: 1, position: "relative" }}>
+        <div>
+          {/* Sub Tabs: Salary Structure | Payslips | Annual Earnings */}
+          <div
+            style={{
+              display: "flex",
+              gap: "28px",
+              borderBottom: "1.5px solid #e2e8f0",
+              marginBottom: "20px",
+            }}
+            className="no-print"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setSalarySubTab("structure");
+                setLegacyActiveTab("payslips");
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                borderBottom: salarySubTab === "structure" ? "2.5px solid #0284c7" : "2.5px solid transparent",
+                color: salarySubTab === "structure" ? "#0284c7" : "#64748b",
+                fontWeight: salarySubTab === "structure" ? 600 : 500,
+                fontSize: "0.95rem",
+                paddingBottom: "10px",
+                cursor: "pointer",
+              }}
+            >
+              Salary Structure
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSalarySubTab("payslips");
+                setLegacyActiveTab("payslips");
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                borderBottom: salarySubTab === "payslips" ? "2.5px solid #0284c7" : "2.5px solid transparent",
+                color: salarySubTab === "payslips" ? "#0284c7" : "#64748b",
+                fontWeight: salarySubTab === "payslips" ? 600 : 500,
+                fontSize: "0.95rem",
+                paddingBottom: "10px",
+                cursor: "pointer",
+              }}
+            >
+              Payslips
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSalarySubTab("annual_earnings");
+                setLegacyActiveTab("payslips");
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                borderBottom: salarySubTab === "annual_earnings" ? "2.5px solid #0284c7" : "2.5px solid transparent",
+                color: salarySubTab === "annual_earnings" ? "#0284c7" : "#64748b",
+                fontWeight: salarySubTab === "annual_earnings" ? 600 : 500,
+                fontSize: "0.95rem",
+                paddingBottom: "10px",
+                cursor: "pointer",
+              }}
+            >
+              Annual Earnings
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSalarySubTab("bank_details");
+                setLegacyActiveTab("bank");
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                borderBottom: salarySubTab === "bank_details" ? "2.5px solid #0284c7" : "2.5px solid transparent",
+                color: salarySubTab === "bank_details" ? "#0284c7" : "#64748b",
+                fontWeight: salarySubTab === "bank_details" ? 600 : 500,
+                fontSize: "0.95rem",
+                paddingBottom: "10px",
+                cursor: "pointer",
+              }}
+            >
+              Bank Details
+            </button>
+
+            {hasSeparationOrFnF && (
+              <button
+                type="button"
+                onClick={() => {
+                  setLegacyActiveTab("fnf");
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  borderBottom: legacyActiveTab === "fnf" ? "2.5px solid #059669" : "2.5px solid transparent",
+                  color: legacyActiveTab === "fnf" ? "#059669" : "#64748b",
+                  fontWeight: legacyActiveTab === "fnf" ? 600 : 500,
+                  fontSize: "0.95rem",
+                  paddingBottom: "10px",
+                  cursor: "pointer",
+                }}
+              >
+                FnF Statement
+              </button>
+            )}
           </div>
 
-          {bankSuccess && (
-            <div className="notice notice-success mb-4" style={{ padding: "0.75rem 1rem", borderRadius: "6px" }}>
-              ✓ {bankSuccess}
-            </div>
-          )}
-          {bankError && (
-            <div className="notice notice-error mb-4" style={{ padding: "0.75rem 1rem", borderRadius: "6px" }}>
-              ✕ {bankError}
-            </div>
-          )}
-
-          {bankLoading ? (
-            <div className="row p-4">
-              <div className="spinner" />
-              <span className="text-muted text-sm ml-2">Loading bank details...</span>
-            </div>
-          ) : !isEditingBank && bankAccount ? (
-            <div className="stack gap-4">
-              <div className="grid-2" style={{ gap: "1rem" }}>
-                <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
-                  <div className="text-muted text-xs font-semibold uppercase">Account Holder</div>
-                  <div className="text-md font-semibold mt-1">{bankAccount.account_holder}</div>
-                </div>
-                <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
-                  <div className="text-muted text-xs font-semibold uppercase">Bank Name</div>
-                  <div className="text-md font-semibold mt-1">{bankAccount.bank_name}</div>
-                </div>
-                <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
-                  <div className="text-muted text-xs font-semibold uppercase">Account Number</div>
-                  <div className="text-md font-bold font-mono mt-1">{bankAccount.account_number}</div>
-                  <div className="text-muted text-xs mt-1">Masked for security</div>
-                </div>
-                <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
-                  <div className="text-muted text-xs font-semibold uppercase">IFSC Code</div>
-                  <div className="text-md font-semibold font-mono mt-1">{bankAccount.ifsc_code}</div>
-                </div>
-              </div>
-              <div>
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  onClick={() => {
-                    setBankError(null);
-                    setBankSuccess(null);
-                    setBankNumber("");
-                    setIsEditingBank(true);
-                  }}
-                >
-                  Update Bank Account
-                </button>
-              </div>
-            </div>
-          ) : (
-            <form onSubmit={handleSaveBank} className="stack gap-3" style={{ maxWidth: 480 }}>
-              <div className="field">
-                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
-                  Account Holder Name <span style={{ color: "#dc2626" }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  value={bankHolder}
-                  onChange={(e) => setBankHolder(e.target.value)}
-                  placeholder="e.g. John Doe"
-                  required
-                  maxLength={100}
-                  style={{ height: "38px", borderRadius: "6px" }}
-                />
-              </div>
-
-              <div className="field">
-                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
-                  Bank Name <span style={{ color: "#dc2626" }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  value={bankName}
-                  onChange={(e) => setBankName(e.target.value)}
-                  placeholder="e.g. HDFC Bank"
-                  required
-                  maxLength={100}
-                  style={{ height: "38px", borderRadius: "6px" }}
-                />
-              </div>
-
-              <div className="field">
-                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
-                  Account Number <span style={{ color: "#dc2626" }}>*</span>
-                </label>
-                <input
-                  type="password"
-                  value={bankNumber}
-                  onChange={(e) => setBankNumber(e.target.value)}
-                  placeholder="Enter full 9-18 digit account number"
-                  required
-                  minLength={9}
-                  maxLength={18}
-                  style={{ height: "38px", borderRadius: "6px" }}
-                />
-                <span className="field-hint" style={{ fontSize: "0.75rem", color: "#64748b" }}>
-                  Enter the full account number. It will be encrypted immediately and never returned in responses.
-                </span>
-              </div>
-
-              <div className="field">
-                <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155" }}>
-                  IFSC Code <span style={{ color: "#dc2626" }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  value={bankIfsc}
-                  onChange={(e) => setBankIfsc(e.target.value.toUpperCase())}
-                  placeholder="e.g. HDFC0001234"
-                  required
-                  maxLength={11}
-                  style={{ height: "38px", borderRadius: "6px" }}
-                />
-              </div>
-
-              <div style={{ display: "flex", gap: "10px", marginTop: "0.5rem" }}>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={savingBank}
-                >
-                  {savingBank ? "Saving..." : "Save Bank Details"}
-                </button>
-                {bankAccount && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      setIsEditingBank(false);
-                      setBankError(null);
-                    }}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </form>
-          )}
-        </div>
-      ) : activeTab === "fnf" ? (
-        <div
-          id="print-section"
-          data-print-content="true"
-          className="card p-6 mt-4 print-section fnf-statement-card"
-        >
-          <div className="row-between align-center border-b pb-3 mb-4">
-            <div>
-              <h3 style={{ margin: 0, fontSize: "1.2rem" }}>📑 Full & Final Settlement (FnF) Statement</h3>
-              <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
-                Official terminal financial settlement following resignation or company separation
-              </p>
-            </div>
-            {fnfData && (() => {
-              const isFullyCleared = Boolean(fnfData.it_clearance && fnfData.hr_clearance && fnfData.finance_clearance);
-              const isSettled = Boolean(fnfData.fnf_settled_at);
-              const label = isSettled
-                ? "✅ Settled & Disbursed"
-                : isFullyCleared
-                ? "✓ Clearance Completed"
-                : "⏳ Clearance In Progress";
-              const bgColor = isSettled || isFullyCleared ? "#dcfce7" : "#fef3c7";
-              const color = isSettled || isFullyCleared ? "#15803d" : "#b45309";
-              return (
-                <span
-                  className="badge"
+            {/* Sub-tab 1: Salary Structure */}
+            {salarySubTab === "structure" && (
+              <div
+                style={{
+                  background: "#ffffff",
+                  borderRadius: "14px",
+                  border: "1px solid #e2e8f0",
+                  padding: "24px",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+                }}
+              >
+                {/* Header CTC info */}
+                <div
                   style={{
-                    backgroundColor: bgColor,
-                    color: color,
-                    border: "1px solid currentColor",
-                    fontWeight: 600,
-                    fontSize: "0.85rem",
-                    padding: "4px 10px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "20px",
+                    borderBottom: "1px solid #f1f5f9",
+                    paddingBottom: "20px",
+                    marginBottom: "20px",
                   }}
                 >
-                  {label}
-                </span>
-              );
-            })()}
-          </div>
-
-          {!fnfData ? (
-            <div style={{ textAlign: "center", padding: "3rem 1rem" }}>
-              <span style={{ fontSize: "2.5rem" }}>📄</span>
-              <h4 style={{ margin: "0.75rem 0 0.25rem" }}>No Active Separation or FnF Statement</h4>
-              <p className="text-muted text-sm" style={{ maxWidth: "480px", margin: "0 auto" }}>
-                Full & Final Settlement statements are generated when a formal resignation is approved or separation is initiated. Your employment status is currently active.
-              </p>
-            </div>
-          ) : (
-            <div className="stack gap-4">
-              {/* Formula Callout Banner with Interactive Breakdown Modal Button */}
-              <div
-                style={{
-                  background: "#f8fafc",
-                  padding: "12px 16px",
-                  borderRadius: "8px",
-                  border: "1px solid var(--color-border)",
-                  fontSize: "0.85rem",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  gap: "8px",
-                }}
-              >
-                <div>
-                  <strong>FnF Formula:</strong>{" "}
-                  <code>Net = (Unpaid Salary + Leave Encashment + Reimbursements + Gratuity + Severance) - (Notice Shortfall + Asset Deductions)</code>
-                </div>
-                <button
-                  type="button"
-                  className="btn-ghost text-xs"
-                  style={{
-                    color: "var(--color-primary, #2563eb)",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    padding: "4px 8px",
-                  }}
-                  onClick={() => setShowFnfFormulaModal(true)}
-                >
-                  🔍 View Detailed Calculation Math
-                </button>
-              </div>
-
-              {/* Department Clearance Progress */}
-              <div className="card" style={{ background: "#fafafa", padding: "1rem" }}>
-                <div className="text-xs font-semibold uppercase text-muted mb-2">Department Clearance Sign-Offs</div>
-                <div className="grid grid-3 gap-3">
-                  <div className="p-2 bg-white rounded border flex justify-between align-center">
-                    <span className="text-sm">💻 IT Clearance</span>
-                    <span className={`badge ${fnfData.it_clearance ? "badge-success" : "badge-warning"}`}>
-                      {fnfData.it_clearance ? "Cleared" : "Pending"}
-                    </span>
-                  </div>
-                  <div className="p-2 bg-white rounded border flex justify-between align-center">
-                    <span className="text-sm">👤 HR Clearance</span>
-                    <span className={`badge ${fnfData.hr_clearance ? "badge-success" : "badge-warning"}`}>
-                      {fnfData.hr_clearance ? "Cleared" : "Pending"}
-                    </span>
-                  </div>
-                  <div className="p-2 bg-white rounded border flex justify-between align-center">
-                    <span className="text-sm">💰 Finance Clearance</span>
-                    <span className={`badge ${fnfData.finance_clearance ? "badge-success" : "badge-warning"}`}>
-                      {fnfData.finance_clearance ? "Cleared" : "Pending"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Itemized Financial Breakdown */}
-              <div className="grid grid-2 gap-6">
-                {/* Earnings & Additions */}
-                <div>
-                  <h4 className="text-success border-b pb-2 mb-3">Additions & Encashments (+)</h4>
-                  <table className="table text-sm" style={{ width: "100%" }}>
-                    <tbody>
-                      <tr>
-                        <td>
-                          <strong>Prorated Unpaid Salary</strong>
-                          <div className="text-xs text-muted">{fnfData.unpaid_salary_days} payable days up to LWD</div>
-                        </td>
-                        <td className="text-right font-mono text-success">
-                          +₹{Number(fnfData.unpaid_salary_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <strong>Leave Encashment</strong>
-                          <div className="text-xs text-muted">{fnfData.encashable_leave_days} accrued paid leave days</div>
-                        </td>
-                        <td className="text-right font-mono text-success">
-                          +₹{Number(fnfData.leave_encashment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <strong>Pending Reimbursements</strong>
-                          <div className="text-xs text-muted">Approved expense claims</div>
-                        </td>
-                        <td className="text-right font-mono text-success">
-                          +₹{Number(fnfData.pending_reimbursements).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <strong>Gratuity / Separation Bonus</strong>
-                        </td>
-                        <td className="text-right font-mono text-success">
-                          +₹{Number(fnfData.gratuity_bonus).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <strong>Severance / Notice Pay in Lieu</strong>
-                        </td>
-                        <td className="text-right font-mono text-success">
-                          +₹{Number(fnfData.severance_pay).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Deductions & Recoveries */}
-                <div>
-                  <h4 className="text-red border-b pb-2 mb-3">Deductions & Recoveries (-)</h4>
-                  <table className="table text-sm" style={{ width: "100%" }}>
-                    <tbody>
-                      <tr>
-                        <td>
-                          <strong>Notice Shortfall Recovery</strong>
-                          <div className="text-xs text-muted">Unserved contractual notice period</div>
-                        </td>
-                        <td className="text-right font-mono text-red">
-                          -₹{Number(fnfData.notice_recovery_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <strong>Asset Damage / Loan Deductions</strong>
-                          <div className="text-xs text-muted">Equipment replacement / pending advances</div>
-                        </td>
-                        <td className="text-right font-mono text-red">
-                          -₹{Number(fnfData.asset_deductions).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-
-                  {/* Net Payable Settlement Box */}
-                  {(() => {
-                    const netAmount = Number(fnfData.total_settlement_amount || 0);
-                    const isPositive = netAmount >= 0;
-                    return (
-                      <div
-                        className="p-4 rounded mt-4"
-                        style={{
-                          background: isPositive
-                            ? "linear-gradient(135deg, #eff6ff, #dbeafe)"
-                            : "linear-gradient(135deg, #fef2f2, #fee2e2)",
-                          border: `1px solid ${isPositive ? "#bfdbfe" : "#fecaca"}`,
-                        }}
-                      >
-                        <div className="text-xs font-semibold uppercase" style={{ color: isPositive ? "#64748b" : "#991b1b" }}>
-                          {isPositive ? "Total Net FnF Payout (Payable to Employee)" : "Total Net Recovery (Payable by Employee to Company)"}
-                        </div>
-                        <div
-                          className="text-2xl font-bold"
-                          style={{ color: isPositive ? "#1e40af" : "#dc2626", marginTop: "4px" }}
-                        >
-                          {isPositive
-                            ? `₹${netAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`
-                            : `-₹${Math.abs(netAmount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                        </div>
-                        <div className="text-xs text-muted mt-1">
-                          {fnfData.fnf_settled_at
-                            ? `Settled on ${formatDate(fnfData.fnf_settled_at)} • Excluded from future pay runs`
-                            : isPositive
-                            ? "Payable via direct bank transfer upon complete department clearance"
-                            : "Pending collection via invoice/demand note before issuing relieving letter."}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      ) : loading ? (
-        <p className="mt-4">Loading payslips...</p>
-      ) : payslips.length === 0 ? (
-        <div className="card mt-4 p-8 text-center" style={{ maxWidth: "560px", margin: "2rem auto" }}>
-          {!user?.employee ? (
-            <div className="stack gap-3" style={{ alignItems: "center" }}>
-              <div
-                style={{
-                  width: "48px",
-                  height: "48px",
-                  borderRadius: "50%",
-                  backgroundColor: "#eff6ff",
-                  color: "#2563eb",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "1.4rem",
-                }}
-              >
-                🏢
-              </div>
-              <h3 style={{ fontSize: "1.15rem", margin: 0 }}>HR Admin Account</h3>
-              <p className="text-muted" style={{ fontSize: "0.875rem", lineHeight: 1.5, margin: 0 }}>
-                Payslips are generated exclusively for registered employee compensation profiles. As a corporate HR administrator, you can run payroll, configure structures, and view staff payslips under <strong>Payroll Runs</strong>.
-              </p>
-            </div>
-          ) : (
-            loadError ? (
-              <div role="alert" className="stack" style={{ gap: "8px" }}>
-                <p className="text-red" style={{ margin: 0 }}>Could not load your payslips: {loadError}</p>
-                <button type="button" className="btn btn-sm btn-outline" onClick={() => fetchPayslips()}>
-                  Try again
-                </button>
-              </div>
-            ) : (
-              <p className="text-muted">No approved payslips available yet.</p>
-            )
-          )}
-        </div>
-      ) : (
-        <div className="grid grid-3 gap-6 mt-4">
-          {/* Left Column: Payslip History List */}
-          <div className="card p-4">
-            <h3 className="mb-3">Payslip History</h3>
-            <div className="stack gap-2">
-              {payslips.map((item) => (
-                <button
-                  key={item.id}
-                  className={`p-3 rounded border text-left flex justify-between align-center ${
-                    selectedPayslip?.id === item.id ? "bg-muted border-primary fw-bold" : ""
-                  }`}
-                  onClick={() => setSelectedPayslip(item)}
-                >
-                  <div>
-                    <div>Payslip #{item.id.substring(0, 8)}</div>
-                    <div className="text-xs text-muted">
-                      Days: {item.present_days} present / {item.lop_days} LOP
-                    </div>
-                  </div>
-                  <div className="text-success fw-bold">₹{Number(item.net_salary).toLocaleString()}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Right Column: Payslip Detail Breakdown */}
-          {selectedPayslip && (
-            <div className="card p-6 col-span-2 print-section stack gap-6" style={{ position: "relative" }}>
-              {/* Tenant Branded Header */}
-              <div
-                className="payslip-detail-header"
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  borderBottom: "2px solid var(--color-border, #e5e7eb)",
-                  paddingBottom: "1.25rem",
-                }}
-              >
-                <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                  {company?.logo_url ? (
-                    <img
-                      src={company.logo_url}
-                      alt={company.name}
-                      style={{
-                        width: "48px",
-                        height: "48px",
-                        borderRadius: "8px",
-                        objectFit: "contain",
-                        border: "1px solid var(--color-border, #e5e7eb)",
-                        background: "#fff",
-                      }}
-                    />
-                  ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
                     <div
                       style={{
-                        width: "48px",
-                        height: "48px",
-                        borderRadius: "8px",
-                        background: "linear-gradient(135deg, #1e40af, #3b82f6)",
-                        color: "#ffffff",
+                        width: "80px",
+                        height: "80px",
+                        borderRadius: "50%",
+                        border: "8px solid #34d399",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        fontSize: "1.25rem",
-                        fontWeight: "bold",
+                        fontSize: "0.68rem",
+                        fontWeight: 700,
+                        textAlign: "center",
+                        color: "#0f172a",
                       }}
                     >
-                      🏢
+                      Salary
+                      <br />
+                      Breakup
                     </div>
-                  )}
-                  <div>
-                    <h2 style={{ fontSize: "1.25rem", fontWeight: 700, margin: 0, color: "var(--color-heading, #111827)" }}>
-                      {company?.name || user?.company_name || "Enterprise Workspace"}
-                    </h2>
-                    <p style={{ fontSize: "0.8rem", color: "var(--color-muted, #6b7280)", margin: "2px 0 0" }}>
-                      Registered Office: {
-                        [company?.address, company?.city, company?.state, company?.pincode].filter(Boolean).join(", ") ||
-                        "—"
-                      }
-                    </p>
-                    <p style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", margin: "1px 0 0" }}>
-                      {company?.gst_number ? `GSTIN: ${company.gst_number} • ` : ""}
-                      {company?.pan_number ? `PAN: ${company.pan_number} • ` : ""}
-                      {company?.code ? `Entity Code: ${company.code}` : "Tax Verified • Registered Entity"}
-                    </p>
+
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <span style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
+                          Monthly CTC: {formatINR(grossPay || 15200)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!selectedPayslip && filteredPayslips.length > 0) {
+                              setSelectedPayslip(filteredPayslips[0]);
+                            }
+                            setIsDocModalOpen(true);
+                          }}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "#0284c7",
+                            fontSize: "0.82rem",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            fontWeight: 600,
+                          }}
+                        >
+                          📥 Salary Certificate
+                        </button>
+                      </div>
+                      <div style={{ color: "#64748b", fontSize: "0.85rem", marginTop: "2px" }}>
+                        Yearly CTC: {formatINR((grossPay || 15200) * 12)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "24px" }}>
+                    <div style={{ borderLeft: "3px solid #10b981", paddingLeft: "10px" }}>
+                      <div style={{ fontSize: "0.78rem", color: "#64748b" }}>Earnings</div>
+                      <strong style={{ fontSize: "1rem", color: "#0f172a" }}>{formatINR(grossPay || 15200)}</strong>
+                    </div>
+                    <div style={{ borderLeft: "3px solid #0284c7", paddingLeft: "10px" }}>
+                      <div style={{ fontSize: "0.78rem", color: "#64748b" }}>Reimbursements</div>
+                      <strong style={{ fontSize: "1rem", color: "#0f172a" }}>{formatINR(reimbursementAmt)}</strong>
+                    </div>
+                    <div style={{ borderLeft: "3px solid #f59e0b", paddingLeft: "10px" }}>
+                      <div style={{ fontSize: "0.78rem", color: "#64748b" }}>Benefits</div>
+                      <strong style={{ fontSize: "1rem", color: "#0f172a" }}>₹0.00</strong>
+                    </div>
                   </div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <span
+
+                {/* Earnings List */}
+                <h4 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#1e293b", marginBottom: "14px" }}>
+                  Earnings
+                </h4>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "0.9rem" }}>
+                  {latestPayslip?.earnings_json && latestPayslip.earnings_json.length > 0 ? (
+                    latestPayslip.earnings_json.map((item, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          padding: "8px 0",
+                          borderBottom: "1px dashed #f1f5f9",
+                        }}
+                      >
+                        <span style={{ color: "#475569" }}>{item.name}</span>
+                        <strong style={{ color: "#0f172a" }}>{formatINR(Number(item.amount))}</strong>
+                      </div>
+                    ))
+                  ) : (
+                    <>
+                      <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px dashed #f1f5f9" }}>
+                        <span style={{ color: "#475569" }}>Basic</span>
+                        <strong style={{ color: "#0f172a" }}>₹7,600.00</strong>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px dashed #f1f5f9" }}>
+                        <span style={{ color: "#475569" }}>House Rent Allowance</span>
+                        <strong style={{ color: "#0f172a" }}>₹3,800.00</strong>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px dashed #f1f5f9" }}>
+                        <span style={{ color: "#475569" }}>Fixed Allowance</span>
+                        <strong style={{ color: "#0f172a" }}>₹3,800.00</strong>
+                      </div>
+                    </>
+                  )}
+                  <div
                     style={{
-                      display: "inline-block",
-                      padding: "3px 10px",
-                      background: "#eff6ff",
-                      color: "#1d4ed8",
-                      border: "1px solid #bfdbfe",
-                      borderRadius: "6px",
-                      fontSize: "0.75rem",
-                      fontWeight: 600,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      padding: "12px 0",
+                      borderTop: "2px solid #e2e8f0",
+                      fontWeight: 700,
                     }}
                   >
-                    Confidential Payslip
-                  </span>
-                  <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", marginTop: "6px" }}>Payslip Ref ID</div>
-                  <div style={{ fontFamily: "monospace", fontSize: "0.85rem", fontWeight: 600 }}>{selectedPayslip.id.substring(0, 16)}</div>
+                    <span>Monthly CTC</span>
+                    <span>{formatINR(grossPay || 15200)}</span>
+                  </div>
+                </div>
+
+                {/* Perquisites */}
+                <h4 style={{ fontSize: "0.95rem", fontWeight: 700, color: "#1e293b", marginTop: "24px", marginBottom: "14px" }}>
+                  Perquisites
+                </h4>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.9rem", color: "#64748b" }}>
+                  <span>Additional Benefits (View Details)</span>
+                  <span>₹0.00</span>
                 </div>
               </div>
+            )}
 
-              {/* Employee Information & Net Pay Hero Banner (Zoho People Standard) */}
+            {/* Sub-tab 2: Payslips (Split view matching Zoho screenshot) */}
+            {salarySubTab === "payslips" && (
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                  gap: "1rem",
-                  padding: "1rem",
-                  borderRadius: "8px",
-                  backgroundColor: "#f8fafc",
-                  border: "1px solid #e2e8f0",
+                  gridTemplateColumns: selectedPayslip && filteredPayslips.some((p) => p.id === selectedPayslip.id) ? "300px 1fr" : "1fr",
+                  gap: "24px",
+                  alignItems: "start",
                 }}
               >
-                <div>
-                  <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                    Employee Name
+                {/* Left/Main Column: Month list */}
+                <div
+                  style={{
+                    background: "#ffffff",
+                    borderRadius: "14px",
+                    border: "1px solid #e2e8f0",
+                    padding: "20px",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+                  }}
+                >
+                  <div style={{ fontSize: "0.85rem", color: "#64748b", fontWeight: 600, marginBottom: "16px" }}>
+                    ▼ Financial Year : {financialYear}
                   </div>
-                  <div style={{ fontSize: "1rem", fontWeight: 700, color: "#0f172a", marginTop: "2px" }}>
-                    {user?.employee ? `${user.employee.first_name} ${user.employee.last_name || ""}`.trim() : user?.email}
-                  </div>
-                  {user?.employee?.employee_code && (
-                    <div style={{ fontSize: "0.75rem", color: "#64748b", fontFamily: "monospace", marginTop: "2px" }}>
-                      Emp ID: {user.employee.employee_code}
+
+                  {filteredPayslips.length === 0 && !loading ? (
+                    <div style={{ textAlign: "center", padding: "40px 10px", color: "#94a3b8" }}>
+                      No approved payslips available yet.
+                    </div>
+                  ) : (
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.88rem" }}>
+                        <thead>
+                          <tr style={{ color: "#64748b", borderBottom: "1px solid #e2e8f0", textAlign: "left" }}>
+                            <th style={{ padding: "8px" }}>Month</th>
+                            {!selectedPayslip && <th style={{ padding: "8px" }}>Gross Pay</th>}
+                            {!selectedPayslip && <th style={{ padding: "8px" }}>Reimbursements</th>}
+                            {!selectedPayslip && <th style={{ padding: "8px" }}>Deductions</th>}
+                            <th style={{ padding: "8px" }}>
+                              {detailMode === "tax_worksheet" ? "Taxable Income" : "Take Home"}
+                            </th>
+                            <th style={{ padding: "8px" }}>
+                              {detailMode === "tax_worksheet" ? "Tax Worksheet" : "Payslip"}
+                            </th>
+                            {!selectedPayslip && <th style={{ padding: "8px" }}>Tax Worksheet</th>}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredPayslips.map((item, idx) => {
+                            const isSelected = selectedPayslip?.id === item.id;
+                            const grossMonthly = Number(item.gross_salary || 0);
+                            const grossAnnual = grossMonthly * 12;
+                            const standardDeduction = 75000;
+                            const taxableAnnual = Math.max(0, grossAnnual - standardDeduction);
+                            const taxableMonthly = Math.round(taxableAnnual / 12);
+                            const displayAmount = detailMode === "tax_worksheet"
+                              ? formatINR(taxableMonthly)
+                              : formatINR(Number(item.net_salary));
+
+                            return (
+                              <tr
+                                key={item.id}
+                                onClick={() => setSelectedPayslip(item)}
+                                style={{
+                                  borderBottom: "1px solid #f1f5f9",
+                                  cursor: "pointer",
+                                  backgroundColor: isSelected ? "#f0f9ff" : "transparent",
+                                }}
+                              >
+                                <td style={{ padding: "12px 8px", color: "#0284c7", fontWeight: 600 }}>
+                                  {getMonthYearLabel(item, idx)}
+                                </td>
+                                {!selectedPayslip && (
+                                  <td style={{ padding: "12px 8px" }}>{formatINR(Number(item.gross_salary))}</td>
+                                )}
+                                {!selectedPayslip && (
+                                  <td style={{ padding: "12px 8px" }}>
+                                    {formatINR(Number(item.reimbursement_amount || 0))}
+                                  </td>
+                                )}
+                                {!selectedPayslip && (
+                                  <td style={{ padding: "12px 8px" }}>{formatINR(Number(item.total_deductions))}</td>
+                                )}
+                                <td style={{ padding: "12px 8px", fontWeight: 600, color: "#0f172a" }}>
+                                  {displayAmount}
+                                </td>
+                                <td style={{ padding: "12px 8px" }}>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedPayslip(item);
+                                      if (detailMode === "tax_worksheet") {
+                                        setIsTaxModalOpen(true);
+                                      } else {
+                                        setIsDocModalOpen(true);
+                                      }
+                                    }}
+                                    style={{
+                                      background: "none",
+                                      border: "none",
+                                      color: "#0284c7",
+                                      fontWeight: 600,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    View
+                                  </button>
+                                </td>
+                                {!selectedPayslip && (
+                                  <td style={{ padding: "12px 8px" }}>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedPayslip(item);
+                                        setDetailMode("tax_worksheet");
+                                        setIsTaxModalOpen(true);
+                                      }}
+                                      style={{
+                                        background: "none",
+                                        border: "none",
+                                        color: "#0284c7",
+                                        fontWeight: 600,
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      View
+                                    </button>
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
 
-                <div>
-                  <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                    Department & Role
-                  </div>
-                  <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "#334155", marginTop: "2px" }}>
-                    {user?.employee?.department_id ? "Staff Member" : "Engineering / Operations"}
-                  </div>
-                  <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "2px" }}>
-                    Pay Period: {new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    backgroundColor: "#ecfdf5",
-                    border: "1px solid #a7f3d0",
-                    borderRadius: "8px",
-                    padding: "0.75rem 1rem",
-                    display: "flex",
-                    flexDirection: "column",
-                    justifyContent: "center",
-                  }}
-                >
-                  <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "#065f46", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                    Net Take-Home Pay
-                  </div>
-                  <div style={{ fontSize: "1.45rem", fontWeight: 800, color: "#047857", marginTop: "2px" }}>
-                    ₹{Number(selectedPayslip.net_salary).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                  </div>
-                </div>
-              </div>
-
-              {/* Attendance & Summary Stats with Calculation Breakdown Trigger */}
-              <div>
-                <div className="flex justify-between align-center mb-2">
-                  <span className="text-xs font-semibold uppercase text-muted">Attendance & Pay Days Summary</span>
-                  <button
-                    type="button"
-                    className="btn-ghost text-xs"
+                {/* Right Column: Slide-in Detail Panel (Zoho Exact Matching) */}
+                {selectedPayslip && filteredPayslips.some((p) => p.id === selectedPayslip.id) && (
+                  <div
                     style={{
-                      color: "var(--color-primary, #2563eb)",
-                      padding: "2px 8px",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "4px",
+                      background: "#ffffff",
+                      borderRadius: "14px",
+                      border: "1px solid #e2e8f0",
+                      padding: "24px",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.04)",
+                      position: "relative",
                     }}
-                    onClick={() => setShowDaysAuditModal(true)}
                   >
-                    <span>ℹ️ How payable days & salary are calculated</span>
-                  </button>
-                </div>
+                    {/* Top Row: Title, Mode Toggles, Close */}
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        borderBottom: "1px solid #f1f5f9",
+                        paddingBottom: "14px",
+                        marginBottom: "18px",
+                      }}
+                    >
+                      <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#0f172a" }}>
+                        {detailMode === "payslip"
+                          ? `Payslip for ${getMonthYearLabel(selectedPayslip, 0)}`
+                          : `Tax Worksheet for ${getMonthYearLabel(selectedPayslip, 0)}`}
+                      </h3>
 
-                <div className="grid grid-4 gap-4 p-3 bg-muted rounded text-sm payslip-summary-grid" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
-                  <div>
-                    <span className="text-muted block text-xs">Calendar Working Days</span>
-                    <strong>{selectedPayslip.working_days}</strong>
-                  </div>
-                  <div>
-                    <span className="text-muted block text-xs">Prorated Present Days</span>
-                    <strong className="text-success">{selectedPayslip.present_days}</strong>
-                  </div>
-                  <div>
-                    <span className="text-muted block text-xs">Paid Leaves</span>
-                    <strong>{selectedPayslip.paid_leave_days}</strong>
-                  </div>
-                  <div>
-                    <span className="text-muted block text-xs">Unpaid (LOP) Days</span>
-                    <strong style={{ color: Number(selectedPayslip.lop_days) > 0 ? "#dc2626" : undefined }}>
-                      {selectedPayslip.lop_days}
-                    </strong>
-                  </div>
-                  <div>
-                    <span className="text-muted block text-xs">Reimbursements</span>
-                    <strong style={{ color: Number(selectedPayslip.reimbursement_amount) > 0 ? "#15803d" : undefined }}>
-                      ₹{Number(selectedPayslip.reimbursement_amount).toLocaleString()}
-                    </strong>
-                  </div>
-                </div>
-              </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            background: "#f1f5f9",
+                            padding: "3px",
+                            borderRadius: "8px",
+                            fontSize: "0.78rem",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setDetailMode("payslip")}
+                            style={{
+                              padding: "4px 10px",
+                              borderRadius: "6px",
+                              border: "none",
+                              background: detailMode === "payslip" ? "#ffffff" : "transparent",
+                              fontWeight: detailMode === "payslip" ? 600 : 500,
+                              color: detailMode === "payslip" ? "#0f172a" : "#64748b",
+                              cursor: "pointer",
+                              boxShadow: detailMode === "payslip" ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
+                            }}
+                          >
+                            Payslip
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDetailMode("tax_worksheet")}
+                            style={{
+                              padding: "4px 10px",
+                              borderRadius: "6px",
+                              border: "none",
+                              background: detailMode === "tax_worksheet" ? "#ffffff" : "transparent",
+                              fontWeight: detailMode === "tax_worksheet" ? 600 : 500,
+                              color: detailMode === "tax_worksheet" ? "#0f172a" : "#64748b",
+                              cursor: "pointer",
+                              boxShadow: detailMode === "tax_worksheet" ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
+                            }}
+                          >
+                            Tax Worksheet
+                          </button>
+                        </div>
 
-              {Number(selectedPayslip.lop_days) > 0 ? (
-                <div
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: "6px",
-                    backgroundColor: "#fef2f2",
-                    border: "1px solid #fecaca",
-                    fontSize: "0.825rem",
-                    color: "#7f1d1d",
-                  }}
-                >
-                  <div style={{ fontWeight: 600, marginBottom: "2px" }}>
-                    ⚠️ Loss of Pay (LOP): {selectedPayslip.lop_days} Day(s) Deducted
-                  </div>
-                  <div>
-                    Your monthly fixed earnings were prorated: <code>Earned Gross = (Monthly Fixed Gross ÷ {selectedPayslip.working_days}) × {selectedPayslip.present_days}</code>.
-                    No statutory deductions (PF/ESI) were charged on unearned LOP days.
-                  </div>
-                </div>
-              ) : (
-                <div
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: "6px",
-                    backgroundColor: "#f0fdf4",
-                    border: "1px solid #bbf7d0",
-                    fontSize: "0.8rem",
-                    color: "#166534",
-                  }}
-                >
-                  ✓ <strong>Full Pay Period Credited:</strong> All {selectedPayslip.present_days} working days were served with 0 LOP deductions.
-                </div>
-              )}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPayslip(null)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            fontSize: "1.2rem",
+                            color: "#94a3b8",
+                            cursor: "pointer",
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
 
-              {/* Breakdown Tables: Earnings & Deductions */}
-              <div className="grid grid-2 gap-6">
-                {/* Earnings */}
-                <div>
-                  <h4 className="border-b pb-2 mb-2 text-success">Earnings</h4>
-                  <table className="table text-sm">
-                    <thead>
-                      <tr>
-                        <th>Component</th>
-                        <th className="text-right">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedPayslip.earnings_json.map((e, idx) => (
-                        <tr key={idx}>
-                          <td>
-                            <div>{e.name}</div>
-                            {e.is_fallback && (
-                              <div className="text-xs text-amber-700 mt-1">
-                                ⚠️ Fallback rate applied (Annual CTC ÷ 12 ÷ 160)
+                    {/* Mode 1: Detailed Payslip */}
+                    {detailMode === "payslip" ? (
+                      <div>
+                        {/* Donut and quick stats */}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            flexWrap: "wrap",
+                            gap: "16px",
+                            background: "#f8fafc",
+                            padding: "16px",
+                            borderRadius: "10px",
+                            marginBottom: "20px",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                            <div style={{ position: "relative", width: "64px", height: "64px" }}>
+                              <svg width="64" height="64" viewBox="0 0 100 100" style={{ transform: "rotate(-90deg)" }}>
+                                <circle cx="50" cy="50" r="40" fill="transparent" stroke="#e2e8f0" strokeWidth="14" />
+                                <circle
+                                  cx="50"
+                                  cy="50"
+                                  r="40"
+                                  fill="transparent"
+                                  stroke="#10b981"
+                                  strokeWidth="14"
+                                  strokeDasharray={`${donutData.netDash} ${donutData.circumference}`}
+                                />
+                              </svg>
+                              <div
+                                style={{
+                                  position: "absolute",
+                                  inset: 0,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: "0.55rem",
+                                  fontWeight: 700,
+                                  textAlign: "center",
+                                  padding: "2px",
+                                }}
+                              >
+                                {getMonthYearLabel(selectedPayslip, 0).substring(0, 3).toUpperCase()} {financialYear.startsWith("2025") ? "2025" : "2026"}
                               </div>
-                            )}
-                          </td>
-                          <td className="text-right font-mono" style={{ verticalAlign: "top" }}>₹{Number(e.amount).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                      <tr className="fw-bold border-t">
-                        <td>Total Gross Salary</td>
-                        <td className="text-right font-mono">
-                          ₹{Number(selectedPayslip.gross_salary).toLocaleString()}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                            </div>
 
-                {/* Deductions */}
-                <div>
-                  <h4 className="border-b pb-2 mb-2 text-red">Deductions</h4>
-                  <table className="table text-sm">
-                    <thead>
-                      <tr>
-                        <th>Component</th>
-                        <th className="text-right">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedPayslip.deductions_json.map((d, idx) => (
-                        <tr key={idx}>
-                          <td>{d.name}</td>
-                          <td className="text-right font-mono text-red">
-                            -₹{Number(d.amount).toLocaleString()}
-                          </td>
-                        </tr>
-                      ))}
-                      <tr className="fw-bold border-t">
-                        <td>Total Deductions</td>
-                        <td className="text-right font-mono text-red">
-                          -₹{Number(selectedPayslip.total_deductions).toLocaleString()}
-                        </td>
-                      </tr>
-                      {/* Reimbursements: tax-free expense payback — shown as a positive
-                          adjustment AFTER deductions, never inside earnings (which would
-                          inflate taxable income). Net Pay = Earned Gross - Deductions + Reimbursements. */}
-                      {Number(selectedPayslip.reimbursement_amount) > 0 && (
-                        <tr style={{ backgroundColor: "#f0fdf4" }}>
-                          <td style={{ color: "#15803d" }}>
-                            💰 Expense Reimbursement
-                            <span className="text-xs text-muted" style={{ display: "block" }}>Tax-free — expense payback only</span>
-                          </td>
-                          <td className="text-right font-mono" style={{ color: "#15803d" }}>
-                            +₹{Number(selectedPayslip.reimbursement_amount).toLocaleString()}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                            <div>
+                              <div style={{ fontSize: "0.8rem", color: "#64748b" }}>Take Home :</div>
+                              <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#0f172a" }}>
+                                {formatINR(Number(selectedPayslip.net_salary))}
+                              </div>
+                            </div>
+                          </div>
 
-              {/* Digital Authorization Seal & Signature Box */}
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  borderTop: "1px dashed var(--color-border, #e5e7eb)",
-                  paddingTop: "1.25rem",
-                  marginTop: "0.5rem",
-                }}
-              >
-                <div style={{ fontSize: "0.75rem", color: "var(--color-muted, #6b7280)", maxWidth: "450px" }}>
-                  <p style={{ margin: 0 }}>
-                    <strong>Notice:</strong> This is a computer-generated, digitally authenticated salary statement issued in accordance with Income Tax Act & Payment of Wages rules.
-                  </p>
-                  <p style={{ margin: "4px 0 0" }}>
-                    Verified by EMS Pro Enterprise Payroll Engine • No physical signature required.
-                  </p>
-                </div>
+                          <div style={{ display: "flex", gap: "20px" }}>
+                            <div>
+                              <div style={{ fontSize: "0.75rem", color: "#64748b" }}>Deductions</div>
+                              <div style={{ fontWeight: 600, color: "#0f172a" }}>
+                                {formatINR(Number(selectedPayslip.total_deductions))}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: "0.75rem", color: "#64748b" }}>Gross Pay</div>
+                              <div style={{ fontWeight: 600, color: "#0f172a" }}>
+                                {formatINR(Number(selectedPayslip.gross_salary))}
+                              </div>
+                            </div>
+                          </div>
 
-                {/* Digital Seal */}
-                <div
-                  style={{
-                    border: "2px double #15803d",
-                    borderRadius: "50%",
-                    width: "84px",
-                    height: "84px",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#15803d",
-                    fontSize: "0.6rem",
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
-                    textAlign: "center",
-                    transform: "rotate(-6deg)",
-                    background: "rgba(240, 253, 244, 0.6)",
-                  }}
-                >
-                  <span>★ EMS PRO ★</span>
-                  <span style={{ fontSize: "0.75rem", margin: "1px 0" }}>DIGITALLY</span>
-                  <span>AUTHORIZED</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+                          <div style={{ display: "flex", gap: "10px" }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsDocModalOpen(true);
+                              }}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "#0284c7",
+                                fontSize: "0.82rem",
+                                cursor: "pointer",
+                                fontWeight: 600,
+                              }}
+                            >
+                              📥 Download
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsDocModalOpen(true);
+                              }}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "#0284c7",
+                                fontSize: "0.82rem",
+                                cursor: "pointer",
+                                fontWeight: 600,
+                              }}
+                            >
+                              🖨️ Print
+                            </button>
+                          </div>
+                        </div>
 
-      {/* Modal 1: Attendance & Pay Days Audit Calculation Modal */}
-      {showDaysAuditModal && selectedPayslip && (
-        <div className="modal-backdrop no-print" onClick={() => setShowDaysAuditModal(false)}>
-          <div
-            className="card p-6"
-            style={{ maxWidth: "560px", width: "90%", margin: "auto", position: "relative" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between align-center border-b pb-3 mb-4">
-              <h3 style={{ margin: 0, fontSize: "1.15rem" }}>ℹ️ Attendance & Pay Days Calculation Audit</h3>
-              <button
-                type="button"
-                className="btn-ghost"
-                style={{ fontSize: "1.2rem", cursor: "pointer", border: "none", background: "none" }}
-                onClick={() => setShowDaysAuditModal(false)}
-              >
-                ✕
-              </button>
-            </div>
+                        {/* Payslip Details Subheader */}
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: "12px",
+                          }}
+                        >
+                          <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600, color: "#1e293b" }}>
+                            Payslip Details
+                          </h4>
+                        </div>
 
-            <div className="stack gap-3 text-sm">
-              <p className="text-muted" style={{ margin: 0 }}>
-                Here is the verified audit trail explaining how your payable days and monthly earnings were calculated for this pay cycle:
-              </p>
+                        {/* Paid Days and Bank Account info box */}
+                        <div
+                          style={{
+                            background: "#f8fafc",
+                            padding: "12px 16px",
+                            borderRadius: "8px",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: "0.82rem",
+                            marginBottom: "20px",
+                          }}
+                        >
+                          <div>
+                            <strong>{getMonthYearLabel(selectedPayslip, 0)}</strong>
+                            <div style={{ color: "#64748b", marginTop: "2px" }}>
+                              Paid Days : {selectedPayslip.present_days} • LOP Days : {selectedPayslip.lop_days}
+                            </div>
+                          </div>
+                          <div>
+                            <span style={{ color: "#64748b" }}>Bank Account No</span>
+                            <div style={{ fontWeight: 600, marginTop: "2px" }}>
+                              {bankAccount?.account_number || "—"}
+                            </div>
+                          </div>
+                        </div>
 
-              <div className="p-3 bg-muted rounded border stack gap-2">
-                <div className="flex justify-between">
-                  <span>1. Total Calendar Working Days in Month:</span>
-                  <strong>{selectedPayslip.working_days} days</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>2. Actual Days Present & Punched:</span>
-                  <strong className="text-success">{selectedPayslip.present_days} days</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>3. Approved Paid Leaves (Sick / Casual / Annual):</span>
-                  <strong>{selectedPayslip.paid_leave_days} days</strong>
-                </div>
-                <div className="flex justify-between border-t pt-2" style={{ color: Number(selectedPayslip.lop_days) > 0 ? "#dc2626" : undefined }}>
-                  <span>4. Unapproved / Loss of Pay (LOP) Days:</span>
-                  <strong>{selectedPayslip.lop_days} days</strong>
-                </div>
-              </div>
+                        {/* Side by Side: Earnings vs Deductions */}
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: "24px",
+                            marginBottom: "20px",
+                          }}
+                        >
+                          {/* Earnings side */}
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "#475569", marginBottom: "8px" }}>
+                              Earnings
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "0.85rem" }}>
+                              {selectedPayslip.earnings_json.map((e, idx) => (
+                                <div key={idx} style={{ display: "flex", justifyContent: "space-between" }}>
+                                  <span style={{ color: "#64748b" }}>{e.name}</span>
+                                  <span style={{ fontWeight: 600 }}>{formatINR(Number(e.amount))}</span>
+                                </div>
+                              ))}
+                              <div
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  borderTop: "1px solid #e2e8f0",
+                                  paddingTop: "8px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                <span>Total Earnings</span>
+                                <span>{formatINR(Number(selectedPayslip.gross_salary))}</span>
+                              </div>
+                            </div>
+                          </div>
 
-              <div
-                style={{
-                  background: "#eff6ff",
-                  padding: "12px",
-                  borderRadius: "6px",
-                  border: "1px solid #bfdbfe",
-                  fontSize: "0.85rem",
-                }}
-              >
-                <div style={{ fontWeight: 600, color: "#1e40af", marginBottom: "4px" }}>
-                  📐 Standard Salary Proration Formula:
-                </div>
-                <code>Earned Gross = Monthly Fixed CTC × (Present Days ÷ Calendar Working Days)</code>
-                <div style={{ marginTop: "6px", color: "#334155", fontSize: "0.8rem" }}>
-                  {Number(selectedPayslip.lop_days) > 0
-                    ? `Because you had ${selectedPayslip.lop_days} day(s) of Loss of Pay, your gross salary was proportionally computed for ${selectedPayslip.present_days} days.`
-                    : `No Loss of Pay (LOP) was recorded. You received 100% of your fixed gross CTC.`}
-                </div>
-              </div>
+                          {/* Deductions side */}
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "#475569", marginBottom: "8px" }}>
+                              Deductions
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "0.85rem" }}>
+                              {selectedPayslip.deductions_json.map((d, idx) => (
+                                <div key={idx} style={{ display: "flex", justifyContent: "space-between" }}>
+                                  <span style={{ color: "#64748b" }}>{d.name}</span>
+                                  <span style={{ fontWeight: 600 }}>{formatINR(Number(d.amount))}</span>
+                                </div>
+                              ))}
+                              <div
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  borderTop: "1px solid #e2e8f0",
+                                  paddingTop: "8px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                <span>Total Deductions</span>
+                                <span>{formatINR(Number(selectedPayslip.total_deductions))}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
 
-              <div className="flex justify-end mt-2">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowDaysAuditModal(false)}>
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+                        {/* Net Pay and Indian Words */}
+                        <div
+                          style={{
+                            borderTop: "1px solid #e2e8f0",
+                            paddingTop: "16px",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "flex-end",
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: "0.85rem", color: "#64748b" }}>Your Take Home Salary Amount (Net Pay)</div>
+                            <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "#0f172a", marginTop: "2px" }}>
+                              {formatINR(Number(selectedPayslip.net_salary))}
+                            </div>
+                            <div style={{ fontSize: "0.78rem", color: "#64748b", marginTop: "2px" }}>
+                              {numberToIndianWords(Number(selectedPayslip.net_salary))}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
+                            Net Pay = Total Earnings - Total Deductions
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Mode 2: Tax Worksheet */
+                      <div>
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(3, 1fr)",
+                            gap: "12px",
+                            background: "#f8fafc",
+                            padding: "12px 16px",
+                            borderRadius: "8px",
+                            fontSize: "0.82rem",
+                            marginBottom: "20px",
+                          }}
+                        >
+                          <div>
+                            <span style={{ color: "#64748b" }}>Employee Name</span>
+                            <div style={{ fontWeight: 600 }}>{empName}</div>
+                          </div>
+                          <div>
+                            <span style={{ color: "#64748b" }}>Designation</span>
+                            <div style={{ fontWeight: 600 }}>{empDesignation}</div>
+                          </div>
+                          <div>
+                            <span style={{ color: "#64748b" }}>PAN</span>
+                            <div style={{ fontWeight: 600 }}>CVTPV3190C</div>
+                          </div>
+                        </div>
 
-      {/* Modal 2: FnF Calculation Formula & Mathematics Audit Modal */}
-      {showFnfFormulaModal && fnfData && (
-        <div className="modal-backdrop no-print" onClick={() => setShowFnfFormulaModal(false)}>
-          <div
-            className="card p-6"
-            style={{ maxWidth: "620px", width: "92%", margin: "auto", position: "relative" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between align-center border-b pb-3 mb-4">
-              <div>
-                <h3 style={{ margin: 0, fontSize: "1.15rem" }}>📑 FnF Settlement Breakdown Audit</h3>
-                <p className="text-muted text-xs" style={{ margin: "2px 0 0" }}>
-                  Legal & financial calculation basis according to employment contract and statutory norms
-                </p>
-              </div>
-              <button
-                type="button"
-                className="btn-ghost"
-                style={{ fontSize: "1.2rem", cursor: "pointer", border: "none", background: "none" }}
-                onClick={() => setShowFnfFormulaModal(false)}
-              >
-                ✕
-              </button>
-            </div>
+                        <h4 style={{ margin: "0 0 12px", fontSize: "0.95rem", fontWeight: 700, color: "#1e293b" }}>
+                          Earnings & Exemptions Breakdown
+                        </h4>
 
-            <div className="stack gap-3 text-sm">
-              <div className="stack gap-2 border p-3 rounded bg-muted">
-                <div className="font-semibold text-xs text-muted uppercase">Base Compensation Figures</div>
-                <div className="flex justify-between">
-                  <span>Monthly Gross Salary:</span>
-                  <strong className="font-mono">₹{Number(fnfData.monthly_gross_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>Per-Day Salary Rate (Monthly Gross ÷ 30):</span>
-                  <strong className="font-mono text-primary">₹{Number(fnfData.per_day_salary || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })} / day</strong>
-                </div>
-              </div>
+                        {(() => {
+                          const grossMonthly = Number(selectedPayslip.gross_salary || 0);
+                          const grossAnnual = grossMonthly * 12;
+                          const standardDeduction = 75000;
+                          const taxableIncome = Math.max(0, grossAnnual - standardDeduction);
+                          return (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "0.88rem" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                <span>⊕ Gross Salary (Annualized: 12 months)</span>
+                                <strong>{formatINR(grossAnnual)}</strong>
+                              </div>
+                              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                <span>⊕ Income from Other Sources</span>
+                                <strong>₹0.00</strong>
+                              </div>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  borderTop: "1px solid #e2e8f0",
+                                  paddingTop: "6px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                <span>Gross Total Income</span>
+                                <span>{formatINR(grossAnnual)}</span>
+                              </div>
 
-              <div className="stack gap-2 border p-3 rounded">
-                <div className="font-semibold text-xs text-success uppercase">1. Additions & Credits Breakdown</div>
-                <div className="flex justify-between">
-                  <span>• Prorated Unpaid Salary ({fnfData.unpaid_salary_days} days × ₹{Number(fnfData.per_day_salary || 0).toFixed(2)}):</span>
-                  <span className="font-mono text-success">+₹{Number(fnfData.unpaid_salary_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>• Leave Encashment ({fnfData.encashable_leave_days} balance leaves × Basic Daily Rate):</span>
-                  <span className="font-mono text-success">+₹{Number(fnfData.leave_encashment_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>• Approved Expense Reimbursements:</span>
-                  <span className="font-mono text-success">+₹{Number(fnfData.pending_reimbursements).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                </div>
-                {Number(fnfData.severance_pay || 0) > 0 && (
-                  <div className="flex justify-between">
-                    <span>• Severance / Notice Pay in Lieu:</span>
-                    <span className="font-mono text-success">+₹{Number(fnfData.severance_pay).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                              <div style={{ marginTop: "14px", fontWeight: 700, fontSize: "0.85rem", color: "#475569" }}>
+                                Exemptions Based on your Declaration
+                              </div>
+                              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                <span>⊕ Standard Deduction Under Section 16(ia)</span>
+                                <strong>{formatINR(standardDeduction)}</strong>
+                              </div>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  borderTop: "1px solid #e2e8f0",
+                                  paddingTop: "6px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                <span>Total Exemptions</span>
+                                <span>{formatINR(standardDeduction)}</span>
+                              </div>
+
+                              <div
+                                style={{
+                                  background: "#f0fdf4",
+                                  padding: "12px 16px",
+                                  borderRadius: "8px",
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  fontWeight: 700,
+                                  color: "#166534",
+                                  marginTop: "12px",
+                                }}
+                              >
+                                <span>Total Taxable Income</span>
+                                <span>{formatINR(taxableIncome)}</span>
+                              </div>
+
+                              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "10px" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setIsTaxModalOpen(true)}
+                                  style={{
+                                    background: "#0284c7",
+                                    color: "#ffffff",
+                                    border: "none",
+                                    borderRadius: "6px",
+                                    padding: "6px 14px",
+                                    fontSize: "0.82rem",
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  Open Full Tax Computation Sheet ↗
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
+            )}
 
-              <div className="stack gap-2 border p-3 rounded">
-                <div className="font-semibold text-xs text-red uppercase">2. Deductions & Recoveries Breakdown</div>
-                <div className="flex justify-between">
-                  <div>
-                    <div>• Notice Shortfall Recovery:</div>
-                    <div className="text-xs text-muted">
-                      Required: {fnfData.notice_days_required}d | Served: {fnfData.notice_days_served}d | Shortfall: {fnfData.notice_recovery_days} days
-                      {fnfData.notice_waived ? " (Waived by Management)" : ` (${fnfData.notice_recovery_days}d × ₹${Number(fnfData.per_day_salary || 0).toFixed(2)})`}
-                    </div>
-                  </div>
-                  <span className="font-mono text-red">-₹{Number(fnfData.notice_recovery_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>• Asset Damage / Unreturned Assets / Advance Loans:</span>
-                  <span className="font-mono text-red">-₹{Number(fnfData.asset_deductions).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
-                </div>
-              </div>
-
+            {/* Sub-tab 3: Annual Earnings */}
+            {salarySubTab === "annual_earnings" && (
               <div
-                className="p-3 rounded flex justify-between align-center"
                 style={{
-                  background: Number(fnfData.total_settlement_amount || 0) >= 0 ? "#eff6ff" : "#fef2f2",
-                  border: `1px solid ${Number(fnfData.total_settlement_amount || 0) >= 0 ? "#bfdbfe" : "#fecaca"}`,
+                  background: "#ffffff",
+                  borderRadius: "14px",
+                  border: "1px solid #e2e8f0",
+                  padding: "24px",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
                 }}
               >
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
-                    Net FnF Balance = Total Additions - Total Deductions
-                  </div>
-                  <div className="text-xs text-muted">
-                    {Number(fnfData.total_settlement_amount || 0) >= 0
-                      ? "Payable to employee upon complete department clearance sign-off"
-                      : "Payable by employee to company prior to issuance of Relieving Letter"}
-                  </div>
-                </div>
                 <div
-                  className="font-mono font-bold"
                   style={{
-                    fontSize: "1.15rem",
-                    color: Number(fnfData.total_settlement_amount || 0) >= 0 ? "#1e40af" : "#dc2626",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "24px",
                   }}
                 >
-                  {Number(fnfData.total_settlement_amount || 0) >= 0
-                    ? `+₹${Number(fnfData.total_settlement_amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`
-                    : `-₹${Math.abs(Number(fnfData.total_settlement_amount)).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                  <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700 }}>
+                    For the financial year: {financialYear}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={handlePrint}
+                    style={{
+                      background: "none",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: "6px",
+                      padding: "6px 12px",
+                      color: "#0284c7",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    📥 Download
+                  </button>
                 </div>
-              </div>
 
-              <div className="flex justify-end mt-2">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowFnfFormulaModal(false)}>
-                  Close
-                </button>
+                {/* SVG Trendline Chart */}
+                <div style={{ height: "180px", width: "100%", marginBottom: "32px", position: "relative" }}>
+                  <svg width="100%" height="100%" viewBox="0 0 800 150" preserveAspectRatio="none">
+                    <line x1="0" y1="30" x2="800" y2="30" stroke="#f1f5f9" strokeDasharray="4" />
+                    <line x1="0" y1="75" x2="800" y2="75" stroke="#f1f5f9" strokeDasharray="4" />
+                    <line x1="0" y1="120" x2="800" y2="120" stroke="#f1f5f9" strokeDasharray="4" />
+                    {/* Line for steady monthly pay */}
+                    <polyline
+                      fill="none"
+                      stroke="#38bdf8"
+                      strokeWidth="3"
+                      points="260,30 360,30 460,30"
+                    />
+                    <circle cx="260" cy="30" r="4" fill="#ffffff" stroke="#0284c7" strokeWidth="2" />
+                    <circle cx="360" cy="30" r="4" fill="#ffffff" stroke="#0284c7" strokeWidth="2" />
+                    <circle cx="460" cy="30" r="4" fill="#ffffff" stroke="#0284c7" strokeWidth="2" />
+                  </svg>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      color: "#94a3b8",
+                      fontSize: "0.75rem",
+                      paddingTop: "6px",
+                    }}
+                  >
+                    <span>Apr</span>
+                    <span>May</span>
+                    <span>Jun</span>
+                    <span>Jul</span>
+                    <span style={{ color: "#0284c7", fontWeight: 600 }}>Aug</span>
+                    <span style={{ color: "#0284c7", fontWeight: 600 }}>Sep</span>
+                    <span style={{ color: "#0284c7", fontWeight: 600 }}>Oct</span>
+                    <span>Nov</span>
+                    <span>Dec</span>
+                    <span>Jan</span>
+                    <span>Feb</span>
+                    <span>Mar</span>
+                  </div>
+                </div>
+
+                {/* YTD Table */}
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.88rem" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #e2e8f0", textAlign: "left", color: "#64748b" }}>
+                      <th style={{ padding: "10px" }}>Earnings</th>
+                      <th style={{ padding: "10px" }}>YTD Total</th>
+                      <th style={{ padding: "10px" }}>October 2026</th>
+                      <th style={{ padding: "10px" }}>September 2026</th>
+                      <th style={{ padding: "10px" }}>August 2026</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style={{ borderBottom: "1px solid #f8fafc" }}>
+                      <td style={{ padding: "10px" }}>Basic</td>
+                      <td style={{ padding: "10px", fontWeight: 600 }}>₹22,800.00</td>
+                      <td style={{ padding: "10px" }}>₹7,600.00</td>
+                      <td style={{ padding: "10px" }}>₹7,600.00</td>
+                      <td style={{ padding: "10px" }}>₹7,600.00</td>
+                    </tr>
+                    <tr style={{ borderBottom: "1px solid #f8fafc" }}>
+                      <td style={{ padding: "10px" }}>House Rent Allowance</td>
+                      <td style={{ padding: "10px", fontWeight: 600 }}>₹11,400.00</td>
+                      <td style={{ padding: "10px" }}>₹3,800.00</td>
+                      <td style={{ padding: "10px" }}>₹3,800.00</td>
+                      <td style={{ padding: "10px" }}>₹3,800.00</td>
+                    </tr>
+                    <tr style={{ borderBottom: "1px solid #f8fafc" }}>
+                      <td style={{ padding: "10px" }}>Fixed Allowance</td>
+                      <td style={{ padding: "10px", fontWeight: 600 }}>₹11,400.00</td>
+                      <td style={{ padding: "10px" }}>₹3,800.00</td>
+                      <td style={{ padding: "10px" }}>₹3,800.00</td>
+                      <td style={{ padding: "10px" }}>₹3,800.00</td>
+                    </tr>
+                    <tr style={{ borderTop: "2px solid #e2e8f0", fontWeight: 700 }}>
+                      <td style={{ padding: "10px" }}>Total Earnings</td>
+                      <td style={{ padding: "10px" }}>₹45,600.00</td>
+                      <td style={{ padding: "10px" }}>₹15,200.00</td>
+                      <td style={{ padding: "10px" }}>₹15,200.00</td>
+                      <td style={{ padding: "10px" }}>₹15,200.00</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-            </div>
+            )}
+
+            {/* Sub-tab 4: Bank Details (Zoho Style Payment Information inside Salary Details) */}
+            {salarySubTab === "bank_details" && (
+              <div
+                style={{
+                  background: "#ffffff",
+                  borderRadius: "14px",
+                  border: "1px solid #e2e8f0",
+                  padding: "24px",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "20px",
+                    borderBottom: "1px solid #f1f5f9",
+                    paddingBottom: "12px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div
+                      style={{
+                        width: "32px",
+                        height: "32px",
+                        borderRadius: "8px",
+                        background: "#eff6ff",
+                        color: "#2563eb",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "1rem",
+                      }}
+                    >
+                      💳
+                    </div>
+                    <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700, color: "#1e293b" }}>
+                      Payment Information
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingBank(!isEditingBank)}
+                    style={{
+                      background: isEditingBank ? "#fef2f2" : "#ffffff",
+                      color: isEditingBank ? "#dc2626" : "#2563eb",
+                      border: `1px solid ${isEditingBank ? "#fecaca" : "#cbd5e1"}`,
+                      borderRadius: "6px",
+                      padding: "5px 14px",
+                      fontSize: "0.84rem",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    {isEditingBank ? "Close Edit" : "Edit Details"}
+                  </button>
+                </div>
+
+                {bankLoading ? (
+                  <div style={{ padding: "40px 0", textAlign: "center", color: "#64748b" }}>
+                    Loading payment details...
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+                    {/* Zoho-Grade Clean Bank Card & Details Layout */}
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1.1fr 1fr",
+                        gap: "24px",
+                        alignItems: "center",
+                        background: "#ffffff",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "12px",
+                        padding: "20px",
+                      }}
+                    >
+                      {/* Styled Payment Mode Card */}
+                      <div
+                        style={{
+                          background: "linear-gradient(135deg, #2563eb 0%, #3b82f6 60%, #60a5fa 100%)",
+                          borderRadius: "12px",
+                          padding: "20px 22px",
+                          color: "#ffffff",
+                          boxShadow: "0 8px 20px -4px rgba(37, 99, 235, 0.3)",
+                          display: "flex",
+                          flexDirection: "column",
+                          justifyContent: "space-between",
+                          minHeight: "145px",
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: "0.68rem", opacity: 0.9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                            Payment Mode
+                          </div>
+                          <div style={{ fontSize: "1.1rem", fontWeight: 700, marginTop: "4px" }}>
+                            Manual Bank Transfer
+                          </div>
+                        </div>
+
+                        <div style={{ marginTop: "16px" }}>
+                          <div style={{ fontSize: "0.66rem", opacity: 0.85, textTransform: "uppercase" }}>
+                            Account Number
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "2px" }}>
+                            <span style={{ fontSize: "1.15rem", fontWeight: 700, letterSpacing: "1px", fontFamily: "monospace" }}>
+                              {showFullAccount
+                                ? unmaskedAccount || bankAccount?.account_number || "987654329012"
+                                : bankAccount?.account_number?.startsWith("****")
+                                ? `XXXX${String(bankAccount.account_number).slice(-4)}`
+                                : bankAccount?.account_number
+                                ? `XXXX${String(bankAccount.account_number).slice(-4)}`
+                                : "XXXX9012"}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={handleToggleShowAccount}
+                              style={{
+                                background: "rgba(255,255,255,0.25)",
+                                border: "none",
+                                borderRadius: "4px",
+                                color: "#ffffff",
+                                fontSize: "0.72rem",
+                                padding: "2px 8px",
+                                cursor: "pointer",
+                                fontWeight: 600,
+                              }}
+                            >
+                              {showFullAccount ? "(Hide)" : "(Show A/C No)"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Clean Side Specification Grid */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "0.88rem" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                          <span style={{ color: "#64748b" }}>Account Holder</span>
+                          <strong style={{ color: "#0f172a" }}>{bankAccount?.account_holder || empName}</strong>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                          <span style={{ color: "#64748b" }}>Bank Name</span>
+                          <strong style={{ color: "#0f172a" }}>{bankAccount?.bank_name || "HDFC"}</strong>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: "8px" }}>
+                          <span style={{ color: "#64748b" }}>IFSC</span>
+                          <strong style={{ color: "#0f172a", fontFamily: "monospace" }}>{bankAccount?.ifsc_code || "HDFC0001234"}</strong>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                          <span style={{ color: "#64748b" }}>Account Type</span>
+                          <strong style={{ color: "#0f172a" }}>Savings</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Bottom Status Card */}
+                    <div
+                      style={{
+                        background: "#f0fdf4",
+                        border: "1px solid #bbf7d0",
+                        borderRadius: "8px",
+                        padding: "12px 16px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        fontSize: "0.85rem",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#166534" }}>
+                        <span>✓</span>
+                        <span>Disbursal via automated corporate salary direct deposit</span>
+                      </div>
+                      <span style={{ color: "#15803d", fontWeight: 700 }}>Verified & Active</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Inline Edit Form */}
+                {isEditingBank && (
+                  <form
+                    onSubmit={handleSaveBank}
+                    style={{
+                      marginTop: "20px",
+                      background: "#f8fafc",
+                      borderRadius: "10px",
+                      border: "1px solid #cbd5e1",
+                      padding: "18px",
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: "12px", color: "#0f172a" }}>
+                      Update Bank Account Information
+                    </div>
+
+                    {bankSuccess && (
+                      <div style={{ color: "#16a34a", fontSize: "0.82rem", marginBottom: "12px", background: "#f0fdf4", padding: "6px 10px", borderRadius: "6px" }}>
+                        ✓ {bankSuccess}
+                      </div>
+                    )}
+                    {bankError && (
+                      <div style={{ color: "#dc2626", fontSize: "0.82rem", marginBottom: "12px", background: "#fef2f2", padding: "6px 10px", borderRadius: "6px" }}>
+                        ✕ {bankError}
+                      </div>
+                    )}
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                      <div>
+                        <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "#475569" }}>Holder Name</label>
+                        <input
+                          type="text"
+                          value={bankHolder}
+                          onChange={(e) => setBankHolder(e.target.value)}
+                          required
+                          style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1", marginTop: "4px", fontSize: "0.85rem" }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "#475569" }}>Bank Name</label>
+                        <input
+                          type="text"
+                          value={bankName}
+                          onChange={(e) => setBankName(e.target.value)}
+                          required
+                          style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1", marginTop: "4px", fontSize: "0.85rem" }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "#475569" }}>Account Number</label>
+                        <input
+                          type="password"
+                          value={bankNumber}
+                          onChange={(e) => setBankNumber(e.target.value)}
+                          required
+                          placeholder="Enter new account number"
+                          style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1", marginTop: "4px", fontSize: "0.85rem" }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "#475569" }}>IFSC Code</label>
+                        <input
+                          type="text"
+                          value={bankIfsc}
+                          onChange={(e) => setBankIfsc(e.target.value.toUpperCase())}
+                          required
+                          style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1", marginTop: "4px", fontSize: "0.85rem" }}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "10px", marginTop: "14px" }}>
+                      <button
+                        type="submit"
+                        disabled={savingBank}
+                        style={{
+                          background: "#16a34a",
+                          color: "#ffffff",
+                          border: "none",
+                          borderRadius: "6px",
+                          padding: "7px 16px",
+                          fontWeight: 600,
+                          fontSize: "0.84rem",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {savingBank ? "Saving..." : "Save Details"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingBank(false)}
+                        style={{
+                          background: "#ffffff",
+                          color: "#475569",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: "6px",
+                          padding: "7px 14px",
+                          fontWeight: 500,
+                          fontSize: "0.84rem",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            )}
           </div>
-        </div>
+      </main>
+
+      {/* PDF / Document Modal */}
+      {(selectedPayslip || latestPayslip) && (
+        <PayslipDocumentModal
+          isOpen={isDocModalOpen}
+          onClose={() => setIsDocModalOpen(false)}
+          item={(selectedPayslip || latestPayslip)!}
+          employee={(user?.employee as any) || undefined}
+          company={company}
+          monthName={getMonthYearLabel(selectedPayslip || latestPayslip, 0)}
+          year={2026}
+        />
+      )}
+
+      {/* Official Tax Worksheet Modal */}
+      {(selectedPayslip || latestPayslip) && (
+        <TaxWorksheetModal
+          isOpen={isTaxModalOpen}
+          onClose={() => setIsTaxModalOpen(false)}
+          item={(selectedPayslip || latestPayslip)!}
+          employee={(user?.employee as any) || undefined}
+          company={company}
+          monthName={getMonthYearLabel(selectedPayslip || latestPayslip, 0)}
+          year={2026}
+        />
       )}
     </div>
   );

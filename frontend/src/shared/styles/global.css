@@ -1501,10 +1501,72 @@ table.table tbody tr:hover {
   button,
   .btn,
   .no-print,
-  .page-header,
-  .modal-backdrop,
-  .card:not(.print-section):not([data-print-content="true"]):not(.fnf-statement-card) {
+  .page-header {
     display: none !important;
+  }
+
+  /* When an official modal is open, ensure everything outside is completely hidden from the page and document flow */
+  body:has(.modal-backdrop) .app-shell,
+  body:has(.modal-backdrop) .app-content-wrapper,
+  body:has(.modal-backdrop) main {
+    display: block !important;
+    overflow: visible !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  body:has(.modal-backdrop) .sidebar,
+  body:has(.modal-backdrop) .app-header,
+  body:has(.modal-backdrop) main > *:not(:has(.modal-backdrop)),
+  body:has(.modal-backdrop) main > div > *:not(:has(.modal-backdrop)),
+  body:has(.modal-backdrop) .print-only,
+  body:has(.modal-backdrop) .modal-backdrop ~ * {
+    display: none !important;
+  }
+
+  /* Specifically hide the documents list table when the document modal is open */
+  body:has(.modal-backdrop) .app-content-wrapper > main > div > *:not(:has(.modal-backdrop)) {
+    display: none !important;
+  }
+
+  .modal-backdrop {
+    background: transparent !important;
+    position: static !important;
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  .modal-backdrop .card {
+    box-shadow: none !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    border: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    page-break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-inside: avoid !important;
+    break-after: avoid !important;
+  }
+
+  /* Target inside of card to prevent duplicate page break */
+  .modal-backdrop .card > div {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
   }
 
   /* 2. Reset the root container so it doesn't clip height or hide content */
@@ -1528,7 +1590,19 @@ table.table tbody tr:hover {
     max-width: 100% !important;
   }
 
-  /* 3. Force the statement card to take the full page */
+  /* When printing from page without modal (i.e. standard payslip print container), hide page cards and display print-only */
+  body:not(:has(.modal-backdrop)) main .no-print,
+  body:not(:has(.modal-backdrop)) main > div > *:not(.print-only) {
+    display: none !important;
+  }
+
+  body:not(:has(.modal-backdrop)) .print-only {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+  }
+
+  /* 3. Force the statement card / printable document to take the full page */
   .fnf-statement-card,
   [data-print-content="true"],
   .print-section {
@@ -1543,6 +1617,7 @@ table.table tbody tr:hover {
     padding: 24px !important;
     background: #ffffff !important;
     page-break-inside: avoid !important;
+    overflow: visible !important;
   }
 
   /* Ensure text colors and badges print cleanly */

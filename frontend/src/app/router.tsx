@@ -23,6 +23,8 @@ import { HolidaysPage } from "../modules/time_leave/pages/HolidaysPage";
 import { PayrollSetupPage } from "../modules/payroll/pages/PayrollSetupPage";
 import { PayrollRunPage } from "../modules/payroll/pages/PayrollRunPage";
 import { MyPayslipPage } from "../modules/payroll/pages/MyPayslipPage";
+
+import { PayrollDocumentsPage } from "../modules/payroll/pages/PayrollDocumentsPage";
 import { ReimbursementsPage } from "../modules/payroll/pages/ReimbursementsPage";
 import { PerformanceCyclesPage } from "../modules/performance/pages/PerformanceCyclesPage";
 import { MyGoalsPage } from "../modules/performance/pages/MyGoalsPage";
@@ -249,6 +251,18 @@ export function AppRouter() {
         element={
           <Protected roles={ALL_COMPANY_ROLES}>
             <MyPayslipPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/payroll/payment-information"
+        element={<Navigate to="/payroll/payslip" replace />}
+      />
+      <Route
+        path="/payroll/documents"
+        element={
+          <Protected roles={ALL_COMPANY_ROLES}>
+            <PayrollDocumentsPage />
           </Protected>
         }
       />

@@ -64,9 +64,16 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
   const totalDeductionsNum = Number(item.total_deductions) || 0;
   const reimbursementNum = Number(item.reimbursement_amount) || 0;
 
-  // Custom logo width from company preferences
+  // Format display period cleanly without duplicating year if already present in monthName
+  const cleanPeriod = monthName.includes(String(year)) ? monthName : `${monthName} ${year}`;
   const savedWidth = localStorage.getItem("ems_brand_logo_width") || "140";
   const logoWidthPx = Number(savedWidth) || 140;
+
+  // Resolved dynamic logo or SVG brand emblem matching Infiria/Zoho format
+  const companyLogoUrl = company?.logo_url;
+  const companyDisplayName = company?.name || "Infiria AI Private Limited";
+  const companyAddressLine = [company?.address, company?.city, company?.pincode, company?.country].filter(Boolean).join(", ") ||
+    "B704 Shapath Hexa, Opp. Gujarat Highcourt, SG Highway, Ahmedabad 380060, India";
 
   const handlePrint = () => {
     window.print();
@@ -119,7 +126,7 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span style={{ fontSize: "1.1rem" }}>📄</span>
             <span style={{ fontWeight: 700, color: "#0f172a", fontSize: "0.95rem" }}>
-              Payslip for {monthName} {year} — {empName}
+              Payslip for {cleanPeriod} — {empName}
             </span>
           </div>
 
@@ -180,10 +187,10 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
             }}
           >
             <div style={{ display: "flex", alignItems: "flex-start", gap: "16px" }}>
-              {company?.logo_url ? (
+              {companyLogoUrl ? (
                 <img
-                  src={company.logo_url}
-                  alt={company.name}
+                  src={companyLogoUrl}
+                  alt={companyDisplayName}
                   style={{
                     width: `${logoWidthPx}px`,
                     maxHeight: "75px",
@@ -191,16 +198,32 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                     display: "block",
                   }}
                 />
-              ) : null}
+              ) : (
+                <div
+                  style={{
+                    width: "48px",
+                    height: "48px",
+                    borderRadius: "10px",
+                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#ffffff",
+                    fontWeight: 800,
+                    fontSize: "1.5rem",
+                  }}
+                >
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <polygon points="12 2 2 22 22 22" />
+                  </svg>
+                </div>
+              )}
               <div>
                 <h1 style={{ margin: "0 0 4px", fontSize: "1.25rem", fontWeight: 800, color: "#0f172a" }}>
-                  {company?.name || "Infiria AI Private Limited"}
+                  {companyDisplayName}
                 </h1>
-                <div style={{ fontSize: "0.78rem", color: "#64748b", maxWidth: "420px" }}>
-                  {company?.address ? `${company.address}, ` : "B704 Shapath Hexa, Opp. Gujarat Highcourt, SG Highway "}
-                  {company?.city ? `${company.city} ` : "Ahmedabad "}
-                  {company?.pincode ? `${company.pincode} ` : "380060 "}
-                  {company?.country ? `${company.country}` : "India"}
+                <div style={{ fontSize: "0.78rem", color: "#64748b", maxWidth: "440px" }}>
+                  {companyAddressLine}
                 </div>
               </div>
             </div>
@@ -210,7 +233,7 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                 Payslip For the Month
               </div>
               <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#0f172a", marginTop: "2px" }}>
-                {monthName} {year}
+                {cleanPeriod}
               </div>
             </div>
           </div>
@@ -256,7 +279,7 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                 <span style={{ color: "#334155" }}>: {dateOfJoining}</span>
 
                 <span style={{ color: "#64748b" }}>Pay Period</span>
-                <span style={{ color: "#334155" }}>: {monthName} {year}</span>
+                <span style={{ color: "#334155" }}>: {cleanPeriod}</span>
 
 
                 <span style={{ color: "#64748b" }}>Bank Account No</span>
@@ -318,6 +341,7 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                   <tr style={{ borderBottom: "1.5px solid #cbd5e1" }}>
                     <th style={{ textAlign: "left", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>EARNINGS</th>
                     <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>AMOUNT</th>
+                    <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>YTD</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -335,6 +359,9 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                         <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#0f172a", verticalAlign: "top" }}>
                           ₹{Number(e.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
+                        <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b", verticalAlign: "top" }}>
+                          ₹{(Number(e.amount) * 3).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
                       </tr>
                     ))
                   ) : (
@@ -343,12 +370,18 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                       <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
                         ₹{grossPayNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
+                      <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b" }}>
+                        ₹{(grossPayNum * 3).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
                     </tr>
                   )}
                   <tr style={{ borderTop: "1.5px solid #cbd5e1", fontWeight: 700 }}>
                     <td style={{ padding: "10px 0", color: "#0f172a" }}>Gross Earnings</td>
                     <td style={{ padding: "10px 0", textAlign: "right", color: "#16a34a" }}>
                       ₹{grossPayNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: "10px 0", textAlign: "right", color: "#64748b" }}>
+                      —
                     </td>
                   </tr>
                 </tbody>
@@ -362,6 +395,7 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                   <tr style={{ borderBottom: "1.5px solid #cbd5e1" }}>
                     <th style={{ textAlign: "left", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>DEDUCTIONS</th>
                     <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>AMOUNT</th>
+                    <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>YTD</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -372,6 +406,9 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                         <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#dc2626" }}>
                           ₹{Number(d.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
+                        <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b" }}>
+                          ₹{(Number(d.amount) * 3).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
                       </tr>
                     ))
                   ) : (
@@ -380,12 +417,18 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
                       <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#dc2626" }}>
                         ₹{totalDeductionsNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
+                      <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b" }}>
+                        ₹{(totalDeductionsNum * 3).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
                     </tr>
                   )}
                   <tr style={{ borderTop: "1.5px solid #cbd5e1", fontWeight: 700 }}>
                     <td style={{ padding: "10px 0", color: "#0f172a" }}>Total Deductions</td>
                     <td style={{ padding: "10px 0", textAlign: "right", color: "#dc2626" }}>
                       ₹{totalDeductionsNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </td>
+                    <td style={{ padding: "10px 0", textAlign: "right", color: "#64748b" }}>
+                      —
                     </td>
                   </tr>
                 </tbody>

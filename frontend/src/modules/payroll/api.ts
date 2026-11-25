@@ -620,8 +620,10 @@ export interface BankAccountResponse {
   updated_at: string;
 }
 
-export async function getMyBankAccount(): Promise<BankAccountResponse> {
-  const res = await apiClient.get<BankAccountResponse>("/payroll/bank-account/me");
+export async function getMyBankAccount(reveal: boolean = false): Promise<BankAccountResponse> {
+  const res = await apiClient.get<BankAccountResponse>("/payroll/bank-account/me", {
+    params: reveal ? { reveal: true } : {},
+  });
   return res.data;
 }
 
