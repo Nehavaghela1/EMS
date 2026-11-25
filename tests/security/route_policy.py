@@ -307,8 +307,10 @@ POLICY: dict[tuple[str, str], Any] = {
     # 5.8: an employee keeps their own bank details; owner and HR admin keep anyone's. The
     # service decides (a manager and other employees are refused there).
     ("GET", "/api/v1/payroll/bank-account/me"): AUTHENTICATED,
+    ("POST", "/api/v1/payroll/bank-account/me/reveal"): AUTHENTICATED,
     ("PUT", "/api/v1/payroll/bank-account/me"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/employees/{employee_id}/bank-account"): AUTHENTICATED,
+    ("POST", "/api/v1/payroll/employees/{employee_id}/bank-account/reveal"): AUTHENTICATED,
     ("PUT", "/api/v1/payroll/employees/{employee_id}/bank-account"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/payslips/me"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/payslips/{employee_id}"): ROLES(UserRole.hr_admin),

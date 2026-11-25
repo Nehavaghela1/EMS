@@ -453,6 +453,24 @@ def get_my_bank_account(
     return _bank_view(request, response, db, user, None, reveal)
 
 
+@bank_accounts_router.post(
+    "/bank-account/me/reveal",
+    response_model=BankAccountResponse,
+    status_code=200,
+)
+@limiter.limit("5/minute", key_func=get_user_or_ip_key)
+def reveal_my_bank_account(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    """Return the full decrypted account number for the caller's own record.
+    Rate-limited to 5/minute. Audited. Cache-Control: no-store."""
+    response.headers["Cache-Control"] = "no-store"
+    return EmployeeBankAccountService(db).reveal(user, None)
+
+
 @bank_accounts_router.put("/bank-account/me", response_model=BankAccountResponse)
 @limiter.limit("30/minute", key_func=get_user_or_ip_key)
 def save_my_bank_account(
@@ -479,6 +497,25 @@ def get_employee_bank_account(
     user: User = Depends(get_company_user),
 ):
     return _bank_view(request, response, db, user, employee_id, reveal)
+
+
+@bank_accounts_router.post(
+    "/employees/{employee_id}/bank-account/reveal",
+    response_model=BankAccountResponse,
+    status_code=200,
+)
+@limiter.limit("5/minute", key_func=get_user_or_ip_key)
+def reveal_employee_bank_account(
+    request: Request,
+    response: Response,
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    """Return the full decrypted account number for a specific employee.
+    hr_admin and owner only. Rate-limited 5/minute. Audited. Cache-Control: no-store."""
+    response.headers["Cache-Control"] = "no-store"
+    return EmployeeBankAccountService(db).reveal(user, employee_id)
 
 
 @bank_accounts_router.put(

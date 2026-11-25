@@ -2614,7 +2614,28 @@ class PayslipService:
         self.db = db
         self.item_repo = PayrollItemRepository(db)
         self.employee_repo = EmployeeRepository(db)
+        self.bank_repo = EmployeeBankAccountRepository(db)
         self.audit = AuditService(db)
+
+    def _attach_masked_account(
+        self, company_id: uuid.UUID, items: list[PayrollItem]
+    ) -> list[PayrollItem]:
+        """Attach the masked payout_account_number to each item without touching the ORM model.
+        Returns the same list (items are mutated with a transient attribute; SQLAlchemy ignores it)."""
+        if not items:
+            return items
+        employee_ids = list({i.employee_id for i in items})
+        bank_map = self.bank_repo.active_by_employee(company_id, employee_ids)
+        for item in items:
+            bank = bank_map.get(item.employee_id)
+            # payout_account_number is not a DB column; set it as a plain Python attribute so
+            # PayrollItemResponse.model_validate picks it up via __dict__ / from_attributes.
+            object.__setattr__(
+                item,
+                "payout_account_number",
+                mask_payout_account_number(bank.account_last4) if bank is not None else None,
+            )
+        return items
 
     def list_own(
         self, actor: User, page_params: PageParams, year: int | None, month: int | None
@@ -2622,7 +2643,7 @@ class PayslipService:
         employee = self.employee_repo.get_by_user_id(actor.company_id, actor.id)
         if employee is None:
             return [], 0, 0
-        return self.item_repo.list_payslips(
+        items, total, pages = self.item_repo.list_payslips(
             actor.company_id,
             employee.id,
             page_params,
@@ -2630,6 +2651,8 @@ class PayslipService:
             year=year,
             month=month,
         )
+        self._attach_masked_account(actor.company_id, items)
+        return items, total, pages
 
     def list_for_employee(
         self,
@@ -2662,6 +2685,7 @@ class PayslipService:
                 details={"employee_id": str(employee.id), "run_count": total},
             )
             self.db.commit()
+        self._attach_masked_account(company_id, items)
         return items, total, pages
 
 
@@ -2732,6 +2756,49 @@ class EmployeeBankAccountService:
             entity_type="employee_bank_account",
             entity_id=account.id,
             details={"employee_id": str(employee.id)},
+        )
+        self.db.commit()
+        return self._response(account, number)
+
+    def reveal(
+        self, actor: User, employee_id: uuid.UUID | None
+    ) -> BankAccountResponse:
+        """Reveal the full decrypted account number.
+
+        Who may call:
+        - Any company employee for their OWN account (employee_id=None).
+        - hr_admin or owner for ANY employee in their company.
+        super_admin is blocked at the router (get_company_user dependency).
+        A request for another company's employee surfaces as 404 via _target.
+        The last four digits are recorded in the audit row; the full number is
+        never written to any log, audit row, or error message.
+        """
+        # An employee resolving a specific employee_id must own that record.
+        # hr_admin / owner may target any employee_id.
+        if employee_id is not None and actor.role not in BANK_ROLES:
+            # Non-admin trying to reveal someone else — 404, not 403.
+            raise NotFoundError(BANK_EMPLOYEE_NOT_FOUND_MESSAGE)
+
+        employee = self._target(actor, employee_id, write=False)
+        account = self.repo.get_active(employee.id, actor.company_id)
+        if account is None:
+            raise NotFoundError(BANK_NOT_FOUND_MESSAGE)
+        number = decrypt_field(
+            account.account_number_enc,
+            company_id=actor.company_id,
+            column=BANK_ACCOUNT_COLUMN,
+        )
+        # Audit records the last four only — never the full account number.
+        self.audit.record(
+            company_id=actor.company_id,
+            actor=actor,
+            action="BANK_ACCOUNT_REVEALED",
+            entity_type="employee_bank_account",
+            entity_id=account.id,
+            details={
+                "employee_id": str(employee.id),
+                "last_four": account.account_last4,
+            },
         )
         self.db.commit()
         return self._response(account, number)

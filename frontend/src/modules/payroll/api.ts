@@ -620,10 +620,15 @@ export interface BankAccountResponse {
   updated_at: string;
 }
 
-export async function getMyBankAccount(reveal: boolean = false): Promise<BankAccountResponse> {
-  const res = await apiClient.get<BankAccountResponse>("/payroll/bank-account/me", {
-    params: reveal ? { reveal: true } : {},
-  });
+export async function getMyBankAccount(): Promise<BankAccountResponse> {
+  const res = await apiClient.get<BankAccountResponse>("/payroll/bank-account/me");
+  return res.data;
+}
+
+/** POST to the reveal endpoint. The returned account_number is the full decrypted value.
+ * Never cache the result — the caller must drop it from state on Hide. */
+export async function revealMyBankAccount(): Promise<BankAccountResponse> {
+  const res = await apiClient.post<BankAccountResponse>("/payroll/bank-account/me/reveal");
   return res.data;
 }
 
@@ -634,6 +639,14 @@ export async function saveMyBankAccount(data: BankAccountRequest): Promise<BankA
 
 export async function getEmployeeBankAccount(employeeId: string): Promise<BankAccountResponse> {
   const res = await apiClient.get<BankAccountResponse>(`/payroll/employees/${employeeId}/bank-account`);
+  return res.data;
+}
+
+/** POST to the reveal endpoint for a specific employee (hr_admin / owner only).
+ * The returned account_number is the full decrypted value.
+ * Never cache the result — the caller must drop it from state on Hide. */
+export async function revealEmployeeBankAccount(employeeId: string): Promise<BankAccountResponse> {
+  const res = await apiClient.post<BankAccountResponse>(`/payroll/employees/${employeeId}/bank-account/reveal`);
   return res.data;
 }
 

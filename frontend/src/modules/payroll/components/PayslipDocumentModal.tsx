@@ -54,9 +54,8 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
   const designation = (employee as any)?.position || (employee as any)?.job_title || "—";
   const department = employee?.department_name || "—";
   const dateOfJoining = employee?.hire_date ? new Date(employee.hire_date).toLocaleDateString("en-GB") : "—";
-  const rawAccount: string | undefined = (employee as any)?.bank_account_last4 || (employee as any)?.bank_account_number;
-  // A payslip never shows a full account number: last 4 digits only.
-  const bankAccount = rawAccount ? `XXXX${String(rawAccount).slice(-4)}` : "—";
+  // The server always returns the masked form in payout_account_number; never re-slice it.
+  const bankAccount: string = (item as any)?.payout_account_number ?? "—";
   const workLocation = (employee as any)?.work_location || company?.city || "—";
 
   const netPayNum = Number(item.net_salary) || 0;

@@ -32,6 +32,7 @@ import {
   getStatutoryConfig,
   updateStatutoryConfig,
   getEmployeeBankAccount,
+  revealEmployeeBankAccount,
   saveEmployeeBankAccount,
   getEmployeeSalaryHistory,
   type BankAccountResponse,
@@ -256,7 +257,8 @@ export function EmployeeProfilePage() {
   const [loadingStatutory, setLoadingStatutory] = useState(false);
 
   // Masked Number reveal toggles (Zoho privacy standard)
-  const [showAccountNo, setShowAccountNo] = useState(false);
+  const [revealedAccountNo, setRevealedAccountNo] = useState<string | null>(null);
+  const [revealingAccountNo, setRevealingAccountNo] = useState(false);
   const [showIfscCode, setShowIfscCode] = useState(false);
   const [showAadhaarNo, setShowAadhaarNo] = useState(false);
   const [showPanNo, setShowPanNo] = useState(false);
@@ -1455,21 +1457,36 @@ export function EmployeeProfilePage() {
                   label="Account Number"
                   value={
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                      <span>{showAccountNo ? "053210100456" : "XXXXXXXX0456"}</span>
+                      <span>{revealedAccountNo ?? "XXXXXXXX0456"}</span>
                       <button
                         type="button"
-                        onClick={() => setShowAccountNo(!showAccountNo)}
+                        disabled={revealingAccountNo}
+                        onClick={async () => {
+                          if (revealedAccountNo !== null) {
+                            setRevealedAccountNo(null);
+                          } else {
+                            setRevealingAccountNo(true);
+                            try {
+                              const result = await revealEmployeeBankAccount(e!.id);
+                              setRevealedAccountNo(result.account_number);
+                            } catch (err: unknown) {
+                              notify(parseApiError(err).message, "error");
+                            } finally {
+                              setRevealingAccountNo(false);
+                            }
+                          }
+                        }}
                         style={{
                           background: "transparent",
                           border: "none",
                           color: "#2563eb",
                           fontSize: "0.78rem",
                           fontWeight: 500,
-                          cursor: "pointer",
+                          cursor: revealingAccountNo ? "wait" : "pointer",
                           padding: 0,
                         }}
                       >
-                        {showAccountNo ? "Hide" : "Show A/C No"}
+                        {revealedAccountNo !== null ? "Hide" : revealingAccountNo ? "Loading…" : "Show A/C No"}
                       </button>
                     </span>
                   }
@@ -4595,6 +4612,10 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
   const [bankIfsc, setBankIfsc] = useState("");
   const [savingBank, setSavingBank] = useState(false);
 
+  // Revealed account number state — dropped on Hide so it never persists in cache
+  const [revealedAccountNumber, setRevealedAccountNumber] = useState<string | null>(null);
+  const [revealingAccount, setRevealingAccount] = useState(false);
+
   const bankQuery = useQuery<BankAccountResponse | null>({
     queryKey: ["employee_bank_account", employeeId],
     queryFn: async () => {
@@ -4895,8 +4916,39 @@ function EmployeeSalaryTab({ employeeId, companyId, isHr }: { employeeId: string
             </div>
             <div className="card" style={{ background: "var(--color-bg)", padding: "1rem" }}>
               <div className="text-muted text-xs font-semibold uppercase">Account Number</div>
-              <div className="text-md font-bold font-mono" style={{ marginTop: "4px" }}>
-                {bankQuery.data.account_number}
+              <div className="text-md font-bold font-mono" style={{ marginTop: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <span>{revealedAccountNumber ?? bankQuery.data.account_number}</span>
+                <button
+                  type="button"
+                  disabled={revealingAccount}
+                  onClick={async () => {
+                    if (revealedAccountNumber !== null) {
+                      // Hide: drop from state — never leave the full number in cache
+                      setRevealedAccountNumber(null);
+                    } else {
+                      setRevealingAccount(true);
+                      try {
+                        const result = await revealEmployeeBankAccount(employeeId);
+                        setRevealedAccountNumber(result.account_number);
+                      } catch (err) {
+                        notify(parseApiError(err).message, "error");
+                      } finally {
+                        setRevealingAccount(false);
+                      }
+                    }
+                  }}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#2563eb",
+                    fontSize: "0.78rem",
+                    fontWeight: 500,
+                    cursor: revealingAccount ? "wait" : "pointer",
+                    padding: 0,
+                  }}
+                >
+                  {revealedAccountNumber !== null ? "Hide" : revealingAccount ? "Loading…" : "Show A/C No"}
+                </button>
               </div>
               <div className="text-muted text-xs" style={{ marginTop: "2px" }}>
                 Updated: {formatDate(bankQuery.data.updated_at)}

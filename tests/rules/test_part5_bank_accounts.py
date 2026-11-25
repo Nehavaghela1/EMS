@@ -163,3 +163,90 @@ def test_part5_responses_are_masked_and_never_leak_plain_number(
 
     # Full number appears in no log or error
     assert ACCOUNT not in caplog.text
+
+
+def test_part5_bank_account_reveal_rules(
+    client: TestClient,
+    db: Session,
+    company_a: TenantContext,
+    company_b: TenantContext,
+    super_admin_headers: dict[str, str],
+):
+    from app.db.rls import bind_tenant_to_session
+    from app.modules.platform.models import AuditLog
+
+    company_id = company_a.company_id
+    hr_headers = company_a.hr_headers
+    owner_headers = _make_user_headers(db, company_id, UserRole.owner)
+
+    # Create employee 1
+    emp1_dict = _create_employee(client, hr_headers)
+    emp1_id = emp1_dict["id"]
+    emp1_headers, _ = _link_user_to_employee(db, company_id, emp1_id, UserRole.employee)
+
+    # Create employee 2
+    emp2_dict = _create_employee(client, hr_headers)
+    emp2_id = emp2_dict["id"]
+    emp2_headers, _ = _link_user_to_employee(db, company_id, emp2_id, UserRole.employee)
+
+    # Save bank details for employee 1
+    put_res = client.put(ME, json=VALID_BANK, headers=emp1_headers)
+    assert put_res.status_code == 200
+
+    # 1. Normal GET of the same employee still returns the masked value
+    get_res = client.get(ME, headers=emp1_headers)
+    assert get_res.status_code == 200
+    assert get_res.json()["account_number"] == "********1012"
+    assert get_res.json()["account_number"] != ACCOUNT
+
+    get_emp_res = client.get(_for(emp1_id), headers=hr_headers)
+    assert get_emp_res.status_code == 200
+    assert get_emp_res.json()["account_number"] == "********1012"
+    assert get_emp_res.json()["account_number"] != ACCOUNT
+
+    # 2. An employee reveals their OWN number and gets the full value
+    reveal_self = client.post("/api/v1/payroll/bank-account/me/reveal", headers=emp1_headers)
+    assert reveal_self.status_code == 200
+    assert reveal_self.json()["account_number"] == ACCOUNT
+    assert reveal_self.headers.get("cache-control") == "no-store"
+
+    # 3. An hr_admin reveals one of their employees' numbers and gets the full value
+    reveal_hr = client.post(f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=hr_headers)
+    assert reveal_hr.status_code == 200
+    assert reveal_hr.json()["account_number"] == ACCOUNT
+    assert reveal_hr.headers.get("cache-control") == "no-store"
+
+    # 4. An owner can do the same
+    reveal_owner = client.post(f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=owner_headers)
+    assert reveal_owner.status_code == 200
+    assert reveal_owner.json()["account_number"] == ACCOUNT
+    assert reveal_owner.headers.get("cache-control") == "no-store"
+
+    # 5. A plain employee revealing a DIFFERENT employee's number gets 404
+    reveal_other = client.post(f"/api/v1/payroll/employees/{emp2_id}/bank-account/reveal", headers=emp1_headers)
+    assert reveal_other.status_code == 404
+
+    # 6. super_admin is refused (403 forbidden - no company context)
+    reveal_sa_me = client.post("/api/v1/payroll/bank-account/me/reveal", headers=super_admin_headers)
+    assert reveal_sa_me.status_code == 403
+
+    reveal_sa_emp = client.post(f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=super_admin_headers)
+    assert reveal_sa_emp.status_code == 403
+
+    # 7. Cross-company access returns 404 (nobody may reveal another company's account)
+    hr_b_headers = company_b.hr_headers
+    reveal_cross = client.post(f"/api/v1/payroll/employees/{emp1_id}/bank-account/reveal", headers=hr_b_headers)
+    assert reveal_cross.status_code == 404
+
+    # 8. An audit row is written and contains ONLY the last four (never full number)
+    bind_tenant_to_session(db, company_id=company_id, is_platform_admin=False)
+    audit_rows = db.query(AuditLog).filter(
+        AuditLog.company_id == company_id,
+        AuditLog.action == "BANK_ACCOUNT_REVEALED",
+    ).all()
+    assert len(audit_rows) >= 3  # self, hr, owner
+    for row in audit_rows:
+        details = str(row.details)
+        assert ACCOUNT not in details
+        assert LAST4 in details
+

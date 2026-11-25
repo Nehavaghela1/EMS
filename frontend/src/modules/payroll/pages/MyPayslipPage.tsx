@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import {
   listMyPayslips,
   getMyBankAccount,
+  revealMyBankAccount,
   saveMyBankAccount,
   type PayrollItem,
   type BankAccountResponse,
@@ -105,23 +106,18 @@ export function MyPayslipPage() {
   async function handleToggleShowAccount() {
     if (showFullAccount) {
       setShowFullAccount(false);
+      setUnmaskedAccount(null);
       return;
     }
-    // If not already revealed and cached, try to fetch revealed account number
-    if (!unmaskedAccount) {
-      try {
-        const revealed = await getMyBankAccount(true);
-        if (revealed?.account_number && !revealed.account_number.includes("*")) {
-          setUnmaskedAccount(revealed.account_number);
-          setShowFullAccount(true);
-          return;
-        }
-      } catch {
-        // Fallback if role is not allowed to call ?reveal=true directly:
-        // Use clean account number if provided in bankAccount or user input
+    try {
+      const revealed = await revealMyBankAccount();
+      if (revealed?.account_number) {
+        setUnmaskedAccount(revealed.account_number);
+        setShowFullAccount(true);
       }
+    } catch {
+      // Failed to reveal or rate limited
     }
-    setShowFullAccount(true);
   }
 
   async function handleSaveBank(e: React.FormEvent) {
@@ -1430,13 +1426,9 @@ export function MyPayslipPage() {
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "2px" }}>
                             <span style={{ fontSize: "1.15rem", fontWeight: 700, letterSpacing: "1px", fontFamily: "monospace" }}>
-                              {showFullAccount
-                                ? unmaskedAccount || bankAccount?.account_number || "987654329012"
-                                : bankAccount?.account_number?.startsWith("****")
-                                ? `XXXX${String(bankAccount.account_number).slice(-4)}`
-                                : bankAccount?.account_number
-                                ? `XXXX${String(bankAccount.account_number).slice(-4)}`
-                                : "XXXX9012"}
+                              {showFullAccount && unmaskedAccount
+                                ? unmaskedAccount
+                                : bankAccount?.account_number || "—"}
                             </span>
                             <button
                               type="button"
