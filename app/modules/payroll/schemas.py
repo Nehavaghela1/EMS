@@ -557,6 +557,9 @@ class PayrollItemResponse(BaseModel):
     reimbursement_amount: Decimal
     # The salary rows the month was paid at (more than one after a mid-month raise).
     salary_segments_json: list[dict] | None = None
+    # Bank account number: full on the employee's own payslip, masked on anyone else's,
+    # None when no bank account is on record.
+    payout_account_number: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -975,7 +975,7 @@ export function MyPayslipPage() {
                           <div>
                             <span style={{ color: "#64748b" }}>Bank Account No</span>
                             <div style={{ fontWeight: 600, marginTop: "2px" }}>
-                              {bankAccount?.account_number || "—"}
+                              {selectedPayslip.payout_account_number || bankAccount?.account_number || "—"}
                             </div>
                           </div>
                         </div>

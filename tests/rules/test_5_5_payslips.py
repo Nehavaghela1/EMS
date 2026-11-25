@@ -263,17 +263,45 @@ def test_R5_a_payslip_has_exactly_the_documented_fields_and_nobody_elses_data(
     client, db, world
 ) -> None:
     _filled_world(db, world)
+    # Save a known bank account for the employee so we can assert on full vs masked
+    account_number = "9876543210123"
+    client.put(
+        f"/api/v1/payroll/employees/{world['emp']['id']}/bank-account",
+        json={
+            "account_holder": "Test Employee",
+            "bank_name": "State Bank of India",
+            "account_number": account_number,
+            "ifsc_code": "SBIN0001234",
+        },
+        headers=world["hr1"],
+    )
     _released(client, world, world["year"], world["month"])
-    item = _me(client, world["emp"]["h"])["items"][0]
+    emp_resp = client.get(f"{PAYSLIPS}/me", headers=world["emp"]["h"])
+    assert emp_resp.status_code == 200, emp_resp.text
+    item = emp_resp.json()["items"][0]
     assert set(item) == set(PayrollItemResponse.model_fields), (
         f"R5: unexpected fields: {set(item) ^ set(PayrollItemResponse.model_fields)}"
     )
-    text = client.get(f"{PAYSLIPS}/me", headers=world["emp"]["h"]).text.lower()
+    # The employee's own payslip contains their own full account number
+    assert item["payout_account_number"] == account_number, (
+        "R5: own payslip must carry full account number"
+    )
+    text = emp_resp.text.lower()
+    assert account_number in text, "R5: employee's own payslip contains their full account number"
     assert world["manager"]["id"] not in text, "R5: another employee's id must not appear"
-    for word in ("account_number", "bank", "ifsc", "pan", "aadhaar", "password", "token"):
+    for word in ("ifsc", "pan", "aadhaar", "password", "token"):
         assert word not in text, f"R5: {word!r} must never be in a payslip response"
-    hr_text = _of(client, world["hr1"], world["emp"]["id"]).text
+
+    # The HR view of that same employee is MASKED and does NOT contain the full number
+    hr_resp = _of(client, world["hr1"], world["emp"]["id"])
+    assert hr_resp.status_code == 200, hr_resp.text
+    hr_item = hr_resp.json()["items"][0]
+    assert hr_item["payout_account_number"] == "********0123", "R5: HR view must be masked"
+    hr_text = hr_resp.text
+    assert account_number not in hr_text, "R5: HR view must NOT contain the full account number"
     assert world["manager"]["id"] not in hr_text, "R5: HR's view of one person has only theirs"
+    for word in ("ifsc", "pan", "aadhaar", "password", "token"):
+        assert word not in hr_text.lower(), f"R5: {word!r} must never be in a payslip response"
 
 
 # ------------------------------------------------------------------- R6

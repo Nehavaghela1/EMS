@@ -2614,7 +2614,36 @@ class PayslipService:
         self.db = db
         self.item_repo = PayrollItemRepository(db)
         self.employee_repo = EmployeeRepository(db)
+        self.bank_repo = EmployeeBankAccountRepository(db)
         self.audit = AuditService(db)
+
+    def _attach_accounts(
+        self, company_id: uuid.UUID, items: list[PayrollItem], *, mask: bool
+    ) -> list[PayrollItem]:
+        """Attach payout_account_number to each item without touching the ORM model.
+        Self-service payslips attach the full decrypted number; HR/manager views attach the masked
+        number. If mask=True, decrypt is never called and plaintext is never loaded."""
+        if not items:
+            return items
+        employee_ids = list({i.employee_id for i in items})
+        bank_map = self.bank_repo.active_by_employee(company_id, employee_ids)
+        for item in items:
+            bank = bank_map.get(item.employee_id)
+            if bank is None:
+                number = None
+            elif mask:
+                number = mask_payout_account_number(bank.account_last4)
+            else:
+                try:
+                    number = decrypt_field(
+                        bank.account_number_enc,
+                        company_id=company_id,
+                        column=BANK_ACCOUNT_COLUMN,
+                    )
+                except DecryptionFailedError:
+                    number = mask_payout_account_number(bank.account_last4)
+            object.__setattr__(item, "payout_account_number", number)
+        return items
 
     def list_own(
         self, actor: User, page_params: PageParams, year: int | None, month: int | None
@@ -2630,6 +2659,7 @@ class PayslipService:
             year=year,
             month=month,
         )
+        self._attach_accounts(actor.company_id, items, mask=False)
         return items, total, pages
 
     def list_for_employee(
@@ -2663,6 +2693,7 @@ class PayslipService:
                 details={"employee_id": str(employee.id), "run_count": total},
             )
             self.db.commit()
+        self._attach_accounts(company_id, items, mask=True)
         return items, total, pages
 
 
@@ -2710,32 +2741,12 @@ class EmployeeBankAccountService:
             updated_at=account.updated_at,
         )
 
-    def view(
-        self, actor: User, employee_id: uuid.UUID | None, *, reveal: bool = False
-    ) -> BankAccountResponse:
-        if reveal and actor.role not in BANK_ROLES:
-            raise ForbiddenError(BANK_FORBIDDEN_MESSAGE)
+    def view(self, actor: User, employee_id: uuid.UUID | None) -> BankAccountResponse:
         employee = self._target(actor, employee_id, write=False)
         account = self.repo.get_active(employee.id, actor.company_id)
         if account is None:
             raise NotFoundError(BANK_NOT_FOUND_MESSAGE)
-        if not reveal:
-            return self._response(account)
-        number = decrypt_field(
-            account.account_number_enc,
-            company_id=actor.company_id,
-            column=BANK_ACCOUNT_COLUMN,
-        )
-        self.audit.record(
-            company_id=actor.company_id,
-            actor=actor,
-            action="BANK_ACCOUNT_REVEALED",
-            entity_type="employee_bank_account",
-            entity_id=account.id,
-            details={"employee_id": str(employee.id)},
-        )
-        self.db.commit()
-        return self._response(account, number)
+        return self._response(account)
 
     def reveal(self, actor: User, employee_id: uuid.UUID | None) -> BankAccountResponse:
         """Reveal the full decrypted account number.
@@ -2743,7 +2754,7 @@ class EmployeeBankAccountService:
         Who may call:
         - Any company employee for their OWN account (employee_id=None).
         - hr_admin or owner for ANY employee in their company.
-        super_admin is blocked at the router (get_company_user dependency).
+        super_admin is refused by the BANK_ROLES check and by _target returning 404.
         A request for another company's employee surfaces as 404 via _target.
         The last four digits are recorded in the audit row; the full number is
         never written to any log, audit row, or error message.

@@ -182,6 +182,7 @@ export interface PayrollItem {
   paid_leave_days: string;
   lop_days: string;
   reimbursement_amount: string;
+  payout_account_number?: string | null;
   created_at?: string;
   updated_at?: string;
 }
