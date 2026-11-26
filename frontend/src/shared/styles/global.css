@@ -1558,13 +1558,16 @@ table.table tbody tr:hover {
     display: none !important;
   }
 
-  /* When printing from page without modal, hide screen-only cards and display print-only */
-  body:not(:has(.modal-backdrop)) main .no-print,
-  body:not(:has(.modal-backdrop)) main > div > *:not(.print-only) {
+  /* When printing from page without modal, hide non-printable screen elements while showing documents */
+  body:not(:has(.modal-backdrop)) .no-print,
+  body:not(:has(.modal-backdrop)) .screen-only {
     display: none !important;
   }
 
-  body:not(:has(.modal-backdrop)) .print-only {
+  body:not(:has(.modal-backdrop)) .print-only,
+  body:not(:has(.modal-backdrop)) .printable-document-shell,
+  body:not(:has(.modal-backdrop)) [data-print-content="true"],
+  body:not(:has(.modal-backdrop)) .fnf-statement-card {
     display: block !important;
     position: static !important;
     width: 100% !important;
