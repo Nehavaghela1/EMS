@@ -7,7 +7,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any, Literal
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -34,7 +34,7 @@ from app.core.regions import (
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.models import Employee, EmploymentType, ResignationStatus
-from app.modules.hr.repository import EmployeeRepository
+from app.modules.hr.repository import EmployeeRepository, EmployeeSectionRepository
 from app.modules.identity.models import PayrollWorkingDaysBasis, User, UserRole
 from app.modules.identity.repository import (
     CompanyRepository,
@@ -58,10 +58,12 @@ from app.modules.payroll.models import (
     SalaryStructure,
     StatutoryConfig,
     StatutoryRate,
+    TaxRegime,
     TaxSlab,
 )
 from app.modules.payroll.payment_files import PAYMENT_FILE_FORMATS, PaymentLine
 from app.modules.payroll.payslip_engine import (
+    TWO_PLACES,
     ComponentSpec,
     EsiRateSpec,
     MissingRateError,
@@ -88,6 +90,9 @@ from app.modules.payroll.repository import (
     TaxSlabRepository,
 )
 from app.modules.payroll.schemas import (
+    AnnualEarningsMonthInfo,
+    AnnualEarningsResponse,
+    AnnualEarningsRowItem,
     BankAccountRequest,
     BankAccountResponse,
     PayrollPaymentRecordRequest,
@@ -98,6 +103,8 @@ from app.modules.payroll.schemas import (
     ReimbursementCreateRequest,
     ReimbursementReviewRequest,
     SalaryAssignRequest,
+    SalaryCertificateComponent,
+    SalaryCertificateResponse,
     SalaryComponentAmount,
     SalaryComponentCreateRequest,
     SalaryStructureCreateRequest,
@@ -109,9 +116,13 @@ from app.modules.payroll.schemas import (
     StatutoryRateCreateRequest,
     StatutoryRateResponse,
     TaxSlabPostRequest,
+    TaxWorksheetColumnItem,
+    TaxWorksheetResponse,
+    TaxWorksheetSlabRow,
     is_masked_account_number,
     mask_payout_account_number,
 )
+from app.modules.payroll.xlsx_export import generate_annual_earnings_xlsx
 from app.modules.platform.service import AuditService, NotificationService
 from app.modules.time_leave.models import AttendanceStatus, Leave
 from app.modules.time_leave.repository import AttendanceRepository, LeaveRepository
@@ -3285,3 +3296,792 @@ class ReimbursementService:
                 users.append(manager.user_id)
             current = manager.reporting_manager_id
         return users
+
+
+# =========================================================================
+# Spec 1A: Tax Worksheet Service
+# =========================================================================
+
+
+class TaxWorksheetService:
+    def __init__(self, db: Session):
+        self.db = db
+        self.employee_repo = EmployeeRepository(db)
+        self.salary_repo = EmployeeSalaryRepository(db)
+        self.structure_repo = SalaryStructureRepository(db)
+        self.statutory_repo = StatutoryConfigRepository(db)
+        self.tax_repo = TaxSlabRepository(db)
+        self.item_repo = PayrollItemRepository(db)
+        self.user_repo = UserRepository(db)
+
+    def _resolve_target_employee(self, actor: User, employee_id: uuid.UUID | None) -> Employee:
+        company_id = actor.company_id
+        if employee_id is None:
+            emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if emp is None:
+                raise NotFoundError("Employee profile not found.")
+            return emp
+
+        if actor.role not in (UserRole.hr_admin, UserRole.owner):
+            emp_self = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if emp_self is None or emp_self.id != employee_id:
+                raise ForbiddenError(
+                    "Only HR admin and Owner can view another employee's worksheet."
+                )
+
+        emp = self.employee_repo.get_by_id(employee_id, company_id)
+        if emp is None:
+            raise NotFoundError("Employee not found.")
+        return emp
+
+    def get_worksheet(
+        self, actor: User, employee_id: uuid.UUID | None, month: int, year: int
+    ) -> TaxWorksheetResponse:
+        company_id = actor.company_id
+        employee = self._resolve_target_employee(actor, employee_id)
+
+        fy_start_year = year if month >= 4 else year - 1
+        fy_str = f"{fy_start_year}-{fy_start_year + 1}"
+
+        statutory_config = self.statutory_repo.get_by_company(company_id)
+        country = statutory_config.country if statutory_config else "IN"
+        regime = statutory_config.default_tax_regime if statutory_config else TaxRegime.new
+
+        tax_slabs = self.tax_repo.list_for(country, fy_str, regime)
+        if not tax_slabs:
+            msg = (
+                f"No income-tax slabs for the {regime.value} regime, "
+                f"financial year {fy_str}, are on file."
+            )
+            raise ConflictError(msg)
+
+        # 1. Released runs for the FY
+        stmt = (
+            select(PayrollItem, PayrollRun)
+            .join(PayrollRun, PayrollItem.payroll_run_id == PayrollRun.id)
+            .where(
+                PayrollItem.company_id == company_id,
+                PayrollItem.employee_id == employee.id,
+                PayrollRun.company_id == company_id,
+                PayrollRun.status.in_([PayrollRunStatus.approved, PayrollRunStatus.paid]),
+                PayrollItem.deleted_at.is_(None),
+                PayrollRun.deleted_at.is_(None),
+                or_(
+                    and_(PayrollRun.year == fy_start_year, PayrollRun.month >= 4),
+                    and_(PayrollRun.year == fy_start_year + 1, PayrollRun.month <= 3),
+                ),
+            )
+            .order_by(PayrollRun.year.asc(), PayrollRun.month.asc())
+        )
+        released_rows = self.db.execute(stmt).all()
+        released_by_month: dict[int, PayrollItem] = {run.month: item for item, run in released_rows}
+
+        emp_full_name = f"{employee.first_name} {employee.last_name or ''}".strip()
+        pan_num = employee.pan_number if hasattr(employee, "pan_number") else None
+
+        # Check if the requested month itself has a released run
+        if month not in released_by_month:
+            zero_col = TaxWorksheetColumnItem(
+                code="NONE", name="", actual="0.00", projection="0.00", total="0.00"
+            )
+            return TaxWorksheetResponse(
+                status="no_payroll",
+                message=f"No released payroll run exists for {month:02d}/{year}.",
+                month=month,
+                year=year,
+                financial_year=fy_str,
+                regime=regime.value,
+                employee_id=employee.id,
+                employee_name=emp_full_name,
+                employee_code=employee.employee_code,
+                designation=employee.position,
+                pan_number=pan_num,
+                gross_earnings=[],
+                total_gross=zero_col,
+                allowances_exempt=zero_col,
+                previous_employment_taxable_income=zero_col,
+                standard_deduction=zero_col,
+                section_deductions=[],
+                income_chargeable_salaries=zero_col,
+                other_income=zero_col,
+                chapter_via_deductions_qualifying=zero_col,
+                chapter_via_deductions_deductible=zero_col,
+                total_taxable_income="0.00",
+                slab_breakdowns=[],
+                gross_tax_liability="0.00",
+                rebate_87a="0.00",
+                marginal_relief="0.00",
+                tax_after_rebate="0.00",
+                surcharge="0.00",
+                health_education_cess="0.00",
+                total_tax_payable="0.00",
+                tds_till_last_month="0.00",
+                tds_this_month="0.00",
+                tds_previous_employer="0.00",
+                total_tds_paid="0.00",
+                tax_payable_or_refundable="0.00",
+                remaining_months_count=0,
+                monthly_tds_remaining="0.00",
+            )
+
+        # 2. Sequence of 12 months for the FY: (month, year)
+        fy_months = [
+            (4, fy_start_year),
+            (5, fy_start_year),
+            (6, fy_start_year),
+            (7, fy_start_year),
+            (8, fy_start_year),
+            (9, fy_start_year),
+            (10, fy_start_year),
+            (11, fy_start_year),
+            (12, fy_start_year),
+            (1, fy_start_year + 1),
+            (2, fy_start_year + 1),
+            (3, fy_start_year + 1),
+        ]
+        target_idx = next(i for i, (m, y) in enumerate(fy_months) if m == month and y == year)
+        actual_months = fy_months[: target_idx + 1]
+        projection_months = fy_months[target_idx + 1 :]
+
+        # 3. Sum ACTUAL earnings by component from released runs up to requested month
+        actual_components: dict[str, dict[str, Any]] = {}
+        actual_total_gross = Decimal("0.00")
+        actual_tds_till_last = Decimal("0.00")
+        actual_tds_this_month = Decimal("0.00")
+
+        for m, y in actual_months:
+            item = released_by_month.get(m)
+            if item is None:
+                continue
+            actual_total_gross += item.gross_salary
+            earnings_json = item.earnings_json or []
+            for e in earnings_json:
+                code = e.get("code", "EARNING")
+                name = e.get("name", code)
+                amount = Decimal(str(e.get("amount", "0.00")))
+                if code not in actual_components:
+                    actual_components[code] = {
+                        "code": code,
+                        "name": name,
+                        "amount": Decimal("0.00"),
+                    }
+                actual_components[code]["amount"] += amount
+
+            # TDS tracking
+            deductions_json = item.deductions_json or []
+            m_tds = Decimal("0.00")
+            for d in deductions_json:
+                if d.get("code") == "TDS":
+                    m_tds += Decimal(str(d.get("amount", "0.00")))
+            if m == month and y == year:
+                actual_tds_this_month += m_tds
+            else:
+                actual_tds_till_last += m_tds
+
+        # 4. Compute PROJECTION from current salary structure for remaining months
+        proj_components: dict[str, dict[str, Any]] = {}
+        proj_total_gross = Decimal("0.00")
+        rem_months_count = len(projection_months)
+
+        latest_salary = self.salary_repo.get_latest(employee.id, company_id)
+        if latest_salary is not None and rem_months_count > 0:
+            structure = self.structure_repo.get_by_id_including_deleted(
+                latest_salary.structure_id, company_id
+            )
+            if structure is not None:
+                earning_amounts, _, monthly_gross = resolve_earning_breakdown(
+                    structure.components, latest_salary.ctc
+                )
+                proj_total_gross = monthly_gross * Decimal(str(rem_months_count))
+                for ea in earning_amounts:
+                    amt = (ea.amount or Decimal("0.00")) * Decimal(str(rem_months_count))
+                    proj_components[ea.code] = {
+                        "code": ea.code,
+                        "name": ea.name,
+                        "amount": amt,
+                    }
+
+        # Combine component rows
+        all_codes = list(actual_components.keys())
+        for c in proj_components.keys():
+            if c not in all_codes:
+                all_codes.append(c)
+
+        gross_earnings_items: list[TaxWorksheetColumnItem] = []
+        for code in all_codes:
+            name = (
+                actual_components.get(code, {}).get("name")
+                or proj_components.get(code, {}).get("name")
+                or code
+            )
+            act_amt = actual_components.get(code, {}).get("amount", Decimal("0.00"))
+            proj_amt = proj_components.get(code, {}).get("amount", Decimal("0.00"))
+            tot_amt = act_amt + proj_amt
+            gross_earnings_items.append(
+                TaxWorksheetColumnItem(
+                    code=code,
+                    name=name,
+                    actual=f"{act_amt:.2f}",
+                    projection=f"{proj_amt:.2f}",
+                    total=f"{tot_amt:.2f}",
+                )
+            )
+
+        tot_gross_total = actual_total_gross + proj_total_gross
+        total_gross_col = TaxWorksheetColumnItem(
+            code="TOTAL_GROSS",
+            name="Gross Salary",
+            actual=f"{actual_total_gross:.2f}",
+            projection=f"{proj_total_gross:.2f}",
+            total=f"{tot_gross_total:.2f}",
+        )
+
+        rules = tax_slabs[0].surcharge_rules or {}
+        std_deduction_val = Decimal(str(rules.get("standard_deduction", "0.00")))
+        std_deduction_col = TaxWorksheetColumnItem(
+            code="STD_DED",
+            name="Standard Deduction under Section 16(ia)",
+            actual="0.00",
+            projection="0.00",
+            total=f"{std_deduction_val:.2f}",
+        )
+
+        taxable_salaries = max(Decimal("0.00"), tot_gross_total - std_deduction_val)
+        salaries_col = TaxWorksheetColumnItem(
+            code="INC_SALARIES",
+            name="Income Chargeable Under the Head Salaries",
+            actual="0.00",
+            projection="0.00",
+            total=f"{taxable_salaries:.2f}",
+        )
+
+        zero_col = TaxWorksheetColumnItem(
+            code="NONE", name="", actual="0.00", projection="0.00", total="0.00"
+        )
+
+        total_taxable_income = taxable_salaries
+
+        # 5. Tax liability computation on total_taxable_income
+        slab_rows: list[TaxWorksheetSlabRow] = []
+        gross_tax = Decimal("0.00")
+        for slab in sorted(tax_slabs, key=lambda s: s.min_income):
+            rate_pct = slab.rate_percent
+            min_inc = slab.min_income
+            max_inc = slab.max_income
+            if total_taxable_income > min_inc:
+                top = (
+                    total_taxable_income if max_inc is None else min(total_taxable_income, max_inc)
+                )
+                taxable_bracket = top - min_inc
+                bracket_tax = (taxable_bracket * rate_pct / Decimal("100")).quantize(
+                    TWO_PLACES, rounding=ROUND_HALF_UP
+                )
+                gross_tax += bracket_tax
+            else:
+                taxable_bracket = Decimal("0.00")
+                bracket_tax = Decimal("0.00")
+
+            slab_label = (
+                f"₹{min_inc:,.2f} - ₹{max_inc:,.2f}"
+                if max_inc is not None
+                else f"Above ₹{min_inc:,.2f}"
+            )
+            slab_rows.append(
+                TaxWorksheetSlabRow(
+                    slab_range=slab_label,
+                    rate_percent=f"{rate_pct:.1f}%",
+                    taxable_amount=f"{taxable_bracket:.2f}",
+                    tax_amount=f"{bracket_tax:.2f}",
+                )
+            )
+
+        rebate = rules.get("rebate_87a") or {}
+        rebate_limit = Decimal(str(rebate.get("income_limit", "0.00")))
+        rebate_max = Decimal(str(rebate.get("max_rebate", "0.00")))
+        cess_percent = tax_slabs[0].cess_percent
+
+        computed_rebate = Decimal("0.00")
+        marginal_relief = Decimal("0.00")
+        tax_after_rebate = gross_tax
+
+        if total_taxable_income <= rebate_limit:
+            computed_rebate = min(gross_tax, rebate_max)
+            tax_after_rebate = gross_tax - computed_rebate
+        elif regime == TaxRegime.new and total_taxable_income > rebate_limit:
+            capped_tax = total_taxable_income - rebate_limit
+            if gross_tax > capped_tax:
+                marginal_relief = gross_tax - capped_tax
+                tax_after_rebate = capped_tax
+
+        cess_amount = (tax_after_rebate * cess_percent / Decimal("100")).quantize(
+            TWO_PLACES, rounding=ROUND_HALF_UP
+        )
+        total_tax_payable = tax_after_rebate + cess_amount
+
+        total_tds_paid = actual_tds_till_last + actual_tds_this_month
+        tax_rem = max(Decimal("0.00"), total_tax_payable - total_tds_paid)
+        monthly_tds_rem = (
+            (tax_rem / Decimal(str(rem_months_count))).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+            if rem_months_count > 0
+            else Decimal("0.00")
+        )
+
+        return TaxWorksheetResponse(
+            status="available",
+            message=None,
+            month=month,
+            year=year,
+            financial_year=fy_str,
+            regime=regime.value,
+            employee_id=employee.id,
+            employee_name=emp_full_name,
+            employee_code=employee.employee_code,
+            designation=employee.position,
+            pan_number=pan_num,
+            gross_earnings=gross_earnings_items,
+            total_gross=total_gross_col,
+            allowances_exempt=zero_col,
+            previous_employment_taxable_income=zero_col,
+            standard_deduction=std_deduction_col,
+            section_deductions=[],
+            income_chargeable_salaries=salaries_col,
+            other_income=zero_col,
+            chapter_via_deductions_qualifying=zero_col,
+            chapter_via_deductions_deductible=zero_col,
+            total_taxable_income=f"{total_taxable_income:.2f}",
+            slab_breakdowns=slab_rows,
+            gross_tax_liability=f"{gross_tax:.2f}",
+            rebate_87a=f"{computed_rebate:.2f}",
+            marginal_relief=f"{marginal_relief:.2f}",
+            tax_after_rebate=f"{tax_after_rebate:.2f}",
+            surcharge="0.00",
+            health_education_cess=f"{cess_amount:.2f}",
+            total_tax_payable=f"{total_tax_payable:.2f}",
+            tds_till_last_month=f"{actual_tds_till_last:.2f}",
+            tds_this_month=f"{actual_tds_this_month:.2f}",
+            tds_previous_employer="0.00",
+            total_tds_paid=f"{total_tds_paid:.2f}",
+            tax_payable_or_refundable=f"{tax_rem:.2f}",
+            remaining_months_count=rem_months_count,
+            monthly_tds_remaining=f"{monthly_tds_rem:.2f}",
+        )
+
+
+# =========================================================================
+# Spec 1B & 1C: Annual Earnings Service & Excel Export
+# =========================================================================
+
+
+class AnnualEarningsService:
+    def __init__(self, db: Session):
+        self.db = db
+        self.employee_repo = EmployeeRepository(db)
+        self.item_repo = PayrollItemRepository(db)
+        self.company_repo = CompanyRepository(db)
+        self.statutory_repo = StatutoryConfigRepository(db)
+
+    def _resolve_target_employee(self, actor: User, employee_id: uuid.UUID | None) -> Employee:
+        company_id = actor.company_id
+        if employee_id is None:
+            emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if emp is None:
+                raise NotFoundError("Employee profile not found.")
+            return emp
+
+        if actor.role not in (UserRole.hr_admin, UserRole.owner):
+            emp_self = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if emp_self is None or emp_self.id != employee_id:
+                raise ForbiddenError(
+                    "Only HR admin and Owner can view another employee's annual earnings."
+                )
+
+        emp = self.employee_repo.get_by_id(employee_id, company_id)
+        if emp is None:
+            raise NotFoundError("Employee not found.")
+        return emp
+
+    def get_annual_earnings(
+        self, actor: User, employee_id: uuid.UUID | None, financial_year: str
+    ) -> AnnualEarningsResponse:
+        company_id = actor.company_id
+        employee = self._resolve_target_employee(actor, employee_id)
+
+        try:
+            parts = financial_year.split("-")
+            start_year = int(parts[0])
+        except (ValueError, IndexError) as err:
+            raise ValidationError(
+                "financial_year must be in format YYYY-YYYY (e.g. 2026-2027)."
+            ) from err
+
+        month_defs = [
+            (4, start_year, "Apr"),
+            (5, start_year, "May"),
+            (6, start_year, "Jun"),
+            (7, start_year, "Jul"),
+            (8, start_year, "Aug"),
+            (9, start_year, "Sep"),
+            (10, start_year, "Oct"),
+            (11, start_year, "Nov"),
+            (12, start_year, "Dec"),
+            (1, start_year + 1, "Jan"),
+            (2, start_year + 1, "Feb"),
+            (3, start_year + 1, "Mar"),
+        ]
+
+        stmt = (
+            select(PayrollItem, PayrollRun)
+            .join(PayrollRun, PayrollItem.payroll_run_id == PayrollRun.id)
+            .where(
+                PayrollItem.company_id == company_id,
+                PayrollItem.employee_id == employee.id,
+                PayrollRun.company_id == company_id,
+                PayrollRun.status.in_([PayrollRunStatus.approved, PayrollRunStatus.paid]),
+                PayrollItem.deleted_at.is_(None),
+                PayrollRun.deleted_at.is_(None),
+                or_(
+                    and_(PayrollRun.year == start_year, PayrollRun.month >= 4),
+                    and_(PayrollRun.year == start_year + 1, PayrollRun.month <= 3),
+                ),
+            )
+            .order_by(PayrollRun.year.asc(), PayrollRun.month.asc())
+        )
+        released_rows = self.db.execute(stmt).all()
+        released_by_month: dict[int, PayrollItem] = {run.month: item for item, run in released_rows}
+
+        months_info: list[AnnualEarningsMonthInfo] = []
+        for m, y, lbl in month_defs:
+            item = released_by_month.get(m)
+            has_p = item is not None
+            net_val = f"{item.net_salary:.2f}" if item is not None else None
+            months_info.append(
+                AnnualEarningsMonthInfo(
+                    month=m,
+                    year=y,
+                    label=f"{lbl} {y}",
+                    has_payroll=has_p,
+                    net_salary=net_val,
+                )
+            )
+
+        # Build component maps across all 12 months
+        earning_comps: dict[str, dict[str, Any]] = {}
+        deduction_comps: dict[str, dict[str, Any]] = {}
+        tax_comps: dict[str, dict[str, Any]] = {}
+        statutory_comps: dict[str, dict[str, Any]] = {}
+        reimbursement_vals: list[Decimal | None] = [None] * 12
+        net_pay_vals: list[Decimal | None] = [None] * 12
+
+        for idx, (m, _y, _) in enumerate(month_defs):
+            item = released_by_month.get(m)
+            if item is None:
+                continue
+
+            net_pay_vals[idx] = item.net_salary
+            reimbursement_vals[idx] = item.reimbursement_amount
+
+            # Earnings
+            for e in item.earnings_json or []:
+                code = e.get("code", "EARNING")
+                name = e.get("name", code)
+                amt = Decimal(str(e.get("amount", "0.00")))
+                if code not in earning_comps:
+                    earning_comps[code] = {"name": name, "amounts": [None] * 12}
+                earning_comps[code]["amounts"][idx] = amt
+
+            # Deductions, Statutories, Taxes
+            for d in item.deductions_json or []:
+                code = d.get("code", "DED")
+                name = d.get("name", code)
+                amt = Decimal(str(d.get("amount", "0.00")))
+                if code == "TDS":
+                    if code not in tax_comps:
+                        tax_comps[code] = {"name": name, "amounts": [None] * 12}
+                    tax_comps[code]["amounts"][idx] = amt
+                elif code in ("EPF", "PF", "ESI", "PT", "LWF"):
+                    if code not in statutory_comps:
+                        statutory_comps[code] = {"name": name, "amounts": [None] * 12}
+                    statutory_comps[code]["amounts"][idx] = amt
+                else:
+                    if code not in deduction_comps:
+                        deduction_comps[code] = {"name": name, "amounts": [None] * 12}
+                    deduction_comps[code]["amounts"][idx] = amt
+
+        result_rows: list[AnnualEarningsRowItem] = []
+
+        # 1. Earnings
+        for code, data in earning_comps.items():
+            amts = data["amounts"]
+            ytd = sum((a for a in amts if a is not None), Decimal("0.00"))
+            result_rows.append(
+                AnnualEarningsRowItem(
+                    group="earnings",
+                    code=code,
+                    name=data["name"],
+                    monthly_amounts=[f"{a:.2f}" if a is not None else None for a in amts],
+                    total_ytd=f"{ytd:.2f}",
+                )
+            )
+
+        # 2. Reimbursements
+        reimb_ytd = sum((a for a in reimbursement_vals if a is not None), Decimal("0.00"))
+        result_rows.append(
+            AnnualEarningsRowItem(
+                group="reimbursements",
+                code="REIMB",
+                name="Reimbursements",
+                monthly_amounts=[f"{a:.2f}" if a is not None else None for a in reimbursement_vals],
+                total_ytd=f"{reimb_ytd:.2f}",
+            )
+        )
+
+        # 3. Statutories
+        for code, data in statutory_comps.items():
+            amts = data["amounts"]
+            ytd = sum((a for a in amts if a is not None), Decimal("0.00"))
+            result_rows.append(
+                AnnualEarningsRowItem(
+                    group="statutories",
+                    code=code,
+                    name=data["name"],
+                    monthly_amounts=[f"{a:.2f}" if a is not None else None for a in amts],
+                    total_ytd=f"{ytd:.2f}",
+                )
+            )
+
+        # 4. Taxes
+        for code, data in tax_comps.items():
+            amts = data["amounts"]
+            ytd = sum((a for a in amts if a is not None), Decimal("0.00"))
+            result_rows.append(
+                AnnualEarningsRowItem(
+                    group="taxes",
+                    code=code,
+                    name=data["name"],
+                    monthly_amounts=[f"{a:.2f}" if a is not None else None for a in amts],
+                    total_ytd=f"{ytd:.2f}",
+                )
+            )
+
+        # 5. Deductions
+        for code, data in deduction_comps.items():
+            amts = data["amounts"]
+            ytd = sum((a for a in amts if a is not None), Decimal("0.00"))
+            result_rows.append(
+                AnnualEarningsRowItem(
+                    group="deductions",
+                    code=code,
+                    name=data["name"],
+                    monthly_amounts=[f"{a:.2f}" if a is not None else None for a in amts],
+                    total_ytd=f"{ytd:.2f}",
+                )
+            )
+
+        # 6. Net Pay
+        net_ytd = sum((a for a in net_pay_vals if a is not None), Decimal("0.00"))
+        result_rows.append(
+            AnnualEarningsRowItem(
+                group="net_pay",
+                code="NET_PAY",
+                name="Net Pay",
+                monthly_amounts=[f"{a:.2f}" if a is not None else None for a in net_pay_vals],
+                total_ytd=f"{net_ytd:.2f}",
+            )
+        )
+
+        emp_full_name = f"{employee.first_name} {employee.last_name or ''}".strip()
+        return AnnualEarningsResponse(
+            financial_year=financial_year,
+            employee_id=employee.id,
+            employee_name=emp_full_name,
+            employee_code=employee.employee_code,
+            months=months_info,
+            rows=result_rows,
+        )
+
+    def export_annual_earnings_xlsx(
+        self, actor: User, employee_id: uuid.UUID | None, financial_year: str
+    ) -> tuple[bytes, str]:
+        response = self.get_annual_earnings(actor, employee_id, financial_year)
+        company = self.company_repo.get_by_id(actor.company_id)
+        company_name = company.name if company else "Company"
+
+        month_labels = [m.label for m in response.months]
+        export_rows = []
+        for r in response.rows:
+            group_label = {
+                "earnings": "Earnings",
+                "reimbursements": "Reimbursements",
+                "statutories": "Statutory Deductions",
+                "taxes": "Taxes",
+                "deductions": "Other Deductions",
+                "net_pay": "Net Pay",
+            }.get(r.group, r.group.capitalize())
+            export_rows.append(
+                {
+                    "group": group_label,
+                    "name": r.name,
+                    "values": [f"₹{v}" if v is not None else "" for v in r.monthly_amounts],
+                    "total": f"₹{r.total_ytd}",
+                }
+            )
+
+        xlsx_bytes = generate_annual_earnings_xlsx(
+            company_name=company_name,
+            employee_name=response.employee_name,
+            employee_code=response.employee_code,
+            financial_year=financial_year,
+            months=month_labels,
+            rows=export_rows,
+        )
+        safe_name = "".join(
+            c for c in response.employee_name if c.isalnum() or c in (" ", "_", "-")
+        ).strip()
+        filename = f"Annual_Earnings_{safe_name}_{financial_year}.xlsx"
+        return xlsx_bytes, filename
+
+
+# =========================================================================
+# Spec 1D: Salary Certificate Service
+# =========================================================================
+
+
+class SalaryCertificateService:
+    def __init__(self, db: Session):
+        self.db = db
+        self.employee_repo = EmployeeRepository(db)
+        self.salary_repo = EmployeeSalaryRepository(db)
+        self.structure_repo = SalaryStructureRepository(db)
+        self.company_repo = CompanyRepository(db)
+        self.section_repo = EmployeeSectionRepository(db)
+        self.user_repo = UserRepository(db)
+
+    def _resolve_target_employee(self, actor: User, employee_id: uuid.UUID | None) -> Employee:
+        company_id = actor.company_id
+        if employee_id is None:
+            emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if emp is None:
+                raise NotFoundError("Employee profile not found.")
+            return emp
+
+        if actor.role not in (UserRole.hr_admin, UserRole.owner):
+            emp_self = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if emp_self is None or emp_self.id != employee_id:
+                raise ForbiddenError(
+                    "Only HR admin and Owner can view another employee's salary certificate."
+                )
+
+        emp = self.employee_repo.get_by_id(employee_id, company_id)
+        if emp is None:
+            raise NotFoundError("Employee not found.")
+        return emp
+
+    def get_certificate(
+        self, actor: User, employee_id: uuid.UUID | None = None
+    ) -> SalaryCertificateResponse:
+        company_id = actor.company_id
+        employee = self._resolve_target_employee(actor, employee_id)
+
+        company = self.company_repo.get_by_id(company_id)
+        if company is None:
+            raise NotFoundError("Company not found.")
+
+        # Address resolution
+        company_addr_parts = [
+            company.address,
+            company.city,
+            company.state,
+            company.pincode,
+            company.country,
+        ]
+        registered_address = ", ".join(p for p in company_addr_parts if p)
+
+        # Residential address of employee
+        addr_record = self.section_repo.find_address_by_kind(employee.id, company_id, "current")
+        if addr_record is None:
+            addr_record = self.section_repo.find_address_by_kind(
+                employee.id, company_id, "permanent"
+            )
+        res_addr = None
+        if addr_record is not None:
+            res_parts = [
+                addr_record.line1,
+                addr_record.line2,
+                addr_record.city,
+                addr_record.state,
+                addr_record.postal_code,
+                addr_record.country,
+            ]
+            res_addr = ", ".join(p for p in res_parts if p)
+
+        # Salary & Structure
+        salary = self.salary_repo.get_in_force(employee.id, company_id, utcnow().date())
+        if salary is None:
+            salary = self.salary_repo.get_latest(employee.id, company_id)
+        if salary is None:
+            raise NotFoundError("No salary structure on file for employee.")
+
+        structure = self.structure_repo.get_by_id_including_deleted(salary.structure_id, company_id)
+        if structure is None:
+            raise NotFoundError("Salary structure not found.")
+
+        earning_amounts, _, monthly_gross = resolve_earning_breakdown(
+            structure.components, salary.ctc
+        )
+
+        components: list[SalaryCertificateComponent] = []
+        for ea in earning_amounts:
+            m_amt = ea.amount or Decimal("0.00")
+            a_amt = m_amt * Decimal("12")
+            components.append(
+                SalaryCertificateComponent(
+                    code=ea.code,
+                    name=ea.name,
+                    type="earning",
+                    monthly_amount=f"{m_amt:.2f}",
+                    annual_amount=f"{a_amt:.2f}",
+                )
+            )
+
+        # Signatory resolution: issuing HR user if requested by HR, else company owner
+        if actor.role == UserRole.hr_admin:
+            hr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if hr_emp is not None:
+                signatory_name = f"{hr_emp.first_name} {hr_emp.last_name or ''}".strip()
+            else:
+                signatory_name = actor.username or "HR Administrator"
+            signatory_title = "Human Resources Manager"
+        else:
+            owners = self.user_repo.list_active_owners(company_id)
+            if owners:
+                owner = owners[0]
+                owner_emp = self.employee_repo.get_by_user_id(company_id, owner.id)
+                if owner_emp is not None:
+                    signatory_name = f"{owner_emp.first_name} {owner_emp.last_name or ''}".strip()
+                else:
+                    signatory_name = owner.username or "Company Owner"
+            else:
+                signatory_name = "Authorized Signatory"
+            signatory_title = "Director / Authorized Signatory"
+
+        emp_full_name = f"{employee.first_name} {employee.last_name or ''}".strip()
+        doj_str = employee.hire_date.strftime("%B %d, %Y") if employee.hire_date else ""
+        today_str = utcnow().strftime("%B %d, %Y")
+
+        return SalaryCertificateResponse(
+            company_name=company.name,
+            company_registered_address=registered_address,
+            company_logo_url=company.logo_url,
+            employee_id=employee.id,
+            employee_code=employee.employee_code,
+            employee_name=emp_full_name,
+            designation=employee.position,
+            date_of_joining=doj_str,
+            residential_address=res_addr,
+            annual_ctc=f"{salary.ctc:.2f}",
+            monthly_gross=f"{monthly_gross:.2f}",
+            components=components,
+            signatory_name=signatory_name,
+            signatory_title=signatory_title,
+            issued_date=today_str,
+        )

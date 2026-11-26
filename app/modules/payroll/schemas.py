@@ -742,3 +742,126 @@ class SendPayslipsResponse(BaseModel):
     queued_count: int
     skipped_count: int
     recipients: list[SendPayslipsRecipientResult]
+
+
+# --- Tax Worksheet Schemas (Spec 1A) ----------------------------------------
+
+
+class TaxWorksheetColumnItem(BaseModel):
+    code: str
+    name: str
+    actual: str
+    projection: str
+    total: str
+
+
+class TaxWorksheetSlabRow(BaseModel):
+    slab_range: str
+    rate_percent: str
+    taxable_amount: str
+    tax_amount: str
+
+
+class TaxWorksheetResponse(BaseModel):
+    status: Literal["available", "no_payroll"]
+    message: str | None = None
+    month: int
+    year: int
+    financial_year: str
+    regime: str
+    employee_id: uuid.UUID
+    employee_name: str
+    employee_code: str
+    designation: str | None
+    pan_number: str | None
+
+    # Components broken down
+    gross_earnings: list[TaxWorksheetColumnItem] = Field(default_factory=list)
+    total_gross: TaxWorksheetColumnItem
+    allowances_exempt: TaxWorksheetColumnItem
+    previous_employment_taxable_income: TaxWorksheetColumnItem
+    standard_deduction: TaxWorksheetColumnItem
+    section_deductions: list[TaxWorksheetColumnItem] = Field(default_factory=list)
+    income_chargeable_salaries: TaxWorksheetColumnItem
+    other_income: TaxWorksheetColumnItem
+    chapter_via_deductions_qualifying: TaxWorksheetColumnItem
+    chapter_via_deductions_deductible: TaxWorksheetColumnItem
+    total_taxable_income: str
+
+    # Tax calculation
+    slab_breakdowns: list[TaxWorksheetSlabRow] = Field(default_factory=list)
+    gross_tax_liability: str
+    rebate_87a: str
+    marginal_relief: str
+    tax_after_rebate: str
+    surcharge: str
+    health_education_cess: str
+    total_tax_payable: str
+
+    # TDS tracking
+    tds_till_last_month: str
+    tds_this_month: str
+    tds_previous_employer: str
+    total_tds_paid: str
+    tax_payable_or_refundable: str
+    remaining_months_count: int
+    monthly_tds_remaining: str
+
+
+# --- Annual Earnings Schemas (Spec 1B & 1C) ---------------------------------
+
+
+class AnnualEarningsRowItem(BaseModel):
+    group: Literal[
+        "earnings", "reimbursements", "statutories", "donations", "taxes", "deductions", "net_pay"
+    ]
+    code: str
+    name: str
+    monthly_amounts: list[str | None]  # 12 elements (April to March), None if no run
+    total_ytd: str
+
+
+class AnnualEarningsMonthInfo(BaseModel):
+    month: int
+    year: int
+    label: str
+    has_payroll: bool
+    net_salary: str | None
+
+
+class AnnualEarningsResponse(BaseModel):
+    financial_year: str
+    employee_id: uuid.UUID
+    employee_name: str
+    employee_code: str
+    months: list[AnnualEarningsMonthInfo]
+    rows: list[AnnualEarningsRowItem]
+
+
+# --- Salary Certificate Schemas (Spec 1D) -----------------------------------
+
+
+class SalaryCertificateComponent(BaseModel):
+    code: str
+    name: str
+    type: str
+    monthly_amount: str
+    annual_amount: str
+
+
+class SalaryCertificateResponse(BaseModel):
+    company_name: str
+    company_registered_address: str
+    company_logo_url: str | None
+    employee_id: uuid.UUID
+    employee_code: str
+    employee_name: str
+    designation: str | None
+    date_of_joining: str
+    residential_address: str | None
+    annual_ctc: str
+    monthly_gross: str
+    components: list[SalaryCertificateComponent]
+    signatory_name: str
+    signatory_title: str
+    issued_date: str

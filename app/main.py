@@ -19,16 +19,19 @@ from app.modules.hr.router import departments_router, employees_router
 from app.modules.identity.router import companies_router, users_router
 from app.modules.identity.router import router as auth_router
 from app.modules.payroll.router import (
+    annual_earnings_router,
     bank_accounts_router,
     employee_salary_router,
     payroll_runs_router,
     payslips_router,
     pt_slabs_router,
     reimbursements_router,
+    salary_certificate_router,
     statutory_config_router,
     statutory_rates_router,
     structures_router,
     tax_slabs_router,
+    tax_worksheet_router,
 )
 from app.modules.performance.router import performance_router
 from app.modules.platform.router import (
@@ -115,6 +118,9 @@ app.include_router(statutory_config_router, prefix=settings.API_V1_PREFIX)
 app.include_router(statutory_rates_router, prefix=settings.API_V1_PREFIX)
 app.include_router(pt_slabs_router, prefix=settings.API_V1_PREFIX)
 app.include_router(tax_slabs_router, prefix=settings.API_V1_PREFIX)
+app.include_router(tax_worksheet_router, prefix=settings.API_V1_PREFIX)
+app.include_router(annual_earnings_router, prefix=settings.API_V1_PREFIX)
+app.include_router(salary_certificate_router, prefix=settings.API_V1_PREFIX)
 app.include_router(bank_accounts_router, prefix=settings.API_V1_PREFIX)
 app.include_router(payroll_runs_router, prefix=settings.API_V1_PREFIX)
 app.include_router(payslips_router, prefix=settings.API_V1_PREFIX)

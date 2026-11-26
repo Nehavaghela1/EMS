@@ -314,6 +314,19 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/api/v1/payroll/employees/{employee_id}/bank-account"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/payslips/me"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/payslips/{employee_id}"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/payroll/tax-worksheet/me"): AUTHENTICATED,
+    ("GET", "/api/v1/payroll/tax-worksheet/{employee_id}"): ROLES(
+        UserRole.hr_admin, UserRole.owner
+    ),
+    ("GET", "/api/v1/payroll/annual-earnings/me"): AUTHENTICATED,
+    ("GET", "/api/v1/payroll/annual-earnings/me/export"): AUTHENTICATED,
+    ("GET", "/api/v1/payroll/annual-earnings/{employee_id}"): ROLES(
+        UserRole.hr_admin, UserRole.owner
+    ),
+    ("GET", "/api/v1/payroll/salary-certificate/me"): AUTHENTICATED,
+    ("GET", "/api/v1/payroll/salary-certificate/{employee_id}"): ROLES(
+        UserRole.hr_admin, UserRole.owner
+    ),
     ("GET", "/api/v1/payroll/statutory-rates"): ROLES(UserRole.hr_admin, UserRole.super_admin),
     ("POST", "/api/v1/payroll/statutory-rates"): ROLES(UserRole.super_admin),
     ("DELETE", "/api/v1/payroll/statutory-rates/{rate_id}"): ROLES(UserRole.super_admin),

@@ -28,6 +28,7 @@ from app.modules.payroll.models import (
 from app.modules.payroll.schemas import (
     MAX_SALARY_DATE,
     MIN_SALARY_DATE,
+    AnnualEarningsResponse,
     BankAccountRequest,
     BankAccountResponse,
     EmployeeSalaryResponse,
@@ -46,6 +47,7 @@ from app.modules.payroll.schemas import (
     ReimbursementResponse,
     ReimbursementReviewRequest,
     SalaryAssignRequest,
+    SalaryCertificateResponse,
     SalaryHistoryItem,
     SalaryStructureCreateRequest,
     SalaryStructureListItem,
@@ -59,8 +61,10 @@ from app.modules.payroll.schemas import (
     StatutoryRateResponse,
     TaxSlabPostRequest,
     TaxSlabResponse,
+    TaxWorksheetResponse,
 )
 from app.modules.payroll.service import (
+    AnnualEarningsService,
     EmployeeBankAccountService,
     EmployeeSalaryService,
     PaymentFileService,
@@ -68,10 +72,12 @@ from app.modules.payroll.service import (
     PayslipService,
     PtSlabService,
     ReimbursementService,
+    SalaryCertificateService,
     SalaryStructureService,
     StatutoryConfigService,
     StatutoryRateService,
     TaxSlabService,
+    TaxWorksheetService,
 )
 
 structures_router = APIRouter(prefix="/payroll/structures", tags=["Payroll — Salary Structures"])
@@ -84,6 +90,13 @@ statutory_rates_router = APIRouter(
 )
 pt_slabs_router = APIRouter(prefix="/payroll/pt-slabs", tags=["Payroll — PT Slabs"])
 tax_slabs_router = APIRouter(prefix="/payroll/tax-slabs", tags=["Payroll — Tax Slabs"])
+tax_worksheet_router = APIRouter(prefix="/payroll/tax-worksheet", tags=["Payroll — Tax Worksheet"])
+annual_earnings_router = APIRouter(
+    prefix="/payroll/annual-earnings", tags=["Payroll — Annual Earnings"]
+)
+salary_certificate_router = APIRouter(
+    prefix="/payroll/salary-certificate", tags=["Payroll — Salary Certificate"]
+)
 
 
 def _to_structure_response(structure: SalaryStructure) -> SalaryStructureResponse:
@@ -858,3 +871,115 @@ def withdraw_reimbursement_claim(
 ):
     claim = ReimbursementService(db).withdraw_claim(user.company_id, id, user)
     return ReimbursementResponse.model_validate(claim)
+
+
+# --- Tax Worksheet Endpoints (Spec 1A) --------------------------------------
+
+
+@tax_worksheet_router.get("/me", response_model=TaxWorksheetResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_my_tax_worksheet(
+    request: Request,
+    response: Response,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2000, le=2100),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    return TaxWorksheetService(db).get_worksheet(user, None, month, year)
+
+
+@tax_worksheet_router.get("/{employee_id}", response_model=TaxWorksheetResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_employee_tax_worksheet(
+    request: Request,
+    response: Response,
+    employee_id: uuid.UUID,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2000, le=2100),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    return TaxWorksheetService(db).get_worksheet(user, employee_id, month, year)
+
+
+# --- Annual Earnings Endpoints (Spec 1B & 1C) --------------------------------
+
+
+@annual_earnings_router.get("/me", response_model=AnnualEarningsResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_my_annual_earnings(
+    request: Request,
+    response: Response,
+    financial_year: str = Query(..., pattern=r"^\d{4}-\d{4}$"),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    return AnnualEarningsService(db).get_annual_earnings(user, None, financial_year)
+
+
+@annual_earnings_router.get("/me/export")
+@limiter.limit("20/minute", key_func=get_user_or_ip_key)
+def export_my_annual_earnings(
+    request: Request,
+    financial_year: str = Query(..., pattern=r"^\d{4}-\d{4}$"),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    content, filename = AnnualEarningsService(db).export_annual_earnings_xlsx(
+        user, None, financial_year
+    )
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@annual_earnings_router.get("/{employee_id}", response_model=AnnualEarningsResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_employee_annual_earnings(
+    request: Request,
+    response: Response,
+    employee_id: uuid.UUID,
+    financial_year: str = Query(..., pattern=r"^\d{4}-\d{4}$"),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    return AnnualEarningsService(db).get_annual_earnings(user, employee_id, financial_year)
+
+
+# --- Salary Certificate Endpoints (Spec 1D) ---------------------------------
+
+
+@salary_certificate_router.get("/me", response_model=SalaryCertificateResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_my_salary_certificate(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    return SalaryCertificateService(db).get_certificate(user, None)
+
+
+@salary_certificate_router.get("/{employee_id}", response_model=SalaryCertificateResponse)
+@limiter.limit("60/minute", key_func=get_user_or_ip_key)
+def get_employee_salary_certificate(
+    request: Request,
+    response: Response,
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    return SalaryCertificateService(db).get_certificate(user, employee_id)
