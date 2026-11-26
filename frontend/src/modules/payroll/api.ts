@@ -674,3 +674,165 @@ export async function getPayrollRunPayments(runId: string): Promise<PayrollPayme
   const res = await apiClient.get<PayrollPaymentRecord[]>(`/payroll/runs/${runId}/payments`);
   return res.data;
 }
+
+// --- Tax Worksheet, Annual Earnings & Salary Certificate ---
+
+export interface TaxWorksheetColumnItem {
+  code: string;
+  name: string;
+  actual: string;
+  projection: string;
+  total: string;
+}
+
+export interface TaxWorksheetSlabRow {
+  slab_range: string;
+  rate_percent: string;
+  taxable_amount: string;
+  tax_amount: string;
+}
+
+export interface TaxWorksheetResponse {
+  status: "available" | "no_payroll";
+  message?: string | null;
+  month: number;
+  year: number;
+  financial_year: string;
+  regime: string;
+  employee_id: string;
+  employee_name: string;
+  employee_code: string;
+  designation?: string | null;
+  pan_number?: string | null;
+  gross_earnings: TaxWorksheetColumnItem[];
+  total_gross: TaxWorksheetColumnItem;
+  allowances_exempt: TaxWorksheetColumnItem;
+  previous_employment_taxable_income: TaxWorksheetColumnItem;
+  standard_deduction: TaxWorksheetColumnItem;
+  section_deductions: TaxWorksheetColumnItem[];
+  income_chargeable_salaries: TaxWorksheetColumnItem;
+  other_income: TaxWorksheetColumnItem;
+  chapter_via_deductions_qualifying: TaxWorksheetColumnItem;
+  chapter_via_deductions_deductible: TaxWorksheetColumnItem;
+  total_taxable_income: string;
+  slab_breakdowns: TaxWorksheetSlabRow[];
+  gross_tax_liability: string;
+  rebate_87a: string;
+  marginal_relief: string;
+  tax_after_rebate: string;
+  surcharge: string;
+  health_education_cess: string;
+  total_tax_payable: string;
+  tds_till_last_month: string;
+  tds_this_month: string;
+  tds_previous_employer: string;
+  total_tds_paid: string;
+  tax_payable_or_refundable: string;
+  remaining_months_count: number;
+  monthly_tds_remaining: string;
+}
+
+export async function getMyTaxWorksheet(month: number, year: number): Promise<TaxWorksheetResponse> {
+  const res = await apiClient.get<TaxWorksheetResponse>("/payroll/tax-worksheet/me", {
+    params: { month, year },
+  });
+  return res.data;
+}
+
+export async function getEmployeeTaxWorksheet(
+  employeeId: string,
+  month: number,
+  year: number
+): Promise<TaxWorksheetResponse> {
+  const res = await apiClient.get<TaxWorksheetResponse>(`/payroll/tax-worksheet/${employeeId}`, {
+    params: { month, year },
+  });
+  return res.data;
+}
+
+export interface AnnualEarningsMonthInfo {
+  month: number;
+  year: number;
+  label: string;
+  has_payroll: boolean;
+  net_salary?: string | null;
+}
+
+export interface AnnualEarningsRowItem {
+  group: "earnings" | "reimbursements" | "statutories" | "donations" | "taxes" | "deductions" | "net_pay";
+  code: string;
+  name: string;
+  monthly_amounts: (string | null)[];
+  total_ytd: string;
+}
+
+export interface AnnualEarningsResponse {
+  financial_year: string;
+  employee_id: string;
+  employee_name: string;
+  employee_code: string;
+  months: AnnualEarningsMonthInfo[];
+  rows: AnnualEarningsRowItem[];
+}
+
+export async function getMyAnnualEarnings(financialYear: string): Promise<AnnualEarningsResponse> {
+  const res = await apiClient.get<AnnualEarningsResponse>("/payroll/annual-earnings/me", {
+    params: { financial_year: financialYear },
+  });
+  return res.data;
+}
+
+export async function getEmployeeAnnualEarnings(
+  employeeId: string,
+  financialYear: string
+): Promise<AnnualEarningsResponse> {
+  const res = await apiClient.get<AnnualEarningsResponse>(`/payroll/annual-earnings/${employeeId}`, {
+    params: { financial_year: financialYear },
+  });
+  return res.data;
+}
+
+export async function exportMyAnnualEarnings(financialYear: string): Promise<Blob> {
+  const res = await apiClient.get("/payroll/annual-earnings/me/export", {
+    params: { financial_year: financialYear },
+    responseType: "blob",
+  });
+  return res.data;
+}
+
+export interface SalaryCertificateComponent {
+  code: string;
+  name: string;
+  type: string;
+  monthly_amount: string;
+  annual_amount: string;
+}
+
+export interface SalaryCertificateResponse {
+  company_name: string;
+  company_registered_address: string;
+  company_logo_url?: string | null;
+  employee_id: string;
+  employee_code: string;
+  employee_name: string;
+  designation?: string | null;
+  date_of_joining: string;
+  residential_address?: string | null;
+  annual_ctc: string;
+  monthly_gross: string;
+  components: SalaryCertificateComponent[];
+  signatory_name: string;
+  signatory_title: string;
+  issued_date: string;
+}
+
+export async function getMySalaryCertificate(): Promise<SalaryCertificateResponse> {
+  const res = await apiClient.get<SalaryCertificateResponse>("/payroll/salary-certificate/me");
+  return res.data;
+}
+
+export async function getEmployeeSalaryCertificate(employeeId: string): Promise<SalaryCertificateResponse> {
+  const res = await apiClient.get<SalaryCertificateResponse>(`/payroll/salary-certificate/${employeeId}`);
+  return res.data;
+}
+
