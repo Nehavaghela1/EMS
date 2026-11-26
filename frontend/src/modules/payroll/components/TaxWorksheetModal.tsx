@@ -130,7 +130,7 @@ export const TaxWorksheetModal: React.FC<TaxWorksheetModalProps> = ({
           {worksheet ? (
             <DocumentShell
               title="INCOME TAX COMPUTATION WORKSHEET"
-              subtitle={`${monthName} ${year} • ${worksheet.financial_year} (${worksheet.regime.toUpperCase()})`}
+              subtitle={`${monthName.replace(String(year), "").trim()} ${year} • ${worksheet.financial_year} (${worksheet.regime.toUpperCase()})`}
               company={company}
               footerNote="— This is a system-generated official tax worksheet based on your payroll earnings and statutory tax slabs. —"
             >
@@ -163,7 +163,7 @@ export const TaxWorksheetModal: React.FC<TaxWorksheetModalProps> = ({
                 <div>
                   <div style={{ color: "#64748b" }}>PAN</div>
                   <div style={{ fontWeight: 700, fontFamily: "monospace", color: "#0f172a", marginTop: "2px" }}>
-                    {worksheet.pan_number || "—"}
+                    {worksheet.pan_number && worksheet.pan_number !== "—" ? worksheet.pan_number : "Not on record"}
                   </div>
                 </div>
                 <div>
@@ -254,7 +254,7 @@ export const TaxWorksheetModal: React.FC<TaxWorksheetModalProps> = ({
                     {worksheet.slab_breakdowns.map((sb, idx) => (
                       <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
                         <td style={{ padding: "6px 8px", color: "#334155" }}>{sb.slab_range}</td>
-                        <td style={{ padding: "6px 8px", textAlign: "center", color: "#64748b" }}>{sb.rate_percent}%</td>
+                        <td style={{ padding: "6px 8px", textAlign: "center", color: "#64748b" }}>{sb.rate_percent}</td>
                         <td style={{ padding: "6px 8px", textAlign: "right" }}>{formatINR(sb.taxable_amount)}</td>
                         <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600 }}>{formatINR(sb.tax_amount)}</td>
                       </tr>

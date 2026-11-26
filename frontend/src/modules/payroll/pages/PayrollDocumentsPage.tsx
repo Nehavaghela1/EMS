@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { listMyPayslips, type PayrollItem } from "../api";
 import { getMyCompany, type CompanyResponse } from "../../identity/api";
 import { useAuth } from "../../../app/auth-context";

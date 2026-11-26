@@ -3623,7 +3623,14 @@ class TaxWorksheetService:
                 top = (
                     total_taxable_income if max_inc is None else min(total_taxable_income, max_inc)
                 )
-                taxable_bracket = top - min_inc
+                # Slabs are seeded with min_inc like 400000.01; normalize to boundary base
+                # for accurate width
+                base_min = (
+                    min_inc.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                    if min_inc > 0
+                    else min_inc
+                )
+                taxable_bracket = max(Decimal("0.00"), top - base_min)
                 bracket_tax = (taxable_bracket * rate_pct / Decimal("100")).quantize(
                     TWO_PLACES, rounding=ROUND_HALF_UP
                 )

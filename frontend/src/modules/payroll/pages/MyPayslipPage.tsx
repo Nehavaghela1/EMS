@@ -22,7 +22,6 @@ import { PayslipDocumentModal } from "../components/PayslipDocumentModal";
 import { TaxWorksheetModal } from "../components/TaxWorksheetModal";
 import { DocumentShell } from "../components/DocumentShell";
 import { DocumentActions } from "../components/DocumentActions";
-import { CompanyLogo } from "../../../shared/components/CompanyLogo";
 import { CATEGORICAL_PALETTE } from "../../../shared/utils/palette";
 import { formatMonthYear, formatShortMonthYear, downloadDocumentAsHtml } from "../utils";
 
@@ -1186,7 +1185,11 @@ export function MyPayslipPage() {
                             </div>
                             <div>
                               <span style={{ color: "#64748b" }}>PAN</span>
-                              <div style={{ fontWeight: 600, fontFamily: "monospace" }}>{taxWorksheet.pan_number || "—"}</div>
+                              <div style={{ fontWeight: 600, fontFamily: "monospace" }}>
+                                {taxWorksheet.pan_number && taxWorksheet.pan_number !== "—"
+                                  ? taxWorksheet.pan_number
+                                  : "Not on record"}
+                              </div>
                             </div>
                           </div>
 
