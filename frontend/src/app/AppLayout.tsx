@@ -6,6 +6,7 @@ import { useTimer } from "./timer-context";
 import { getUserWorkspaces, switchWorkspace, getMyCompany } from "../modules/identity/api";
 import { fetchDashboard } from "../modules/platform/api";
 import { NotificationBell } from "../shared/components/NotificationBell";
+import { CompanyLogo } from "../shared/components/CompanyLogo";
 
 interface SubItem {
   to: string;
@@ -456,35 +457,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 title="Switch company / organization"
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0, flex: 1 }}>
-                  <div
+                  <CompanyLogo
+                    name={activeCompanyName}
+                    logoUrl={activeCompanyLogo}
+                    size={34}
                     style={{
-                      width: "34px",
-                      height: "34px",
-                      borderRadius: "8px",
-                      background: activeCompanyLogo ? "#ffffff" : "var(--color-primary, #2563eb)",
-                      border: activeCompanyLogo ? "1px solid rgba(255,255,255,0.2)" : "none",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "1rem",
-                      fontWeight: 800,
-                      color: "#fff",
-                      flexShrink: 0,
                       boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
-                      overflow: "hidden",
-                      padding: activeCompanyLogo ? "2px" : "0",
                     }}
-                  >
-                    {activeCompanyLogo ? (
-                      <img
-                        src={activeCompanyLogo}
-                        alt={activeCompanyName}
-                        style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-                      />
-                    ) : (
-                      activeCompanyName.charAt(0).toUpperCase()
-                    )}
-                  </div>
+                  />
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div
                       style={{
@@ -749,35 +729,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 padding: "0.85rem 1rem",
               }}
             >
-              <div
+              <CompanyLogo
+                name={activeCompanyName}
+                logoUrl={activeCompanyLogo}
+                size={34}
                 style={{
-                  width: "34px",
-                  height: "34px",
-                  borderRadius: "8px",
-                  background: activeCompanyLogo ? "#ffffff" : "var(--color-primary, #2563eb)",
-                  border: activeCompanyLogo ? "1px solid rgba(255,255,255,0.2)" : "none",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "1rem",
-                  fontWeight: 800,
-                  color: "#fff",
-                  flexShrink: 0,
                   boxShadow: "0 2px 4px rgba(0, 0, 0, 0.2)",
-                  overflow: "hidden",
-                  padding: activeCompanyLogo ? "2px" : "0",
                 }}
-              >
-                {activeCompanyLogo ? (
-                  <img
-                    src={activeCompanyLogo}
-                    alt={activeCompanyName}
-                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-                  />
-                ) : (
-                  activeCompanyName.charAt(0).toUpperCase()
-                )}
-              </div>
+              />
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div
                   style={{

@@ -21,6 +21,7 @@ import { parseApiError } from "../../../shared/api/errors";
 import { PayslipDocumentModal } from "../components/PayslipDocumentModal";
 import { TaxWorksheetModal } from "../components/TaxWorksheetModal";
 import { DocumentShell } from "../components/DocumentShell";
+import { CompanyLogo } from "../../../shared/components/CompanyLogo";
 import { CATEGORICAL_PALETTE } from "../../../shared/utils/palette";
 import { formatMonthYear, formatShortMonthYear } from "../utils";
 
@@ -361,22 +362,7 @@ export function MyPayslipPage() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <div
-            style={{
-              width: "48px",
-              height: "48px",
-              borderRadius: "12px",
-              background: "linear-gradient(135deg, #6366f1 0%, #a855f7 100%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#ffffff",
-              fontSize: "1.5rem",
-              fontWeight: 800,
-            }}
-          >
-            Δ
-          </div>
+          <CompanyLogo name={companyName} logoUrl={company?.logo_url} size={48} />
           <div>
             <h1 style={{ margin: 0, fontSize: "1.4rem", fontWeight: 700, color: "#0f172a" }}>
               Welcome {empName}!

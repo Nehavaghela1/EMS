@@ -1,5 +1,6 @@
 import React from "react";
 import { type CompanyResponse } from "../../identity/api";
+import { CompanyLogo } from "../../../shared/components/CompanyLogo";
 
 interface DocumentShellProps {
   title: string;
@@ -106,36 +107,8 @@ export const DocumentShell: React.FC<DocumentShellProps> = ({
           )}
         </div>
 
-        {/* Company Logo or dynamic fallback mark */}
-        {companyLogoUrl ? (
-          <img
-            src={companyLogoUrl}
-            alt={companyName}
-            style={{
-              maxHeight: "52px",
-              maxWidth: "140px",
-              objectFit: "contain",
-            }}
-          />
-        ) : (
-          <div
-            style={{
-              height: "44px",
-              padding: "0 12px",
-              borderRadius: "8px",
-              background: "#0f172a",
-              color: "#ffffff",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 700,
-              fontSize: "0.85rem",
-              letterSpacing: "0.05em",
-            }}
-          >
-            {companyName.slice(0, 3).toUpperCase()}
-          </div>
-        )}
+        {/* Company Logo or dynamic neutral mark */}
+        <CompanyLogo name={companyName} logoUrl={companyLogoUrl} size={48} />
       </div>
 
       {/* Document Body */}
