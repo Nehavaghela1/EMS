@@ -368,7 +368,6 @@ export function MyPayslipPage() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <CompanyLogo name={companyName} logoUrl={company?.logo_url} size={48} />
           <div>
             <h1 style={{ margin: 0, fontSize: "1.4rem", fontWeight: 700, color: "#0f172a" }}>
               Welcome {empName}!
@@ -721,6 +720,7 @@ export function MyPayslipPage() {
             >
               {/* Left Column: Month list */}
               <div
+                className="no-print"
                 style={{
                   background: "#ffffff",
                   borderRadius: "14px",
