@@ -214,12 +214,12 @@ export function ReimbursementsPage() {
         </button>
       </div>
 
-      {/* Zoho Expense KPI Summary Cards */}
+      {/* Zoho Expense KPI Summary Cards - All 6 cards in a single row */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: "12px",
+          gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+          gap: "10px",
           marginBottom: "1rem",
         }}
       >
