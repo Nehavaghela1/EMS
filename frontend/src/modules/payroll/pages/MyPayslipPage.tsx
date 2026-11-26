@@ -8,6 +8,9 @@ import {
   getMyAnnualEarnings,
   exportMyAnnualEarnings,
   getMySalaryCertificate,
+  downloadMyPayslipPdf,
+  downloadMyTaxWorksheetPdf,
+  downloadMySalaryCertificatePdf,
   type PayrollItem,
   type BankAccountResponse,
   type TaxWorksheetResponse,
@@ -23,7 +26,7 @@ import { TaxWorksheetModal } from "../components/TaxWorksheetModal";
 import { DocumentShell } from "../components/DocumentShell";
 import { DocumentActions } from "../components/DocumentActions";
 import { CATEGORICAL_PALETTE } from "../../../shared/utils/palette";
-import { formatMonthYear, formatShortMonthYear, downloadDocumentAsHtml } from "../utils";
+import { formatMonthYear, formatShortMonthYear, triggerBlobDownload } from "../utils";
 
 // Number to Indian Words converter
 function numberToIndianWords(num: number): string {
@@ -264,14 +267,44 @@ export function MyPayslipPage() {
     window.print();
   };
 
-  const handleDownloadPayslip = () => {
-    if (payslipDetailRef.current) {
+  const handleDownloadPayslip = async () => {
+    if (!selectedPayslip) return;
+    try {
+      const blob = await downloadMyPayslipPdf(selectedPayslip.id);
       const empName = user?.employee
         ? `${user.employee.first_name}_${user.employee.last_name || ""}`.trim()
         : "Employee";
-      const label = selectedPayslip ? formatMonthYear(selectedPayslip).replace(/\s+/g, "_") : "Statement";
-      downloadDocumentAsHtml(payslipDetailRef.current, `Payslip_${empName}_${label}.html`);
-    } else {
+      const label = formatMonthYear(selectedPayslip).replace(/\s+/g, "_");
+      triggerBlobDownload(blob, `Payslip_${empName}_${label}.pdf`);
+    } catch {
+      window.print();
+    }
+  };
+
+  const handleDownloadTaxWorksheet = async () => {
+    if (!selectedPayslip) return;
+    try {
+      const m = selectedPayslip.month || 10;
+      const y = selectedPayslip.year || 2026;
+      const blob = await downloadMyTaxWorksheetPdf(m, y);
+      const empName = user?.employee
+        ? `${user.employee.first_name}_${user.employee.last_name || ""}`.trim()
+        : "Employee";
+      const label = formatMonthYear(selectedPayslip).replace(/\s+/g, "_");
+      triggerBlobDownload(blob, `Tax_Worksheet_${empName}_${label}.pdf`);
+    } catch {
+      window.print();
+    }
+  };
+
+  const handleDownloadSalaryCertificate = async () => {
+    try {
+      const blob = await downloadMySalaryCertificatePdf();
+      const empName = user?.employee
+        ? `${user.employee.first_name}_${user.employee.last_name || ""}`.trim()
+        : "Employee";
+      triggerBlobDownload(blob, `Salary_Certificate_${empName}.pdf`);
+    } catch {
       window.print();
     }
   };
@@ -1255,7 +1288,12 @@ export function MyPayslipPage() {
                               <span>{formatINR(taxWorksheet.total_taxable_income)}</span>
                             </div>
 
-                            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "14px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "14px" }}>
+                              <DocumentActions
+                                onDownload={handleDownloadTaxWorksheet}
+                                onPrint={handlePrint}
+                                documentTitle={`Tax_Worksheet_${getMonthYearLabel(selectedPayslip, 0)}`}
+                              />
                               <button
                                 type="button"
                                 onClick={() => setIsTaxModalOpen(true)}
@@ -1718,7 +1756,7 @@ export function MyPayslipPage() {
               </div>
 
               <DocumentActions
-                onDownload={handlePrint}
+                onDownload={handleDownloadSalaryCertificate}
                 onPrint={handlePrint}
                 downloadLabel="Download"
                 printLabel="Print"
