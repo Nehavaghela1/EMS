@@ -2,6 +2,7 @@ import React from "react";
 import { type TaxWorksheetResponse } from "../api";
 import { type CompanyResponse } from "../../identity/api";
 import { DocumentShell } from "./DocumentShell";
+import { DocumentActions } from "./DocumentActions";
 
 interface TaxWorksheetModalProps {
   isOpen: boolean;
@@ -79,26 +80,8 @@ export const TaxWorksheetModal: React.FC<TaxWorksheetModalProps> = ({
               Income Tax Computation Worksheet
             </span>
           </div>
-          <div style={{ display: "flex", gap: "10px" }}>
-            <button
-              type="button"
-              onClick={handlePrint}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                padding: "6px 14px",
-                fontSize: "0.82rem",
-                fontWeight: 600,
-                color: "#0f172a",
-                backgroundColor: "#ffffff",
-                border: "1px solid #cbd5e1",
-                borderRadius: "6px",
-                cursor: "pointer",
-              }}
-            >
-              <span>🖨️</span> Print / PDF
-            </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <DocumentActions onDownload={handlePrint} onPrint={handlePrint} />
             <button
               type="button"
               onClick={onClose}

@@ -21,6 +21,7 @@ import { parseApiError } from "../../../shared/api/errors";
 import { PayslipDocumentModal } from "../components/PayslipDocumentModal";
 import { TaxWorksheetModal } from "../components/TaxWorksheetModal";
 import { DocumentShell } from "../components/DocumentShell";
+import { DocumentActions } from "../components/DocumentActions";
 import { CompanyLogo } from "../../../shared/components/CompanyLogo";
 import { CATEGORICAL_PALETTE } from "../../../shared/utils/palette";
 import { formatMonthYear, formatShortMonthYear } from "../utils";
@@ -995,50 +996,18 @@ export function MyPayslipPage() {
                           </div>
                         </div>
 
-                        <div style={{ display: "flex", gap: "10px" }}>
-                          <button
-                            type="button"
-                            onClick={handleDownloadPayslip}
-                            style={{
-                              background: "none",
-                              border: "none",
-                              color: "#0284c7",
-                              fontSize: "0.82rem",
-                              cursor: "pointer",
-                              fontWeight: 600,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "4px",
-                            }}
-                          >
-                            <span>📥</span> Download
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handlePrint}
-                            style={{
-                              background: "none",
-                              border: "none",
-                              color: "#0284c7",
-                              fontSize: "0.82rem",
-                              cursor: "pointer",
-                              fontWeight: 600,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "4px",
-                            }}
-                          >
-                            <span>🖨️</span> Print
-                          </button>
-                          {/* Test locator */}
-                          <button
-                            type="button"
-                            onClick={handlePrint}
-                            style={{ display: "none" }}
-                          >
-                            Download Statement (PDF / Print)
-                          </button>
-                        </div>
+                        <DocumentActions
+                          onDownload={handleDownloadPayslip}
+                          onPrint={handlePrint}
+                        />
+                        {/* Test locator */}
+                        <button
+                          type="button"
+                          onClick={handlePrint}
+                          style={{ display: "none" }}
+                        >
+                          Download Statement (PDF / Print)
+                        </button>
                       </div>
 
                       {/* Payslip Details Subheader */}
@@ -1338,47 +1307,13 @@ export function MyPayslipPage() {
                 </p>
               </div>
 
-              <div style={{ display: "flex", gap: "10px" }}>
-                <button
-                  type="button"
-                  onClick={handleExportAnnualEarnings}
-                  disabled={isExportingAnnual}
-                  style={{
-                    background: "#2563eb",
-                    border: "none",
-                    borderRadius: "6px",
-                    padding: "8px 16px",
-                    color: "#ffffff",
-                    fontWeight: 600,
-                    fontSize: "0.85rem",
-                    cursor: isExportingAnnual ? "not-allowed" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                >
-                  <span>📥</span> {isExportingAnnual ? "Exporting..." : "Download Excel (.xlsx)"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePrint}
-                  style={{
-                    background: "#ffffff",
-                    border: "1px solid #cbd5e1",
-                    borderRadius: "6px",
-                    padding: "8px 16px",
-                    color: "#0f172a",
-                    fontWeight: 600,
-                    fontSize: "0.85rem",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                >
-                  <span>🖨️</span> Print Report
-                </button>
-              </div>
+              <DocumentActions
+                onDownload={handleExportAnnualEarnings}
+                onPrint={handlePrint}
+                downloadLabel="Download Excel"
+                printLabel="Print Report"
+                isDownloading={isExportingAnnual}
+              />
             </div>
 
             {annualEarningsLoading ? (
@@ -1773,27 +1708,12 @@ export function MyPayslipPage() {
                 </p>
               </div>
 
-              <div style={{ display: "flex", gap: "10px" }}>
-                <button
-                  type="button"
-                  onClick={handlePrint}
-                  style={{
-                    background: "#ffffff",
-                    border: "1px solid #cbd5e1",
-                    borderRadius: "6px",
-                    padding: "8px 16px",
-                    color: "#0f172a",
-                    fontWeight: 600,
-                    fontSize: "0.85rem",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                >
-                  <span>🖨️</span> Print / PDF
-                </button>
-              </div>
+              <DocumentActions
+                onDownload={handlePrint}
+                onPrint={handlePrint}
+                downloadLabel="Download"
+                printLabel="Print"
+              />
             </div>
 
             {salaryCertLoading ? (

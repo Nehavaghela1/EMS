@@ -3,6 +3,7 @@ import { type PayrollItem } from "../api";
 import { type Employee } from "../../hr/api";
 import { type CompanyResponse } from "../../identity/api";
 import { DocumentShell } from "./DocumentShell";
+import { DocumentActions } from "./DocumentActions";
 
 interface PayslipDocumentModalProps {
   isOpen: boolean;
@@ -124,45 +125,8 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
             </span>
           </div>
 
-          <div style={{ display: "flex", gap: "10px" }}>
-            <button
-              type="button"
-              onClick={handleDownload}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                padding: "6px 14px",
-                fontSize: "0.82rem",
-                fontWeight: 600,
-                color: "#ffffff",
-                backgroundColor: "#2563eb",
-                border: "none",
-                borderRadius: "6px",
-                cursor: "pointer",
-              }}
-            >
-              <span>📥</span> Download
-            </button>
-            <button
-              type="button"
-              onClick={handlePrint}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                padding: "6px 14px",
-                fontSize: "0.82rem",
-                fontWeight: 600,
-                color: "#0f172a",
-                backgroundColor: "#ffffff",
-                border: "1px solid #cbd5e1",
-                borderRadius: "6px",
-                cursor: "pointer",
-              }}
-            >
-              <span>🖨️</span> Print
-            </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <DocumentActions onDownload={handleDownload} onPrint={handlePrint} />
             <button
               type="button"
               onClick={onClose}
