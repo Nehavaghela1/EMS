@@ -4,6 +4,7 @@ import { getMyCompany, type CompanyResponse } from "../../identity/api";
 import { useAuth } from "../../../app/auth-context";
 import { parseApiError } from "../../../shared/api/errors";
 import { PayslipDocumentModal } from "../components/PayslipDocumentModal";
+import { formatMonthYear } from "../utils";
 
 export function PayrollDocumentsPage() {
   const { user } = useAuth();
@@ -33,15 +34,6 @@ export function PayrollDocumentsPage() {
     }
     loadData();
   }, []);
-
-  const getMonthYearLabel = (item: PayrollItem | null, idx: number = 0) => {
-    if (!item) return "Current Month";
-    const date = new Date();
-    date.setMonth(date.getMonth() - idx);
-    const itemYear = (item as any)?.year || date.getFullYear();
-    const month = date.toLocaleDateString("en-US", { month: "long" });
-    return `${month} ${itemYear}`;
-  };
 
   return (
     <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "1.5rem" }}>
@@ -108,8 +100,8 @@ export function PayrollDocumentsPage() {
               </tr>
             </thead>
             <tbody>
-              {payslips.map((item, idx) => {
-                const periodLabel = getMonthYearLabel(item, idx);
+              {payslips.map((item) => {
+                const periodLabel = formatMonthYear(item);
                 return (
                   <tr
                     key={item.id}
@@ -164,11 +156,8 @@ export function PayrollDocumentsPage() {
           item={selectedPayslip}
           employee={(user?.employee as any) || undefined}
           company={company}
-          monthName={getMonthYearLabel(
-            selectedPayslip,
-            payslips.findIndex((p) => p.id === selectedPayslip.id)
-          )}
-          year={new Date().getFullYear()}
+          monthName={formatMonthYear(selectedPayslip)}
+          year={selectedPayslip.year || new Date().getFullYear()}
         />
       )}
     </div>

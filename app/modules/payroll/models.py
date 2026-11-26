@@ -448,6 +448,7 @@ class PayrollRun(TenantBase):
 
     items: Mapped[list["PayrollItem"]] = relationship(
         "PayrollItem",
+        back_populates="payroll_run",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
@@ -466,6 +467,7 @@ class PayrollItem(TenantBase):
         ForeignKey("payroll_runs.id", ondelete="CASCADE"),
         nullable=False,
     )
+    payroll_run: Mapped["PayrollRun"] = relationship("PayrollRun", back_populates="items")
     employee_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("employees.id"), nullable=False
     )

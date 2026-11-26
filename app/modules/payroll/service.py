@@ -2631,7 +2631,7 @@ class PayslipService:
     def _attach_accounts(
         self, company_id: uuid.UUID, items: list[PayrollItem], *, mask: bool
     ) -> list[PayrollItem]:
-        """Attach payout_account_number to each item without touching the ORM model.
+        """Attach payout_account_number, month and year to each item without touching the ORM model.
         Self-service payslips attach the full decrypted number; HR/manager views attach the masked
         number. If mask=True, decrypt is never called and plaintext is never loaded."""
         if not items:
@@ -2654,6 +2654,11 @@ class PayslipService:
                 except DecryptionFailedError:
                     number = mask_payout_account_number(bank.account_last4)
             object.__setattr__(item, "payout_account_number", number)
+            # Attach month and year from associated payroll_run
+            run = getattr(item, "payroll_run", None)
+            if run is not None:
+                object.__setattr__(item, "month", run.month)
+                object.__setattr__(item, "year", run.year)
         return items
 
     def list_own(

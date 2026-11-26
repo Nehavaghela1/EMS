@@ -539,6 +539,8 @@ class PayrollRunAttendanceRelockRequest(BaseModel):
 class PayrollItemResponse(BaseModel):
     id: uuid.UUID
     payroll_run_id: uuid.UUID
+    month: int | None = None
+    year: int | None = None
     employee_id: uuid.UUID
     ctc_snapshot: Decimal
     gross_salary: Decimal

@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.pagination import PageParams, paginate
 from app.core.time import utcnow
@@ -736,6 +736,7 @@ class PayrollItemRepository:
         employee may see (approved or paid); HR-level callers pass False."""
         stmt = (
             select(PayrollItem)
+            .options(joinedload(PayrollItem.payroll_run))
             .join(PayrollRun, PayrollItem.payroll_run_id == PayrollRun.id)
             .where(
                 PayrollItem.company_id == company_id,

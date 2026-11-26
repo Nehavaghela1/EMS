@@ -166,6 +166,8 @@ export interface PayrollItemLine {
 export interface PayrollItem {
   id: string;
   payroll_run_id: string;
+  month?: number | null;
+  year?: number | null;
   employee_id: string;
   ctc_snapshot: string;
   gross_salary: string;

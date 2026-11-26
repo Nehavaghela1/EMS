@@ -22,6 +22,7 @@ import { PayslipDocumentModal } from "../components/PayslipDocumentModal";
 import { TaxWorksheetModal } from "../components/TaxWorksheetModal";
 import { DocumentShell } from "../components/DocumentShell";
 import { CATEGORICAL_PALETTE } from "../../../shared/utils/palette";
+import { formatMonthYear, formatShortMonthYear } from "../utils";
 
 // Number to Indian Words converter
 function numberToIndianWords(num: number): string {
@@ -174,18 +175,11 @@ export function MyPayslipPage() {
   }
 
   function getMonthNumberAndYear(item: PayrollItem | null): { month: number; year: number } {
-    if (!item) {
+    if (!item || !item.month || !item.year) {
       const d = new Date();
       return { month: d.getMonth() + 1, year: d.getFullYear() };
     }
-    const parts = item.id.split("-");
-    const mStr = parts[1]?.toLowerCase() || "";
-    const yStr = parts[2] || "";
-    const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-    const mIdx = months.indexOf(mStr);
-    const month = mIdx >= 0 ? mIdx + 1 : new Date().getMonth() + 1;
-    const year = parseInt(yStr, 10) || (financialYear.startsWith("2025") ? 2025 : 2026);
-    return { month, year };
+    return { month: item.month, year: item.year };
   }
 
   async function fetchTaxWorksheet(item: PayrollItem) {
@@ -270,7 +264,7 @@ export function MyPayslipPage() {
   const handleDownloadPayslip = () => {
     const originalTitle = document.title;
     const empName = user?.employee ? `${user.employee.first_name}_${user.employee.last_name || ""}`.trim() : "Employee";
-    const label = selectedPayslip ? getMonthYearLabel(selectedPayslip, 0).replace(/\s+/g, "_") : "Statement";
+    const label = selectedPayslip ? formatMonthYear(selectedPayslip).replace(/\s+/g, "_") : "Statement";
     document.title = `Payslip_${empName}_${label}`;
     window.print();
     document.title = originalTitle;
@@ -301,40 +295,17 @@ export function MyPayslipPage() {
   const filteredPayslips = useMemo(() => {
     const isFy25 = financialYear.includes("2025");
     return payslips.filter((p) => {
-      const is2025 = p.id.includes("2025");
-      return isFy25 ? is2025 : !is2025;
+      if (p.year) {
+        return isFy25 ? p.year === 2025 : p.year === 2026;
+      }
+      return true;
     });
   }, [payslips, financialYear]);
 
   const latestPayslip = filteredPayslips.length > 0 ? filteredPayslips[0] : null;
 
-  const getMonthYearLabel = (item: PayrollItem | null, idx: number = 0) => {
-    if (!item) return "Current Month";
-    const parts = item.id.split("-");
-    const monthPart = parts[1];
-    const yearPart = parts[2] || (financialYear.startsWith("2025") ? "2025" : "2026");
-    if (monthPart) {
-      const monthNames: Record<string, string> = {
-        jan: "January",
-        feb: "February",
-        mar: "March",
-        apr: "April",
-        may: "May",
-        jun: "June",
-        jul: "July",
-        aug: "August",
-        sep: "September",
-        oct: "October",
-        nov: "November",
-        dec: "December",
-      };
-      const cleanMonth = monthNames[monthPart.toLowerCase()] || monthPart;
-      return `${cleanMonth} ${yearPart}`;
-    }
-    const date = new Date();
-    date.setMonth(date.getMonth() - idx);
-    const month = date.toLocaleDateString("en-US", { month: "long" });
-    return `${month} ${yearPart}`;
+  const getMonthYearLabel = (item: PayrollItem | null, _idx: number = 0) => {
+    return formatMonthYear(item);
   };
 
   const donutData = useMemo(() => {
@@ -996,7 +967,7 @@ export function MyPayslipPage() {
                                 padding: "2px",
                               }}
                             >
-                              {getMonthYearLabel(selectedPayslip, 0).substring(0, 3).toUpperCase()} {financialYear.startsWith("2025") ? "2025" : "2026"}
+                              {formatShortMonthYear(selectedPayslip)}
                             </div>
                           </div>
 
