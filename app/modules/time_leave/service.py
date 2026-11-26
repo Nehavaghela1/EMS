@@ -256,21 +256,35 @@ class AttendanceService:
         ins = [p for p in ordered if p.direction == PunchDirection.in_]
         outs = [p for p in ordered if p.direction == PunchDirection.out]
 
-        first_in = ins[0].punched_at if ins else None
-        last_out = outs[-1].punched_at if outs else None
+        first_in = ins[0].punched_at if ins else attendance.check_in
+        last_out = outs[-1].punched_at if outs else attendance.check_out
 
         worked_seconds = Decimal("0")
         open_in: datetime | None = None
+        has_paired_in_out = False
         for p in ordered:
             if p.direction == PunchDirection.in_:
                 open_in = p.punched_at
-            elif p.direction == PunchDirection.out and open_in is not None:
-                worked_seconds += Decimal(str((p.punched_at - open_in).total_seconds()))
-                open_in = None
+            elif p.direction == PunchDirection.out:
+                if open_in is not None:
+                    worked_seconds += Decimal(str((p.punched_at - open_in).total_seconds()))
+                    open_in = None
+                    has_paired_in_out = True
+                elif attendance.check_in is not None and attendance.check_in <= p.punched_at:
+                    diff_sec = (p.punched_at - attendance.check_in).total_seconds()
+                    worked_seconds += Decimal(str(diff_sec))
+                    has_paired_in_out = True
 
-        worked_hours = (worked_seconds / Decimal("3600")).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
+        if has_paired_in_out:
+            worked_hours = (worked_seconds / Decimal("3600")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+        elif attendance.hours_worked is not None:
+            worked_hours = attendance.hours_worked
+        else:
+            worked_hours = (worked_seconds / Decimal("3600")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
 
         if first_in is not None and last_out is not None and last_out >= first_in:
             span_seconds = Decimal(str((last_out - first_in).total_seconds()))
@@ -420,12 +434,13 @@ class AttendanceService:
         )
         for po in past_open:
             po.status = AttendanceStatus.mispunch
+        now = utcnow()
         try:
             record = self.repo.create(
                 company_id=company_id,
                 employee_id=employee.id,
                 date=today,
-                check_in=utcnow(),
+                check_in=now,
                 status=AttendanceStatus.present,
                 source=AttendanceSource.web,
                 notes=fence_notes,
@@ -435,7 +450,7 @@ class AttendanceService:
                 company_id=company_id,
                 employee_id=employee.id,
                 attendance_id=record.id,
-                punched_at=record.check_in,
+                punched_at=now,
                 direction=PunchDirection.in_,
                 source=PunchSource.web,
                 created_by=current_user.id,
@@ -497,7 +512,8 @@ class AttendanceService:
             created_by=current_user.id,
         )
         existing_punches = self.repo.list_punches_for_attendance(company_id, record.id)
-        self.recompute_attendance_from_punches(record, existing_punches)
+        if existing_punches:
+            self.recompute_attendance_from_punches(record, existing_punches)
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
         return record
@@ -671,21 +687,32 @@ class AttendanceService:
         self._check_attendance_not_payroll_locked(company_id, record.date)
 
         # 2A: Refuse an employee's regularization request on a weekly off or holiday
-        settings_row = self.settings_repo.get_by_company(company_id)
-        weekend_days = self._weekend_days(settings_row)
-        if record.date.isoweekday() in weekend_days:
-            day_name = record.date.strftime("%A")
-            raise ValidationError(
-                f"Regularization cannot be requested for a weekly off ({day_name}).",
-                details={"field": "attendance_id"},
+        # ONLY when the attendance record has NO punch for that day.
+        has_punches = (
+            record.check_in is not None
+            or record.check_out is not None
+            or len(self.repo.list_punches_for_attendance(company_id, record.id)) > 0
+        )
+        if not has_punches:
+            settings_row = self.settings_repo.get_by_company(company_id)
+            weekend_days = self._weekend_days(settings_row)
+            if record.date.isoweekday() in weekend_days:
+                day_name = record.date.strftime("%A")
+                raise ValidationError(
+                    f"Regularization cannot be requested for a weekly off ({day_name}). "
+                    "A record with no punch on a non-working day cannot be regularized.",
+                    details={"field": "attendance_id"},
+                )
+            dept_id = caller.department_id if caller else None
+            holidays = self.holiday_repo.list_in_range(
+                company_id, record.date, record.date, dept_id
             )
-        dept_id = caller.department_id if caller else None
-        holidays = self.holiday_repo.list_in_range(company_id, record.date, record.date, dept_id)
-        if holidays:
-            raise ValidationError(
-                f"Regularization cannot be requested for holiday: {holidays[0].name}.",
-                details={"field": "attendance_id"},
-            )
+            if holidays:
+                raise ValidationError(
+                    f"Regularization cannot be requested for holiday: {holidays[0].name}. "
+                    "A record with no punch on a non-working day cannot be regularized.",
+                    details={"field": "attendance_id"},
+                )
 
         if record.date < utcnow().date() - timedelta(days=REGULARIZATION_MAX_AGE_DAYS):
             raise ValidationError(

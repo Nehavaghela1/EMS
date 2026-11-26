@@ -42,6 +42,7 @@ from app.modules.time_leave.models import (
     AttendanceRegularizationRequest,
     AttendanceSource,
     AttendanceStatus,
+    Holiday,
     Leave,
     LeaveStatus,
     RegularizationStatus,
@@ -1044,3 +1045,201 @@ def _repo_root() -> Path:
     from tests.conftest import REPO_ROOT
 
     return Path(REPO_ROOT)
+
+
+# ------------------------------------------------------------------- Part 2A: Weekly off & holidays
+
+
+def test_part_2a_weekly_off_with_no_punch_is_refused(client: TestClient, db: Session, org) -> None:
+    ctx = org["ctx"]
+    bind_tenant_to_session(db, company_id=ctx.company_id, is_platform_admin=False)
+    # Find recent Saturday (isoweekday 6) within 30 days
+    today = utcnow().date()
+    days_back = 1
+    while (today - timedelta(days=days_back)).isoweekday() != 6:
+        days_back += 1
+    saturday = today - timedelta(days=days_back)
+    day_name = saturday.strftime("%A")
+
+    # Record on Saturday with NO punches (check_in=None, check_out=None)
+    row = Attendance(
+        company_id=ctx.company_id,
+        employee_id=uuid.UUID(org["emp"]["id"]),
+        date=saturday,
+        status=AttendanceStatus.absent,
+        source=AttendanceSource.web,
+    )
+    db.add(row)
+    db.commit()
+
+    body = {
+        "requested_check_in": _at(saturday, 9).isoformat(),
+        "requested_check_out": _at(saturday, 18).isoformat(),
+        "reason": "Weekend duty no punch",
+    }
+    resp = client.post(f"{ATT}/{row.id}/regularize", headers=org["emp"]["h"], json=body)
+    assert resp.status_code == 422, (
+        f"Expected 422 for unpunched weekly off, got {resp.status_code}: {resp.text}"
+    )
+    err_msg = resp.json()["error"]["message"]
+    assert "weekly off" in err_msg.lower()
+    assert day_name in err_msg
+    assert "no punch on a non-working day cannot be regularized" in err_msg.lower()
+
+
+def test_part_2a_weekly_off_with_punch_is_accepted(client: TestClient, db: Session, org) -> None:
+    ctx = org["ctx"]
+    bind_tenant_to_session(db, company_id=ctx.company_id, is_platform_admin=False)
+    today = utcnow().date()
+    days_back = 1
+    while (today - timedelta(days=days_back)).isoweekday() != 6:
+        days_back += 1
+    saturday = today - timedelta(days=days_back)
+
+    # Record on Saturday WITH a punch (check_in recorded, e.g. mispunch)
+    row = Attendance(
+        company_id=ctx.company_id,
+        employee_id=uuid.UUID(org["emp"]["id"]),
+        date=saturday,
+        check_in=_at(saturday, 9),
+        status=AttendanceStatus.mispunch,
+        source=AttendanceSource.web,
+    )
+    db.add(row)
+    db.commit()
+
+    body = {
+        "requested_check_in": _at(saturday, 9).isoformat(),
+        "requested_check_out": _at(saturday, 18).isoformat(),
+        "reason": "Weekend shift forgot checkout",
+    }
+    resp = client.post(f"{ATT}/{row.id}/regularize", headers=org["emp"]["h"], json=body)
+    assert resp.status_code == 201, (
+        f"Expected 201 for punched weekly off, got {resp.status_code}: {resp.text}"
+    )
+
+
+def test_part_2a_holiday_with_no_punch_is_refused(client: TestClient, db: Session, org) -> None:
+    ctx = org["ctx"]
+    bind_tenant_to_session(db, company_id=ctx.company_id, is_platform_admin=False)
+    # Pick a weekday (e.g. Wednesday, isoweekday 3) within 30 days
+    today = utcnow().date()
+    days_back = 1
+    while (today - timedelta(days=days_back)).isoweekday() != 3:
+        days_back += 1
+    holiday_date = today - timedelta(days=days_back)
+
+    # Create holiday
+    holiday_name = f"Festival Test Holiday {uuid.uuid4().hex[:4]}"
+    h_row = Holiday(
+        company_id=ctx.company_id,
+        name=holiday_name,
+        date=holiday_date,
+        is_optional=False,
+    )
+    db.add(h_row)
+    db.flush()
+
+    row = Attendance(
+        company_id=ctx.company_id,
+        employee_id=uuid.UUID(org["emp"]["id"]),
+        date=holiday_date,
+        status=AttendanceStatus.absent,
+        source=AttendanceSource.web,
+    )
+    db.add(row)
+    db.commit()
+
+    body = {
+        "requested_check_in": _at(holiday_date, 9).isoformat(),
+        "requested_check_out": _at(holiday_date, 18).isoformat(),
+        "reason": "Holiday forgot punch",
+    }
+    resp = client.post(f"{ATT}/{row.id}/regularize", headers=org["emp"]["h"], json=body)
+    assert resp.status_code == 422, (
+        f"Expected 422 for unpunched holiday, got {resp.status_code}: {resp.text}"
+    )
+    err_msg = resp.json()["error"]["message"]
+    assert "holiday" in err_msg.lower()
+    assert holiday_name in err_msg
+    assert "no punch on a non-working day cannot be regularized" in err_msg.lower()
+
+
+def test_part_2a_hr_path_still_regularizes_weekly_off_either_way(
+    client: TestClient, db: Session, org
+) -> None:
+    ctx = org["ctx"]
+    bind_tenant_to_session(db, company_id=ctx.company_id, is_platform_admin=False)
+    today = utcnow().date()
+    days_back = 1
+    while (today - timedelta(days=days_back)).isoweekday() != 7:  # Sunday
+        days_back += 1
+    sunday = today - timedelta(days=days_back)
+
+    # Completely unpunched Sunday record
+    row = Attendance(
+        company_id=ctx.company_id,
+        employee_id=uuid.UUID(org["emp"]["id"]),
+        date=sunday,
+        status=AttendanceStatus.absent,
+        source=AttendanceSource.web,
+    )
+    db.add(row)
+    db.commit()
+
+    # HR path (PUT /attendance/{id}) must succeed even for unpunched weekly off
+    hr_body = {
+        "check_in": _at(sunday, 10).isoformat(),
+        "check_out": _at(sunday, 19).isoformat(),
+        "status": "present",
+        "reason": "HR direct correction for emergency Sunday work",
+    }
+    resp = client.put(f"{ATT}/{row.id}", headers=ctx.hr_headers, json=hr_body)
+    assert resp.status_code == 200, f"HR correction on weekly off must succeed: {resp.text}"
+    assert resp.json()["status"] == "present"
+    assert "Regularized by" in resp.json()["notes"]
+
+
+def test_part_2a_six_day_company_accepts_saturday_request(
+    client: TestClient, db: Session, org
+) -> None:
+    ctx = org["ctx"]
+    bind_tenant_to_session(db, company_id=ctx.company_id, is_platform_admin=False)
+    # Set company settings to six-day week: weekend_days = [7] (Sunday only)
+    settings_row = (
+        db.query(CompanySettings).filter(CompanySettings.company_id == ctx.company_id).one()
+    )
+    old_weekend_days = list(settings_row.weekend_days)
+    settings_row.weekend_days = [7]
+    db.commit()
+
+    try:
+        today = utcnow().date()
+        days_back = 1
+        while (today - timedelta(days=days_back)).isoweekday() != 6:  # Saturday
+            days_back += 1
+        saturday = today - timedelta(days=days_back)
+
+        # Unpunched record on Saturday: for a six-day company, Saturday is a regular working day!
+        row = Attendance(
+            company_id=ctx.company_id,
+            employee_id=uuid.UUID(org["emp"]["id"]),
+            date=saturday,
+            status=AttendanceStatus.absent,
+            source=AttendanceSource.web,
+        )
+        db.add(row)
+        db.commit()
+
+        body = {
+            "requested_check_in": _at(saturday, 9).isoformat(),
+            "requested_check_out": _at(saturday, 18).isoformat(),
+            "reason": "Worked Saturday in 6-day company forgot punch",
+        }
+        resp = client.post(f"{ATT}/{row.id}/regularize", headers=org["emp"]["h"], json=body)
+        assert resp.status_code == 201, (
+            f"Saturday request in 6-day company must be 201, got {resp.status_code}: {resp.text}"
+        )
+    finally:
+        settings_row.weekend_days = old_weekend_days
+        db.commit()
