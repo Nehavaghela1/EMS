@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import ColumnElement, func, or_, select
@@ -11,6 +11,7 @@ from app.core.time import utcnow
 from app.modules.hr.models import Employee
 from app.modules.time_leave.models import (
     Attendance,
+    AttendancePunch,
     AttendanceRegularizationRequest,
     AttendanceSource,
     AttendanceStatus,
@@ -20,6 +21,8 @@ from app.modules.time_leave.models import (
     LeaveBalance,
     LeaveStatus,
     LeaveType,
+    PunchDirection,
+    PunchSource,
     RegularizationStatus,
     Shift,
 )
@@ -63,6 +66,59 @@ class AttendanceRepository:
             )
         ).all()
         return {row_date: row_status for row_date, row_status in rows}
+
+    def hours_by_date(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID, start_date: date, end_date: date
+    ) -> dict[date, tuple[Decimal | None, Decimal | None]]:
+        rows = self.db.execute(
+            select(Attendance.date, Attendance.worked_hours, Attendance.span_hours).where(
+                Attendance.company_id == company_id,
+                Attendance.employee_id == employee_id,
+                Attendance.date >= start_date,
+                Attendance.date <= end_date,
+                Attendance.deleted_at.is_(None),
+            )
+        ).all()
+        return {row_date: (worked, span) for row_date, worked, span in rows}
+
+    def list_punches_for_attendance(
+        self, company_id: uuid.UUID, attendance_id: uuid.UUID
+    ) -> list[AttendancePunch]:
+        return list(
+            self.db.scalars(
+                select(AttendancePunch)
+                .where(
+                    AttendancePunch.company_id == company_id,
+                    AttendancePunch.attendance_id == attendance_id,
+                    AttendancePunch.deleted_at.is_(None),
+                )
+                .order_by(AttendancePunch.punched_at.asc())
+            ).all()
+        )
+
+    def add_punch(
+        self,
+        *,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        attendance_id: uuid.UUID,
+        punched_at: datetime,
+        direction: PunchDirection,
+        source: PunchSource,
+        created_by: uuid.UUID | None,
+    ) -> AttendancePunch:
+        punch = AttendancePunch(
+            company_id=company_id,
+            employee_id=employee_id,
+            attendance_id=attendance_id,
+            punched_at=punched_at,
+            direction=direction,
+            source=source,
+            created_by=created_by,
+        )
+        self.db.add(punch)
+        self.db.flush()
+        return punch
 
     def get_open_for_employee(
         self, company_id: uuid.UUID, employee_id: uuid.UUID

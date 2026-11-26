@@ -261,6 +261,16 @@ class PayrollWorkingDaysBasis(str, enum.Enum):
     fixed_30 = "fixed_30"
 
 
+class AttendancePayMode(str, enum.Enum):
+    fixed = "fixed"
+    hourly_prorata = "hourly_prorata"
+
+
+class WorkedHoursBasis(str, enum.Enum):
+    intervals = "intervals"
+    span = "span"
+
+
 class CompanySettings(TenantBase):
     """RLS: Yes — the first RLS-protected table in the system (Spec 7.2, 8.3).
 
@@ -293,3 +303,32 @@ class CompanySettings(TenantBase):
         nullable=False,
         default=PayrollWorkingDaysBasis.calendar_days,
     )
+    attendance_pay_mode: Mapped[AttendancePayMode] = mapped_column(
+        Enum(AttendancePayMode, name="attendance_pay_mode"),
+        nullable=False,
+        default=AttendancePayMode.fixed,
+        server_default=text("'fixed'"),
+    )
+    worked_hours_basis: Mapped[WorkedHoursBasis] = mapped_column(
+        Enum(WorkedHoursBasis, name="worked_hours_basis"),
+        nullable=False,
+        default=WorkedHoursBasis.intervals,
+        server_default=text("'intervals'"),
+    )
+
+
+def resolve_attendance_pay_mode(
+    employee: object, settings: CompanySettings | None
+) -> AttendancePayMode:
+    """Resolve the effective attendance pay mode for an employee.
+
+    Returns the employee's override if set, otherwise the company setting,
+    defaulting to ``AttendancePayMode.fixed`` when no settings row exists.
+    Every caller must go through this helper.
+    """
+    emp_mode = getattr(employee, "attendance_pay_mode", None)
+    if emp_mode is not None:
+        return AttendancePayMode(emp_mode)
+    if settings is not None and settings.attendance_pay_mode is not None:
+        return AttendancePayMode(settings.attendance_pay_mode)
+    return AttendancePayMode.fixed

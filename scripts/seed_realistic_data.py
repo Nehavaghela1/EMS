@@ -861,8 +861,8 @@ def run_seed():
                         employee_id=emp.id,
                         ctc_snapshot=Decimal("1200000.00"),
                         gross_salary=Decimal("100000.00"),
-                        total_deductions=Decimal("12000.00"),
-                        net_salary=Decimal("88000.00"),
+                        total_deductions=Decimal("2000.00"),
+                        net_salary=Decimal("98000.00"),
                         employer_cost=Decimal("105000.00"),
                         earnings_json=[
                             {"code": "BASIC", "name": "Basic Pay", "amount": 50000.0},

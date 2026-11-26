@@ -5,13 +5,81 @@ Generates standard A4 PDF documents matching official payroll layouts using Repo
 """
 
 import io
+import os
 from decimal import Decimal
 from typing import Any
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+_FONT_INITIALIZED = False
+_SANS_REGULAR = "Helvetica"
+_SANS_BOLD = "Helvetica-Bold"
+_SANS_OBLIQUE = "Helvetica-Oblique"
+
+_CANDIDATE_FONTS = [
+    (
+        "/System/Library/Fonts/SFNS.ttf",
+        "/System/Library/Fonts/SFNS.ttf",
+        "/System/Library/Fonts/SFNSItalic.ttf",
+    ),
+    (
+        "/System/Library/Fonts/Geneva.ttf",
+        "/System/Library/Fonts/Geneva.ttf",
+        "/System/Library/Fonts/Geneva.ttf",
+    ),
+    (
+        "/System/Library/Fonts/SFCompact.ttf",
+        "/System/Library/Fonts/SFCompact.ttf",
+        "/System/Library/Fonts/SFCompactItalic.ttf",
+    ),
+    (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+    ),
+    (
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf",
+    ),
+]
+
+
+def _ensure_unicode_fonts() -> tuple[str, str, str]:
+    global _FONT_INITIALIZED, _SANS_REGULAR, _SANS_BOLD, _SANS_OBLIQUE
+    if _FONT_INITIALIZED:
+        return _SANS_REGULAR, _SANS_BOLD, _SANS_OBLIQUE
+    for norm, bold, obl in _CANDIDATE_FONTS:
+        if os.path.exists(norm):
+            try:
+                tf = TTFont("AppUnicodeSans", norm)
+                if ord("₹") in tf.face.charToGlyph:
+                    pdfmetrics.registerFont(tf)
+                    pdfmetrics.registerFont(
+                        TTFont("AppUnicodeSans-Bold", bold if os.path.exists(bold) else norm)
+                    )
+                    pdfmetrics.registerFont(
+                        TTFont("AppUnicodeSans-Oblique", obl if os.path.exists(obl) else norm)
+                    )
+                    pdfmetrics.registerFontFamily(
+                        "AppUnicodeSans",
+                        normal="AppUnicodeSans",
+                        bold="AppUnicodeSans-Bold",
+                        italic="AppUnicodeSans-Oblique",
+                    )
+                    _SANS_REGULAR = "AppUnicodeSans"
+                    _SANS_BOLD = "AppUnicodeSans-Bold"
+                    _SANS_OBLIQUE = "AppUnicodeSans-Oblique"
+                    break
+            except Exception:
+                pass
+    _FONT_INITIALIZED = True
+    return _SANS_REGULAR, _SANS_BOLD, _SANS_OBLIQUE
 
 
 def _fmt_inr(val: Any) -> str:
@@ -39,6 +107,7 @@ def generate_payslip_pdf(
     net_pay_words: str,
 ) -> bytes:
     """Renders a single-page official Payslip PDF."""
+    font_reg, font_bold, font_oblique = _ensure_unicode_fonts()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -55,7 +124,7 @@ def generate_payslip_pdf(
         parent=styles["Normal"],
         fontSize=15,
         leading=18,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
     )
     header_sub_style = ParagraphStyle(
@@ -63,7 +132,7 @@ def generate_payslip_pdf(
         parent=styles["Normal"],
         fontSize=8.5,
         leading=12,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#64748b"),
     )
     period_style = ParagraphStyle(
@@ -72,7 +141,7 @@ def generate_payslip_pdf(
         alignment=2,  # Right align
         fontSize=9,
         leading=13,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
     )
     period_sub_style = ParagraphStyle(
@@ -81,7 +150,7 @@ def generate_payslip_pdf(
         alignment=2,
         fontSize=7.5,
         leading=10,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#64748b"),
     )
     label_style = ParagraphStyle(
@@ -89,7 +158,7 @@ def generate_payslip_pdf(
         parent=styles["Normal"],
         fontSize=8,
         leading=11,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#64748b"),
     )
     val_style = ParagraphStyle(
@@ -97,7 +166,7 @@ def generate_payslip_pdf(
         parent=styles["Normal"],
         fontSize=8,
         leading=11,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
     )
     table_th_style = ParagraphStyle(
@@ -105,7 +174,7 @@ def generate_payslip_pdf(
         parent=styles["Normal"],
         fontSize=8.5,
         leading=11,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#334155"),
     )
     table_cell_style = ParagraphStyle(
@@ -113,7 +182,7 @@ def generate_payslip_pdf(
         parent=styles["Normal"],
         fontSize=8,
         leading=11,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#1e293b"),
     )
     table_cell_bold = ParagraphStyle(
@@ -121,7 +190,7 @@ def generate_payslip_pdf(
         parent=styles["Normal"],
         fontSize=8,
         leading=11,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
     )
     table_num_style = ParagraphStyle(
@@ -130,7 +199,7 @@ def generate_payslip_pdf(
         alignment=2,
         fontSize=8,
         leading=11,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#1e293b"),
     )
     table_num_bold = ParagraphStyle(
@@ -139,7 +208,7 @@ def generate_payslip_pdf(
         alignment=2,
         fontSize=8,
         leading=11,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
     )
     footer_style = ParagraphStyle(
@@ -148,7 +217,7 @@ def generate_payslip_pdf(
         alignment=1,
         fontSize=7.5,
         leading=10,
-        fontName="Helvetica-Oblique",
+        fontName=font_oblique,
         textColor=colors.HexColor("#94a3b8"),
     )
 
@@ -225,13 +294,13 @@ def generate_payslip_pdf(
             Paragraph(
                 f"<font size='14' color='#16a34a'><b>{net_payable}</b></font><br/>"
                 "<font size='7.5' color='#64748b'>TOTAL NET PAY</font>",
-                ParagraphStyle("NetPayCallout", alignment=1, leading=15),
+                ParagraphStyle("NetPayCallout", fontName=font_bold, alignment=1, leading=15),
             )
         ],
         [
             Paragraph(
                 f"<font size='7.5' color='#334155'>Paid Days: <b>{paid_days}</b> &nbsp;|&nbsp; LOP: <b>{lop_days}</b></font>",
-                ParagraphStyle("NetPayDays", alignment=1, leading=10),
+                ParagraphStyle("NetPayDays", fontName=font_reg, alignment=1, leading=10),
             )
         ],
     ]
@@ -410,6 +479,7 @@ def generate_payslip_pdf(
                 ParagraphStyle(
                     "WordsStyle",
                     parent=styles["Normal"],
+                    fontName=font_reg,
                     fontSize=8,
                     textColor=colors.HexColor("#475569"),
                 ),
@@ -446,6 +516,7 @@ def generate_tax_worksheet_pdf(
     monthly_tds: str,
 ) -> bytes:
     """Renders a single-page official Tax Computation Worksheet PDF."""
+    font_reg, font_bold, font_oblique = _ensure_unicode_fonts()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -462,7 +533,7 @@ def generate_tax_worksheet_pdf(
         parent=styles["Normal"],
         fontSize=15,
         leading=18,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
     )
     header_sub_style = ParagraphStyle(
@@ -470,7 +541,7 @@ def generate_tax_worksheet_pdf(
         parent=styles["Normal"],
         fontSize=8.5,
         leading=12,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#64748b"),
     )
     period_style = ParagraphStyle(
@@ -479,7 +550,7 @@ def generate_tax_worksheet_pdf(
         alignment=2,
         fontSize=9,
         leading=13,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
     )
     period_sub_style = ParagraphStyle(
@@ -488,7 +559,7 @@ def generate_tax_worksheet_pdf(
         alignment=2,
         fontSize=7.5,
         leading=10,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#64748b"),
     )
     section_title = ParagraphStyle(
@@ -496,7 +567,7 @@ def generate_tax_worksheet_pdf(
         parent=styles["Normal"],
         fontSize=9.5,
         leading=13,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
     )
     cell_label = ParagraphStyle(
@@ -504,7 +575,7 @@ def generate_tax_worksheet_pdf(
         parent=styles["Normal"],
         fontSize=8,
         leading=11,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#334155"),
     )
     cell_label_bold = ParagraphStyle(
@@ -512,7 +583,7 @@ def generate_tax_worksheet_pdf(
         parent=styles["Normal"],
         fontSize=8,
         leading=11,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
     )
     cell_num = ParagraphStyle(
@@ -521,7 +592,7 @@ def generate_tax_worksheet_pdf(
         alignment=2,
         fontSize=8,
         leading=11,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#1e293b"),
     )
     cell_num_bold = ParagraphStyle(
@@ -530,7 +601,7 @@ def generate_tax_worksheet_pdf(
         alignment=2,
         fontSize=8,
         leading=11,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
     )
     footer_style = ParagraphStyle(
@@ -539,7 +610,7 @@ def generate_tax_worksheet_pdf(
         alignment=1,
         fontSize=7.5,
         leading=10,
-        fontName="Helvetica-Oblique",
+        fontName=font_oblique,
         textColor=colors.HexColor("#94a3b8"),
     )
 
@@ -696,6 +767,7 @@ def generate_salary_certificate_pdf(
     signatory_title: str,
 ) -> bytes:
     """Renders a single-page official Salary Certificate PDF."""
+    font_reg, font_bold, font_oblique = _ensure_unicode_fonts()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -712,7 +784,7 @@ def generate_salary_certificate_pdf(
         parent=styles["Normal"],
         fontSize=16,
         leading=20,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#0f172a"),
         alignment=1,
     )
@@ -721,7 +793,7 @@ def generate_salary_certificate_pdf(
         parent=styles["Normal"],
         fontSize=8.5,
         leading=12,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#64748b"),
         alignment=1,
     )
@@ -730,7 +802,7 @@ def generate_salary_certificate_pdf(
         parent=styles["Normal"],
         fontSize=12,
         leading=16,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#1e293b"),
         alignment=1,
     )
@@ -739,7 +811,7 @@ def generate_salary_certificate_pdf(
         parent=styles["Normal"],
         fontSize=9,
         leading=14,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#334155"),
     )
     table_th = ParagraphStyle(
@@ -747,7 +819,7 @@ def generate_salary_certificate_pdf(
         parent=styles["Normal"],
         fontSize=8.5,
         leading=11,
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         textColor=colors.HexColor("#334155"),
     )
     table_cell = ParagraphStyle(
@@ -755,7 +827,7 @@ def generate_salary_certificate_pdf(
         parent=styles["Normal"],
         fontSize=8,
         leading=11,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#1e293b"),
     )
     table_num = ParagraphStyle(
@@ -764,7 +836,7 @@ def generate_salary_certificate_pdf(
         alignment=2,
         fontSize=8,
         leading=11,
-        fontName="Helvetica",
+        fontName=font_reg,
         textColor=colors.HexColor("#1e293b"),
     )
     footer_style = ParagraphStyle(
@@ -773,7 +845,7 @@ def generate_salary_certificate_pdf(
         alignment=1,
         fontSize=7.5,
         leading=10,
-        fontName="Helvetica-Oblique",
+        fontName=font_oblique,
         textColor=colors.HexColor("#94a3b8"),
     )
 
@@ -831,15 +903,15 @@ def generate_salary_certificate_pdf(
         [
             Paragraph(
                 "<b>Total Gross Salary</b>",
-                ParagraphStyle("TCB", parent=table_cell, fontName="Helvetica-Bold"),
+                ParagraphStyle("TCB", parent=table_cell, fontName=font_bold),
             ),
             Paragraph(
                 f"<b>{_fmt_inr(monthly_gross)}</b>",
-                ParagraphStyle("TNB1", parent=table_num, fontName="Helvetica-Bold"),
+                ParagraphStyle("TNB1", parent=table_num, fontName=font_bold),
             ),
             Paragraph(
                 f"<b>{_fmt_inr(annual_ctc)}</b>",
-                ParagraphStyle("TNB2", parent=table_num, fontName="Helvetica-Bold"),
+                ParagraphStyle("TNB2", parent=table_num, fontName=font_bold),
             ),
         ]
     )

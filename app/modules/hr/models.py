@@ -157,6 +157,16 @@ class Employee(TenantBase):
         String(30), nullable=False, default="pending", server_default=text("'pending'")
     )
     notice_period_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    attendance_pay_mode: Mapped[str | None] = mapped_column(
+        Enum(
+            "fixed",
+            "hourly_prorata",
+            name="attendance_pay_mode",
+            create_type=False,
+        ),
+        nullable=True,
+        default=None,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_attendance_exempt: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     invitation_status: Mapped[InvitationStatus] = mapped_column(

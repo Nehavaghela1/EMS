@@ -39,7 +39,14 @@ from app.modules.hr.repository import (
     EmployeeRepository,
     EmployeeSectionRepository,
 )
-from app.modules.identity.models import PayrollWorkingDaysBasis, User, UserRole
+from app.modules.identity.models import (
+    AttendancePayMode,
+    PayrollWorkingDaysBasis,
+    User,
+    UserRole,
+    WorkedHoursBasis,
+    resolve_attendance_pay_mode,
+)
 from app.modules.identity.repository import (
     CompanyRepository,
     CompanySettingsRepository,
@@ -1354,6 +1361,10 @@ def summarise_attendance(
     attendance: dict[date, AttendanceStatus],
     leaves: list[tuple[Leave, bool]],
     attendance_exempt: bool,
+    pay_mode: AttendancePayMode = AttendancePayMode.fixed,
+    worked_hours_basis: WorkedHoursBasis = WorkedHoursBasis.intervals,
+    full_day_hours: Decimal = Decimal("8"),
+    attendance_hours: dict[date, tuple[Decimal | None, Decimal | None]] | None = None,
 ) -> AttendanceSummary:
     """Loss of pay for one employee and month, one date at a time so that no date is counted
     twice. A calendar day before joining or after the approved last working date is loss of
@@ -1394,6 +1405,19 @@ def summarise_attendance(
                 elif status == AttendanceStatus.half_day:
                     lop += _HALF
                     half += _ONE
+                elif (
+                    status == AttendanceStatus.present
+                    and pay_mode == AttendancePayMode.hourly_prorata
+                    and attendance_hours is not None
+                    and full_day_hours > _ZERO
+                ):
+                    worked, span = attendance_hours.get(day, (None, None))
+                    hours = worked if worked_hours_basis == WorkedHoursBasis.intervals else span
+                    if hours is not None and hours < full_day_hours:
+                        shortfall = ((full_day_hours - hours) / full_day_hours).quantize(
+                            Decimal("0.0001"), rounding=ROUND_HALF_UP
+                        )
+                        lop += max(_ZERO, min(_ONE, shortfall))
         if lop != lop_before:
             lop_dates.append((day, lop - lop_before))
         day += timedelta(days=1)
@@ -1765,6 +1789,16 @@ class PayrollRunService:
                     company_id, emp.id, month_start, month_end
                 ),
                 attendance_exempt=emp.is_attendance_exempt,
+                pay_mode=resolve_attendance_pay_mode(emp, settings),
+                worked_hours_basis=(
+                    settings.worked_hours_basis
+                    if settings is not None
+                    else WorkedHoursBasis.intervals
+                ),
+                full_day_hours=(settings.full_day_hours if settings is not None else Decimal("8")),
+                attendance_hours=self.attendance_repo.hours_by_date(
+                    company_id, emp.id, month_start, month_end
+                ),
             )
             lop_days = summary.lop_days
             paid_leave_days = summary.paid_leave_days

@@ -181,15 +181,17 @@ export function ReimbursementsPage() {
 
   // Calculate summary metrics for Zoho-style KPI cards
   const pool = summaryClaims.length > 0 ? summaryClaims : claims;
-  const totalApproved = pool
-    .filter((c) => c.status === "approved")
-    .reduce((sum, c) => sum + Number(c.amount || 0), 0);
-  const totalPending = pool
-    .filter((c) => c.status === "pending")
-    .reduce((sum, c) => sum + Number(c.amount || 0), 0);
-  const totalPaidInPayroll = pool
-    .filter((c) => c.status === "paid")
-    .reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const pendingClaims = pool.filter((c) => c.status === "pending");
+  const approvedClaims = pool.filter((c) => c.status === "approved");
+  const paidClaims = pool.filter((c) => c.status === "paid");
+  const rejectedClaims = pool.filter((c) => c.status === "rejected");
+  const withdrawnClaims = pool.filter((c) => c.status === "withdrawn");
+
+  const totalApproved = approvedClaims.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const totalPending = pendingClaims.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const totalPaidInPayroll = paidClaims.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const totalRejected = rejectedClaims.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const totalWithdrawn = withdrawnClaims.reduce((sum, c) => sum + Number(c.amount || 0), 0);
 
   const tabLabels: Record<string, string> = {
     all: "ALL",
@@ -230,7 +232,7 @@ export function ReimbursementsPage() {
         </div>
 
         <div className="card p-3" style={{ background: "#fefce8", border: "1px solid #fef08a" }}>
-          <div className="text-xs uppercase font-semibold" style={{ color: "#854d0e" }}>⏳ Pending Approval</div>
+          <div className="text-xs uppercase font-semibold" style={{ color: "#854d0e" }}>⏳ Pending Approval ({pendingClaims.length})</div>
           <div className="text-xl font-bold mt-1" style={{ color: "#a16207" }}>
             ₹{totalPending.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
           </div>
@@ -238,7 +240,7 @@ export function ReimbursementsPage() {
         </div>
 
         <div className="card p-3" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-          <div className="text-xs uppercase font-semibold" style={{ color: "#166534" }}>⏳ Approved (Pending Payroll)</div>
+          <div className="text-xs uppercase font-semibold" style={{ color: "#166534" }}>⏳ Approved (Pending Payroll) ({approvedClaims.length})</div>
           <div className="text-xl font-bold mt-1 text-success">
             ₹{totalApproved.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
           </div>
@@ -246,11 +248,27 @@ export function ReimbursementsPage() {
         </div>
 
         <div className="card p-3" style={{ background: "#ecfeff", border: "1px solid #a5f3fc" }}>
-          <div className="text-xs uppercase font-semibold" style={{ color: "#0e7490" }}>✅ Paid in Payroll</div>
+          <div className="text-xs uppercase font-semibold" style={{ color: "#0e7490" }}>✅ Paid in Payroll ({paidClaims.length})</div>
           <div className="text-xl font-bold mt-1" style={{ color: "#0891b2" }}>
             ₹{totalPaidInPayroll.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
           </div>
           <div className="text-xs text-muted mt-1">Credited in finalized payslips</div>
+        </div>
+
+        <div className="card p-3" style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
+          <div className="text-xs uppercase font-semibold" style={{ color: "#991b1b" }}>❌ Rejected ({rejectedClaims.length})</div>
+          <div className="text-xl font-bold mt-1" style={{ color: "#b91c1c" }}>
+            ₹{totalRejected.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-xs text-muted mt-1">Declined claims</div>
+        </div>
+
+        <div className="card p-3" style={{ background: "#f1f5f9", border: "1px solid #cbd5e1" }}>
+          <div className="text-xs uppercase font-semibold" style={{ color: "#475569" }}>↩️ Withdrawn ({withdrawnClaims.length})</div>
+          <div className="text-xl font-bold mt-1" style={{ color: "#334155" }}>
+            ₹{totalWithdrawn.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-xs text-muted mt-1">Withdrawn by employee</div>
         </div>
       </div>
 

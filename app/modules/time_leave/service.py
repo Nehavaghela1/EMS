@@ -33,6 +33,7 @@ from app.modules.platform.service import (
 from app.modules.time_leave.geofence import verify_employee_geofence
 from app.modules.time_leave.models import (
     Attendance,
+    AttendancePunch,
     AttendanceRegularizationRequest,
     AttendanceSource,
     AttendanceStatus,
@@ -42,6 +43,8 @@ from app.modules.time_leave.models import (
     LeaveBalance,
     LeaveStatus,
     LeaveType,
+    PunchDirection,
+    PunchSource,
     RegularizationStatus,
     Shift,
 )
@@ -196,8 +199,10 @@ class AttendanceService:
         self.notify = NotificationService(db)
         # Imported lazily to avoid circular imports at module level
         from app.modules.identity.repository import CompanyLocationRepository
+        from app.modules.time_leave.repository import HolidayRepository
 
         self.location_repo = CompanyLocationRepository(db)
+        self.holiday_repo = HolidayRepository(db)
 
     def _check_attendance_not_payroll_locked(
         self, company_id: uuid.UUID, target_date: date
@@ -223,6 +228,9 @@ class AttendanceService:
                 f"for period {run.month:02d}/{run.year}."
             )
 
+    def _weekend_days(self, settings_row: CompanySettings | None) -> set[int]:
+        return set(settings_row.weekend_days) if settings_row else {6, 7}
+
     def _resolve_scope(self, company_id: uuid.UUID, current_user: User) -> list[uuid.UUID] | None:
         """None = unrestricted (HR/SA). A list = restricted to exactly these
         employee ids (self for an employee, self + direct reports for a manager)."""
@@ -235,6 +243,116 @@ class AttendanceService:
             reports = self.employee_repo.list_direct_report_ids(company_id, caller_employee.id)
             return [caller_employee.id] + [r for r in reports if r != caller_employee.id]
         return [caller_employee.id]
+
+    @staticmethod
+    def recompute_attendance_from_punches(
+        attendance: Attendance, punches: list[AttendancePunch]
+    ) -> None:
+        """Recompute derived summary fields on an Attendance row from its ordered punches.
+
+        Called whenever a punch is added so the summary can never drift from punch rows.
+        """
+        ordered = sorted(punches, key=lambda p: p.punched_at)
+        ins = [p for p in ordered if p.direction == PunchDirection.in_]
+        outs = [p for p in ordered if p.direction == PunchDirection.out]
+
+        first_in = ins[0].punched_at if ins else None
+        last_out = outs[-1].punched_at if outs else None
+
+        worked_seconds = Decimal("0")
+        open_in: datetime | None = None
+        for p in ordered:
+            if p.direction == PunchDirection.in_:
+                open_in = p.punched_at
+            elif p.direction == PunchDirection.out and open_in is not None:
+                worked_seconds += Decimal(str((p.punched_at - open_in).total_seconds()))
+                open_in = None
+
+        worked_hours = (worked_seconds / Decimal("3600")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+
+        if first_in is not None and last_out is not None and last_out >= first_in:
+            span_seconds = Decimal(str((last_out - first_in).total_seconds()))
+            span_hours = (span_seconds / Decimal("3600")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            outside_hours = (span_hours - worked_hours).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+        else:
+            span_hours = None
+            outside_hours = None
+
+        attendance.check_in = first_in
+        attendance.check_out = last_out
+        attendance.worked_hours = worked_hours
+        attendance.span_hours = span_hours
+        attendance.outside_hours = outside_hours
+        attendance.hours_worked = worked_hours
+
+    def record_punch(
+        self,
+        *,
+        company_id: uuid.UUID,
+        employee_id: uuid.UUID,
+        punched_at: datetime,
+        direction: PunchDirection,
+        source: PunchSource = PunchSource.web,
+        created_by: uuid.UUID | None = None,
+    ) -> AttendancePunch:
+        """Record a single punch event and recompute the day's Attendance summary."""
+        now = utcnow()
+        if punched_at > now:
+            raise ValidationError(f"Punch time {punched_at.isoformat()} cannot be in the future.")
+        punch_date = punched_at.date()
+        self._check_attendance_not_payroll_locked(company_id, punch_date)
+
+        attendance = self.repo.get_by_employee_and_date(company_id, employee_id, punch_date)
+        if attendance is None:
+            attendance = Attendance(
+                company_id=company_id,
+                employee_id=employee_id,
+                date=punch_date,
+                status=AttendanceStatus.present,
+                source=AttendanceSource.web,
+            )
+            self.db.add(attendance)
+            self.db.flush()
+
+        existing = self.repo.list_punches_for_attendance(company_id, attendance.id)
+        if not existing:
+            if direction == PunchDirection.out:
+                raise ValidationError(
+                    f"Cannot punch out with no open punch-in (punch at {punched_at.isoformat()})."
+                )
+        else:
+            last_punch = existing[-1]
+            if last_punch.direction == direction:
+                raise ValidationError(
+                    f"Cannot record '{direction.value}' punch at {punched_at.isoformat()}: "
+                    f"clashes with previous '{last_punch.direction.value}' punch at "
+                    f"{last_punch.punched_at.isoformat()}."
+                )
+            if punched_at <= last_punch.punched_at:
+                raise ValidationError(
+                    f"Punch at {punched_at.isoformat()} must be after previous punch at "
+                    f"{last_punch.punched_at.isoformat()}."
+                )
+
+        punch = self.repo.add_punch(
+            company_id=company_id,
+            employee_id=employee_id,
+            attendance_id=attendance.id,
+            punched_at=punched_at,
+            direction=direction,
+            source=source,
+            created_by=created_by,
+        )
+        all_punches = existing + [punch]
+        self.recompute_attendance_from_punches(attendance, all_punches)
+        self.db.commit()
+        return punch
 
     def check_in(
         self, company_id: uuid.UUID, current_user: User, body: CheckInRequest | None = None
@@ -312,6 +430,17 @@ class AttendanceService:
                 source=AttendanceSource.web,
                 notes=fence_notes,
             )
+            # Record punch event
+            punch = self.repo.add_punch(
+                company_id=company_id,
+                employee_id=employee.id,
+                attendance_id=record.id,
+                punched_at=record.check_in,
+                direction=PunchDirection.in_,
+                source=PunchSource.web,
+                created_by=current_user.id,
+            )
+            self.recompute_attendance_from_punches(record, [punch])
             self.db.commit()
         except IntegrityError as exc:
             self.db.rollback()
@@ -357,6 +486,18 @@ class AttendanceService:
             status = AttendanceStatus.present
 
         self.repo.update(record, check_out=now, hours_worked=hours, status=status)
+        # Record punch event and recompute derived summary
+        self.repo.add_punch(
+            company_id=company_id,
+            employee_id=employee.id,
+            attendance_id=record.id,
+            punched_at=now,
+            direction=PunchDirection.out,
+            source=PunchSource.web,
+            created_by=current_user.id,
+        )
+        existing_punches = self.repo.list_punches_for_attendance(company_id, record.id)
+        self.recompute_attendance_from_punches(record, existing_punches)
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
         return record
@@ -526,6 +667,26 @@ class AttendanceService:
         caller = self.employee_repo.get_by_user_id(company_id, current_user.id)
         if caller is None or record.employee_id != caller.id:
             raise ForbiddenError("You can only request a correction for your own attendance.")
+
+        self._check_attendance_not_payroll_locked(company_id, record.date)
+
+        # 2A: Refuse an employee's regularization request on a weekly off or holiday
+        settings_row = self.settings_repo.get_by_company(company_id)
+        weekend_days = self._weekend_days(settings_row)
+        if record.date.isoweekday() in weekend_days:
+            day_name = record.date.strftime("%A")
+            raise ValidationError(
+                f"Regularization cannot be requested for a weekly off ({day_name}).",
+                details={"field": "attendance_id"},
+            )
+        dept_id = caller.department_id if caller else None
+        holidays = self.holiday_repo.list_in_range(company_id, record.date, record.date, dept_id)
+        if holidays:
+            raise ValidationError(
+                f"Regularization cannot be requested for holiday: {holidays[0].name}.",
+                details={"field": "attendance_id"},
+            )
+
         if record.date < utcnow().date() - timedelta(days=REGULARIZATION_MAX_AGE_DAYS):
             raise ValidationError(
                 f"Attendance older than {REGULARIZATION_MAX_AGE_DAYS} days cannot be corrected "
@@ -931,8 +1092,10 @@ class AttendanceService:
         today = utcnow().date()
 
         # Company settings for weekends
-        # 0=Monday ... 6=Sunday. Default weekend: Saturday(5), Sunday(6)
-        weekend_days = {5, 6}
+        settings_row = self.settings_repo.get_by_company(company_id)
+        # Convert ISO weekday (Mon=1 ... Sun=7) to Python weekday (Mon=0 ... Sun=6)
+        iso_weekend_days = self._weekend_days(settings_row)
+        weekend_days = {(d - 1) % 7 for d in iso_weekend_days}
 
         # Index attendance rows by date
         att_rows = (

@@ -67,6 +67,9 @@ class Attendance(TenantBase):
         Enum(AttendanceStatus, name="attendance_status"), nullable=False
     )
     hours_worked: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    span_hours: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    worked_hours: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    outside_hours: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     source: Mapped[AttendanceSource] = mapped_column(
         # values_callable: `import` is a Python keyword, so the enum member
         # is named `import_` — without this, SQLAlchemy's default behaviour
@@ -83,6 +86,52 @@ class Attendance(TenantBase):
         default=AttendanceSource.web,
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PunchDirection(str, enum.Enum):
+    in_ = "in"
+    out = "out"
+
+
+class PunchSource(str, enum.Enum):
+    web = "web"
+    biometric = "biometric"
+    hr_manual = "hr_manual"
+
+
+class AttendancePunch(TenantBase):
+    """Individual door-reader / web / HR manual punch events (one row per punch).
+    RLS: Yes."""
+
+    __tablename__ = "attendance_punch"
+    __table_args__ = (
+        Index("ix_attendance_punch_company_emp_at", "company_id", "employee_id", "punched_at"),
+        Index("ix_attendance_punch_attendance_at", "attendance_id", "punched_at"),
+    )
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("employees.id"), nullable=False
+    )
+    attendance_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("attendance.id"), nullable=False
+    )
+    punched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    direction: Mapped[PunchDirection] = mapped_column(
+        Enum(
+            PunchDirection,
+            name="punch_direction",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
+    )
+    source: Mapped[PunchSource] = mapped_column(
+        Enum(PunchSource, name="punch_source"),
+        nullable=False,
+        default=PunchSource.web,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
 
 
 class Shift(TenantBase):
