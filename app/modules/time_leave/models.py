@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy import Time as SATime
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import TenantBase
 
@@ -87,6 +87,12 @@ class Attendance(TenantBase):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    punches: Mapped[list["AttendancePunch"]] = relationship(
+        "AttendancePunch",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
 
 class PunchDirection(str, enum.Enum):
     in_ = "in"
@@ -113,7 +119,7 @@ class AttendancePunch(TenantBase):
         PGUUID(as_uuid=True), ForeignKey("employees.id"), nullable=False
     )
     attendance_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("attendance.id"), nullable=False
+        PGUUID(as_uuid=True), ForeignKey("attendance.id", ondelete="CASCADE"), nullable=False
     )
     punched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     direction: Mapped[PunchDirection] = mapped_column(
