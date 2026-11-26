@@ -219,9 +219,9 @@ def test_R3_the_breakdown_adds_up_to_the_paisa(
     for amount in [gross, net, reimb, *(Decimal(e["amount"]) for e in item["earnings_json"])]:
         assert amount == amount.quantize(Decimal("0.01")), f"R3: {amount} must have two decimals"
     assert any(e["code"] == "SPECIAL" for e in item["earnings_json"]), "R3: balance line present"
-    assert len(item["earnings_json"]) == 3, (
-        "R3: every salary component on the structure is present in earnings_json"
-    )
+    assert (
+        len(item["earnings_json"]) == 3
+    ), "R3: every salary component on the structure is present in earnings_json"
     assert Decimal(item["lop_days"]) == Decimal(join_day - 1), "R3: the case includes a LOP part"
 
 
