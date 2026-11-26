@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useRef } from "react";
 import { type TaxWorksheetResponse } from "../api";
 import { type CompanyResponse } from "../../identity/api";
 import { DocumentShell } from "./DocumentShell";
 import { DocumentActions } from "./DocumentActions";
+import { downloadDocumentAsHtml } from "../utils";
 
 interface TaxWorksheetModalProps {
   isOpen: boolean;
@@ -21,10 +22,21 @@ export const TaxWorksheetModal: React.FC<TaxWorksheetModalProps> = ({
   monthName,
   year,
 }) => {
+  const contentRef = useRef<HTMLDivElement>(null);
   if (!isOpen) return null;
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDownload = () => {
+    if (!contentRef.current) return;
+    const cleanMonth = monthName.replace(String(year), "").trim();
+    const periodStr = `${cleanMonth}_${year}`.trim();
+    downloadDocumentAsHtml(
+      contentRef.current,
+      `Tax_Worksheet_${periodStr || "Document"}.html`
+    );
   };
 
   const formatINR = (val: string | number | null | undefined) =>
@@ -81,7 +93,7 @@ export const TaxWorksheetModal: React.FC<TaxWorksheetModalProps> = ({
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            <DocumentActions onDownload={handlePrint} onPrint={handlePrint} />
+            <DocumentActions onDownload={handleDownload} onPrint={handlePrint} />
             <button
               type="button"
               onClick={onClose}
@@ -106,6 +118,7 @@ export const TaxWorksheetModal: React.FC<TaxWorksheetModalProps> = ({
 
         {/* Modal Printable Content */}
         <div
+          ref={contentRef}
           data-print-content="true"
           style={{
             overflowY: "auto",

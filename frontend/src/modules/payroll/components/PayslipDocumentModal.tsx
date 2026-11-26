@@ -1,9 +1,10 @@
-import React from "react";
+import React, { useRef } from "react";
 import { type PayrollItem } from "../api";
 import { type Employee } from "../../hr/api";
 import { type CompanyResponse } from "../../identity/api";
 import { DocumentShell } from "./DocumentShell";
 import { DocumentActions } from "./DocumentActions";
+import { downloadDocumentAsHtml } from "../utils";
 
 interface PayslipDocumentModalProps {
   isOpen: boolean;
@@ -62,16 +63,19 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
   const reimbursementNum = Number(item.reimbursement_amount) || 0;
 
   const cleanPeriod = monthName.includes(String(year)) ? monthName : `${monthName} ${year}`;
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
     window.print();
   };
 
   const handleDownload = () => {
-    const originalTitle = document.title;
-    document.title = `Payslip_${empName.replace(/\s+/g, "_")}_${monthName}${year}`;
-    window.print();
-    document.title = originalTitle;
+    if (!contentRef.current) return;
+    const periodStr = cleanPeriod.replace(/\s+/g, "_");
+    downloadDocumentAsHtml(
+      contentRef.current,
+      `Payslip_${empName.replace(/\s+/g, "_")}_${periodStr}.html`
+    );
   };
 
   return (
@@ -151,6 +155,7 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
 
         {/* Modal Printable Content */}
         <div
+          ref={contentRef}
           data-print-content="true"
           style={{
             overflowY: "auto",

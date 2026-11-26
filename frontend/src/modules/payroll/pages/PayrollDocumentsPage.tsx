@@ -1,11 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { listMyPayslips, type PayrollItem } from "../api";
 import { getMyCompany, type CompanyResponse } from "../../identity/api";
 import { useAuth } from "../../../app/auth-context";
 import { parseApiError } from "../../../shared/api/errors";
 import { PayslipDocumentModal } from "../components/PayslipDocumentModal";
 import { DocumentActions } from "../components/DocumentActions";
-import { formatMonthYear } from "../utils";
+import { formatMonthYear, downloadDocumentAsHtml } from "../utils";
 
 export function PayrollDocumentsPage() {
   const { user } = useAuth();
@@ -54,13 +54,13 @@ export function PayrollDocumentsPage() {
     setSelectedPayslip(item);
     setIsDocModalOpen(true);
     setTimeout(() => {
-      const originalTitle = document.title;
+      const modalDoc = document.querySelector(".modal-backdrop [data-print-content='true']") as HTMLElement;
       const empName = user?.employee ? `${user.employee.first_name}_${user.employee.last_name || ""}`.trim() : "Employee";
       const label = formatMonthYear(item).replace(/\s+/g, "_");
-      document.title = `Payslip_${empName}_${label}`;
-      window.print();
-      document.title = originalTitle;
-    }, 100);
+      if (modalDoc) {
+        downloadDocumentAsHtml(modalDoc, `Payslip_${empName}_${label}.html`);
+      }
+    }, 150);
   };
 
   return (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   listMyPayslips,
   getMyBankAccount,
@@ -24,7 +24,7 @@ import { DocumentShell } from "../components/DocumentShell";
 import { DocumentActions } from "../components/DocumentActions";
 import { CompanyLogo } from "../../../shared/components/CompanyLogo";
 import { CATEGORICAL_PALETTE } from "../../../shared/utils/palette";
-import { formatMonthYear, formatShortMonthYear } from "../utils";
+import { formatMonthYear, formatShortMonthYear, downloadDocumentAsHtml } from "../utils";
 
 // Number to Indian Words converter
 function numberToIndianWords(num: number): string {
@@ -259,17 +259,22 @@ export function MyPayslipPage() {
     }
   };
 
+  const payslipDetailRef = useRef<HTMLDivElement>(null);
+
   const handlePrint = () => {
     window.print();
   };
 
   const handleDownloadPayslip = () => {
-    const originalTitle = document.title;
-    const empName = user?.employee ? `${user.employee.first_name}_${user.employee.last_name || ""}`.trim() : "Employee";
-    const label = selectedPayslip ? formatMonthYear(selectedPayslip).replace(/\s+/g, "_") : "Statement";
-    document.title = `Payslip_${empName}_${label}`;
-    window.print();
-    document.title = originalTitle;
+    if (payslipDetailRef.current) {
+      const empName = user?.employee
+        ? `${user.employee.first_name}_${user.employee.last_name || ""}`.trim()
+        : "Employee";
+      const label = selectedPayslip ? formatMonthYear(selectedPayslip).replace(/\s+/g, "_") : "Statement";
+      downloadDocumentAsHtml(payslipDetailRef.current, `Payslip_${empName}_${label}.html`);
+    } else {
+      window.print();
+    }
   };
 
   const handleExportAnnualEarnings = async () => {
@@ -839,6 +844,7 @@ export function MyPayslipPage() {
               {/* Right Column: Slide-in Detail Panel */}
               {selectedPayslip && filteredPayslips.some((p) => p.id === selectedPayslip.id) && (
                 <div
+                  ref={payslipDetailRef}
                   style={{
                     background: "#ffffff",
                     borderRadius: "14px",
