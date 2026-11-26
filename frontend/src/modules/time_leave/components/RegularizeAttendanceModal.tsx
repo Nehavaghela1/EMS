@@ -2,6 +2,8 @@ import React, { useState, useMemo } from "react";
 import { formatDate } from "../../../shared/utils/date";
 import { parseApiError } from "../../../shared/api/errors";
 import { apiClient } from "../../../app/api-client";
+import { DateInput } from "../../../shared/components/DateInput";
+import { ModalError } from "../../../shared/components/ModalError";
 
 export interface Props {
   isOpen: boolean;
@@ -271,25 +273,9 @@ export const RegularizeAttendanceModal: React.FC<Props> = ({
         </div>
 
         {/* Error notification banner */}
-        {error && (
-          <div
-            style={{
-              margin: "16px 24px 0 24px",
-              padding: "10px 14px",
-              backgroundColor: "#fef2f2",
-              border: "1px solid #fecaca",
-              borderRadius: "8px",
-              color: "#b91c1c",
-              fontSize: "0.84rem",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-            }}
-          >
-            <span>⚠️</span>
-            <span>{error}</span>
-          </div>
-        )}
+        <div style={{ margin: "16px 24px 0 24px" }}>
+          <ModalError error={error} />
+        </div>
 
         {/* Rejection Sub-Modal Form (when Admin clicks Reject) */}
         {rejecting ? (
@@ -400,7 +386,7 @@ export const RegularizeAttendanceModal: React.FC<Props> = ({
                   <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
                     Actual Check-In Time *
                   </label>
-                  <input
+                  <DateInput
                     type="datetime-local"
                     value={checkIn}
                     onChange={(e) => setCheckIn(e.target.value)}
@@ -420,7 +406,7 @@ export const RegularizeAttendanceModal: React.FC<Props> = ({
                   <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
                     Actual Check-Out Time *
                   </label>
-                  <input
+                  <DateInput
                     type="datetime-local"
                     value={checkOut}
                     onChange={(e) => setCheckOut(e.target.value)}

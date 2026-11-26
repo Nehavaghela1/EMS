@@ -20,6 +20,8 @@ import {
   type LeaveType,
 } from "../api";
 import { formatDate } from "../../../shared/utils/date";
+import { DateInput } from "../../../shared/components/DateInput";
+import { ModalError } from "../../../shared/components/ModalError";
 
 const STATUS_FILTERS: { label: string; value: LeaveStatus | "" }[] = [
   { label: "All", value: "" },
@@ -456,7 +458,7 @@ export function LeavePage() {
                 ✕
               </button>
             </div>
-            {decisionError && <div className="alert alert-error">{decisionError}</div>}
+            <ModalError error={decisionError} />
             {decisionTarget.status === "rejected" && (
               <div className="field">
                 <label>Rejection reason</label>
@@ -730,7 +732,7 @@ function ApplyLeaveForm({
         </div>
         <div className="field">
           <label>Start date *</label>
-          <input
+          <DateInput
             type="date"
             value={startDate}
             onChange={(e) => {
@@ -745,7 +747,7 @@ function ApplyLeaveForm({
         {!isHalfDay && (
           <div className="field">
             <label>End date *</label>
-            <input
+            <DateInput
               type="date"
               value={endDate}
               min={startDate || undefined}
