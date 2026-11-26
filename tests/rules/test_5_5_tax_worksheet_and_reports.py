@@ -219,4 +219,18 @@ def test_salary_certificate_generation(client: TestClient, db: Session, world: d
     assert Decimal(data["monthly_gross"]) > Decimal("0.00")
     assert len(data["components"]) > 0
     assert data["signatory_name"]
-    assert data["signatory_title"]
+    assert data["signatory_title"] == "CEO / Director"
+
+    # Monthly and Annual columns must match:
+    # 1. Total annual equals CTC
+    # 2. Total monthly equals monthly_gross
+    # 3. For each component, annual_amount equals component's resolved annual amount
+    total_annual = Decimal("0.00")
+    total_monthly = Decimal("0.00")
+    for comp in data["components"]:
+        m = Decimal(comp["monthly_amount"])
+        a = Decimal(comp["annual_amount"])
+        total_monthly += m
+        total_annual += a
+    assert total_annual == Decimal(data["annual_ctc"])
+    assert total_monthly == Decimal(data["monthly_gross"])

@@ -4030,14 +4030,14 @@ class SalaryCertificateService:
         if structure is None:
             raise NotFoundError("Salary structure not found.")
 
-        earning_amounts, _, monthly_gross = resolve_earning_breakdown(
-            structure.components, salary.ctc
-        )
+        earning_amounts, _, _ = resolve_earning_breakdown(structure.components, salary.ctc)
 
         components: list[SalaryCertificateComponent] = []
+        monthly_total = Decimal("0.00")
         for ea in earning_amounts:
-            m_amt = ea.amount or Decimal("0.00")
-            a_amt = m_amt * Decimal("12")
+            a_amt = ea.amount or Decimal("0.00")
+            m_amt = _round(a_amt / Decimal("12"))
+            monthly_total += m_amt
             components.append(
                 SalaryCertificateComponent(
                     code=ea.code,
@@ -4053,9 +4053,10 @@ class SalaryCertificateService:
             hr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
             if hr_emp is not None:
                 signatory_name = f"{hr_emp.first_name} {hr_emp.last_name or ''}".strip()
+                signatory_title = hr_emp.position or "Human Resources Manager"
             else:
                 signatory_name = actor.username or "HR Administrator"
-            signatory_title = "Human Resources Manager"
+                signatory_title = "Human Resources Manager"
         else:
             owners = self.user_repo.list_active_owners(company_id)
             if owners:
@@ -4067,7 +4068,7 @@ class SalaryCertificateService:
                     signatory_name = owner.username or "Company Owner"
             else:
                 signatory_name = "Authorized Signatory"
-            signatory_title = "Director / Authorized Signatory"
+            signatory_title = "CEO / Director"
 
         emp_full_name = f"{employee.first_name} {employee.last_name or ''}".strip()
         doj_str = employee.hire_date.strftime("%B %d, %Y") if employee.hire_date else ""
@@ -4084,7 +4085,7 @@ class SalaryCertificateService:
             date_of_joining=doj_str,
             residential_address=res_addr,
             annual_ctc=f"{salary.ctc:.2f}",
-            monthly_gross=f"{monthly_gross:.2f}",
+            monthly_gross=f"{monthly_total:.2f}",
             components=components,
             signatory_name=signatory_name,
             signatory_title=signatory_title,
