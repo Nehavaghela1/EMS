@@ -14,7 +14,6 @@ interface PayslipDocumentModalProps {
   company?: CompanyResponse | null;
   monthName: string;
   year: number;
-  autoPrint?: boolean;
 }
 
 export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
@@ -25,7 +24,6 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
   company,
   monthName,
   year,
-  autoPrint = false,
 }) => {
   if (!isOpen) return null;
 
@@ -33,55 +31,6 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
   const cleanPeriod = monthName.includes(String(year)) ? monthName : `${monthName} ${year}`;
   const contentRef = useRef<HTMLDivElement>(null);
   const [downloading, setDownloading] = useState(false);
-
-  React.useEffect(() => {
-    if (autoPrint && contentRef.current) {
-      const timer = setTimeout(() => {
-        const printTarget = contentRef.current;
-        if (printTarget) {
-          const printWindow = window.open("", "_blank");
-          if (printWindow) {
-            const styles = Array.from(document.querySelectorAll("style, link[rel='stylesheet']"))
-              .map((el) => el.outerHTML)
-              .join("\n");
-            const title = `Payslip_${empName}_${cleanPeriod}`;
-
-            printWindow.document.open();
-            printWindow.document.write(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${title}</title>
-  ${styles}
-  <style>
-    body {
-      background: #ffffff !important;
-      margin: 0 !important;
-      padding: 20px !important;
-      display: block !important;
-    }
-    .no-print {
-      display: none !important;
-    }
-  </style>
-</head>
-<body>
-  ${printTarget.outerHTML}
-</body>
-</html>`);
-            printWindow.document.close();
-            printWindow.focus();
-            setTimeout(() => {
-              printWindow.print();
-            }, 250);
-            return;
-          }
-        }
-        window.print();
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [autoPrint, empName, cleanPeriod]);
 
   const handleDownload = async () => {
     setDownloading(true);

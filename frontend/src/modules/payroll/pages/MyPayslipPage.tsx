@@ -27,6 +27,7 @@ import { DocumentShell } from "../components/DocumentShell";
 import { DocumentActions } from "../components/DocumentActions";
 import { CATEGORICAL_PALETTE } from "../../../shared/utils/palette";
 import { formatMonthYear, formatShortMonthYear, triggerBlobDownload } from "../utils";
+import { printCleanPayslip } from "../printUtils";
 
 // Number to Indian Words converter
 function numberToIndianWords(num: number): string {
@@ -71,7 +72,6 @@ export function MyPayslipPage() {
   const [selectedPayslip, setSelectedPayslip] = useState<PayrollItem | null>(null);
   const [detailMode, setDetailMode] = useState<"payslip" | "tax_worksheet">("payslip");
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
-  const [autoPrintDocModal, setAutoPrintDocModal] = useState(false);
   const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
 
   // Backend Tax Worksheet state
@@ -266,8 +266,7 @@ export function MyPayslipPage() {
 
   const handlePrint = () => {
     if (selectedPayslip) {
-      setAutoPrintDocModal(true);
-      setIsDocModalOpen(true);
+      printCleanPayslip(selectedPayslip, user?.employee as any, company);
     } else {
       window.print();
     }
@@ -338,14 +337,8 @@ export function MyPayslipPage() {
     "₹" + Number(val || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const filteredPayslips = useMemo(() => {
-    const isFy25 = financialYear.includes("2025");
-    return payslips.filter((p) => {
-      if (p.year) {
-        return isFy25 ? p.year === 2025 : p.year === 2026;
-      }
-      return true;
-    });
-  }, [payslips, financialYear]);
+    return payslips;
+  }, [payslips]);
 
   const latestPayslip = filteredPayslips.length > 0 ? filteredPayslips[0] : null;
 
@@ -1855,16 +1848,12 @@ export function MyPayslipPage() {
         <>
           <PayslipDocumentModal
             isOpen={isDocModalOpen}
-            onClose={() => {
-              setIsDocModalOpen(false);
-              setAutoPrintDocModal(false);
-            }}
+            onClose={() => setIsDocModalOpen(false)}
             item={selectedPayslip}
             employee={user?.employee as any}
             company={company}
             monthName={getMonthYearLabel(selectedPayslip, 0)}
             year={financialYear.startsWith("2025") ? 2025 : 2026}
-            autoPrint={autoPrintDocModal}
           />
 
           <TaxWorksheetModal
