@@ -776,6 +776,7 @@ class TaxWorksheetResponse(BaseModel):
     employee_code: str
     designation: str | None
     pan_number: str | None
+    pan_warning: str | None = None
 
     # Components broken down
     gross_earnings: list[TaxWorksheetColumnItem] = Field(default_factory=list)

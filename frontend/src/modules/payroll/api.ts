@@ -706,6 +706,7 @@ export interface TaxWorksheetResponse {
   employee_code: string;
   designation?: string | null;
   pan_number?: string | null;
+  pan_warning?: string | null;
   gross_earnings: TaxWorksheetColumnItem[];
   total_gross: TaxWorksheetColumnItem;
   allowances_exempt: TaxWorksheetColumnItem;

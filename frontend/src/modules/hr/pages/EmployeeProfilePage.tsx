@@ -19,6 +19,7 @@ import {
   updateFnFClearance,
   updateUserRole,
   listDepartments,
+  revealEmployeePan,
   type Employee,
 } from "../api";
 import { getMyCompany, listLocations } from "../../identity/api";
@@ -247,6 +248,7 @@ export function EmployeeProfilePage() {
     personal_email: "",
     phone: "",
     last_name: "",
+    pan: "",
   });
   const [savingPersonal, setSavingPersonal] = useState(false);
 
@@ -259,9 +261,10 @@ export function EmployeeProfilePage() {
   // Masked Number reveal toggles (Zoho privacy standard)
   const [revealedAccountNo, setRevealedAccountNo] = useState<string | null>(null);
   const [revealingAccountNo, setRevealingAccountNo] = useState(false);
+  const [revealedPan, setRevealedPan] = useState<string | null>(null);
+  const [revealingPan, setRevealingPan] = useState(false);
   const [showIfscCode, setShowIfscCode] = useState(false);
   const [showAadhaarNo, setShowAadhaarNo] = useState(false);
-  const [showPanNo, setShowPanNo] = useState(false);
 
   // Close modals on Escape key without leaving employee profile page
   useEffect(() => {
@@ -360,6 +363,7 @@ export function EmployeeProfilePage() {
       personal_email: e.personal_email || "",
       phone: e.phone || "",
       last_name: e.last_name || "",
+      pan: "",
     });
     setShowEditPersonalModal(true);
   }
@@ -369,11 +373,15 @@ export function EmployeeProfilePage() {
     if (!id) return;
     setSavingPersonal(true);
     try {
-      await updateEmployee(id, {
+      const payload: Record<string, any> = {
         personal_email: (personalForm.personal_email.trim() || null) as any,
         phone: personalForm.phone.trim() || null,
         last_name: personalForm.last_name.trim() || null,
-      });
+      };
+      if (isHr && personalForm.pan.trim()) {
+        payload.pan = personalForm.pan.trim().toUpperCase();
+      }
+      await updateEmployee(id, payload);
       notify("Personal details updated successfully.");
       setShowEditPersonalModal(false);
       await queryClient.invalidateQueries({ queryKey: ["employee", id] });
@@ -1343,25 +1351,42 @@ export function EmployeeProfilePage() {
                   label="Permanent Account Number (PAN)"
                   value={
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                      <span>{showPanNo ? "ABCDE1234F" : "XXXXX1234F"}</span>
-                      <button
-                        type="button"
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          setShowPanNo(!showPanNo);
-                        }}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          color: "#2563eb",
-                          fontSize: "0.78rem",
-                          fontWeight: 500,
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      >
-                        {showPanNo ? "Hide" : "Show PAN"}
-                      </button>
+                      <span>
+                        {revealedPan ?? (e.pan || (e.pan_last3 ? `•••••••${e.pan_last3}` : "Not on record"))}
+                      </span>
+                      {(e.pan || e.pan_last3) && (
+                        <button
+                          type="button"
+                          disabled={revealingPan}
+                          onClick={async (ev) => {
+                            ev.stopPropagation();
+                            if (revealedPan !== null) {
+                              setRevealedPan(null);
+                            } else {
+                              setRevealingPan(true);
+                              try {
+                                const res = await revealEmployeePan(e.id);
+                                setRevealedPan(res.pan);
+                              } catch (err: unknown) {
+                                notify(parseApiError(err).message, "error");
+                              } finally {
+                                setRevealingPan(false);
+                              }
+                            }
+                          }}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "#2563eb",
+                            fontSize: "0.78rem",
+                            fontWeight: 500,
+                            cursor: revealingPan ? "wait" : "pointer",
+                            padding: 0,
+                          }}
+                        >
+                          {revealedPan !== null ? "Hide" : revealingPan ? "Loading…" : "Show PAN"}
+                        </button>
+                      )}
                     </span>
                   }
                   isLocked={!isHr}
@@ -2758,6 +2783,22 @@ export function EmployeeProfilePage() {
                       style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem" }}
                     />
                   </div>
+
+                  {isHr && (
+                    <div>
+                      <label style={{ fontSize: "0.82rem", fontWeight: 600, color: "#334155", display: "block", marginBottom: "4px" }}>
+                        Permanent Account Number (PAN) <span style={{ fontSize: "0.75rem", color: "#64748b", fontWeight: 400 }}>(HR Only • 10 characters e.g. ABCDE1234F)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={personalForm.pan}
+                        maxLength={10}
+                        onChange={(ev) => setPersonalForm({ ...personalForm, pan: ev.target.value.toUpperCase() })}
+                        placeholder={e?.pan_last3 ? `•••••••${e.pan_last3} (leave blank to keep unchanged)` : "e.g. ABCDE1234F"}
+                        style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.86rem", textTransform: "uppercase", fontFamily: "monospace" }}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "1.5rem", paddingTop: "1rem", borderTop: "1px solid #f1f5f9" }}>

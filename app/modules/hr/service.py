@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.email_templates import employee_invitation_email
+from app.core.encryption import decrypt_field, encrypt_field
 from app.core.exceptions import (
     AppError,
     ConflictError,
@@ -644,6 +645,29 @@ class EmployeeService:
         # Compute real changes only
         diff: dict[str, dict[str, Any]] = {}
         real_updates: dict[str, Any] = {}
+
+        # Handle PAN encryption and last3 if PAN provided
+        if "pan" in updates:
+            new_pan = updates.pop("pan")
+            if new_pan:
+                new_pan_clean = new_pan.strip().upper()
+                new_pan_enc = encrypt_field(new_pan_clean, company_id=company_id, column="pan_enc")
+                new_pan_last3 = new_pan_clean[-3:]
+                old_pan_masked = f"•••••••{employee.pan_last3}" if employee.pan_last3 else None
+                new_pan_masked = f"•••••••{new_pan_last3}"
+                if employee.pan_last3 != new_pan_last3 or employee.pan_enc is None:
+                    real_updates["pan_enc"] = new_pan_enc
+                    real_updates["pan_last3"] = new_pan_last3
+                    diff["tax_id"] = {"from": old_pan_masked, "to": new_pan_masked}
+            else:
+                if employee.pan_enc is not None:
+                    real_updates["pan_enc"] = None
+                    real_updates["pan_last3"] = None
+                    diff["tax_id"] = {
+                        "from": f"•••••••{employee.pan_last3}" if employee.pan_last3 else None,
+                        "to": None,
+                    }
+
         for field, new_val in updates.items():
             old_val = getattr(employee, field)
             # Compare JSONable representations
@@ -689,6 +713,59 @@ class EmployeeService:
             DashboardService.invalidate_company_dashboards(company_id)
 
         return employee
+
+    def reveal_pan(
+        self, company_id: uuid.UUID, employee_id: uuid.UUID | None, actor: User
+    ) -> tuple[uuid.UUID, str, str]:
+        """Reveal full decrypted PAN for an employee.
+
+        Who may call:
+        - Employee for their own PAN (employee_id=None or employee.user_id == actor.id).
+        - hr_admin or owner for any employee in their company.
+        super_admin is refused (403/ForbiddenError).
+        Cross-tenant request returns 404 (NotFoundError).
+        Audit row logs action='pan.reveal' with pan_last3 only.
+        """
+        if actor.role == UserRole.super_admin or not actor.company_id:
+            raise ForbiddenError("Super administrators cannot access employee tax identification.")
+
+        # Resolve employee
+        if employee_id is None:
+            emp = self.repo.get_by_user_id(actor.company_id, actor.id)
+            if emp is None:
+                raise NotFoundError("Employee profile not found for current user.")
+        else:
+            is_hr = actor.role in (UserRole.hr_admin, UserRole.owner)
+            own_emp = self.repo.get_by_user_id(actor.company_id, actor.id)
+            is_own = own_emp is not None and own_emp.id == employee_id
+
+            if not is_hr and not is_own:
+                # Non-admin viewing someone else -> 404 per security requirement
+                raise NotFoundError("Employee not found.")
+
+            emp = self.repo.get_by_id_any_status(employee_id, actor.company_id)
+            if emp is None or emp.company_id != actor.company_id:
+                raise NotFoundError("Employee not found.")
+
+        if emp.pan_enc is None:
+            raise NotFoundError("No PAN on file for employee.")
+
+        decrypted = decrypt_field(emp.pan_enc, company_id=actor.company_id, column="pan_enc")
+        last3 = emp.pan_last3 or decrypted[-3:]
+
+        self.audit.record(
+            company_id=actor.company_id,
+            actor=actor,
+            action="pan.reveal",
+            entity_type="employee",
+            entity_id=emp.id,
+            details={
+                "employee_id": str(emp.id),
+                "pan_last3": last3,
+            },
+        )
+        self.db.commit()
+        return emp.id, decrypted, last3
 
     def clear_department_heads_for_employee(
         self, company_id: uuid.UUID, employee_id: uuid.UUID, actor: User | None = None

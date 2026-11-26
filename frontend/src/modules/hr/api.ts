@@ -73,6 +73,8 @@ export interface Employee {
   manager_name?: string | null;
   manager_email?: string | null;
   manager_position?: string | null;
+  pan?: string | null;
+  pan_last3?: string | null;
   created_at: string;
 }
 
@@ -120,6 +122,7 @@ export interface EmployeeUpdateInput {
   probation_end_date?: string | null;
   notice_period_days?: number;
   is_attendance_exempt?: boolean;
+  pan?: string | null;
 }
 
 export interface EmployeeCreateResponse extends Employee {
@@ -148,6 +151,18 @@ export async function listEmployees(params: ListEmployeesParams = {}): Promise<P
 
 export async function getEmployee(id: string): Promise<Employee> {
   const { data } = await apiClient.get<Employee>(`/employees/${id}`);
+  return data;
+}
+
+export interface EmployeePanRevealResult {
+  employee_id: string;
+  pan: string;
+  pan_last3: string;
+}
+
+export async function revealEmployeePan(employeeId?: string): Promise<EmployeePanRevealResult> {
+  const endpoint = employeeId ? `/employees/${employeeId}/pan/reveal` : "/employees/me/pan/reveal";
+  const { data } = await apiClient.post<EmployeePanRevealResult>(endpoint);
   return data;
 }
 

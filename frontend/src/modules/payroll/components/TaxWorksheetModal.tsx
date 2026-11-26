@@ -182,6 +182,29 @@ export const TaxWorksheetModal: React.FC<TaxWorksheetModalProps> = ({
                 </div>
               </div>
 
+              {/* Missing PAN Warning (Section 206AA) */}
+              {(!worksheet.pan_number || worksheet.pan_number === "—" || worksheet.pan_warning) && (
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    background: "#fffbeb",
+                    border: "1px solid #fef3c7",
+                    borderRadius: "6px",
+                    color: "#92400e",
+                    fontSize: "0.78rem",
+                    marginBottom: "14px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <span style={{ fontSize: "1rem" }}>⚠️</span>
+                  <span>
+                    <strong>Statutory Warning:</strong> No PAN on record. Under Section 206AA of the Income Tax Act, tax may be deductible at higher rates (up to 20%). Please contact HR to register your PAN.
+                  </span>
+                </div>
+              )}
+
               {/* Status Note if no payroll run */}
               {worksheet.status === "no_payroll" && (
                 <div

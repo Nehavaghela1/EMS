@@ -2829,7 +2829,14 @@ class PayslipService:
         m_name = month_names[month - 1] if 1 <= month <= 12 else f"Month {month}"
         period_title = f"{m_name} {year}"
 
-        pan_val = getattr(employee, "pan_number", None) or "—"
+        pan_val = "—"
+        if employee.pan_enc:
+            try:
+                pan_val = decrypt_field(employee.pan_enc, company_id=company_id, column="pan_enc")
+            except Exception:
+                pan_val = f"•••••••{employee.pan_last3}" if employee.pan_last3 else "—"
+        elif employee.pan_last3:
+            pan_val = f"•••••••{employee.pan_last3}"
 
         emp_name = f"{employee.first_name} {employee.last_name or ''}".strip()
         doj = employee.hire_date.strftime("%d/%m/%Y") if employee.hire_date else "—"
@@ -3618,7 +3625,21 @@ class TaxWorksheetService:
         released_by_month: dict[int, PayrollItem] = {run.month: item for item, run in released_rows}
 
         emp_full_name = f"{employee.first_name} {employee.last_name or ''}".strip()
-        pan_num = employee.pan_number if hasattr(employee, "pan_number") else None
+        pan_num = None
+        pan_warn = None
+        if employee.pan_enc:
+            try:
+                pan_num = decrypt_field(employee.pan_enc, company_id=company_id, column="pan_enc")
+            except Exception:
+                pan_num = f"•••••••{employee.pan_last3}" if employee.pan_last3 else None
+        elif employee.pan_last3:
+            pan_num = f"•••••••{employee.pan_last3}"
+
+        if not pan_num:
+            pan_warn = (
+                "No PAN on record. Under Section 206AA of the Income Tax Act, tax may be "
+                "deductible at higher rates. Please ensure HR updates your PAN."
+            )
 
         # Check if the requested month itself has a released run
         if month not in released_by_month:
@@ -3637,6 +3658,7 @@ class TaxWorksheetService:
                 employee_code=employee.employee_code,
                 designation=employee.position,
                 pan_number=pan_num,
+                pan_warning=pan_warn,
                 gross_earnings=[],
                 total_gross=zero_col,
                 allowances_exempt=zero_col,
@@ -3908,6 +3930,7 @@ class TaxWorksheetService:
             employee_code=employee.employee_code,
             designation=employee.position,
             pan_number=pan_num,
+            pan_warning=pan_warn,
             gross_earnings=gross_earnings_items,
             total_gross=total_gross_col,
             allowances_exempt=zero_col,

@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
@@ -39,6 +39,7 @@ from app.modules.hr.schemas import (
     EmployeeExportJobResponse,
     EmployeeExportRequest,
     EmployeeInviteInfo,
+    EmployeePanRevealResponse,
     EmployeeResponse,
     EmployeeSkillCreate,
     EmployeeSkillResponse,
@@ -181,6 +182,14 @@ def _to_employee_response(
         if not is_hr_or_owner and not is_self:
             resp.personal_email = None
 
+    # Compute masked PAN if pan_last3 or pan_enc is present
+    if employee.pan_last3:
+        resp.pan = f"•••••••{employee.pan_last3}"
+        resp.pan_last3 = employee.pan_last3
+    else:
+        resp.pan = None
+        resp.pan_last3 = None
+
     return resp
 
 
@@ -302,7 +311,27 @@ def get_my_employee(
 ):
     employee = EmployeeService(db).get_my_employee_record(user.company_id, user)
     system_role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    return _to_employee_response(employee, system_role=system_role)
+    return _to_employee_response(employee, system_role=system_role, viewer_user=user)
+
+
+@employees_router.post(
+    "/me/pan/reveal",
+    response_model=EmployeePanRevealResponse,
+    status_code=200,
+)
+@limiter.limit("5/minute", key_func=get_user_or_ip_key)
+def reveal_my_pan(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role()),
+):
+    """Return decrypted PAN for caller's own employee record.
+    Rate-limited 5/minute. Audited with pan_last3. Cache-Control: private, no-store.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    emp_id, pan, last3 = EmployeeService(db).reveal_pan(user.company_id, None, user)
+    return EmployeePanRevealResponse(employee_id=emp_id, pan=pan, pan_last3=last3)
 
 
 @employees_router.get("/resignations", response_model=list[EmployeeResponse])
@@ -554,6 +583,29 @@ def update_employee(
 ):
     employee = EmployeeService(db).update_employee(user.company_id, employee_id, data, user)
     return _build_full_employee_response(db, employee, viewer_user=user)
+
+
+@employees_router.post(
+    "/{employee_id}/pan/reveal",
+    response_model=EmployeePanRevealResponse,
+    status_code=200,
+)
+@limiter.limit("5/minute", key_func=get_user_or_ip_key)
+def reveal_employee_pan(
+    request: Request,
+    response: Response,
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role()),
+):
+    """Return decrypted PAN for specific employee record.
+    Allowed for owner, hr_admin, or employee themselves on their own record.
+    super_admin refused. Cross-company 404.
+    Rate-limited 5/minute. Audited with pan_last3. Cache-Control: private, no-store.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    emp_id, pan, last3 = EmployeeService(db).reveal_pan(user.company_id, employee_id, user)
+    return EmployeePanRevealResponse(employee_id=emp_id, pan=pan, pan_last3=last3)
 
 
 @employees_router.delete("/{employee_id}", status_code=204)

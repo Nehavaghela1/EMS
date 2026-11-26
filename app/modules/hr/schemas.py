@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -183,6 +184,19 @@ class EmployeeUpdateRequest(BaseModel):
     probation_end_date: date | None = None
     notice_period_days: int | None = Field(default=None, ge=0, le=365)
     is_attendance_exempt: bool | None = None
+    pan: str | None = None
+
+    @field_validator("pan")
+    @classmethod
+    def validate_pan(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip().upper()
+        if not s:
+            return None
+        if not re.match(r"^[A-Z]{5}[0-9]{4}[A-Z]$", s):
+            raise ValueError("Invalid PAN format. Must be 10 characters in the format AAAAA9999A.")
+        return s
 
     @model_validator(mode="before")
     @classmethod
@@ -319,6 +333,8 @@ class EmployeeResponse(BaseModel):
     manager_name: str | None = None
     manager_email: str | None = None
     manager_position: str | None = None
+    pan: str | None = None
+    pan_last3: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -337,6 +353,12 @@ class EmployeeInviteInfo(BaseModel):
 
 class EmployeeCreateResponse(EmployeeResponse):
     invite: EmployeeInviteInfo
+
+
+class EmployeePanRevealResponse(BaseModel):
+    employee_id: uuid.UUID
+    pan: str
+    pan_last3: str
 
 
 class ManagerSearchResponse(BaseModel):

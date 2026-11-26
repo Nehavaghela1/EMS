@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     text,
@@ -169,6 +170,8 @@ class Employee(TenantBase):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_attendance_exempt: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    pan_enc: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    pan_last3: Mapped[str | None] = mapped_column(String(3), nullable=True)
     invitation_status: Mapped[InvitationStatus] = mapped_column(
         Enum(InvitationStatus, name="invitation_status"),
         nullable=False,
