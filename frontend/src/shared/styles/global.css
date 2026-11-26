@@ -1491,9 +1491,20 @@ table.table tbody tr:hover {
 }
 
 
-/* ── Print Styles for Official Documents (e.g. Payslip & FnF Statement) ── */
+/* ── Print Styles for Official Documents (e.g. Payslip, Tax Worksheet, Salary Certificate & FnF) ── */
+@media screen {
+  .print-only {
+    display: none !important;
+  }
+}
+
 @media print {
-  /* 1. Hide the Sidebar, Header, Navigation, and Print buttons */
+  @page {
+    size: A4 portrait;
+    margin: 12mm 15mm;
+  }
+
+  /* 1. Hide navigation, sidebar, header, buttons and interactive controls */
   nav,
   aside,
   header,
@@ -1501,11 +1512,33 @@ table.table tbody tr:hover {
   button,
   .btn,
   .no-print,
+  .screen-only,
   .page-header {
     display: none !important;
   }
 
-  /* When an official modal is open, ensure everything outside is completely hidden from the page and document flow */
+  /* 2. Reset the root container so it doesn't clip height or hide content */
+  html,
+  body,
+  #root,
+  .app-shell,
+  .app-content-wrapper,
+  main,
+  .main,
+  .container {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* When an official modal is open, ensure everything outside is hidden */
   body:has(.modal-backdrop) .app-shell,
   body:has(.modal-backdrop) .app-content-wrapper,
   body:has(.modal-backdrop) main {
@@ -1525,9 +1558,16 @@ table.table tbody tr:hover {
     display: none !important;
   }
 
-  /* Specifically hide the documents list table when the document modal is open */
-  body:has(.modal-backdrop) .app-content-wrapper > main > div > *:not(:has(.modal-backdrop)) {
+  /* When printing from page without modal, hide screen-only cards and display print-only */
+  body:not(:has(.modal-backdrop)) main .no-print,
+  body:not(:has(.modal-backdrop)) main > div > *:not(.print-only) {
     display: none !important;
+  }
+
+  body:not(:has(.modal-backdrop)) .print-only {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
   }
 
   .modal-backdrop {
@@ -1561,7 +1601,6 @@ table.table tbody tr:hover {
     break-after: avoid !important;
   }
 
-  /* Target inside of card to prevent duplicate page break */
   .modal-backdrop .card > div {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
@@ -1569,137 +1608,25 @@ table.table tbody tr:hover {
     break-after: avoid !important;
   }
 
-  /* 2. Reset the root container so it doesn't clip height or hide content */
-  html,
-  body,
-  #root,
-  .app-shell,
-  .app-content-wrapper,
-  main,
-  .main,
-  .container {
-    height: auto !important;
-    min-height: 100% !important;
-    overflow: visible !important;
-    background: #ffffff !important;
-    color: #000000 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    display: block !important;
-    width: 100% !important;
-    max-width: 100% !important;
-  }
-
-  /* When printing from page without modal (i.e. standard payslip print container), hide page cards and display print-only */
-  body:not(:has(.modal-backdrop)) main .no-print,
-  body:not(:has(.modal-backdrop)) main > div > *:not(.print-only) {
-    display: none !important;
-  }
-
-  body:not(:has(.modal-backdrop)) .print-only {
-    display: block !important;
-    position: static !important;
-    width: 100% !important;
-  }
-
-  /* 3. Force the statement card / printable document to take the full page */
+  /* 3. Printable document shells strictly fit on 1 A4 page */
   .fnf-statement-card,
   [data-print-content="true"],
-  .print-section {
+  .print-section,
+  .printable-document-shell {
     display: block !important;
     position: static !important;
     width: 100% !important;
     max-width: 100% !important;
     box-shadow: none !important;
-    border: 1px solid #e2e8f0 !important;
-    border-radius: 8px !important;
+    border: none !important;
     margin: 0 auto !important;
-    padding: 24px !important;
+    padding: 0 !important;
     background: #ffffff !important;
     page-break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-inside: avoid !important;
+    break-after: avoid !important;
     overflow: visible !important;
-  }
-
-  /* Ensure text colors and badges print cleanly */
-  * {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-}
-
-.border-t {
-  border-top: 1px solid var(--color-border);
-}
-
-.text-xl {
-  font-size: var(--text-xl);
-}
-
-.text-2xl {
-  font-size: var(--text-2xl);
-}
-
-/* ── Manager Dashboard Responsive ─────────────────────────── */
-.manager-team-row {
-  display: grid;
-  grid-template-columns: minmax(200px, 1.5fr) minmax(130px, 1fr) minmax(160px, 1.2fr) minmax(150px, 1.1fr) auto;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 18px;
-  background: var(--color-surface, #ffffff);
-  border-radius: 10px;
-  border: 1px solid var(--color-border, #e2e8f0);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-  transition: all 0.15s ease;
-}
-
-.manager-leave-strip-container {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  border-radius: 8px;
-  border: 1px solid var(--color-border, #e2e8f0);
-  max-width: 100%;
-}
-
-@media (max-width: 768px) {
-  .manager-team-row {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-    padding: 14px;
-  }
-
-  .manager-team-row > div {
-    width: 100%;
-  }
-
-  .manager-team-row > div:last-child {
-    text-align: left;
-    margin-top: 4px;
-  }
-
-  .manager-leave-strip-container {
-    overflow-x: auto;
-    width: 100%;
-    display: block;
-  }
-}
-
-@media screen {
-  .print-only {
-    display: none !important;
-  }
-}
-
-@media print {
-  /* Hide navigation, sidebar, and buttons */
-  nav, aside, header, button, .no-print, .screen-only {
-    display: none !important;
-  }
-
-  .print-only {
-    display: block !important;
   }
 
   /* Dossier Print Styles */
@@ -1739,5 +1666,11 @@ table.table tbody tr:hover {
   #printable-employee-dossier .td-value {
     width: 65%;
     font-weight: 600;
+  }
+
+  /* Ensure text colors and borders print cleanly */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
