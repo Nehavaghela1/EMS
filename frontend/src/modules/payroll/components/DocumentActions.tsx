@@ -2,7 +2,9 @@ import React from "react";
 
 interface DocumentActionsProps {
   onDownload: () => void;
-  onPrint: () => void;
+  onPrint?: () => void;
+  documentElement?: HTMLElement | null;
+  documentTitle?: string;
   downloadLabel?: string;
   printLabel?: string;
   isDownloading?: boolean;
@@ -16,11 +18,68 @@ interface DocumentActionsProps {
 export const DocumentActions: React.FC<DocumentActionsProps> = ({
   onDownload,
   onPrint,
+  documentElement,
+  documentTitle,
   downloadLabel = "Download",
   printLabel = "Print",
   isDownloading = false,
   className = "no-print",
 }) => {
+  const handlePrintClick = () => {
+    if (onPrint) {
+      onPrint();
+      return;
+    }
+
+    // Default clean print behavior: open document in its own tab
+    const printTarget =
+      documentElement ||
+      (document.querySelector(".modal-backdrop [data-print-content='true']") as HTMLElement) ||
+      (document.querySelector("[data-print-content='true']") as HTMLElement);
+
+    if (printTarget) {
+      const printWindow = window.open("", "_blank");
+      if (printWindow) {
+        const styles = Array.from(document.querySelectorAll("style, link[rel='stylesheet']"))
+          .map((el) => el.outerHTML)
+          .join("\n");
+        const title = documentTitle || document.title || "Document";
+
+        printWindow.document.open();
+        printWindow.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${title}</title>
+  ${styles}
+  <style>
+    body {
+      background: #ffffff !important;
+      margin: 0 !important;
+      padding: 20px !important;
+      display: block !important;
+    }
+    .no-print {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  ${printTarget.outerHTML}
+</body>
+</html>`);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+          printWindow.print();
+        }, 250);
+        return;
+      }
+    }
+
+    // Fallback if window.open was blocked
+    window.print();
+  };
   return (
     <div
       className={className}
@@ -72,7 +131,7 @@ export const DocumentActions: React.FC<DocumentActionsProps> = ({
 
       <button
         type="button"
-        onClick={onPrint}
+        onClick={handlePrintClick}
         style={{
           background: "none",
           border: "none",
