@@ -866,7 +866,12 @@ def run_seed():
                         employer_cost=Decimal("105000.00"),
                         earnings_json=[
                             {"code": "BASIC", "name": "Basic Pay", "amount": 50000.0},
-                            {"code": "HRA", "name": "House Rent Allowance", "amount": 25000.0},
+                            {"code": "HRA", "name": "House Rent Allowance", "amount": 20000.0},
+                            {
+                                "code": "SPECIAL_ALLOWANCE",
+                                "name": "Special Allowance",
+                                "amount": 30000.0,
+                            },
                         ],
                         deductions_json=[
                             {"code": "EPF_EE", "name": "Employee PF", "amount": 1800.0},

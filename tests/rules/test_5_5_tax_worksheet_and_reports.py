@@ -114,7 +114,9 @@ def test_tax_worksheet_released_run_actual_and_projection(
         act = Decimal(sec["actual"])
         proj = Decimal(sec["projection"])
         tot = Decimal(sec["total"])
-        assert act + proj == tot, f"Mismatch on section deduction {sec['code']}: {act} + {proj} != {tot}"
+        assert act + proj == tot, (
+            f"Mismatch on section deduction {sec['code']}: {act} + {proj} != {tot}"
+        )
 
     # Verify money figures are string representation from Decimal (e.g. 2 decimal places)
     for field in [
