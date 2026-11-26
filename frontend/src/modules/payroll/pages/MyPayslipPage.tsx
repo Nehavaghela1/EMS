@@ -97,7 +97,7 @@ export function MyPayslipPage() {
   const [unmaskedAccount, setUnmaskedAccount] = useState<string | null>(null);
 
   // Financial Year Filter
-  const [financialYear, setFinancialYear] = useState("2026 - 27");
+  const [financialYear, setFinancialYear] = useState("2026-2027");
 
   useEffect(() => {
     fetchPayslips();
@@ -418,8 +418,8 @@ export function MyPayslipPage() {
                 cursor: "pointer",
               }}
             >
-              <option value="2026 - 27">2026 - 27</option>
-              <option value="2025 - 26">2025 - 26</option>
+              <option value="2026-2027">2026 - 27</option>
+              <option value="2025-2026">2025 - 26</option>
             </select>
           </div>
         </div>
@@ -723,7 +723,7 @@ export function MyPayslipPage() {
                 }}
               >
                 <div style={{ fontSize: "0.85rem", color: "#64748b", fontWeight: 600, marginBottom: "16px" }}>
-                  ▼ Financial Year : {financialYear}
+                  ▼ Financial Year : {financialYear === "2026-2027" ? "2026 - 27" : financialYear === "2025-2026" ? "2025 - 26" : financialYear}
                 </div>
 
                 {filteredPayslips.length === 0 && !loading ? (
@@ -1305,7 +1305,7 @@ export function MyPayslipPage() {
             >
               <div>
                 <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700 }}>
-                  Annual Earnings Report: {financialYear}
+                  Annual Earnings Report: {financialYear === "2026-2027" ? "2026 - 27" : financialYear === "2025-2026" ? "2025 - 26" : financialYear}
                 </h3>
                 <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: "0.85rem" }}>
                   Monthly component breakdown and YTD earnings overview.
