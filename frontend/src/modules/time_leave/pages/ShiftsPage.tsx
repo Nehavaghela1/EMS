@@ -9,6 +9,7 @@ import { useToast } from "../../../app/toast-context";
 import { useAuth } from "../../../app/auth-context";
 import { listDepartments, listEmployees, type Department } from "../../hr/api";
 import { assignShift, createShift, deleteShift, getAssignedShift, listShifts, updateShift, type Shift } from "../api";
+import { AttendanceCalendar } from "../components/AttendanceCalendar";
 
 function formatTimeString(timeStr: string): string {
   const parts = timeStr.split(":");
@@ -317,6 +318,14 @@ export function ShiftsPage() {
                     </div>
                   );
                 })}
+              </div>
+
+              {/* Monthly Attendance Calendar */}
+              <div style={{ marginTop: "2rem", borderTop: "1px solid var(--color-border, #e2e8f0)", paddingTop: "1.5rem" }}>
+                <AttendanceCalendar
+                  employeeId={user?.employee?.id}
+                  employeeName={user?.employee ? `${user.employee.first_name} ${user.employee.last_name || ""}`.trim() : undefined}
+                />
               </div>
             </>
           )}

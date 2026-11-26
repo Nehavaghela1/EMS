@@ -7,7 +7,6 @@ import { usePagination } from "../../../shared/hooks/usePagination";
 import { useAuth } from "../../../app/auth-context";
 import { useToast } from "../../../app/toast-context";
 import { TodayAttendanceCard } from "../components/TodayAttendanceCard";
-import { AttendanceCalendar } from "../components/AttendanceCalendar";
 import { RegularizeAttendanceModal } from "../components/RegularizeAttendanceModal";
 import {
   listAttendance,
@@ -112,21 +111,6 @@ export function AttendancePage() {
 
   const [regularizing, setRegularizing] = useState<Attendance | null>(null);
   const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null);
-  const viewParam = searchParams.get("view");
-  const [viewMode, setViewMode] = useState<"list" | "calendar">(viewParam === "calendar" ? "calendar" : "list");
-
-  function handleViewModeChange(mode: "list" | "calendar") {
-    setViewMode(mode);
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (mode === "calendar") {
-        next.set("view", "calendar");
-      } else {
-        next.delete("view");
-      }
-      return next;
-    });
-  }
 
   function handleSelectEmployee(empId: string, empName: string) {
     setFilterEmployee({ id: empId, name: empName });
@@ -424,52 +408,6 @@ export function AttendancePage() {
                   ? "Team Attendance"
                   : "My Attendance"}
           </h2>
-
-          {/* View Toggle */}
-          <div
-            style={{
-              display: "inline-flex",
-              backgroundColor: "var(--color-surface, #f1f5f9)",
-              borderRadius: "8px",
-              padding: "2px",
-              border: "1px solid var(--color-border, #e2e8f0)",
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => handleViewModeChange("list")}
-              style={{
-                padding: "4px 10px",
-                fontSize: "0.8rem",
-                fontWeight: 600,
-                borderRadius: "6px",
-                border: "none",
-                cursor: "pointer",
-                backgroundColor: viewMode === "list" ? "#ffffff" : "transparent",
-                color: viewMode === "list" ? "var(--color-primary, #2563eb)" : "var(--color-muted, #64748b)",
-                boxShadow: viewMode === "list" ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
-              }}
-            >
-              ☰ List View
-            </button>
-            <button
-              type="button"
-              onClick={() => handleViewModeChange("calendar")}
-              style={{
-                padding: "4px 10px",
-                fontSize: "0.8rem",
-                fontWeight: 600,
-                borderRadius: "6px",
-                border: "none",
-                cursor: "pointer",
-                backgroundColor: viewMode === "calendar" ? "#ffffff" : "transparent",
-                color: viewMode === "calendar" ? "var(--color-primary, #2563eb)" : "var(--color-muted, #64748b)",
-                boxShadow: viewMode === "calendar" ? "0 1px 2px rgba(0,0,0,0.05)" : "none",
-              }}
-            >
-              📅 Monthly Calendar
-            </button>
-          </div>
         </div>
 
         {filterEmployee && (
@@ -499,35 +437,28 @@ export function AttendancePage() {
         )}
       </div>
 
-      {viewMode === "calendar" ? (
-        <AttendanceCalendar
-          employeeId={filterEmployee?.id || (user?.employee?.id ?? undefined)}
-          employeeName={filterEmployee?.name || (user?.employee ? `${user.employee.first_name} ${user.employee.last_name || ""}`.trim() : undefined)}
-        />
-      ) : (
-        <DataTable
-          columns={columns}
-          page={historyQuery.data}
-          isLoading={historyQuery.isLoading}
-          isError={historyQuery.isError}
-          error={historyQuery.error}
-          currentPage={page}
-          onPageChange={setPage}
-          sort={null}
-          onSortChange={() => { }}
-          emptyMessage={filterEmployee ? `No attendance records found for ${filterEmployee.name}.` : "No attendance records."}
-          rowKey={(a) => a.id}
-          onRowClick={(a) => {
-            if (a.employee_id && (isHr || user?.role === "manager")) {
-              const empName = a.employee_name ?? a.employee_code ?? "Employee";
-              handleSelectEmployee(a.employee_id, empName);
-            }
-          }}
-          onRowDoubleClick={(a) => {
-            setRegularizing(a);
-          }}
-        />
-      )}
+      <DataTable
+        columns={columns}
+        page={historyQuery.data}
+        isLoading={historyQuery.isLoading}
+        isError={historyQuery.isError}
+        error={historyQuery.error}
+        currentPage={page}
+        onPageChange={setPage}
+        sort={null}
+        onSortChange={() => { }}
+        emptyMessage={filterEmployee ? `No attendance records found for ${filterEmployee.name}.` : "No attendance records."}
+        rowKey={(a) => a.id}
+        onRowClick={(a) => {
+          if (a.employee_id && (isHr || user?.role === "manager")) {
+            const empName = a.employee_name ?? a.employee_code ?? "Employee";
+            handleSelectEmployee(a.employee_id, empName);
+          }
+        }}
+        onRowDoubleClick={(a) => {
+          setRegularizing(a);
+        }}
+      />
 
       {regularizing && (
         <RegularizeAttendanceModal
