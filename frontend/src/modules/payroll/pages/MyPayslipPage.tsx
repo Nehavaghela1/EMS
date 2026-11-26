@@ -112,7 +112,7 @@ export function MyPayslipPage() {
   useEffect(() => {
     if (salarySubTab === "annual_earnings") {
       fetchAnnualEarnings();
-    } else if (salarySubTab === "salary_certificate") {
+    } else if (salarySubTab === "salary_certificate" || salarySubTab === "structure") {
       fetchSalaryCertificate();
     }
   }, [salarySubTab, financialYear]);
@@ -590,7 +590,7 @@ export function MyPayslipPage() {
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                     <span style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
-                      Monthly CTC: {grossPay > 0 ? formatINR(grossPay) : "—"}
+                      Monthly CTC: {salaryCert?.monthly_gross ? formatINR(salaryCert.monthly_gross) : grossPay > 0 ? formatINR(grossPay) : "—"}
                     </span>
                     <button
                       type="button"
@@ -611,7 +611,7 @@ export function MyPayslipPage() {
                     </button>
                   </div>
                   <div style={{ color: "#64748b", fontSize: "0.85rem", marginTop: "2px" }}>
-                    Yearly CTC: {grossPay > 0 ? formatINR(grossPay * 12) : "—"}
+                    Yearly CTC: {salaryCert?.annual_ctc ? formatINR(salaryCert.annual_ctc) : grossPay > 0 ? formatINR(grossPay * 12) : "—"}
                   </div>
                 </div>
               </div>
@@ -620,7 +620,7 @@ export function MyPayslipPage() {
                 <div style={{ borderLeft: `3px solid ${greenTakeHome}`, paddingLeft: "10px" }}>
                   <div style={{ fontSize: "0.78rem", color: "#64748b" }}>Earnings</div>
                   <strong style={{ fontSize: "1rem", color: "#0f172a" }}>
-                    {grossPay > 0 ? formatINR(grossPay) : "—"}
+                    {salaryCert?.monthly_gross ? formatINR(salaryCert.monthly_gross) : grossPay > 0 ? formatINR(grossPay) : "—"}
                   </strong>
                 </div>
                 <div style={{ borderLeft: "3px solid #0284c7", paddingLeft: "10px" }}>
@@ -639,7 +639,22 @@ export function MyPayslipPage() {
               Earnings Breakdown
             </h4>
             <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "0.9rem" }}>
-              {latestPayslip?.earnings_json && latestPayslip.earnings_json.length > 0 ? (
+              {salaryCert?.components && salaryCert.components.length > 0 ? (
+                salaryCert.components.map((item, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      padding: "8px 0",
+                      borderBottom: "1px dashed #f1f5f9",
+                    }}
+                  >
+                    <span style={{ color: "#475569" }}>{item.name}</span>
+                    <strong style={{ color: "#0f172a" }}>{formatINR(Number(item.monthly_amount))}</strong>
+                  </div>
+                ))
+              ) : latestPayslip?.earnings_json && latestPayslip.earnings_json.length > 0 ? (
                 latestPayslip.earnings_json.map((item, idx) => (
                   <div
                     key={idx}
@@ -659,7 +674,7 @@ export function MyPayslipPage() {
                   No salary structure recorded for the selected period.
                 </div>
               )}
-              {grossPay > 0 && (
+              {(salaryCert?.monthly_gross || grossPay > 0) && (
                 <div
                   style={{
                     display: "flex",
@@ -670,7 +685,7 @@ export function MyPayslipPage() {
                   }}
                 >
                   <span>Monthly CTC</span>
-                  <span>{formatINR(grossPay)}</span>
+                  <span>{formatINR(salaryCert?.monthly_gross || grossPay)}</span>
                 </div>
               )}
             </div>
@@ -1035,7 +1050,7 @@ export function MyPayslipPage() {
                           display: "flex",
                           justifyContent: "space-between",
                           fontSize: "0.82rem",
-                          marginBottom: "20px",
+                          marginBottom: "16px",
                         }}
                       >
                         <div>
@@ -1051,6 +1066,31 @@ export function MyPayslipPage() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Full LOP Alert */}
+                      {Number(selectedPayslip.lop_days || 0) > 0 && Number(selectedPayslip.present_days || 0) === 0 && (
+                        <div
+                          style={{
+                            background: "#fffbeb",
+                            border: "1px solid #fde68a",
+                            borderRadius: "8px",
+                            padding: "10px 14px",
+                            color: "#92400e",
+                            fontSize: "0.84rem",
+                            fontWeight: 600,
+                            marginBottom: "16px",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                          }}
+                        >
+                          <span>⚠️</span>
+                          <span>
+                            Full LOP: Earnings are nil for this period ({selectedPayslip.lop_days} LOP days out of{" "}
+                            {selectedPayslip.working_days || selectedPayslip.lop_days} working days)
+                          </span>
+                        </div>
+                      )}
 
                       {/* Side by Side: Earnings vs Deductions */}
                       <div
