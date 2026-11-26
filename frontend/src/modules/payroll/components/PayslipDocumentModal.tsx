@@ -2,6 +2,7 @@ import React from "react";
 import { type PayrollItem } from "../api";
 import { type Employee } from "../../hr/api";
 import { type CompanyResponse } from "../../identity/api";
+import { DocumentShell } from "./DocumentShell";
 
 interface PayslipDocumentModalProps {
   isOpen: boolean;
@@ -13,13 +14,13 @@ interface PayslipDocumentModalProps {
   year: number;
 }
 
-// Helper to convert number to Indian words
+// Number to Indian Words converter
 function numberToWords(num: number): string {
   if (isNaN(num) || num <= 0) return "Zero Only";
   const a = [
     "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
     "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
-    "Seventeen", "Eighteen", "Nineteen"
+    "Seventeen", "Eighteen", "Nineteen",
   ];
   const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
 
@@ -48,34 +49,28 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
   if (!isOpen) return null;
 
   const empName = employee ? `${employee.first_name} ${employee.last_name || ""}`.trim() : "Employee";
-  const empCode = employee?.employee_code || "INF" + item.employee_id.substring(0, 4).toUpperCase();
-  // Only real data from the record is shown; anything missing reads "—" instead of
-  // invented sample values (a fixed bank account number was shown before, BUG-037).
+  const empCode = employee?.employee_code || "—";
   const designation = (employee as any)?.position || (employee as any)?.job_title || "—";
   const department = employee?.department_name || "—";
   const dateOfJoining = employee?.hire_date ? new Date(employee.hire_date).toLocaleDateString("en-GB") : "—";
-  // The server returns the masked form in payout_account_number; never re-slice it.
   const bankAccount: string = item.payout_account_number ?? "—";
-  const workLocation = (employee as any)?.work_location || company?.city || "—";
 
   const netPayNum = Number(item.net_salary) || 0;
   const grossPayNum = Number(item.gross_salary) || 0;
   const totalDeductionsNum = Number(item.total_deductions) || 0;
   const reimbursementNum = Number(item.reimbursement_amount) || 0;
 
-  // Format display period cleanly without duplicating year if already present in monthName
   const cleanPeriod = monthName.includes(String(year)) ? monthName : `${monthName} ${year}`;
-  const savedWidth = localStorage.getItem("ems_brand_logo_width") || "140";
-  const logoWidthPx = Number(savedWidth) || 140;
-
-  // Resolved dynamic logo or SVG brand emblem matching Infiria/Zoho format
-  const companyLogoUrl = company?.logo_url;
-  const companyDisplayName = company?.name || "Infiria AI Private Limited";
-  const companyAddressLine = [company?.address, company?.city, company?.pincode, company?.country].filter(Boolean).join(", ") ||
-    "B704 Shapath Hexa, Opp. Gujarat Highcourt, SG Highway, Ahmedabad 380060, India";
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDownload = () => {
+    const originalTitle = document.title;
+    document.title = `Payslip_${empName.replace(/\s+/g, "_")}_${monthName}${year}`;
+    window.print();
+    document.title = originalTitle;
   };
 
   return (
@@ -124,368 +119,276 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
         >
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span style={{ fontSize: "1.1rem" }}>📄</span>
-            <span style={{ fontWeight: 700, color: "#0f172a", fontSize: "0.95rem" }}>
-              Payslip for {cleanPeriod} — {empName}
+            <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "#0f172a" }}>
+              Payslip — {cleanPeriod}
             </span>
           </div>
 
-          <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ display: "flex", gap: "10px" }}>
             <button
               type="button"
-              className="btn btn-primary btn-sm"
-              onClick={handlePrint}
+              onClick={handleDownload}
               style={{
-                background: "#2563eb",
-                borderColor: "#2563eb",
-                display: "inline-flex",
+                display: "flex",
                 alignItems: "center",
                 gap: "6px",
+                padding: "6px 14px",
+                fontSize: "0.82rem",
                 fontWeight: 600,
+                color: "#ffffff",
+                backgroundColor: "#2563eb",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
               }}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="6 9 6 2 18 2 18 9" />
-                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
-                <rect x="6" y="14" width="12" height="8" />
-              </svg>
-              <span>Print / Download PDF</span>
+              <span>📥</span> Download
             </button>
             <button
               type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={onClose}
-              style={{ border: "1px solid #cbd5e1" }}
+              onClick={handlePrint}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "6px 14px",
+                fontSize: "0.82rem",
+                fontWeight: 600,
+                color: "#0f172a",
+                backgroundColor: "#ffffff",
+                border: "1px solid #cbd5e1",
+                borderRadius: "6px",
+                cursor: "pointer",
+              }}
             >
-              Close
+              <span>🖨️</span> Print
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "32px",
+                height: "32px",
+                border: "1px solid #cbd5e1",
+                borderRadius: "6px",
+                backgroundColor: "#ffffff",
+                cursor: "pointer",
+                color: "#64748b",
+                fontSize: "1rem",
+              }}
+            >
+              ✕
             </button>
           </div>
         </div>
 
-        {/* Payslip Document Body (Matches Zoho / Reference Image) */}
+        {/* Modal Printable Content */}
         <div
-          className="print-section"
+          data-print-content="true"
           style={{
-            padding: "2.5rem 3rem",
-            backgroundColor: "#ffffff",
             overflowY: "auto",
-            color: "#1e293b",
-            fontFamily: "system-ui, -apple-system, sans-serif",
-            fontSize: "0.85rem",
-            lineHeight: 1.5,
+            padding: "16px",
+            flex: 1,
+            backgroundColor: "#ffffff",
           }}
         >
-          {/* Header Row: Company Logo & Details (Left) + Payslip For (Right) */}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              borderBottom: "1px solid #e2e8f0",
-              paddingBottom: "1.5rem",
-              marginBottom: "1.5rem",
-            }}
+          <DocumentShell
+            title="PAYSLIP"
+            subtitle={`Payslip for the month of ${cleanPeriod}`}
+            company={company}
+            footerNote="— This is a computer-generated payroll document and requires no signature. —"
           >
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "16px" }}>
-              {companyLogoUrl ? (
-                <img
-                  src={companyLogoUrl}
-                  alt={companyDisplayName}
-                  style={{
-                    width: `${logoWidthPx}px`,
-                    maxHeight: "75px",
-                    objectFit: "contain",
-                    display: "block",
-                  }}
-                />
-              ) : (
-                <div
-                  style={{
-                    width: "48px",
-                    height: "48px",
-                    borderRadius: "10px",
-                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#ffffff",
-                    fontWeight: 800,
-                    fontSize: "1.5rem",
-                  }}
-                >
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <polygon points="12 2 2 22 22 22" />
-                  </svg>
-                </div>
-              )}
+            {/* Employee Metadata */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gap: "10px 16px",
+                border: "1px solid #e2e8f0",
+                borderRadius: "8px",
+                padding: "12px 16px",
+                marginBottom: "16px",
+                background: "#f8fafc",
+                fontSize: "0.78rem",
+              }}
+            >
               <div>
-                <h1 style={{ margin: "0 0 4px", fontSize: "1.25rem", fontWeight: 800, color: "#0f172a" }}>
-                  {companyDisplayName}
-                </h1>
-                <div style={{ fontSize: "0.78rem", color: "#64748b", maxWidth: "440px" }}>
-                  {companyAddressLine}
-                </div>
+                <span style={{ color: "#64748b" }}>Employee Name:</span>
+                <strong style={{ display: "block", color: "#0f172a" }}>{empName}</strong>
+              </div>
+              <div>
+                <span style={{ color: "#64748b" }}>Employee Code:</span>
+                <strong style={{ display: "block", color: "#0f172a" }}>{empCode}</strong>
+              </div>
+              <div>
+                <span style={{ color: "#64748b" }}>Designation:</span>
+                <strong style={{ display: "block", color: "#0f172a" }}>{designation}</strong>
+              </div>
+              <div>
+                <span style={{ color: "#64748b" }}>Department:</span>
+                <strong style={{ display: "block", color: "#0f172a" }}>{department}</strong>
+              </div>
+              <div>
+                <span style={{ color: "#64748b" }}>Date of Joining:</span>
+                <strong style={{ display: "block", color: "#0f172a" }}>{dateOfJoining}</strong>
+              </div>
+              <div>
+                <span style={{ color: "#64748b" }}>Bank Account:</span>
+                <strong style={{ display: "block", color: "#0f172a", fontFamily: "monospace" }}>{bankAccount}</strong>
               </div>
             </div>
 
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600 }}>
-                Payslip For the Month
+            {/* Attendance Strip */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-around",
+                border: "1px solid #e2e8f0",
+                borderRadius: "8px",
+                padding: "8px 12px",
+                marginBottom: "16px",
+                background: "#ffffff",
+                fontSize: "0.78rem",
+                textAlign: "center",
+              }}
+            >
+              <div>
+                <span style={{ color: "#64748b" }}>Working Days</span>
+                <strong style={{ display: "block", color: "#0f172a" }}>{item.working_days || "—"}</strong>
               </div>
-              <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#0f172a", marginTop: "2px" }}>
-                {cleanPeriod}
+              <div>
+                <span style={{ color: "#64748b" }}>Present Days</span>
+                <strong style={{ display: "block", color: "#16a34a" }}>{item.present_days || "—"}</strong>
               </div>
-            </div>
-          </div>
-
-          {/* Employee Summary & Net Pay Highlight Box */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1.4fr 1fr",
-              gap: "2rem",
-              marginBottom: "1.75rem",
-            }}
-          >
-            {/* Left Column: Metadata list */}
-            <div>
-              <div
-                style={{
-                  fontSize: "0.75rem",
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  color: "#64748b",
-                  letterSpacing: "0.05em",
-                  marginBottom: "0.75rem",
-                }}
-              >
-                Employee Summary
+              <div>
+                <span style={{ color: "#64748b" }}>Paid Leave</span>
+                <strong style={{ display: "block", color: "#0284c7" }}>{item.paid_leave_days || "0.0"}</strong>
               </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", rowGap: "6px", fontSize: "0.82rem" }}>
-                <span style={{ color: "#64748b" }}>Employee Name</span>
-                <span style={{ fontWeight: 600, color: "#0f172a" }}>: {empName}</span>
-
-                <span style={{ color: "#64748b" }}>Designation</span>
-                <span style={{ color: "#334155" }}>: {designation}</span>
-
-                <span style={{ color: "#64748b" }}>Employee ID</span>
-                <span style={{ color: "#334155" }}>: {empCode}</span>
-
-                <span style={{ color: "#64748b" }}>Department</span>
-                <span style={{ color: "#334155" }}>: {department}</span>
-
-                <span style={{ color: "#64748b" }}>Date of Joining</span>
-                <span style={{ color: "#334155" }}>: {dateOfJoining}</span>
-
-                <span style={{ color: "#64748b" }}>Pay Period</span>
-                <span style={{ color: "#334155" }}>: {cleanPeriod}</span>
-
-
-                <span style={{ color: "#64748b" }}>Bank Account No</span>
-                <span style={{ color: "#334155" }}>: {bankAccount}</span>
-
-                <span style={{ color: "#64748b" }}>Work Location</span>
-                <span style={{ color: "#334155" }}>: {workLocation}</span>
+              <div>
+                <span style={{ color: "#64748b" }}>Loss of Pay (LOP)</span>
+                <strong style={{ display: "block", color: "#dc2626" }}>{item.lop_days || "0.0"}</strong>
               </div>
             </div>
 
-            {/* Right Column: Net Pay Highlight Card */}
-            <div>
-              <div
-                style={{
-                  background: "#f0fdf4",
-                  border: "1px solid #bbf7d0",
-                  borderRadius: "10px",
-                  padding: "1.25rem 1.5rem",
-                  marginBottom: "1rem",
-                }}
-              >
-                <div style={{ fontSize: "1.75rem", fontWeight: 800, color: "#15803d" }}>
-                  ₹{netPayNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "#166534", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: "2px" }}>
-                  Total Net Pay
-                </div>
-              </div>
-
-              {/* Attendance metrics */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "0.82rem", background: "#f8fafc", padding: "10px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
-                <div>
-                  <span style={{ color: "#64748b" }}>Paid Days : </span>
-                  <span style={{ fontWeight: 700, color: "#0f172a" }}>{Number(item.working_days || 31) - Number(item.lop_days || 0)}</span>
-                </div>
-                <div>
-                  <span style={{ color: "#64748b" }}>LOP Days : </span>
-                  <span style={{ fontWeight: 700, color: "#dc2626" }}>{item.lop_days || 0}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Earnings & Deductions Tables */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "2rem",
-              borderTop: "1px solid #e2e8f0",
-              paddingTop: "1.25rem",
-              marginBottom: "1.25rem",
-            }}
-          >
-            {/* Earnings */}
-            <div>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
-                <thead>
-                  <tr style={{ borderBottom: "1.5px solid #cbd5e1" }}>
-                    <th style={{ textAlign: "left", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>EARNINGS</th>
-                    <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>AMOUNT</th>
-                    <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>YTD</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {item.earnings_json && item.earnings_json.length > 0 ? (
-                    item.earnings_json.map((e, idx) => (
-                      <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                        <td style={{ padding: "8px 0", color: "#334155" }}>
-                          <div>{e.name}</div>
-                          {e.is_fallback && (
-                            <div style={{ fontSize: "0.72rem", color: "#b45309", marginTop: "2px" }}>
-                              ⚠️ Calculated using fallback formula (CTC ÷ 12 ÷ 160 hrs)
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#0f172a", verticalAlign: "top" }}>
-                          ₹{Number(e.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                        <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b", verticalAlign: "top" }}>
-                          ₹{(Number(e.amount) * 3).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            {/* Earnings & Deductions Tables */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "16px",
+                marginBottom: "16px",
+              }}
+            >
+              {/* Earnings */}
+              <div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1.5px solid #cbd5e1" }}>
+                      <th style={{ textAlign: "left", padding: "6px 0", color: "#475569", textTransform: "uppercase" }}>EARNINGS</th>
+                      <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase" }}>AMOUNT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {item.earnings_json && item.earnings_json.length > 0 ? (
+                      item.earnings_json.map((e, idx) => (
+                        <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "6px 0", color: "#334155" }}>{e.name}</td>
+                          <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 600 }}>
+                            ₹{Number(e.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "6px 0", color: "#334155" }}>Gross Salary</td>
+                        <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 600 }}>
+                          ₹{grossPayNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
                       </tr>
-                    ))
-                  ) : (
-                    <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "8px 0", color: "#334155" }}>Gross pay (no breakdown recorded)</td>
-                      <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>
+                    )}
+                    <tr style={{ borderTop: "1.5px solid #cbd5e1", fontWeight: 700 }}>
+                      <td style={{ padding: "8px 0", color: "#0f172a" }}>Total Earnings</td>
+                      <td style={{ padding: "8px 0", textAlign: "right", color: "#16a34a" }}>
                         ₹{grossPayNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
-                      <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b" }}>
-                        ₹{(grossPayNum * 3).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
                     </tr>
-                  )}
-                  <tr style={{ borderTop: "1.5px solid #cbd5e1", fontWeight: 700 }}>
-                    <td style={{ padding: "10px 0", color: "#0f172a" }}>Gross Earnings</td>
-                    <td style={{ padding: "10px 0", textAlign: "right", color: "#16a34a" }}>
-                      ₹{grossPayNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ padding: "10px 0", textAlign: "right", color: "#64748b" }}>
-                      —
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                  </tbody>
+                </table>
+              </div>
 
-            {/* Deductions */}
-            <div>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
-                <thead>
-                  <tr style={{ borderBottom: "1.5px solid #cbd5e1" }}>
-                    <th style={{ textAlign: "left", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>DEDUCTIONS</th>
-                    <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>AMOUNT</th>
-                    <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase", fontSize: "0.72rem" }}>YTD</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {item.deductions_json && item.deductions_json.length > 0 ? (
-                    item.deductions_json.map((d, idx) => (
-                      <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                        <td style={{ padding: "8px 0", color: "#334155" }}>{d.name}</td>
-                        <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#dc2626" }}>
-                          ₹{Number(d.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                        </td>
-                        <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b" }}>
-                          ₹{(Number(d.amount) * 3).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              {/* Deductions */}
+              <div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1.5px solid #cbd5e1" }}>
+                      <th style={{ textAlign: "left", padding: "6px 0", color: "#475569", textTransform: "uppercase" }}>DEDUCTIONS</th>
+                      <th style={{ textAlign: "right", padding: "6px 0", color: "#475569", textTransform: "uppercase" }}>AMOUNT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {item.deductions_json && item.deductions_json.length > 0 ? (
+                      item.deductions_json.map((d, idx) => (
+                        <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "6px 0", color: "#334155" }}>{d.name}</td>
+                          <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 600, color: "#dc2626" }}>
+                            ₹{Number(d.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "6px 0", color: "#334155" }}>Deductions</td>
+                        <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 600, color: "#dc2626" }}>
+                          ₹{totalDeductionsNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                         </td>
                       </tr>
-                    ))
-                  ) : (
-                    <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                      <td style={{ padding: "8px 0", color: "#334155" }}>Deductions (no breakdown recorded)</td>
-                      <td style={{ padding: "8px 0", textAlign: "right", fontWeight: 600, color: "#dc2626" }}>
+                    )}
+                    <tr style={{ borderTop: "1.5px solid #cbd5e1", fontWeight: 700 }}>
+                      <td style={{ padding: "8px 0", color: "#0f172a" }}>Total Deductions</td>
+                      <td style={{ padding: "8px 0", textAlign: "right", color: "#dc2626" }}>
                         ₹{totalDeductionsNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
                       </td>
-                      <td style={{ padding: "8px 0", textAlign: "right", color: "#64748b" }}>
-                        ₹{(totalDeductionsNum * 3).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                      </td>
                     </tr>
-                  )}
-                  <tr style={{ borderTop: "1.5px solid #cbd5e1", fontWeight: 700 }}>
-                    <td style={{ padding: "10px 0", color: "#0f172a" }}>Total Deductions</td>
-                    <td style={{ padding: "10px 0", textAlign: "right", color: "#dc2626" }}>
-                      ₹{totalDeductionsNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ padding: "10px 0", textAlign: "right", color: "#64748b" }}>
-                      —
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
-              {reimbursementNum > 0 && (
-                <div style={{ marginTop: "10px", padding: "6px 10px", background: "#f0fdf4", borderRadius: "6px", display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "#166534" }}>
-                  <span>+ Reimbursed Expenses (Tax-exempt)</span>
-                  <span style={{ fontWeight: 700 }}>₹{reimbursementNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+            {/* Total Net Payable Bar */}
+            <div
+              style={{
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                borderRadius: "8px",
+                padding: "10px 16px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "10px",
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 800, color: "#0f172a", fontSize: "0.88rem" }}>
+                  TOTAL NET PAYABLE
                 </div>
-              )}
-            </div>
-          </div>
-
-          {/* Total Net Payable Bar */}
-          <div
-            style={{
-              background: "#f8fafc",
-              border: "1px solid #e2e8f0",
-              borderRadius: "8px",
-              padding: "1rem 1.5rem",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "1rem",
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 800, color: "#0f172a", fontSize: "0.95rem" }}>
-                TOTAL NET PAYABLE
+                <div style={{ fontSize: "0.72rem", color: "#64748b" }}>
+                  Gross Earnings - Total Deductions {reimbursementNum > 0 ? `+ Reimbursements (₹${reimbursementNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })})` : ""}
+                </div>
               </div>
-              <div style={{ fontSize: "0.75rem", color: "#64748b" }}>
-                Gross Earnings - Total Deductions {reimbursementNum > 0 ? "+ Approved Reimbursements" : ""}
+
+              <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#0f172a" }}>
+                ₹{netPayNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
               </div>
             </div>
 
-            <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#0f172a" }}>
-              ₹{netPayNum.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            {/* Amount in words */}
+            <div style={{ textAlign: "right", fontSize: "0.75rem", color: "#475569" }}>
+              <strong>Amount In Words: </strong> {numberToWords(netPayNum)}
             </div>
-          </div>
-
-          {/* Amount in words */}
-          <div style={{ textAlign: "right", fontSize: "0.8rem", color: "#475569", marginBottom: "2rem" }}>
-            <strong>Amount In Words : </strong> {numberToWords(netPayNum)}
-          </div>
-
-          {/* Footer note */}
-          <div
-            style={{
-              borderTop: "1px solid #f1f5f9",
-              paddingTop: "1.5rem",
-              textAlign: "center",
-              fontSize: "0.75rem",
-              color: "#94a3b8",
-            }}
-          >
-            — This is a computer-generated payroll document and requires no signature. —
-          </div>
+          </DocumentShell>
         </div>
       </div>
     </div>
