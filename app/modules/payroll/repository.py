@@ -756,6 +756,17 @@ class PayrollItemRepository:
             stmt = stmt.where(PayrollRun.month == month)
         return paginate(self.db, stmt, page_params)
 
+    def get_by_id(self, item_id: uuid.UUID, company_id: uuid.UUID) -> PayrollItem | None:
+        return self.db.scalar(
+            select(PayrollItem)
+            .options(joinedload(PayrollItem.payroll_run))
+            .where(
+                PayrollItem.id == item_id,
+                PayrollItem.company_id == company_id,
+                PayrollItem.deleted_at.is_(None),
+            )
+        )
+
     def find_employee_any_company(self, employee_id: uuid.UUID) -> Employee | None:
         """For the platform super admin only, who is not tied to one company."""
         return self.db.scalar(

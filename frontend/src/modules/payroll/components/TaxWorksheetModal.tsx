@@ -1,9 +1,9 @@
-import React, { useRef } from "react";
-import { type TaxWorksheetResponse } from "../api";
+import React, { useRef, useState } from "react";
+import { downloadMyTaxWorksheetPdf, type TaxWorksheetResponse } from "../api";
 import { type CompanyResponse } from "../../identity/api";
 import { DocumentShell } from "./DocumentShell";
 import { DocumentActions } from "./DocumentActions";
-import { downloadDocumentAsHtml } from "../utils";
+import { triggerBlobDownload } from "../utils";
 
 interface TaxWorksheetModalProps {
   isOpen: boolean;
@@ -23,20 +23,23 @@ export const TaxWorksheetModal: React.FC<TaxWorksheetModalProps> = ({
   year,
 }) => {
   const contentRef = useRef<HTMLDivElement>(null);
+  const [downloading, setDownloading] = useState(false);
   if (!isOpen) return null;
 
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleDownload = () => {
-    if (!contentRef.current) return;
-    const cleanMonth = monthName.replace(String(year), "").trim();
-    const periodStr = `${cleanMonth}_${year}`.trim();
-    downloadDocumentAsHtml(
-      contentRef.current,
-      `Tax_Worksheet_${periodStr || "Document"}.html`
-    );
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const m = worksheet?.month || 10;
+      const y = worksheet?.year || year || 2026;
+      const blob = await downloadMyTaxWorksheetPdf(m, y);
+      const cleanMonth = monthName.replace(String(year), "").trim();
+      const periodStr = `${cleanMonth}_${year}`.trim();
+      triggerBlobDownload(blob, `Tax_Worksheet_${periodStr || "Document"}.pdf`);
+    } catch {
+      window.print();
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const formatINR = (val: string | number | null | undefined) =>
@@ -93,7 +96,12 @@ export const TaxWorksheetModal: React.FC<TaxWorksheetModalProps> = ({
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            <DocumentActions onDownload={handleDownload} onPrint={handlePrint} />
+            <DocumentActions
+              onDownload={handleDownload}
+              isDownloading={downloading}
+              documentElement={contentRef.current}
+              documentTitle={`Tax_Worksheet_${monthName}_${year}`}
+            />
             <button
               type="button"
               onClick={onClose}

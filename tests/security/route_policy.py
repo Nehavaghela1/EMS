@@ -313,9 +313,17 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/api/v1/payroll/employees/{employee_id}/bank-account/reveal"): AUTHENTICATED,
     ("PUT", "/api/v1/payroll/employees/{employee_id}/bank-account"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/payslips/me"): AUTHENTICATED,
+    ("GET", "/api/v1/payroll/payslips/me/{payroll_item_id}/pdf"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/payslips/{employee_id}"): ROLES(UserRole.hr_admin),
+    ("GET", "/api/v1/payroll/payslips/{employee_id}/{payroll_item_id}/pdf"): ROLES(
+        UserRole.hr_admin
+    ),
     ("GET", "/api/v1/payroll/tax-worksheet/me"): AUTHENTICATED,
+    ("GET", "/api/v1/payroll/tax-worksheet/me/pdf"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/tax-worksheet/{employee_id}"): ROLES(
+        UserRole.hr_admin, UserRole.owner
+    ),
+    ("GET", "/api/v1/payroll/tax-worksheet/{employee_id}/pdf"): ROLES(
         UserRole.hr_admin, UserRole.owner
     ),
     ("GET", "/api/v1/payroll/annual-earnings/me"): AUTHENTICATED,
@@ -324,7 +332,11 @@ POLICY: dict[tuple[str, str], Any] = {
         UserRole.hr_admin, UserRole.owner
     ),
     ("GET", "/api/v1/payroll/salary-certificate/me"): AUTHENTICATED,
+    ("GET", "/api/v1/payroll/salary-certificate/me/pdf"): AUTHENTICATED,
     ("GET", "/api/v1/payroll/salary-certificate/{employee_id}"): ROLES(
+        UserRole.hr_admin, UserRole.owner
+    ),
+    ("GET", "/api/v1/payroll/salary-certificate/{employee_id}/pdf"): ROLES(
         UserRole.hr_admin, UserRole.owner
     ),
     ("GET", "/api/v1/payroll/statutory-rates"): ROLES(UserRole.hr_admin, UserRole.super_admin),

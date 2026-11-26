@@ -838,3 +838,25 @@ export async function getEmployeeSalaryCertificate(employeeId: string): Promise<
   return res.data;
 }
 
+export async function downloadMyPayslipPdf(payrollItemId: string): Promise<Blob> {
+  const res = await apiClient.get(`/payroll/payslips/me/${payrollItemId}/pdf`, {
+    responseType: "blob",
+  });
+  return res.data;
+}
+
+export async function downloadMyTaxWorksheetPdf(month: number, year: number): Promise<Blob> {
+  const res = await apiClient.get("/payroll/tax-worksheet/me/pdf", {
+    params: { month, year },
+    responseType: "blob",
+  });
+  return res.data;
+}
+
+export async function downloadMySalaryCertificatePdf(): Promise<Blob> {
+  const res = await apiClient.get("/payroll/salary-certificate/me/pdf", {
+    responseType: "blob",
+  });
+  return res.data;
+}
+

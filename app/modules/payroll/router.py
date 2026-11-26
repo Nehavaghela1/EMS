@@ -780,6 +780,47 @@ def list_employee_payslips(
     return _payslip_page(items, total, pages, params)
 
 
+@payslips_router.get("/me/{payroll_item_id}/pdf")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def download_my_payslip_pdf(
+    request: Request,
+    payroll_item_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    content, filename = PayslipService(db).export_payslip_pdf(user, payroll_item_id, None)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@payslips_router.get("/{employee_id}/{payroll_item_id}/pdf")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def download_employee_payslip_pdf(
+    request: Request,
+    employee_id: uuid.UUID,
+    payroll_item_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin)),
+):
+    content, filename = PayslipService(db).export_payslip_pdf(user, payroll_item_id, employee_id)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 # --- Routes 97-99: reimbursements ------------------------------------------
 
 reimbursements_router = APIRouter(
@@ -890,6 +931,27 @@ def get_my_tax_worksheet(
     return TaxWorksheetService(db).get_worksheet(user, None, month, year)
 
 
+@tax_worksheet_router.get("/me/pdf")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def download_my_tax_worksheet_pdf(
+    request: Request,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2000, le=2100),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    content, filename = TaxWorksheetService(db).export_tax_worksheet_pdf(user, None, month, year)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @tax_worksheet_router.get("/{employee_id}", response_model=TaxWorksheetResponse)
 @limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_employee_tax_worksheet(
@@ -903,6 +965,30 @@ def get_employee_tax_worksheet(
 ):
     response.headers["Cache-Control"] = "private, no-store"
     return TaxWorksheetService(db).get_worksheet(user, employee_id, month, year)
+
+
+@tax_worksheet_router.get("/{employee_id}/pdf")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def download_employee_tax_worksheet_pdf(
+    request: Request,
+    employee_id: uuid.UUID,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2000, le=2100),
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
+):
+    content, filename = TaxWorksheetService(db).export_tax_worksheet_pdf(
+        user, employee_id, month, year
+    )
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # --- Annual Earnings Endpoints (Spec 1B & 1C) --------------------------------
@@ -972,6 +1058,25 @@ def get_my_salary_certificate(
     return SalaryCertificateService(db).get_certificate(user, None)
 
 
+@salary_certificate_router.get("/me/pdf")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def download_my_salary_certificate_pdf(
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(get_company_user),
+):
+    content, filename = SalaryCertificateService(db).export_certificate_pdf(user, None)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @salary_certificate_router.get("/{employee_id}", response_model=SalaryCertificateResponse)
 @limiter.limit("60/minute", key_func=get_user_or_ip_key)
 def get_employee_salary_certificate(
@@ -983,3 +1088,23 @@ def get_employee_salary_certificate(
 ):
     response.headers["Cache-Control"] = "private, no-store"
     return SalaryCertificateService(db).get_certificate(user, employee_id)
+
+
+@salary_certificate_router.get("/{employee_id}/pdf")
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def download_employee_salary_certificate_pdf(
+    request: Request,
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner)),
+):
+    content, filename = SalaryCertificateService(db).export_certificate_pdf(user, employee_id)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )

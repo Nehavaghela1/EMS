@@ -34,7 +34,11 @@ from app.core.regions import (
 from app.core.roles import HR_LEVEL_ROLES
 from app.core.time import utcnow
 from app.modules.hr.models import Employee, EmploymentType, ResignationStatus
-from app.modules.hr.repository import EmployeeRepository, EmployeeSectionRepository
+from app.modules.hr.repository import (
+    DepartmentRepository,
+    EmployeeRepository,
+    EmployeeSectionRepository,
+)
 from app.modules.identity.models import PayrollWorkingDaysBasis, User, UserRole
 from app.modules.identity.repository import (
     CompanyRepository,
@@ -2650,6 +2654,9 @@ class PayslipService:
         self.item_repo = PayrollItemRepository(db)
         self.employee_repo = EmployeeRepository(db)
         self.bank_repo = EmployeeBankAccountRepository(db)
+        self.company_repo = CompanyRepository(db)
+        self.company_settings_repo = CompanySettingsRepository(db)
+        self.department_repo = DepartmentRepository(db)
         self.audit = AuditService(db)
 
     def _attach_accounts(
@@ -2735,6 +2742,175 @@ class PayslipService:
             self.db.commit()
         self._attach_accounts(company_id, items, mask=True)
         return items, total, pages
+
+    def export_payslip_pdf(
+        self, actor: User, payroll_item_id: uuid.UUID, employee_id: uuid.UUID | None = None
+    ) -> tuple[bytes, str]:
+        from app.modules.payroll.pdf_export import generate_payslip_pdf
+
+        company_id = actor.company_id
+        item = self.item_repo.get_by_id(payroll_item_id, company_id)
+        if item is None:
+            raise NotFoundError("Payslip not found.")
+
+        # Permissions: employee can only download their own payslip
+        if employee_id is None:
+            own = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if own is None or item.employee_id != own.id:
+                raise ForbiddenError("You may only download your own payslip.")
+            employee = own
+        else:
+            if actor.role not in (UserRole.hr_admin, UserRole.owner):
+                raise ForbiddenError(
+                    "Only HR administrators and owners can download employee payslips."
+                )
+            target_emp = self.employee_repo.get_by_id(employee_id, company_id)
+            if target_emp is None or item.employee_id != target_emp.id:
+                raise NotFoundError("Employee payslip not found.")
+            employee = target_emp
+
+        self._attach_accounts(company_id, [item], mask=False)
+
+        company = self.company_repo.get_by_id(company_id)
+        co_name = company.name if company else "Company"
+        addr_line = company.address or "" if company else ""
+        city_pin = f"{company.city or ''} {company.pincode or ''}".strip() if company else ""
+
+        month = getattr(item, "month", None) or 1
+        year = getattr(item, "year", None) or 2026
+        month_names = [
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ]
+        m_name = month_names[month - 1] if 1 <= month <= 12 else f"Month {month}"
+        period_title = f"{m_name} {year}"
+
+        pan_val = getattr(employee, "pan_number", None) or "—"
+
+        emp_name = f"{employee.first_name} {employee.last_name or ''}".strip()
+        doj = employee.hire_date.strftime("%d/%m/%Y") if employee.hire_date else "—"
+
+        dept_name = "—"
+        if employee.department_id:
+            dept = self.department_repo.get_by_id(employee.department_id, company_id)
+            if dept:
+                dept_name = dept.name
+
+        emp_details = [
+            ("Employee Name", emp_name),
+            ("Employee ID", employee.employee_code or "—"),
+            ("Designation", employee.position or "—"),
+            ("Department", dept_name),
+            ("Date of Joining", doj),
+            ("PAN", pan_val),
+            ("Pay Period", period_title),
+            ("Work Location", "Ahmedabad"),
+        ]
+
+        # Earnings & Deductions
+        earnings_list: list[tuple[str, str]] = []
+        for e in item.earnings_json or []:
+            name = e.get("name") or e.get("code") or "Earning"
+            amt = e.get("amount", "0.00")
+            earnings_list.append((name, f"₹{Decimal(str(amt)):,.2f}"))
+
+        deductions_list: list[tuple[str, str]] = []
+        for d in item.deductions_json or []:
+            name = d.get("name") or d.get("code") or "Deduction"
+            amt = d.get("amount", "0.00")
+            deductions_list.append((name, f"₹{Decimal(str(amt)):,.2f}"))
+
+        net_val = f"₹{item.net_salary:,.2f}"
+        reimb_val = f"₹{item.reimbursement_amount:,.2f}"
+
+        # Indian words for net pay
+        int_net = int(item.net_salary)
+
+        def _in_words(num: int) -> str:
+            if num <= 0:
+                return "Zero"
+            a = [
+                "",
+                "One",
+                "Two",
+                "Three",
+                "Four",
+                "Five",
+                "Six",
+                "Seven",
+                "Eight",
+                "Nine",
+                "Ten",
+                "Eleven",
+                "Twelve",
+                "Thirteen",
+                "Fourteen",
+                "Fifteen",
+                "Sixteen",
+                "Seventeen",
+                "Eighteen",
+                "Nineteen",
+            ]
+            b = [
+                "",
+                "",
+                "Twenty",
+                "Thirty",
+                "Forty",
+                "Fifty",
+                "Sixty",
+                "Seventy",
+                "Eighty",
+                "Ninety",
+            ]
+
+            def _w(n: int) -> str:
+                if n < 20:
+                    return a[n]
+                if n < 100:
+                    return b[n // 10] + (" " + a[n % 10] if n % 10 else "")
+                if n < 1000:
+                    return a[n // 100] + " Hundred" + (" " + _w(n % 100) if n % 100 else "")
+                if n < 100000:
+                    return _w(n // 1000) + " Thousand" + (" " + _w(n % 1000) if n % 1000 else "")
+                if n < 10000000:
+                    return _w(n // 100000) + " Lakh" + (" " + _w(n % 100000) if n % 100000 else "")
+                return (
+                    _w(n // 10000000) + " Crore" + (" " + _w(n % 10000000) if n % 10000000 else "")
+                )
+
+            return f"Indian Rupee {_w(num)} Only"
+
+        words = _in_words(int_net)
+
+        pdf_bytes = generate_payslip_pdf(
+            company_name=co_name,
+            company_address=addr_line,
+            company_city_pin=city_pin,
+            period_title=period_title,
+            employee_details=emp_details,
+            net_payable=net_val,
+            paid_days=str(item.present_days + item.paid_leave_days),
+            lop_days=str(item.lop_days),
+            earnings=earnings_list,
+            deductions=deductions_list,
+            reimbursements=reimb_val,
+            net_pay_words=words,
+        )
+
+        clean_emp = emp_name.replace(" ", "_")
+        filename = f"Payslip_{clean_emp}_{m_name}_{year}.pdf"
+        return pdf_bytes, filename
 
 
 class EmployeeBankAccountService:
@@ -3341,6 +3517,8 @@ class TaxWorksheetService:
         self.statutory_repo = StatutoryConfigRepository(db)
         self.tax_repo = TaxSlabRepository(db)
         self.item_repo = PayrollItemRepository(db)
+        self.company_repo = CompanyRepository(db)
+        self.company_settings_repo = CompanySettingsRepository(db)
         self.user_repo = UserRepository(db)
 
     def _resolve_target_employee(self, actor: User, employee_id: uuid.UUID | None) -> Employee:
@@ -3724,6 +3902,85 @@ class TaxWorksheetService:
             monthly_tds_remaining=f"{monthly_tds_rem:.2f}",
         )
 
+    def export_tax_worksheet_pdf(
+        self, actor: User, employee_id: uuid.UUID | None, month: int, year: int
+    ) -> tuple[bytes, str]:
+        from app.modules.payroll.pdf_export import generate_tax_worksheet_pdf
+
+        worksheet = self.get_worksheet(actor, employee_id, month, year)
+        company = self.company_repo.get_by_id(actor.company_id)
+        co_name = company.name if company else "Company"
+        addr_line = company.address or "" if company else ""
+        city_pin = f"{company.city or ''} {company.pincode or ''}".strip() if company else ""
+
+        month_names = [
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ]
+        m_name = month_names[month - 1] if 1 <= month <= 12 else f"Month {month}"
+        period_title = f"{m_name} {year}"
+
+        gross_rows = [
+            ("Monthly Gross Salary", f"₹{Decimal(worksheet.total_gross.actual):,.2f}"),
+            (
+                "Gross Salary (Annualized: 12 Months)",
+                f"₹{Decimal(worksheet.total_gross.total):,.2f}",
+            ),
+            ("Income from Other Sources", "₹0.00"),
+            ("Gross Total Income", f"₹{Decimal(worksheet.total_gross.total):,.2f}"),
+            (
+                "Less: Standard Deduction under Section 16(ia)",
+                f"- ₹{Decimal(worksheet.standard_deduction.total):,.2f}",
+            ),
+        ]
+
+        tax_rows = [
+            (
+                f"Tax as per Slabs ({worksheet.regime})",
+                f"₹{Decimal(worksheet.gross_tax_liability):,.2f}",
+            ),
+            ("Less: Tax Rebate under Section 87A", f"- ₹{Decimal(worksheet.rebate_87a):,.2f}"),
+            ("Net Tax before Cess", f"₹{Decimal(worksheet.tax_after_rebate):,.2f}"),
+            ("Health & Education Cess (4%)", f"₹{Decimal(worksheet.health_education_cess):,.2f}"),
+        ]
+
+        monthly_tds_val = (
+            worksheet.monthly_tds_remaining
+            if worksheet.monthly_tds_remaining
+            else worksheet.tds_this_month
+        )
+
+        pdf_bytes = generate_tax_worksheet_pdf(
+            company_name=co_name,
+            company_address=addr_line,
+            company_city_pin=city_pin,
+            period_title=period_title,
+            financial_year=worksheet.financial_year,
+            regime=worksheet.regime,
+            employee_name=worksheet.employee_name,
+            designation=worksheet.designation or "—",
+            pan=worksheet.pan_number or "—",
+            gross_income_rows=gross_rows,
+            net_taxable_income=f"₹{Decimal(worksheet.total_taxable_income):,.2f}",
+            tax_liability_rows=tax_rows,
+            total_tax_payable=f"₹{Decimal(worksheet.total_tax_payable):,.2f}",
+            monthly_tds=f"₹{Decimal(monthly_tds_val):,.2f}",
+        )
+
+        clean_emp = worksheet.employee_name.replace(" ", "_")
+        filename = f"Tax_Worksheet_{clean_emp}_{m_name}_{year}.pdf"
+        return pdf_bytes, filename
+
 
 # =========================================================================
 # Spec 1B & 1C: Annual Earnings Service & Excel Export
@@ -4011,6 +4268,7 @@ class SalaryCertificateService:
         self.salary_repo = EmployeeSalaryRepository(db)
         self.structure_repo = SalaryStructureRepository(db)
         self.company_repo = CompanyRepository(db)
+        self.company_settings_repo = CompanySettingsRepository(db)
         self.section_repo = EmployeeSectionRepository(db)
         self.user_repo = UserRepository(db)
 
@@ -4151,3 +4409,36 @@ class SalaryCertificateService:
             signatory_title=signatory_title,
             issued_date=today_str,
         )
+
+    def export_certificate_pdf(
+        self, actor: User, employee_id: uuid.UUID | None
+    ) -> tuple[bytes, str]:
+        from app.modules.payroll.pdf_export import generate_salary_certificate_pdf
+
+        cert = self.get_certificate(actor, employee_id)
+        company = self.company_repo.get_by_id(actor.company_id)
+        addr_line = company.address or "" if company else ""
+        city_pin = f"{company.city or ''} {company.pincode or ''}".strip() if company else ""
+
+        comps = [(c.name, c.monthly_amount, c.annual_amount) for c in cert.components]
+
+        pdf_bytes = generate_salary_certificate_pdf(
+            company_name=cert.company_name,
+            company_address=addr_line,
+            company_city_pin=city_pin,
+            issued_date=cert.issued_date,
+            employee_name=cert.employee_name,
+            employee_code=cert.employee_code or "—",
+            designation=cert.designation or "—",
+            date_of_joining=cert.date_of_joining or "—",
+            residential_address=cert.residential_address or "—",
+            annual_ctc=cert.annual_ctc,
+            monthly_gross=cert.monthly_gross,
+            components=comps,
+            signatory_name=cert.signatory_name,
+            signatory_title=cert.signatory_title,
+        )
+
+        clean_emp = cert.employee_name.replace(" ", "_")
+        filename = f"Salary_Certificate_{clean_emp}.pdf"
+        return pdf_bytes, filename

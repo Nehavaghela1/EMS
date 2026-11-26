@@ -1,10 +1,10 @@
-import React, { useRef } from "react";
-import { type PayrollItem } from "../api";
+import React, { useRef, useState } from "react";
+import { downloadMyPayslipPdf, type PayrollItem } from "../api";
 import { type Employee } from "../../hr/api";
 import { type CompanyResponse } from "../../identity/api";
 import { DocumentShell } from "./DocumentShell";
 import { DocumentActions } from "./DocumentActions";
-import { downloadDocumentAsHtml } from "../utils";
+import { triggerBlobDownload } from "../utils";
 
 interface PayslipDocumentModalProps {
   isOpen: boolean;
@@ -64,18 +64,23 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
 
   const cleanPeriod = monthName.includes(String(year)) ? monthName : `${monthName} ${year}`;
   const contentRef = useRef<HTMLDivElement>(null);
+  const [downloading, setDownloading] = useState(false);
 
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleDownload = () => {
-    if (!contentRef.current) return;
-    const periodStr = cleanPeriod.replace(/\s+/g, "_");
-    downloadDocumentAsHtml(
-      contentRef.current,
-      `Payslip_${empName.replace(/\s+/g, "_")}_${periodStr}.html`
-    );
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const blob = await downloadMyPayslipPdf(item.id);
+      const periodStr = cleanPeriod.replace(/\s+/g, "_");
+      triggerBlobDownload(
+        blob,
+        `Payslip_${empName.replace(/\s+/g, "_")}_${periodStr}.pdf`
+      );
+    } catch {
+      // Fallback
+      window.print();
+    } finally {
+      setDownloading(false);
+    }
   };
 
   return (
@@ -130,7 +135,12 @@ export const PayslipDocumentModal: React.FC<PayslipDocumentModalProps> = ({
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            <DocumentActions onDownload={handleDownload} onPrint={handlePrint} />
+            <DocumentActions
+              onDownload={handleDownload}
+              isDownloading={downloading}
+              documentElement={contentRef.current}
+              documentTitle={`Payslip_${empName}_${cleanPeriod}`}
+            />
             <button
               type="button"
               onClick={onClose}
