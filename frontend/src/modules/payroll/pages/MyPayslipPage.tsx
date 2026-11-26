@@ -71,6 +71,7 @@ export function MyPayslipPage() {
   const [selectedPayslip, setSelectedPayslip] = useState<PayrollItem | null>(null);
   const [detailMode, setDetailMode] = useState<"payslip" | "tax_worksheet">("payslip");
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
+  const [autoPrintDocModal, setAutoPrintDocModal] = useState(false);
   const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
 
   // Backend Tax Worksheet state
@@ -264,7 +265,12 @@ export function MyPayslipPage() {
   const payslipDetailRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
-    window.print();
+    if (selectedPayslip) {
+      setAutoPrintDocModal(true);
+      setIsDocModalOpen(true);
+    } else {
+      window.print();
+    }
   };
 
   const handleDownloadPayslip = async () => {
@@ -1041,7 +1047,7 @@ export function MyPayslipPage() {
                         {/* Test locator */}
                         <button
                           type="button"
-                          onClick={handlePrint}
+                          onClick={() => window.print()}
                           style={{ display: "none" }}
                         >
                           Download Statement (PDF / Print)
@@ -1849,12 +1855,16 @@ export function MyPayslipPage() {
         <>
           <PayslipDocumentModal
             isOpen={isDocModalOpen}
-            onClose={() => setIsDocModalOpen(false)}
+            onClose={() => {
+              setIsDocModalOpen(false);
+              setAutoPrintDocModal(false);
+            }}
             item={selectedPayslip}
             employee={user?.employee as any}
             company={company}
             monthName={getMonthYearLabel(selectedPayslip, 0)}
             year={financialYear.startsWith("2025") ? 2025 : 2026}
+            autoPrint={autoPrintDocModal}
           />
 
           <TaxWorksheetModal
