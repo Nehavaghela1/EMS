@@ -12,6 +12,7 @@ from app.modules.performance.models import CycleStatus
 from app.modules.performance.schemas import (
     GoalProgressHistoryResponse,
     GoalProgressUpdateRequest,
+    GoalRejectRequest,
     GoalsCreateRequest,
     GoalUpdateRequest,
     ManagerReviewRequest,
@@ -209,6 +210,46 @@ def get_goal_progress_history(
     service = PerformanceService(db)
     history = service.get_goal_progress_history(user.company_id, id, user)
     return [GoalProgressHistoryResponse.model_validate(h) for h in history]
+
+
+@performance_router.post("/goals/{id}/send-for-approval", response_model=PerformanceGoalResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def send_goal_for_approval(
+    request: Request,
+    id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role()),
+):
+    service = PerformanceService(db)
+    goal = service.send_goal_for_approval(user.company_id, id, user)
+    return service.goal_to_response(user.company_id, goal)
+
+
+@performance_router.post("/goals/{id}/approve", response_model=PerformanceGoalResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def approve_performance_goal(
+    request: Request,
+    id: uuid.UUID,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner, UserRole.manager)),
+):
+    service = PerformanceService(db)
+    goal = service.approve_goal(user.company_id, id, user)
+    return service.goal_to_response(user.company_id, goal)
+
+
+@performance_router.post("/goals/{id}/reject", response_model=PerformanceGoalResponse)
+@limiter.limit("30/minute", key_func=get_user_or_ip_key)
+def reject_performance_goal(
+    request: Request,
+    id: uuid.UUID,
+    data: GoalRejectRequest,
+    db: Session = Depends(get_tenant_db),
+    user: User = Depends(require_company_role(UserRole.hr_admin, UserRole.owner, UserRole.manager)),
+):
+    service = PerformanceService(db)
+    goal = service.reject_goal(user.company_id, id, data.reason, user)
+    return service.goal_to_response(user.company_id, goal)
 
 
 @performance_router.post("/goals/{goal_id}/self-review", response_model=PerformanceReviewResponse)

@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import (
@@ -38,6 +39,12 @@ class GoalStatus(str, enum.Enum):
     draft = "draft"
     in_progress = "in_progress"
     completed = "completed"
+
+
+class GoalApproval(str, enum.Enum):
+    pending_approval = "pending_approval"
+    approved = "approved"
+    rejected = "rejected"
 
 
 class ReviewerRole(str, enum.Enum):
@@ -90,6 +97,13 @@ class PerformanceGoal(TenantBase):
     status: Mapped[GoalStatus] = mapped_column(
         SAEnum(GoalStatus, name="goal_status"), nullable=False, default=GoalStatus.draft
     )
+    approval_status: Mapped[GoalApproval] = mapped_column(
+        SAEnum(GoalApproval, name="goal_approval_status"),
+        nullable=False,
+        default=GoalApproval.approved,
+        server_default=text("'approved'"),
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     progress: Mapped[int] = mapped_column(nullable=False, default=0)
     self_rating: Mapped[Decimal | None] = mapped_column(SANumeric(3, 1), nullable=True)
     self_comments: Mapped[str | None] = mapped_column(Text, nullable=True)

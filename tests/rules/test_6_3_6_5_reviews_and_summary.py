@@ -242,6 +242,9 @@ def setup_active_cycle_with_goals(client: TestClient, p2_setup: dict[str, Any]) 
         headers=emp_headers,
     )
     goals = g.json()
+    mgr_headers = _auth_headers(p2_setup["mgr_user_a"])
+    client.post(f"/api/v1/performance/goals/{goals[0]['id']}/approve", headers=mgr_headers)
+    client.post(f"/api/v1/performance/goals/{goals[1]['id']}/approve", headers=mgr_headers)
     return {
         "cycle_id": cycle_id,
         "goal_1_id": goals[0]["id"],

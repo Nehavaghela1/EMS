@@ -19,6 +19,7 @@ from app.modules.hr.repository import EmployeeRepository
 from app.modules.identity.models import User, UserRole
 from app.modules.performance.models import (
     CycleStatus,
+    GoalApproval,
     GoalStatus,
     PerformanceCycle,
     PerformanceGoal,
@@ -299,15 +300,41 @@ class PerformanceService:
             else:
                 raise ForbiddenError("Employees can only set goals for themselves.")
 
-        # Check total weightages sum <= 100
+        # Determine starting approval state:
+        # - employee creates for themselves -> pending_approval
+        # - manager, hr_admin or owner creates -> approved immediately
+        is_self = current_emp is not None and current_emp.id == emp.id and not is_hr
+        initial_approval = GoalApproval.pending_approval if is_self else GoalApproval.approved
+
+        # 7C: 100% weightage total sums APPROVED goals only; pending and rejected ones are excluded.
+        # Validate the 100% cap at approval time for pending goals, but for immediately approved
+        # goals validate now.
+        # Additionally, drafting goals (pending or approved) cannot cause an employee's total
+        # unrejected weightage to exceed 100%, matching 6.2 R4 ("Total weightage per employee
+        # per cycle cannot exceed 100%").
         existing_goals = self.goal_repo.list_by_employee_and_cycle(company_id, emp.id, cycle.id)
-        current_sum = sum((g.weightage for g in existing_goals), Decimal("0.00"))
+        approved_existing = [
+            g for g in existing_goals if g.approval_status == GoalApproval.approved
+        ]
+        active_unrejected_existing = [
+            g for g in existing_goals if g.approval_status != GoalApproval.rejected
+        ]
+        current_approved_sum = sum((g.weightage for g in approved_existing), Decimal("0.00"))
+        current_active_sum = sum((g.weightage for g in active_unrejected_existing), Decimal("0.00"))
         new_items_sum = sum((item.weightage for item in data.goals), Decimal("0.00"))
-        if current_sum + new_items_sum > Decimal("100.00"):
-            raise WeightageSumError(
-                f"Total goal weightage cannot exceed 100.00%. "
-                f"Current sum: {current_sum}%, attempting to add: {new_items_sum}%"
-            )
+
+        if initial_approval == GoalApproval.approved:
+            if current_approved_sum + new_items_sum > Decimal("100.00"):
+                raise WeightageSumError(
+                    f"Total goal weightage cannot exceed 100.00%. "
+                    f"Current sum: {current_approved_sum}%, attempting to add: {new_items_sum}%"
+                )
+        else:
+            if current_active_sum + new_items_sum > Decimal("100.00"):
+                raise WeightageSumError(
+                    f"Total goal weightage cannot exceed 100.00%. Current active/pending sum: "
+                    f"{current_active_sum}%, attempting to add: {new_items_sum}%"
+                )
 
         created = []
         for item in data.goals:
@@ -320,6 +347,7 @@ class PerformanceService:
                 weightage=item.weightage,
                 target_value=item.target_value,
                 status=GoalStatus.in_progress,
+                approval_status=initial_approval,
                 progress=0,
             )
             created.append(goal)
@@ -329,7 +357,11 @@ class PerformanceService:
                 action="PERFORMANCE_GOAL_CREATED",
                 entity_type="performance_goal",
                 entity_id=goal.id,
-                details={"title": goal.title, "weightage": str(goal.weightage)},
+                details={
+                    "title": goal.title,
+                    "weightage": str(goal.weightage),
+                    "approval_status": goal.approval_status.value,
+                },
             )
 
         # If someone else created/modified goals for the employee, notify the employee and manager
@@ -404,13 +436,23 @@ class PerformanceService:
         if goal.status == GoalStatus.completed and is_hr and not data.reason:
             raise ConflictError("A reason is required to modify a completed goal.")
 
-        # If weightage is updated, check sum
+        # If weightage is updated, check sum (APPROVED goals only)
         if data.weightage is not None and data.weightage != goal.weightage:
             emp_goals = self.goal_repo.list_by_employee_and_cycle(
                 company_id, goal.employee_id, goal.cycle_id
             )
-            other_sum = sum((g.weightage for g in emp_goals if g.id != goal.id), Decimal("0.00"))
-            if other_sum + data.weightage > Decimal("100.00"):
+            other_sum = sum(
+                (
+                    g.weightage
+                    for g in emp_goals
+                    if g.id != goal.id and g.approval_status == GoalApproval.approved
+                ),
+                Decimal("0.00"),
+            )
+            if (
+                goal.approval_status == GoalApproval.approved
+                and other_sum + data.weightage > Decimal("100.00")
+            ):
                 raise WeightageSumError("Total goal weightage cannot exceed 100.00%.")
 
         new_status = data.status if data.status is not None else goal.status
@@ -559,6 +601,187 @@ class PerformanceService:
         goals = self.list_goals(company_id, employee_id, actor)
         return [self.goal_to_response(company_id, g) for g in goals]
 
+    def _verify_goal_approval_authority(
+        self, company_id: uuid.UUID, actor: User, target_employee: Employee
+    ) -> None:
+        """Verify actor has authority to approve or reject goals for target_employee.
+
+        Only reporting manager, hr_admin or owner of the company may approve/reject.
+        A different manager gets 403.
+        """
+        if actor.role in (UserRole.hr_admin, UserRole.owner):
+            return
+
+        if actor.role == UserRole.manager:
+            caller_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if caller_emp is None:
+                raise ForbiddenError("You do not have permission to approve goals.")
+            if target_employee.reporting_manager_id == caller_emp.id:
+                return
+            raise ForbiddenError("Only the employee's reporting manager or HR can approve goals.")
+
+        raise ForbiddenError("You do not have permission to approve or reject goals.")
+
+    def send_goal_for_approval(
+        self, company_id: uuid.UUID, goal_id: uuid.UUID, actor: User
+    ) -> PerformanceGoal:
+        goal = self.goal_repo.get_by_id(goal_id, company_id)
+        if goal is None:
+            raise NotFoundError("Performance goal not found.")
+
+        caller_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+        is_hr = actor.role in (UserRole.hr_admin, UserRole.owner)
+        if not (is_hr or (caller_emp and caller_emp.id == goal.employee_id)):
+            raise ForbiddenError("You can only send your own goals for approval.")
+
+        if goal.approval_status != GoalApproval.pending_approval:
+            # If rejected, resubmitting sets it back to pending_approval
+            if goal.approval_status == GoalApproval.rejected:
+                goal.approval_status = GoalApproval.pending_approval
+                goal.rejection_reason = None
+                self.goal_repo.update(goal)
+            else:
+                raise ConflictError("Goal is already approved.")
+
+        target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
+        # Notify approver: reporting manager or HR
+        if target_emp:
+            approver_user_id = None
+            if target_emp.reporting_manager_id:
+                mgr = self.employee_repo.get_by_id(target_emp.reporting_manager_id, company_id)
+                if mgr and mgr.user_id:
+                    approver_user_id = mgr.user_id
+            if approver_user_id:
+                self.notifications.notify(
+                    company_id=company_id,
+                    user_id=approver_user_id,
+                    type="goal_approval_requested",
+                    title="Goal Approval Requested",
+                    message=f"Goal '{goal.title}' submitted for approval.",
+                    entity_type="performance_goal",
+                    entity_id=goal.id,
+                    action_url="/performance/team-goals",
+                )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PERFORMANCE_GOAL_SUBMITTED_FOR_APPROVAL",
+            entity_type="performance_goal",
+            entity_id=goal.id,
+            details={"title": goal.title},
+        )
+        self.db.commit()
+        return goal
+
+    def approve_goal(
+        self, company_id: uuid.UUID, goal_id: uuid.UUID, actor: User
+    ) -> PerformanceGoal:
+        goal = self.goal_repo.get_by_id(goal_id, company_id)
+        if goal is None:
+            raise NotFoundError("Performance goal not found.")
+
+        target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
+        if target_emp is None:
+            raise NotFoundError("Employee profile not found.")
+
+        self._verify_goal_approval_authority(company_id, actor, target_emp)
+
+        if goal.approval_status == GoalApproval.approved:
+            raise ConflictError("Goal is already approved.")
+
+        # 7C: Validate the 100% cap at APPROVAL time, not creation time
+        emp_goals = self.goal_repo.list_by_employee_and_cycle(
+            company_id, goal.employee_id, goal.cycle_id
+        )
+        approved_sum = sum(
+            (
+                g.weightage
+                for g in emp_goals
+                if g.id != goal.id and g.approval_status == GoalApproval.approved
+            ),
+            Decimal("0.00"),
+        )
+        if approved_sum + goal.weightage > Decimal("100.00"):
+            raise WeightageSumError(
+                f"Approving this goal would exceed the 100.00% cap. "
+                f"Currently approved: {approved_sum}%, goal weightage: {goal.weightage}%"
+            )
+
+        goal.approval_status = GoalApproval.approved
+        goal.rejection_reason = None
+        self.goal_repo.update(goal)
+
+        if target_emp.user_id:
+            self.notifications.notify(
+                company_id=company_id,
+                user_id=target_emp.user_id,
+                type="goal_approved",
+                title="Goal Approved",
+                message=f"Your goal '{goal.title}' has been approved.",
+                entity_type="performance_goal",
+                entity_id=goal.id,
+                action_url="/performance/goals",
+            )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PERFORMANCE_GOAL_APPROVED",
+            entity_type="performance_goal",
+            entity_id=goal.id,
+            details={"title": goal.title, "weightage": str(goal.weightage)},
+        )
+        self.db.commit()
+        return goal
+
+    def reject_goal(
+        self, company_id: uuid.UUID, goal_id: uuid.UUID, reason: str, actor: User
+    ) -> PerformanceGoal:
+        goal = self.goal_repo.get_by_id(goal_id, company_id)
+        if goal is None:
+            raise NotFoundError("Performance goal not found.")
+
+        target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
+        if target_emp is None:
+            raise NotFoundError("Employee profile not found.")
+
+        self._verify_goal_approval_authority(company_id, actor, target_emp)
+
+        cleaned_reason = (reason or "").strip()
+        if not cleaned_reason:
+            raise ValidationError(
+                "A rejection reason of 1 to 1000 characters is required.",
+                details={"field": "reason"},
+            )
+
+        goal.approval_status = GoalApproval.rejected
+        goal.rejection_reason = cleaned_reason
+        self.goal_repo.update(goal)
+
+        if target_emp.user_id:
+            self.notifications.notify(
+                company_id=company_id,
+                user_id=target_emp.user_id,
+                type="goal_rejected",
+                title="Goal Rejected",
+                message=f"Your goal '{goal.title}' was rejected: {cleaned_reason}",
+                entity_type="performance_goal",
+                entity_id=goal.id,
+                action_url="/performance/goals",
+            )
+
+        self.audit.record(
+            company_id=company_id,
+            actor=actor,
+            action="PERFORMANCE_GOAL_REJECTED",
+            entity_type="performance_goal",
+            entity_id=goal.id,
+            details={"title": goal.title, "reason": cleaned_reason},
+        )
+        self.db.commit()
+        return goal
+
     # 3. Reviews & Invariants
     def submit_self_review(
         self, company_id: uuid.UUID, goal_id: uuid.UUID, data: SelfReviewRequest, actor: User
@@ -586,11 +809,29 @@ class PerformanceService:
         if emp is None or goal.employee_id != emp.id:
             raise ForbiddenError("Employees can only submit self-reviews for their own goals.")
 
-        # Check total weightages sum for this employee in this cycle == 100
+        # 7C: self-review stays blocked while any of the employee's goals are pending approval,
+        # with a message naming how many are waiting and with whom
         emp_goals = self.goal_repo.list_by_employee_and_cycle(
             company_id, goal.employee_id, goal.cycle_id
         )
-        total_weightage = sum((g.weightage for g in emp_goals), Decimal("0.00"))
+        pending_goals = [g for g in emp_goals if g.approval_status == GoalApproval.pending_approval]
+        if pending_goals:
+            count = len(pending_goals)
+            approver_name = "HR Admin"
+            if emp.reporting_manager_id:
+                mgr = self.employee_repo.get_by_id(emp.reporting_manager_id, company_id)
+                if mgr:
+                    approver_name = f"manager {mgr.first_name} {mgr.last_name or ''}".strip()
+            plural = "goal is" if count == 1 else "goals are"
+            msg = (
+                f"Self-review is blocked while {count} {plural} pending "
+                f"approval with {approver_name}."
+            )
+            raise ConflictError(msg)
+
+        # Check total weightages sum for this employee in this cycle == 100 (APPROVED goals only)
+        approved_goals = [g for g in emp_goals if g.approval_status == GoalApproval.approved]
+        total_weightage = sum((g.weightage for g in approved_goals), Decimal("0.00"))
         if total_weightage != Decimal("100.00"):
             raise WeightageSumError(
                 f"Goal weightages for this cycle sum to {total_weightage}%, "
@@ -660,6 +901,28 @@ class PerformanceService:
         if goal is None:
             raise NotFoundError("Performance goal not found.")
 
+        target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
+        if not target_emp:
+            raise NotFoundError("Employee profile not found.")
+
+        if actor.role in (UserRole.hr_admin, UserRole.owner):
+            mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if mgr_emp is not None and mgr_emp.id == target_emp.id:
+                raise ForbiddenError("You cannot submit a manager review for your own goal.")
+            if target_emp.reporting_manager_id is not None:
+                if not mgr_emp or target_emp.reporting_manager_id != mgr_emp.id:
+                    raise ForbiddenError(
+                        "HR administrators cannot submit manager reviews on behalf of managers."
+                    )
+        elif actor.role == UserRole.manager:
+            mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
+            if not mgr_emp:
+                raise ForbiddenError("Manager profile not found.")
+            if target_emp.reporting_manager_id != mgr_emp.id:
+                raise ForbiddenError("Managers can only review goals for their direct reports.")
+        else:
+            raise ForbiddenError("Only reporting managers can submit manager reviews.")
+
         # Cycle active check
         cycle = self.cycle_repo.get_by_id(goal.cycle_id, company_id)
         if cycle is None or cycle.status != CycleStatus.active:
@@ -681,32 +944,6 @@ class PerformanceService:
             raise ConflictError(
                 "Employee must submit their self-review before manager review can be submitted."
             )
-
-        # Only reporting manager can review. HR cannot submit review if employee has a manager.
-        target_emp = self.employee_repo.get_by_id(goal.employee_id, company_id)
-        if not target_emp:
-            raise NotFoundError("Employee profile not found.")
-
-        if actor.role in (UserRole.hr_admin, UserRole.owner):
-            # Check if actor is also the reporting manager
-            mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
-            # Nobody rates their own goal as its manager (BUG-063).
-            if mgr_emp is not None and mgr_emp.id == target_emp.id:
-                raise ForbiddenError("You cannot submit a manager review for your own goal.")
-            if target_emp.reporting_manager_id is not None:
-                if not mgr_emp or target_emp.reporting_manager_id != mgr_emp.id:
-                    raise ForbiddenError(
-                        "HR administrators cannot submit manager reviews on behalf of managers."
-                    )
-            # If employee has no manager assigned, HR admin / Owner acts as fallback reviewer
-        elif actor.role == UserRole.manager:
-            mgr_emp = self.employee_repo.get_by_user_id(company_id, actor.id)
-            if not mgr_emp:
-                raise ForbiddenError("Manager profile not found.")
-            if target_emp.reporting_manager_id != mgr_emp.id:
-                raise ForbiddenError("Managers can only review goals for their direct reports.")
-        else:
-            raise ForbiddenError("Only reporting managers can submit manager reviews.")
 
         existing = self.review_repo.get_by_goal_and_role(company_id, goal.id, ReviewerRole.manager)
         if existing is not None:

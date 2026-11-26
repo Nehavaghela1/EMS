@@ -41,6 +41,8 @@ export interface GoalsCreateInput {
   goals: GoalCreateItem[];
 }
 
+export type GoalApproval = "pending_approval" | "approved" | "rejected";
+
 export interface PerformanceGoal {
   id: string;
   progress?: number;
@@ -51,6 +53,8 @@ export interface PerformanceGoal {
   weightage: string;
   target_value: string | null;
   status: GoalStatus;
+  approval_status?: GoalApproval;
+  rejection_reason?: string | null;
   self_rating: string | null;
   self_comments: string | null;
   self_review_status?: "draft" | "submitted" | null;
@@ -168,6 +172,21 @@ export async function updatePerformanceGoal(
 /** PUT /performance/goals/{id}/progress — 0 to 100; the server keeps the history. */
 export async function updateGoalProgress(goalId: string, progress: number, notes?: string): Promise<PerformanceGoal> {
   const { data } = await apiClient.put<PerformanceGoal>(`/performance/goals/${goalId}/progress`, { progress, notes });
+  return data;
+}
+
+export async function sendGoalForApproval(goalId: string): Promise<PerformanceGoal> {
+  const { data } = await apiClient.post<PerformanceGoal>(`/performance/goals/${goalId}/send-for-approval`);
+  return data;
+}
+
+export async function approveGoal(goalId: string): Promise<PerformanceGoal> {
+  const { data } = await apiClient.post<PerformanceGoal>(`/performance/goals/${goalId}/approve`);
+  return data;
+}
+
+export async function rejectGoal(goalId: string, reason: string): Promise<PerformanceGoal> {
+  const { data } = await apiClient.post<PerformanceGoal>(`/performance/goals/${goalId}/reject`, { reason });
   return data;
 }
 

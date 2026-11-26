@@ -7,6 +7,8 @@ import {
   updateGoalProgress,
   getGoalProgressHistory,
   getActivePIP,
+  approveGoal,
+  rejectGoal,
   type PerformanceCycle,
   type PerformanceGoal,
   type PerformancePIP,
@@ -63,10 +65,52 @@ export function TeamGoalsPage() {
   const [editReason, setEditReason] = useState("");
   const [submittingEdit, setSubmittingEdit] = useState(false);
 
-  const totalWeightage = goals.reduce((acc, g) => acc + Number(g.weightage), 0);
+  // Approval queue state
+  const [rejectingGoal, setRejectingGoal] = useState<PerformanceGoal | null>(null);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState("");
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+
+  const approvedGoals = goals.filter((g) => g.approval_status === "approved");
+  const totalApprovedWeightage = approvedGoals.reduce((acc, g) => acc + Number(g.weightage), 0);
+  const totalWeightage = totalApprovedWeightage;
   const newGoalsOnly = goalInputs.reduce((acc, g) => acc + Number(g.weightage || 0), 0);
   const newGoalTotalWeightage = Math.round((totalWeightage + newGoalsOnly) * 100) / 100;
   const remainingWeightage = Math.max(0, Math.round((100 - totalWeightage) * 100) / 100);
+
+  async function handleApprove(goal: PerformanceGoal) {
+    setActionBusyId(goal.id);
+    try {
+      await approveGoal(goal.id);
+      notify(`Goal "${goal.title}" approved.`, "success");
+      if (selectedEmployeeId) {
+        await loadGoalsForEmployee(selectedEmployeeId);
+      }
+    } catch (err: unknown) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to approve goal", "error");
+    } finally {
+      setActionBusyId(null);
+    }
+  }
+
+  async function handleRejectConfirm() {
+    if (!rejectingGoal || !rejectionReasonInput.trim()) return;
+    setActionBusyId(rejectingGoal.id);
+    try {
+      await rejectGoal(rejectingGoal.id, rejectionReasonInput.trim());
+      notify(`Goal "${rejectingGoal.title}" rejected.`, "info");
+      setRejectingGoal(null);
+      setRejectionReasonInput("");
+      if (selectedEmployeeId) {
+        await loadGoalsForEmployee(selectedEmployeeId);
+      }
+    } catch (err: unknown) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to reject goal", "error");
+    } finally {
+      setActionBusyId(null);
+    }
+  }
 
   async function openHistory(goal: PerformanceGoal) {
     setHistoryGoal(goal);
@@ -415,14 +459,18 @@ export function TeamGoalsPage() {
                   <th>Goal Title</th>
                   <th>Target / Metric</th>
                   <th>Weightage</th>
+                  <th>Approval State</th>
                   <th>Progress</th>
                   <th>Status</th>
                   <th>Self Rating</th>
+                  <th style={{ textAlign: "right" }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {goals.map((g) => {
                   const isLocked = g.self_rating !== null && g.self_rating !== undefined;
+                  const isPending = g.approval_status === "pending_approval";
+                  const isRejected = g.approval_status === "rejected";
                   return (
                     <tr
                       key={g.id}
@@ -440,9 +488,45 @@ export function TeamGoalsPage() {
                           <span>{g.title}</span>
                         </div>
                         <div className="text-xs text-muted">{g.description || "No description"}</div>
+                        {isRejected && g.rejection_reason && (
+                          <div
+                            style={{
+                              marginTop: "4px",
+                              padding: "4px 8px",
+                              backgroundColor: "#fef2f2",
+                              borderRadius: "4px",
+                              color: "#dc2626",
+                              fontSize: "0.75rem",
+                              border: "1px solid #fecaca",
+                            }}
+                          >
+                            <strong>Rejection Note:</strong> {g.rejection_reason}
+                          </div>
+                        )}
                       </td>
                       <td>{g.target_value || "—"}</td>
-                      <td className="fw-bold">{g.weightage}%</td>
+                      <td className="fw-bold">
+                        {g.weightage}%
+                        {isPending && (
+                          <div className="text-xs text-muted" style={{ fontWeight: "normal" }}>
+                            (Not counted yet)
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {g.approval_status === "approved" ? (
+                          <span className="badge badge-success">Approved</span>
+                        ) : isPending ? (
+                          <span
+                            className="badge"
+                            style={{ backgroundColor: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}
+                          >
+                            Pending Approval
+                          </span>
+                        ) : (
+                          <span className="badge badge-danger">Rejected</span>
+                        )}
+                      </td>
                       <td onDoubleClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
                           {Boolean(g.self_rating) ? (
@@ -497,6 +581,47 @@ export function TeamGoalsPage() {
                         ) : (
                           <span className="text-muted text-xs">Not submitted</span>
                         )}
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        <div className="flex gap-2 justify-end items-center">
+                          {isPending && (
+                            <>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-primary"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleApprove(g);
+                                }}
+                                disabled={actionBusyId === g.id}
+                              >
+                                {actionBusyId === g.id ? "Approving…" : "Approve"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-outline text-danger"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRejectingGoal(g);
+                                  setRejectionReasonInput("");
+                                }}
+                                disabled={actionBusyId === g.id}
+                              >
+                                Reject
+                              </button>
+                            </>
+                          )}
+                          {g.approval_status === "approved" && (
+                            <span className="text-xs text-muted" style={{ fontStyle: "italic" }}>
+                              Ready for review
+                            </span>
+                          )}
+                          {isRejected && (
+                            <span className="text-xs text-muted" style={{ fontStyle: "italic" }}>
+                              Rejected
+                            </span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -795,6 +920,66 @@ export function TeamGoalsPage() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rejection Reason Modal */}
+      {rejectingGoal && (
+        <div className="modal-backdrop" onClick={() => setRejectingGoal(null)}>
+          <div className="modal card" style={{ maxWidth: "480px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Reject Goal</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setRejectingGoal(null)}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-sm text-muted mb-3">
+              Provide feedback for why <strong>{rejectingGoal.title}</strong> is being rejected. The employee will see this feedback.
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleRejectConfirm();
+              }}
+              className="stack gap-3"
+            >
+              <div className="field">
+                <label>
+                  Rejection Reason <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={rejectionReasonInput}
+                  onChange={(e) => setRejectionReasonInput(e.target.value)}
+                  placeholder="e.g. Please revise the metric to be specific and align with Q3 team deliverables..."
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-2 justify-end mt-2">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setRejectingGoal(null)}
+                  disabled={actionBusyId === rejectingGoal.id}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-danger"
+                  disabled={actionBusyId === rejectingGoal.id || !rejectionReasonInput.trim()}
+                >
+                  {actionBusyId === rejectingGoal.id ? "Rejecting…" : "Confirm Rejection"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

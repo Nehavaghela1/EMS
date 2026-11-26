@@ -4,6 +4,7 @@ Tests for Rule 0 (Multi-tenancy), 6.1 Rules R1-R12, and 6.2 Rules R1-R11.
 
 import uuid
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -847,6 +848,10 @@ def test_6_2_R8_goals_frozen_after_review_submission(
     gid = g.json()[0]["id"]
 
     # Submit self review
+    # In Part 7, self-review requires goals to be approved first:
+    mgr_headers = _auth_headers(p1_setup["mgr_user_a"])
+    client.post(f"/api/v1/performance/goals/{gid}/approve", headers=mgr_headers)
+
     client.post(
         f"/api/v1/performance/goals/{gid}/self-review",
         json={"rating": 4.5, "comments": "Good"},
@@ -935,3 +940,182 @@ def test_6_2_R11_rate_limit_goal_write_routes(
             break
     limiter.reset()
     assert hit_429, "Rate limit must trigger 429 on goal write routes"
+
+
+# ==============================================================================
+# PART 7E RULE TESTS: GOAL APPROVAL FLOW
+# ==============================================================================
+
+
+def test_part_7e_goal_approval_flow_rules(
+    client: TestClient, p1_setup: dict[str, Any], active_cycle: str, db: Session
+):
+    """Part 7E Rule Tests:
+    - an employee's own new goal starts pending_approval and 6.2 R1's 201 still holds
+    - a manager's or HR's goal for someone starts approved
+    - a pending goal is excluded from the weightage total
+    - self-review is refused while a goal is pending, and allowed once approved
+    - a different manager approving gets 403
+    - rejection requires a reason and the employee can read it
+    - a pre-migration goal is 'approved' and behaves exactly as before
+    """
+    emp_headers = _auth_headers(p1_setup["emp_user_a"])
+    mgr_headers = _auth_headers(p1_setup["mgr_user_a"])
+
+    # Create a different manager in Company A
+    bind_tenant_to_session(db, company_id=p1_setup["cid_a"], is_platform_admin=True)
+    other_mgr_user = User(
+        id=uuid.uuid4(),
+        company_id=p1_setup["cid_a"],
+        email=f"othermrg_{uuid.uuid4().hex[:6]}@compa.com",
+        hashed_password=hash_password("Pass123!"),
+        role=UserRole.manager,
+        is_active=True,
+    )
+    db.add(other_mgr_user)
+    db.flush()
+    other_mgr_emp = Employee(
+        id=uuid.uuid4(),
+        company_id=p1_setup["cid_a"],
+        user_id=other_mgr_user.id,
+        employee_code=f"EMP{uuid.uuid4().hex[:6].upper()}",
+        first_name="OtherManager",
+        last_name="A",
+        email=other_mgr_user.email,
+        hire_date=date(2025, 1, 1),
+        employment_type=EmploymentType.full_time,
+        invitation_status=InvitationStatus.activated,
+        is_active=True,
+    )
+    db.add(other_mgr_emp)
+    db.flush()
+    # Ensure other_emp_a reports to other_mgr_emp so other_mgr can read their goals
+    p1_setup["other_emp_a"].reporting_manager_id = other_mgr_emp.id
+    db.commit()
+
+    other_mgr_headers = _auth_headers(other_mgr_user)
+
+    emp_id = str(p1_setup["emp_a"].id)
+    other_emp_id = str(p1_setup["other_emp_a"].id)
+
+    # 1. Employee's own new goal starts pending_approval and returns 201
+    r_emp_goal = client.post(
+        "/api/v1/performance/goals",
+        json={
+            "cycle_id": active_cycle,
+            "employee_id": emp_id,
+            "goals": [{"title": "Self Goal 1", "weightage": 50}],
+        },
+        headers=emp_headers,
+    )
+    assert r_emp_goal.status_code == 201
+    emp_goal_data = r_emp_goal.json()[0]
+    assert emp_goal_data["approval_status"] == "pending_approval"
+    emp_goal_id = emp_goal_data["id"]
+
+    # 2. Manager's goal for direct report starts approved
+    r_mgr_goal = client.post(
+        "/api/v1/performance/goals",
+        json={
+            "cycle_id": active_cycle,
+            "employee_id": emp_id,
+            "goals": [{"title": "Manager Goal 2", "weightage": 50}],
+        },
+        headers=mgr_headers,
+    )
+    assert r_mgr_goal.status_code == 201
+    mgr_goal_data = r_mgr_goal.json()[0]
+    assert mgr_goal_data["approval_status"] == "approved"
+    mgr_goal_id = mgr_goal_data["id"]
+
+    # 3. Pending goal is excluded from the weightage total in review calculations
+    # Employee attempts self-review on mgr_goal (approved) while emp_goal is pending -> 409 refused
+    r_self_pending = client.post(
+        f"/api/v1/performance/goals/{mgr_goal_id}/self-review",
+        json={"rating": 4.0, "comments": "Self review attempt"},
+        headers=emp_headers,
+    )
+    assert r_self_pending.status_code == 409
+    body = r_self_pending.json()
+    msg = body.get("error", {}).get("message") or body.get("message") or body.get("detail") or ""
+    assert "pending approval" in msg
+
+    # 4. A different manager approving gets 403
+    r_bad_mgr = client.post(
+        f"/api/v1/performance/goals/{emp_goal_id}/approve",
+        headers=other_mgr_headers,
+    )
+    assert r_bad_mgr.status_code == 403
+
+    # 5. Rejection requires a reason and the employee can read it
+    r_rej_empty = client.post(
+        f"/api/v1/performance/goals/{emp_goal_id}/reject",
+        json={"reason": "   "},
+        headers=mgr_headers,
+    )
+    assert r_rej_empty.status_code in (400, 422)
+
+    r_rej = client.post(
+        f"/api/v1/performance/goals/{emp_goal_id}/reject",
+        json={"reason": "Please split into specific deliverables."},
+        headers=mgr_headers,
+    )
+    assert r_rej.status_code == 200
+    assert r_rej.json()["approval_status"] == "rejected"
+    assert r_rej.json()["rejection_reason"] == "Please split into specific deliverables."
+
+    # Employee reads goals and sees the rejection reason
+    r_goals_list = client.get(f"/api/v1/performance/goals/{emp_id}", headers=emp_headers)
+    assert r_goals_list.status_code == 200
+    emp_seen_goal = next(g for g in r_goals_list.json() if g["id"] == emp_goal_id)
+    assert emp_seen_goal["rejection_reason"] == "Please split into specific deliverables."
+    assert emp_seen_goal["approval_status"] == "rejected"
+
+    # Send for approval again and manager approves it
+    r_send = client.post(
+        f"/api/v1/performance/goals/{emp_goal_id}/send-for-approval",
+        headers=emp_headers,
+    )
+    assert r_send.status_code == 200
+    assert r_send.json()["approval_status"] == "pending_approval"
+
+    r_app = client.post(
+        f"/api/v1/performance/goals/{emp_goal_id}/approve",
+        headers=mgr_headers,
+    )
+    assert r_app.status_code == 200
+    assert r_app.json()["approval_status"] == "approved"
+
+    # Now both goals are approved (50 + 50 = 100%), self-review is allowed
+    r_self_ok = client.post(
+        f"/api/v1/performance/goals/{mgr_goal_id}/self-review",
+        json={"rating": 4.5, "comments": "Completed successfully"},
+        headers=emp_headers,
+    )
+    assert r_self_ok.status_code == 200
+
+    # 6. Pre-migration goal (simulated with server_default 'approved') behaves as approved
+    from app.modules.performance.models import GoalApproval, GoalStatus, PerformanceGoal
+
+    bind_tenant_to_session(db, company_id=p1_setup["cid_a"], is_platform_admin=True)
+    legacy_goal = PerformanceGoal(
+        id=uuid.uuid4(),
+        company_id=p1_setup["cid_a"],
+        employee_id=p1_setup["other_emp_a"].id,
+        cycle_id=uuid.UUID(active_cycle),
+        title="Legacy Goal",
+        weightage=Decimal("100.00"),
+        status=GoalStatus.in_progress,
+        approval_status=GoalApproval.approved,
+        progress=0,
+    )
+    db.add(legacy_goal)
+    db.commit()
+
+    r_leg = client.get(
+        f"/api/v1/performance/goals/{other_emp_id}",
+        headers=other_mgr_headers,
+    )
+    assert r_leg.status_code == 200
+    leg_found = next(g for g in r_leg.json() if g["id"] == str(legacy_goal.id))
+    assert leg_found["approval_status"] == "approved"

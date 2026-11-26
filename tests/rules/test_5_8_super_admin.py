@@ -83,6 +83,19 @@ COMPANY_ROUTES = {
     ("PUT", f"{P}/employees/{{employee_id}}/bank-account"),
     ("POST", f"{P}/employees/{{employee_id}}/bank-account/reveal"),
     ("GET", f"{P}/runs/{{id}}/payment-file"),
+    ("GET", f"{P}/annual-earnings/me"),
+    ("GET", f"{P}/annual-earnings/me/export"),
+    ("GET", f"{P}/annual-earnings/{{employee_id}}"),
+    ("GET", f"{P}/payslips/me/{{payroll_item_id}}/pdf"),
+    ("GET", f"{P}/payslips/{{employee_id}}/{{payroll_item_id}}/pdf"),
+    ("GET", f"{P}/salary-certificate/me"),
+    ("GET", f"{P}/salary-certificate/me/pdf"),
+    ("GET", f"{P}/salary-certificate/{{employee_id}}"),
+    ("GET", f"{P}/salary-certificate/{{employee_id}}/pdf"),
+    ("GET", f"{P}/tax-worksheet/me"),
+    ("GET", f"{P}/tax-worksheet/me/pdf"),
+    ("GET", f"{P}/tax-worksheet/{{employee_id}}"),
+    ("GET", f"{P}/tax-worksheet/{{employee_id}}/pdf"),
 }
 
 

@@ -645,6 +645,9 @@ def test_c1_self_and_manager_reviews_notifications(
     assert r_g.status_code == 201
     goal_id = r_g.json()[0]["id"]
 
+    # Manager approves goal
+    client.post(f"/api/v1/performance/goals/{goal_id}/approve", headers=pm_h)
+
     bind_tenant_to_session(db, company_id=gap_setup["cid"], is_platform_admin=True)
     db.query(Notification).filter(Notification.company_id == gap_setup["cid"]).delete()
     db.commit()

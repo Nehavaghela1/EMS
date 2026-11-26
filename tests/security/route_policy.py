@@ -393,6 +393,13 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/api/v1/performance/goals/{id}"): AUTHENTICATED,
     ("PUT", "/api/v1/performance/goals/{id}/progress"): AUTHENTICATED,
     ("GET", "/api/v1/performance/goals/{id}/history"): AUTHENTICATED,
+    ("POST", "/api/v1/performance/goals/{id}/send-for-approval"): AUTHENTICATED,
+    ("POST", "/api/v1/performance/goals/{id}/approve"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.manager
+    ),
+    ("POST", "/api/v1/performance/goals/{id}/reject"): ROLES(
+        UserRole.hr_admin, UserRole.owner, UserRole.manager
+    ),
     ("GET", "/api/v1/performance/pips"): AUTHENTICATED,
     ("POST", "/api/v1/performance/pips"): ROLES(UserRole.hr_admin, UserRole.manager),
     ("GET", "/api/v1/performance/pips/active/{employee_id}"): AUTHENTICATED,

@@ -8,6 +8,7 @@ import {
   updateGoalProgress,
   getGoalProgressHistory,
   getActivePIP,
+  sendGoalForApproval,
   type PerformanceCycle,
   type PerformanceGoal,
   type PerformancePIP,
@@ -67,12 +68,31 @@ export function MyGoalsPage() {
   const [selfRating, setSelfRating] = useState("4.0");
   const [selfComments, setSelfComments] = useState("");
   const [submittingReview, setSubmittingReview] = useState(false);
+  const [sendingApprovalId, setSendingApprovalId] = useState<string | null>(null);
 
-  const totalWeightage = goals.reduce((acc, g) => acc + Number(g.weightage), 0);
+  // 7C/7D: Approved goals count towards weightage total; pending/rejected excluded
+  const approvedGoals = goals.filter((g) => g.approval_status === "approved");
+  const pendingGoals = goals.filter((g) => g.approval_status === "pending_approval");
+  const totalApprovedWeightage = approvedGoals.reduce((acc, g) => acc + Number(g.weightage), 0);
+  const totalWeightage = totalApprovedWeightage;
   const newGoalsOnly = goalInputs.reduce((acc, g) => acc + Number(g.weightage || 0), 0);
   // The server caps existing + new goals at 100%, so the form counts both (BUG-058).
   const newGoalTotalWeightage = Math.round((totalWeightage + newGoalsOnly) * 100) / 100;
   const remainingWeightage = Math.max(0, Math.round((100 - totalWeightage) * 100) / 100);
+
+  async function handleSendForApproval(goal: PerformanceGoal) {
+    setSendingApprovalId(goal.id);
+    try {
+      await sendGoalForApproval(goal.id);
+      notify("Goal sent for manager/HR approval", "success");
+      init();
+    } catch (err: unknown) {
+      const parsed = parseApiError(err);
+      notify(parsed.message || "Failed to send goal for approval", "error");
+    } finally {
+      setSendingApprovalId(null);
+    }
+  }
 
   async function openHistory(goal: PerformanceGoal) {
     setHistoryGoal(goal);
@@ -361,7 +381,20 @@ export function MyGoalsPage() {
       {goals.length > 0 && totalWeightage !== 100 && (
         <div className="p-3 bg-warning-subtle border border-warning rounded my-4 flex justify-between align-center">
           <span className="text-warning-dark fw-bold text-sm">
-            ⚠️ Warning: Total goal weightage is {totalWeightage}%. Weightages must sum to exactly 100.00% to enable self-review submission.
+            ⚠️ Warning: Approved goal weightage is {totalWeightage}%. Approved goals must sum to exactly 100.00% to enable self-review submission.
+            {pendingGoals.length > 0 && ` (${pendingGoals.length} goal${pendingGoals.length > 1 ? "s" : ""} pending approval)`}
+          </span>
+        </div>
+      )}
+
+      {/* Pending / Rejected Notice Banner */}
+      {pendingGoals.length > 0 && (
+        <div
+          className="p-3 rounded my-3 flex justify-between align-center"
+          style={{ backgroundColor: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af", fontSize: "0.85rem" }}
+        >
+          <span>
+            📋 You have <strong>{pendingGoals.length} goal{pendingGoals.length > 1 ? "s" : ""}</strong> pending manager/HR approval. Pending goals are excluded from review totals until approved.
           </span>
         </div>
       )}
@@ -384,6 +417,7 @@ export function MyGoalsPage() {
                   <th>Goal Title</th>
                   <th>Target / Metric</th>
                   <th>Weightage</th>
+                  <th>Approval State</th>
                   <th>Progress</th>
                   <th>Status</th>
                   <th>Self Rating</th>
@@ -393,11 +427,13 @@ export function MyGoalsPage() {
               <tbody>
                 {goals.map((g) => {
                   const isLocked = g.self_rating !== null && g.self_rating !== undefined;
+                  const isPending = g.approval_status === "pending_approval";
+                  const isRejected = g.approval_status === "rejected";
                   return (
                     <tr
                       key={g.id}
                       onDoubleClick={() => openEditGoal(g)}
-                      style={{ cursor: isLocked ? "default" : "pointer" }}
+                      style={{ cursor: isLocked ? "default" : "pointer", opacity: isRejected ? 0.75 : 1 }}
                       title={isLocked ? "Locked: self-review submitted" : "Double-click to edit goal"}
                     >
                       <td>
@@ -410,9 +446,45 @@ export function MyGoalsPage() {
                           <span>{g.title}</span>
                         </div>
                         <div className="text-xs text-muted">{g.description || "No description"}</div>
+                        {isRejected && g.rejection_reason && (
+                          <div
+                            style={{
+                              marginTop: "4px",
+                              padding: "4px 8px",
+                              backgroundColor: "#fef2f2",
+                              borderRadius: "4px",
+                              color: "#dc2626",
+                              fontSize: "0.75rem",
+                              border: "1px solid #fecaca",
+                            }}
+                          >
+                            <strong>Rejection Reason:</strong> {g.rejection_reason}
+                          </div>
+                        )}
                       </td>
                       <td>{g.target_value || "—"}</td>
-                      <td className="fw-bold">{g.weightage}%</td>
+                      <td className="fw-bold">
+                        {g.weightage}%
+                        {isPending && (
+                          <div className="text-xs text-muted" style={{ fontWeight: "normal" }}>
+                            (Not counted yet)
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {g.approval_status === "approved" ? (
+                          <span className="badge badge-success">Approved</span>
+                        ) : isPending ? (
+                          <span
+                            className="badge"
+                            style={{ backgroundColor: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}
+                          >
+                            Pending Approval
+                          </span>
+                        ) : (
+                          <span className="badge badge-danger">Rejected</span>
+                        )}
+                      </td>
                       <td onDoubleClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
                           {Boolean(g.self_rating) ? (
@@ -469,8 +541,34 @@ export function MyGoalsPage() {
                         )}
                       </td>
                       <td style={{ textAlign: "right" }}>
-                        <div className="flex gap-2 justify-end">
-                          {!g.self_rating ? (
+                        <div className="flex gap-2 justify-end items-center">
+                          {isPending && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSendForApproval(g);
+                              }}
+                              disabled={sendingApprovalId === g.id}
+                            >
+                              {sendingApprovalId === g.id ? "Sending…" : "Send for Approval"}
+                            </button>
+                          )}
+                          {isRejected && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSendForApproval(g);
+                              }}
+                              disabled={sendingApprovalId === g.id}
+                            >
+                              {sendingApprovalId === g.id ? "Resubmitting…" : "Resubmit for Approval"}
+                            </button>
+                          )}
+                          {g.approval_status === "approved" && !g.self_rating && (
                             <button
                               type="button"
                               className="btn btn-sm btn-primary"
@@ -481,7 +579,8 @@ export function MyGoalsPage() {
                             >
                               Self Review
                             </button>
-                          ) : (
+                          )}
+                          {g.self_rating && (
                             <span className="text-xs text-muted" style={{ fontStyle: "italic" }}>
                               Reviewed
                             </span>

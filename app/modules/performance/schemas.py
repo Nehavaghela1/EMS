@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.modules.performance.models import (
     CycleStatus,
     CycleType,
+    GoalApproval,
     GoalStatus,
     ReviewerRole,
 )
@@ -106,6 +107,8 @@ class PerformanceGoalResponse(BaseModel):
     weightage: Decimal
     target_value: str | None
     status: GoalStatus
+    approval_status: GoalApproval = GoalApproval.approved
+    rejection_reason: str | None = None
     progress: int = 0
     self_rating: Decimal | None
     self_comments: str | None
@@ -114,6 +117,10 @@ class PerformanceGoalResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class GoalRejectRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class SelfReviewRequest(BaseModel):

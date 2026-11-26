@@ -365,6 +365,7 @@ def test_sec_blind_review_leak_prevention(client: TestClient, sec_setup: dict[st
     hr_a_h = _auth_headers(sec_setup["hr_a"])
     emp_a_h = _auth_headers(sec_setup["emp_a"])
     mgr_a_h = _auth_headers(sec_setup["mgr_a"])
+    mgr_a_h = _auth_headers(sec_setup["mgr_a"])
 
     today = utcnow().date()
     c = client.post(
@@ -387,6 +388,9 @@ def test_sec_blind_review_leak_prevention(client: TestClient, sec_setup: dict[st
             "goals": [{"title": "Confidential Appraisal Goal", "weightage": 100.0}],
         },
     ).json()[0]
+
+    # Manager approves employee's goal
+    client.post(f"/api/v1/performance/goals/{g['id']}/approve", headers=mgr_a_h)
 
     # Before self-review: manager cannot submit review
     r_premature = client.post(
@@ -433,6 +437,7 @@ def test_mut_decimal_weightage_sum_gate_strictness(client: TestClient, sec_setup
     """
     hr_a_h = _auth_headers(sec_setup["hr_a"])
     emp_a_h = _auth_headers(sec_setup["emp_a"])
+    mgr_a_h = _auth_headers(sec_setup["mgr_a"])
 
     today = utcnow().date()
     c = client.post(
@@ -494,6 +499,10 @@ def test_mut_decimal_weightage_sum_gate_strictness(client: TestClient, sec_setup
     ).json()
     assert len(g_99) == 2
 
+    # Manager approves goals so they count towards weightage sum
+    client.post(f"/api/v1/performance/goals/{g_99[0]['id']}/approve", headers=mgr_a_h)
+    client.post(f"/api/v1/performance/goals/{g_99[1]['id']}/approve", headers=mgr_a_h)
+
     r_review_fail = client.post(
         f"/api/v1/performance/goals/{g_99[0]['id']}/self-review",
         headers=emp_a_h,
@@ -509,6 +518,9 @@ def test_mut_decimal_weightage_sum_gate_strictness(client: TestClient, sec_setup
         json={"weightage": 50.00},
     )
     assert r_up.status_code == 200
+
+    # Manager approves updated goal so self-review can proceed
+    client.post(f"/api/v1/performance/goals/{g_99[1]['id']}/approve", headers=mgr_a_h)
 
     # Now self-review must succeed with 200
     r_review_ok = client.post(
@@ -536,6 +548,7 @@ def test_mut_cannot_reopen_without_mandatory_reason_and_hr_role(
     hr_a_h = _auth_headers(sec_setup["hr_a"])
     emp_a_h = _auth_headers(sec_setup["emp_a"])
     mgr_a_h = _auth_headers(sec_setup["mgr_a"])
+    mgr_a_h = _auth_headers(sec_setup["mgr_a"])
 
     today = utcnow().date()
     c = client.post(
@@ -558,6 +571,9 @@ def test_mut_cannot_reopen_without_mandatory_reason_and_hr_role(
             "goals": [{"title": "Goal for Reopen", "weightage": 100.0}],
         },
     ).json()[0]
+
+    # Manager approves goal
+    client.post(f"/api/v1/performance/goals/{g['id']}/approve", headers=mgr_a_h)
 
     rev = client.post(
         f"/api/v1/performance/goals/{g['id']}/self-review",
