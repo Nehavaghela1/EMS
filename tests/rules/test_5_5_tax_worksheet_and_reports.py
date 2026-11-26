@@ -93,6 +93,29 @@ def test_tax_worksheet_released_run_actual_and_projection(
         tot = Decimal(item["total"])
         assert act + proj == tot, f"Mismatch on {item['code']}: {act} + {proj} != {tot}"
 
+    # Assert EVERY column row in the response satisfies actual + projection == total
+    for col_key in [
+        "total_gross",
+        "allowances_exempt",
+        "previous_employment_taxable_income",
+        "standard_deduction",
+        "income_chargeable_salaries",
+        "other_income",
+        "chapter_via_deductions_qualifying",
+        "chapter_via_deductions_deductible",
+    ]:
+        col_item = data[col_key]
+        act = Decimal(col_item["actual"])
+        proj = Decimal(col_item["projection"])
+        tot = Decimal(col_item["total"])
+        assert act + proj == tot, f"Mismatch on {col_key}: {act} + {proj} != {tot}"
+
+    for sec in data.get("section_deductions", []):
+        act = Decimal(sec["actual"])
+        proj = Decimal(sec["projection"])
+        tot = Decimal(sec["total"])
+        assert act + proj == tot, f"Mismatch on section deduction {sec['code']}: {act} + {proj} != {tot}"
+
     # Verify money figures are string representation from Decimal (e.g. 2 decimal places)
     for field in [
         "total_taxable_income",

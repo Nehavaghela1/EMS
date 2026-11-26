@@ -3567,20 +3567,42 @@ class TaxWorksheetService:
 
         rules = tax_slabs[0].surcharge_rules or {}
         std_deduction_val = Decimal(str(rules.get("standard_deduction", "0.00")))
+
+        # Rule for annual-only items (Sec 16(ia) standard deduction and net chargeable salaries):
+        # Apportion proportionally across passed months and remaining projection months of the FY
+        # so that every single row strictly satisfies: actual + projection == total.
+        elapsed_months_count = len(actual_months)  # e.g. 7 for October
+        total_fy_months = 12
+        if total_fy_months > 0 and std_deduction_val > Decimal("0.00"):
+            act_std_ded = _round(
+                std_deduction_val
+                * Decimal(str(elapsed_months_count))
+                / Decimal(str(total_fy_months))
+            )
+            proj_std_ded = std_deduction_val - act_std_ded
+        else:
+            act_std_ded = Decimal("0.00")
+            proj_std_ded = Decimal("0.00")
+
         std_deduction_col = TaxWorksheetColumnItem(
             code="STD_DED",
             name="Standard Deduction under Section 16(ia)",
-            actual="0.00",
-            projection="0.00",
+            actual=f"{act_std_ded:.2f}",
+            projection=f"{proj_std_ded:.2f}",
             total=f"{std_deduction_val:.2f}",
         )
 
         taxable_salaries = max(Decimal("0.00"), tot_gross_total - std_deduction_val)
+        act_taxable_salaries = max(Decimal("0.00"), actual_total_gross - act_std_ded)
+        proj_taxable_salaries = max(Decimal("0.00"), proj_total_gross - proj_std_ded)
+        # Ensure exact actual + projection == total for net taxable salaries
+        proj_taxable_salaries = taxable_salaries - act_taxable_salaries
+
         salaries_col = TaxWorksheetColumnItem(
             code="INC_SALARIES",
             name="Income Chargeable Under the Head Salaries",
-            actual="0.00",
-            projection="0.00",
+            actual=f"{act_taxable_salaries:.2f}",
+            projection=f"{proj_taxable_salaries:.2f}",
             total=f"{taxable_salaries:.2f}",
         )
 
