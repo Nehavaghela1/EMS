@@ -526,6 +526,30 @@ def resolve_earning_breakdown(
     return earning_amounts, deduction_amounts, gross
 
 
+def resolve_monthly_earning_breakdown(
+    components: list[SalaryComponent], ctc: Decimal
+) -> tuple[list[SalaryComponentAmount], list[SalaryComponentAmount], Decimal]:
+    """Helper that returns MONTHLY component amounts (annual / 12, ROUND_HALF_UP).
+    Used by the tax worksheet projection, salary certificate, and other monthly views
+    so monthly figures are consistently derived across all endpoints.
+    """
+    annual_earnings, deductions, _ = resolve_earning_breakdown(components, ctc)
+    monthly_earnings = [
+        SalaryComponentAmount(
+            code=ea.code,
+            name=ea.name,
+            type=ea.type,
+            amount=_round(ea.amount / Decimal("12")) if ea.amount is not None else None,
+            note=ea.note,
+        )
+        for ea in annual_earnings
+    ]
+    monthly_gross = sum(
+        (a.amount for a in monthly_earnings if a.amount is not None), Decimal("0.00")
+    )
+    return monthly_earnings, deductions, monthly_gross
+
+
 def check_ctc_covers_earnings(earning_components: list[SalaryComponent], ctc: Decimal) -> None:
     """Spec 19 WP-16 gate: with a balance component the CTC must be at least the fixed and
     percentage earnings (the balance is what is left and may not go negative); without one the
@@ -3494,7 +3518,7 @@ class TaxWorksheetService:
                 latest_salary.structure_id, company_id
             )
             if structure is not None:
-                earning_amounts, _, monthly_gross = resolve_earning_breakdown(
+                earning_amounts, _, monthly_gross = resolve_monthly_earning_breakdown(
                     structure.components, latest_salary.ctc
                 )
                 proj_total_gross = monthly_gross * Decimal(str(rem_months_count))
@@ -4030,14 +4054,21 @@ class SalaryCertificateService:
         if structure is None:
             raise NotFoundError("Salary structure not found.")
 
-        earning_amounts, _, _ = resolve_earning_breakdown(structure.components, salary.ctc)
+        earning_amounts, _, monthly_gross = resolve_monthly_earning_breakdown(
+            structure.components, salary.ctc
+        )
 
         components: list[SalaryCertificateComponent] = []
         monthly_total = Decimal("0.00")
+        annual_total = Decimal("0.00")
+        annual_earnings, _, _ = resolve_earning_breakdown(structure.components, salary.ctc)
+        annual_map = {ea.code: ea.amount or Decimal("0.00") for ea in annual_earnings}
+
         for ea in earning_amounts:
-            a_amt = ea.amount or Decimal("0.00")
-            m_amt = _round(a_amt / Decimal("12"))
+            m_amt = ea.amount or Decimal("0.00")
+            a_amt = annual_map.get(ea.code, Decimal("0.00"))
             monthly_total += m_amt
+            annual_total += a_amt
             components.append(
                 SalaryCertificateComponent(
                     code=ea.code,
