@@ -686,12 +686,12 @@ export function PayrollDocumentsPage() {
           {error}
         </div>
       ) : viewMode === "card" ? (
-        /* Full-width Responsive Grid matching Screen 3 (cfdb8156.png) */
+        /* Full-width Responsive Grid - All 4 cards in a single row */
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-            gap: "24px",
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gap: "20px",
           }}
         >
           {folders.map((folder) => (
