@@ -31,6 +31,16 @@ export interface AttendanceRegularization {
   created_at: string;
 }
 
+export interface AttendancePunch {
+  id: string;
+  attendance_id: string;
+  employee_id: string;
+  punched_at: string;
+  direction: "in" | "out";
+  source: string;
+  created_at: string;
+}
+
 export interface Attendance {
   id: string;
   employee_id: string;
@@ -42,9 +52,13 @@ export interface Attendance {
   check_out: string | null;
   status: AttendanceStatus;
   hours_worked: string | null;
+  worked_hours?: string | null;
+  span_hours?: string | null;
+  outside_hours?: string | null;
   source: string;
   notes: string | null;
   active_regularization?: AttendanceRegularization | null;
+  punches?: AttendancePunch[];
   created_at: string;
 }
 

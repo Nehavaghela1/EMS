@@ -203,6 +203,82 @@ describe("Sub-feature 4.2: Punch In/Out Frontend (TodayAttendanceCard)", () => {
     });
   });
 
+  it("shows 'Check in again' button and running figures when clocked out", async () => {
+    vi.mocked(timeLeaveApi.listAttendance).mockResolvedValue({
+      items: [
+        {
+          id: "att-1",
+          employee_id: "emp-1",
+          date: "2026-11-17",
+          check_in: "2026-11-17T09:00:00Z",
+          check_out: "2026-11-17T13:00:00Z",
+          status: "present",
+          hours_worked: "4.00",
+          worked_hours: "4.00",
+          span_hours: "4.00",
+          outside_hours: "0.00",
+          punches: [
+            {
+              id: "p-1",
+              attendance_id: "att-1",
+              employee_id: "emp-1",
+              punched_at: "2026-11-17T09:00:00Z",
+              direction: "in",
+              source: "web",
+              created_at: "2026-11-17T09:00:00Z",
+            },
+            {
+              id: "p-2",
+              attendance_id: "att-1",
+              employee_id: "emp-1",
+              punched_at: "2026-11-17T13:00:00Z",
+              direction: "out",
+              source: "web",
+              created_at: "2026-11-17T13:00:00Z",
+            },
+          ],
+          source: "web",
+          notes: null,
+          created_at: "2026-11-17T09:00:00Z",
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 1,
+      pages: 1,
+      has_next: false,
+    });
+    vi.mocked(timeLeaveApi.checkIn).mockResolvedValue({
+      id: "att-1",
+      employee_id: "emp-1",
+      date: "2026-11-17",
+      check_in: "2026-11-17T09:00:00Z",
+      check_out: null,
+      status: "present",
+      hours_worked: "4.00",
+      worked_hours: "4.00",
+      span_hours: "4.00",
+      outside_hours: "0.00",
+      source: "web",
+      notes: null,
+      created_at: "2026-11-17T09:00:00Z",
+    });
+
+    renderCard("employee", true);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Check in again" })).toBeInTheDocument();
+      expect(screen.getByText("4.00 hrs")).toBeInTheDocument();
+      expect(screen.getByText("0.00 hrs")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Check in again" }));
+
+    await waitFor(() => {
+      expect(timeLeaveApi.checkIn).toHaveBeenCalled();
+    });
+  });
+
   it("shows attendance exempt badge for owner", async () => {
     vi.mocked(timeLeaveApi.listAttendance).mockResolvedValue({
       items: [],

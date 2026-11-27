@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseApiError } from "../../../shared/api/errors";
 import { useAuth } from "../../../app/auth-context";
@@ -18,6 +18,20 @@ function formatTimeString(timeStr: string): string {
   return `${String(hours).padStart(2, "0")}:${minutes} ${ampm}`;
 }
 
+function formatPunchTime(isoString: string): string {
+  try {
+    const d = new Date(isoString);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return isoString;
+  }
+}
+
+function formatHoursValue(val: string | number | null | undefined): string {
+  if (val === null || val === undefined) return "0.00";
+  const num = typeof val === "number" ? val : parseFloat(val);
+  return isNaN(num) ? "0.00" : num.toFixed(2);
+}
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -30,11 +44,23 @@ function todayIso(): string {
  * there is exactly one implementation of "today's status," not two drifting
  * copies.
  */
-export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoEmployee?: boolean }) {
+export function TodayAttendanceCard({
+  showWhenNoEmployee = true,
+  collapsedPunchTrail = false,
+}: {
+  showWhenNoEmployee?: boolean;
+  collapsedPunchTrail?: boolean;
+}) {
   const { user } = useAuth();
   const { notify } = useToast();
   const queryClient = useQueryClient();
   const today = todayIso();
+  const [, setCurrentTime] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const todayQuery = useQuery({
     queryKey: ["attendance", "today", user?.employee?.id],
@@ -334,29 +360,129 @@ export function TodayAttendanceCard({ showWhenNoEmployee = true }: { showWhenNoE
         ) : (
           <div className="stack">
             {checkError && <div className="alert alert-error">{checkError}</div>}
-            {!todayRecord && (
+            
+            {/* Primary Action Row */}
+            {!todayRecord?.check_in && (
               <div className="row-between">
-                <span>You haven't checked in today.</span>
+                <div>
+                  <div style={{ fontWeight: 600, color: "#1e293b" }}>Not Clocked In</div>
+                  <div className="text-muted text-xs">You haven't checked in today.</div>
+                </div>
                 <button className="btn btn-primary" onClick={handleCheckIn} disabled={checkBusy}>
                   {checkBusy ? "Checking in…" : "Check in"}
                 </button>
               </div>
             )}
-            {todayRecord && !todayRecord.check_out && (
+
+            {todayRecord?.check_in && !todayRecord.check_out && (
               <div className="row-between">
-                <span>
-                  Checked in at {new Date(todayRecord.check_in!).toLocaleTimeString()}. Still clocked in.
-                </span>
-                <button className="btn btn-primary" onClick={handleCheckOut} disabled={checkBusy}>
+                <div>
+                  <div style={{ fontWeight: 600, color: "#059669" }}>
+                    Clocked in since {formatPunchTime(todayRecord.check_in)}
+                  </div>
+                  <div className="text-muted text-xs">Still clocked in · Active session</div>
+                </div>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleCheckOut}
+                  disabled={checkBusy}
+                  style={{ backgroundColor: "#dc2626", borderColor: "#b91c1c" }}
+                >
                   {checkBusy ? "Checking out…" : "Check out"}
                 </button>
               </div>
             )}
-            {todayRecord && todayRecord.check_out && (
-              <div>
-                Done for today — {new Date(todayRecord.check_in!).toLocaleTimeString()} to{" "}
-                {new Date(todayRecord.check_out).toLocaleTimeString()} ({todayRecord.hours_worked}h,{" "}
-                {todayRecord.status.replace("_", " ")}).
+
+            {todayRecord?.check_in && todayRecord.check_out && (
+              <div className="row-between">
+                <div>
+                  <div style={{ fontWeight: 600, color: "#475569" }}>
+                    Clocked out at {formatPunchTime(todayRecord.check_out)}
+                  </div>
+                  <div className="text-muted text-xs">Day open · You can clock back in</div>
+                </div>
+                <button className="btn btn-primary" onClick={handleCheckIn} disabled={checkBusy}>
+                  {checkBusy ? "Checking in…" : "Check in again"}
+                </button>
+              </div>
+            )}
+
+            {/* Live Figures from Attendance Row */}
+            {todayRecord?.check_in && (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
+                  gap: "10px",
+                  padding: "10px 14px",
+                  background: "#f8fafc",
+                  borderRadius: "8px",
+                  border: "1px solid #e2e8f0",
+                  marginTop: "8px",
+                  fontSize: "0.82rem",
+                }}
+              >
+                <div>
+                  <span style={{ color: "#64748b" }}>Worked: </span>
+                  <strong style={{ color: "#0f172a" }}>
+                    {formatHoursValue(todayRecord.worked_hours ?? todayRecord.hours_worked)} hrs
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ color: "#64748b" }}>Outside: </span>
+                  <strong style={{ color: "#0f172a" }}>
+                    {formatHoursValue(todayRecord.outside_hours)} hrs
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ color: "#64748b" }}>First in: </span>
+                  <strong style={{ color: "#0f172a" }}>
+                    {formatPunchTime(todayRecord.check_in)}
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ color: "#64748b" }}>Last out: </span>
+                  <strong style={{ color: "#0f172a" }}>
+                    {todayRecord.check_out ? formatPunchTime(todayRecord.check_out) : "—"}
+                  </strong>
+                </div>
+              </div>
+            )}
+
+            {/* Punch Trail Sequence */}
+            {todayRecord?.punches && todayRecord.punches.length > 0 && (
+              <div
+                style={{
+                  marginTop: "6px",
+                  padding: "6px 10px",
+                  background: "#f1f5f9",
+                  borderRadius: "6px",
+                  fontSize: "0.78rem",
+                  color: "#475569",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  overflowX: collapsedPunchTrail ? "hidden" : "auto",
+                  textOverflow: collapsedPunchTrail ? "ellipsis" : "clip",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span style={{ fontWeight: 600, color: "#64748b", textTransform: "uppercase", fontSize: "0.7rem" }}>
+                  Trail:
+                </span>
+                {todayRecord.punches.map((p, idx) => (
+                  <span key={p.id || idx} style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                    {idx > 0 && <span style={{ color: "#94a3b8" }}>→</span>}
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        color: p.direction === "in" ? "#059669" : "#dc2626",
+                      }}
+                    >
+                      {formatPunchTime(p.punched_at)} {p.direction}
+                    </span>
+                  </span>
+                ))}
               </div>
             )}
           </div>

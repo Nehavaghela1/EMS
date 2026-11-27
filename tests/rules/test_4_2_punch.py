@@ -5,7 +5,7 @@ Dates and times are computed from utcnow().
 
 import threading
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -30,11 +30,15 @@ from app.modules.identity.models import (
 )
 from app.modules.time_leave.models import (
     Attendance,
+    AttendancePunch,
+    AttendanceSource,
     AttendanceStatus,
     Holiday,
     Leave,
     LeaveStatus,
     LeaveType,
+    PunchDirection,
+    PunchSource,
 )
 from tests.conftest import TenantContext
 
@@ -137,7 +141,127 @@ def test_R3_second_punch_in_is_409(
     assert first.status_code == 201
 
     second = client.post(CHECK_IN, headers=emp_headers)
-    assert second.status_code == 409, "R3: Second punch-in must return 409"
+    assert second.status_code == 409, "R3: Second punch-in while already clocked in must return 409"
+
+
+def test_R3_check_in_after_check_out_succeeds_and_adds_third_punch(
+    client: TestClient, db: Session, company_a: TenantContext
+) -> None:
+    emp = _create_employee(client, company_a.hr_headers)
+    emp_headers, _ = _link_user_to_employee(db, company_a.company_id, emp["id"], UserRole.employee)
+
+    # 1. First check-in
+    r1 = client.post(CHECK_IN, headers=emp_headers)
+    assert r1.status_code == 201
+    att_id = r1.json()["id"]
+
+    # 2. Check out
+    r2 = client.post(CHECK_OUT, headers=emp_headers)
+    assert r2.status_code == 200
+
+    # 3. Check in again after check-out -> succeeds (re-opens attendance row)
+    r3 = client.post(CHECK_IN, headers=emp_headers)
+    assert r3.status_code in (200, 201)
+    body3 = r3.json()
+    assert body3["id"] == att_id, "Must update the same attendance row, not create a new one"
+    assert body3["check_out"] is None, "check_out must be reset to None while currently clocked in"
+
+    # Verify punches in database: exactly 1 attendance row, 3 punches
+    att_rows = db.query(Attendance).filter(Attendance.employee_id == emp["id"]).all()
+    assert len(att_rows) == 1
+
+    punches = (
+        db.query(AttendancePunch)
+        .filter(AttendancePunch.attendance_id == att_id)
+        .order_by(AttendancePunch.punched_at.asc())
+        .all()
+    )
+    assert len(punches) == 3
+    assert [p.direction.value for p in punches] == ["in", "out", "in"]
+
+
+def test_multiple_in_out_intervals_computes_worked_hours_sum(
+    client: TestClient, db: Session, company_a: TenantContext
+) -> None:
+    emp = _create_employee(client, company_a.hr_headers)
+    emp_headers, emp_user = _link_user_to_employee(
+        db, company_a.company_id, emp["id"], UserRole.employee
+    )
+    today = utcnow().date()
+
+    # Create an attendance row with 4 punches:
+    # 09:00 in -> 12:00 out (3 hrs)
+    # 13:00 in -> 17:00 out (4 hrs)
+    # Total worked: 7.00 hrs, span: 8.00 hrs, outside: 1.00 hr
+    t_09 = datetime(today.year, today.month, today.day, 9, 0, 0, tzinfo=UTC)
+    t_12 = datetime(today.year, today.month, today.day, 12, 0, 0, tzinfo=UTC)
+    t_13 = datetime(today.year, today.month, today.day, 13, 0, 0, tzinfo=UTC)
+    t_17 = datetime(today.year, today.month, today.day, 17, 0, 0, tzinfo=UTC)
+
+    att = Attendance(
+        company_id=company_a.company_id,
+        employee_id=emp["id"],
+        date=today,
+        check_in=t_09,
+        check_out=t_17,
+        status=AttendanceStatus.present,
+        source=AttendanceSource.web,
+    )
+    db.add(att)
+    db.flush()
+
+    p1 = AttendancePunch(
+        company_id=company_a.company_id,
+        employee_id=emp["id"],
+        attendance_id=att.id,
+        punched_at=t_09,
+        direction=PunchDirection.in_,
+        source=PunchSource.web,
+        created_by=emp_user.id,
+    )
+    p2 = AttendancePunch(
+        company_id=company_a.company_id,
+        employee_id=emp["id"],
+        attendance_id=att.id,
+        punched_at=t_12,
+        direction=PunchDirection.out,
+        source=PunchSource.web,
+        created_by=emp_user.id,
+    )
+    p3 = AttendancePunch(
+        company_id=company_a.company_id,
+        employee_id=emp["id"],
+        attendance_id=att.id,
+        punched_at=t_13,
+        direction=PunchDirection.in_,
+        source=PunchSource.web,
+        created_by=emp_user.id,
+    )
+    p4 = AttendancePunch(
+        company_id=company_a.company_id,
+        employee_id=emp["id"],
+        attendance_id=att.id,
+        punched_at=t_17,
+        direction=PunchDirection.out,
+        source=PunchSource.web,
+        created_by=emp_user.id,
+    )
+    db.add_all([p1, p2, p3, p4])
+    db.flush()
+
+    from app.modules.time_leave.service import AttendanceService
+
+    AttendanceService.recompute_attendance_from_punches(att, [p1, p2, p3, p4])
+    db.commit()
+
+    # Query via API
+    res = client.get(f"/api/v1/attendance/{att.id}", headers=emp_headers)
+    assert res.status_code == 200
+    item = res.json()
+    assert Decimal(str(item["worked_hours"])) == Decimal("7.00")
+    assert Decimal(str(item["span_hours"])) == Decimal("8.00")
+    assert Decimal(str(item["outside_hours"])) == Decimal("1.00")
+    assert len(item["punches"]) == 4
 
 
 def test_R3_punch_on_approved_leave_gives_specific_message(

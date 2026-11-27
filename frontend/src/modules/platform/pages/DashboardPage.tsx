@@ -764,7 +764,7 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
                 {todayRecord?.check_in && !todayRecord.check_out
                   ? "Clocked In"
                   : todayRecord?.check_out
-                  ? "Completed Today"
+                  ? "Clocked Out"
                   : "Not Clocked In"}
               </span>
             </div>
@@ -821,15 +821,17 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
                 </div>
               </div>
 
-              {/* Check-in / Check-out timestamps */}
+              {/* Check-in / Check-out timestamps and hours */}
               <div
                 style={{
-                  display: "flex",
-                  justifyContent: "space-around",
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "8px",
                   marginTop: "14px",
                   paddingTop: "12px",
                   borderTop: "1px solid #e2e8f0",
                   fontSize: "0.8rem",
+                  textAlign: "left",
                 }}
               >
                 <div>
@@ -848,8 +850,54 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
                       : "—"}
                   </strong>
                 </div>
+                <div>
+                  <span style={{ color: "#64748b" }}>Worked: </span>
+                  <strong style={{ color: "#0f172a" }}>
+                    {todayRecord?.worked_hours != null ? `${Number(todayRecord.worked_hours).toFixed(2)} hrs` : todayRecord?.hours_worked != null ? `${Number(todayRecord.hours_worked).toFixed(2)} hrs` : "0.00 hrs"}
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ color: "#64748b" }}>Outside: </span>
+                  <strong style={{ color: "#0f172a" }}>
+                    {todayRecord?.outside_hours != null ? `${Number(todayRecord.outside_hours).toFixed(2)} hrs` : "0.00 hrs"}
+                  </strong>
+                </div>
               </div>
             </div>
+
+            {/* Punch Trail Sequence (collapsed to one line on dashboard) */}
+            {todayRecord?.punches && todayRecord.punches.length > 0 && (
+              <div
+                style={{
+                  marginBottom: "1rem",
+                  padding: "6px 10px",
+                  background: "#f1f5f9",
+                  borderRadius: "6px",
+                  fontSize: "0.78rem",
+                  color: "#475569",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  overflowX: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <span style={{ fontWeight: 600, color: "#64748b", textTransform: "uppercase", fontSize: "0.7rem", flexShrink: 0 }}>
+                  Trail:
+                </span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {todayRecord.punches.map((p, idx) => (
+                    <span key={p.id || idx} style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      {idx > 0 && <span style={{ color: "#94a3b8", margin: "0 2px" }}>→</span>}
+                      <span style={{ fontWeight: 600, color: p.direction === "in" ? "#059669" : "#dc2626" }}>
+                        {new Date(p.punched_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {p.direction}
+                      </span>
+                    </span>
+                  ))}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Punch Button Actions */}
@@ -908,24 +956,38 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
                   <polyline points="16 17 21 12 16 7"></polyline>
                   <line x1="21" y1="12" x2="9" y2="12"></line>
                 </svg>
-                {punchBusy ? "Checking Out…" : "Check Out for the Day"}
+                {punchBusy ? "Checking Out…" : "Check Out"}
               </button>
             )}
 
             {todayRecord?.check_in && todayRecord.check_out && (
-              <div
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handlePunchIn}
+                disabled={punchBusy}
                 style={{
-                  textAlign: "center",
-                  padding: "10px",
-                  background: "#f1f5f9",
-                  borderRadius: "8px",
-                  fontSize: "0.85rem",
-                  color: "#475569",
-                  fontWeight: 600,
+                  width: "100%",
+                  padding: "12px",
+                  fontSize: "0.95rem",
+                  fontWeight: 700,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                  borderRadius: "10px",
+                  backgroundColor: "#2563eb",
+                  borderColor: "#1d4ed8",
+                  boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)",
                 }}
               >
-                ✓ Day completed ({todayRecord.hours_worked || "8.0"} hrs recorded). See you tomorrow!
-              </div>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+                  <polyline points="10 17 15 12 10 7"></polyline>
+                  <line x1="15" y1="12" x2="3" y2="12"></line>
+                </svg>
+                {punchBusy ? "Checking In…" : "Check In Again"}
+              </button>
             )}
           </div>
         </div>

@@ -299,74 +299,18 @@ class AttendanceService:
             outside_hours = None
 
         attendance.check_in = first_in
-        attendance.check_out = last_out
+        if ordered and ordered[-1].direction == PunchDirection.in_:
+            attendance.check_out = None
+        elif outs:
+            attendance.check_out = outs[-1].punched_at
+        elif attendance.check_out is not None and not ins:
+            attendance.check_out = attendance.check_out
+        else:
+            attendance.check_out = None
         attendance.worked_hours = worked_hours
         attendance.span_hours = span_hours
         attendance.outside_hours = outside_hours
         attendance.hours_worked = worked_hours
-
-    def record_punch(
-        self,
-        *,
-        company_id: uuid.UUID,
-        employee_id: uuid.UUID,
-        punched_at: datetime,
-        direction: PunchDirection,
-        source: PunchSource = PunchSource.web,
-        created_by: uuid.UUID | None = None,
-    ) -> AttendancePunch:
-        """Record a single punch event and recompute the day's Attendance summary."""
-        now = utcnow()
-        if punched_at > now:
-            raise ValidationError(f"Punch time {punched_at.isoformat()} cannot be in the future.")
-        punch_date = punched_at.date()
-        self._check_attendance_not_payroll_locked(company_id, punch_date)
-
-        attendance = self.repo.get_by_employee_and_date(company_id, employee_id, punch_date)
-        if attendance is None:
-            attendance = Attendance(
-                company_id=company_id,
-                employee_id=employee_id,
-                date=punch_date,
-                status=AttendanceStatus.present,
-                source=AttendanceSource.web,
-            )
-            self.db.add(attendance)
-            self.db.flush()
-
-        existing = self.repo.list_punches_for_attendance(company_id, attendance.id)
-        if not existing:
-            if direction == PunchDirection.out:
-                raise ValidationError(
-                    f"Cannot punch out with no open punch-in (punch at {punched_at.isoformat()})."
-                )
-        else:
-            last_punch = existing[-1]
-            if last_punch.direction == direction:
-                raise ValidationError(
-                    f"Cannot record '{direction.value}' punch at {punched_at.isoformat()}: "
-                    f"clashes with previous '{last_punch.direction.value}' punch at "
-                    f"{last_punch.punched_at.isoformat()}."
-                )
-            if punched_at <= last_punch.punched_at:
-                raise ValidationError(
-                    f"Punch at {punched_at.isoformat()} must be after previous punch at "
-                    f"{last_punch.punched_at.isoformat()}."
-                )
-
-        punch = self.repo.add_punch(
-            company_id=company_id,
-            employee_id=employee_id,
-            attendance_id=attendance.id,
-            punched_at=punched_at,
-            direction=direction,
-            source=source,
-            created_by=created_by,
-        )
-        all_punches = existing + [punch]
-        self.recompute_attendance_from_punches(attendance, all_punches)
-        self.db.commit()
-        return punch
 
     def check_in(
         self, company_id: uuid.UUID, current_user: User, body: CheckInRequest | None = None
@@ -384,11 +328,6 @@ class AttendanceService:
             raise NotFoundError("You do not have an employee record.")
         today = utcnow().date()
         self._check_attendance_not_payroll_locked(company_id, today)
-        existing_att = self.repo.get_by_employee_and_date(company_id, employee.id, today)
-        if existing_att:
-            if existing_att.status == AttendanceStatus.on_leave:
-                raise ConflictError("You are on approved leave today.")
-            raise AlreadyCheckedInError()
 
         # ── Geofence validation ──────────────────────────────────────────────
         fence_notes: str | None = None
@@ -416,6 +355,44 @@ class AttendanceService:
                         f"{distance:.0f}m from office "
                         f"(limit {location.geofence_radius_meters}m{accuracy_str})"
                     )
+
+        existing_att = self.repo.get_by_employee_and_date(company_id, employee.id, today)
+        if existing_att:
+            if existing_att.status == AttendanceStatus.on_leave:
+                raise ConflictError("You are on approved leave today.")
+            # Check if currently clocked in:
+            # If check_in is set and check_out is None, or latest punch is 'in' -> 409
+            punches = self.repo.list_punches_for_attendance(company_id, existing_att.id)
+            if punches:
+                last_punch = punches[-1]
+                if last_punch.direction == PunchDirection.in_:
+                    raise AlreadyCheckedInError()
+            elif existing_att.check_in is not None and existing_att.check_out is None:
+                raise AlreadyCheckedInError()
+
+            # Employee has clocked out earlier today -> Re-check-in:
+            # Append an 'in' punch to today's existing attendance row, set check_out back to None,
+            # and recompute attendance from punches.
+            now = utcnow()
+            existing_att.check_out = None
+            if fence_notes:
+                existing_att.notes = (
+                    f"{existing_att.notes}\n{fence_notes}" if existing_att.notes else fence_notes
+                )
+            punch = self.repo.add_punch(
+                company_id=company_id,
+                employee_id=employee.id,
+                attendance_id=existing_att.id,
+                punched_at=now,
+                direction=PunchDirection.in_,
+                source=PunchSource.web,
+                created_by=current_user.id,
+            )
+            all_punches = punches + [punch]
+            self.recompute_attendance_from_punches(existing_att, all_punches)
+            self.db.commit()
+            DashboardService.invalidate_company_dashboards(company_id)
+            return existing_att
 
         # Auto-flag past unclosed shifts as mispunch
         past_open = (
@@ -514,6 +491,14 @@ class AttendanceService:
         existing_punches = self.repo.list_punches_for_attendance(company_id, record.id)
         if existing_punches:
             self.recompute_attendance_from_punches(record, existing_punches)
+            calc_hours = record.worked_hours or hours
+            if calc_hours < Decimal("1.0"):
+                status = AttendanceStatus.absent
+            elif calc_hours < half_thresh:
+                status = AttendanceStatus.half_day
+            else:
+                status = AttendanceStatus.present
+            record.status = status
         self.db.commit()
         DashboardService.invalidate_company_dashboards(company_id)
         return record

@@ -13,7 +13,7 @@ from pydantic import (
     model_validator,
 )
 
-from app.modules.time_leave.models import AttendanceStatus, LeaveStatus
+from app.modules.time_leave.models import AttendanceStatus, LeaveStatus, PunchDirection, PunchSource
 
 
 class AttendanceRegularizationResponse(BaseModel):
@@ -35,6 +35,18 @@ class AttendanceRegularizationResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AttendancePunchResponse(BaseModel):
+    id: uuid.UUID
+    attendance_id: uuid.UUID
+    employee_id: uuid.UUID
+    punched_at: datetime
+    direction: PunchDirection
+    source: PunchSource
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # Attendance (routes 43-49)
 class AttendanceResponse(BaseModel):
     id: uuid.UUID
@@ -47,9 +59,13 @@ class AttendanceResponse(BaseModel):
     check_out: datetime | None
     status: AttendanceStatus
     hours_worked: Decimal | None
+    worked_hours: Decimal | None = None
+    span_hours: Decimal | None = None
+    outside_hours: Decimal | None = None
     source: str
     notes: str | None
     active_regularization: AttendanceRegularizationResponse | None = None
+    punches: list[AttendancePunchResponse] = []
     created_at: datetime
 
     model_config = {"from_attributes": True}

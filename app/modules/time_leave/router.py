@@ -34,11 +34,13 @@ from app.modules.time_leave.models import (
 from app.modules.time_leave.schemas import (
     AssignedShiftDetailResponse,
     AttendanceExportRequest,
+    AttendancePunchResponse,
     AttendanceRegularizationApprove,
     AttendanceRegularizationCreate,
     AttendanceRegularizationResponse,
     AttendanceRegularizeRequest,
     AttendanceResponse,
+    AttendancePunchResponse,
     CalendarResponse,
     CheckInRequest,
     EmployeeShiftResponse,
@@ -105,6 +107,14 @@ def _to_attendance_response(record: Attendance, db: Session | None = None) -> At
         )
         if latest_reg:
             res.active_regularization = AttendanceRegularizationResponse.model_validate(latest_reg)
+
+        punches = AttendanceRepository(db).list_punches_for_attendance(record.company_id, record.id)
+        res.punches = [AttendancePunchResponse.model_validate(p) for p in punches]
+
+        punches = AttendanceRepository(db).list_punches_for_attendance(
+            record.company_id, record.id
+        )
+        res.punches = [AttendancePunchResponse.model_validate(p) for p in punches]
 
     return res
 
