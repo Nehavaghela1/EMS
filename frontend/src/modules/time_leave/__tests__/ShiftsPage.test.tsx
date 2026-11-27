@@ -148,6 +148,16 @@ describe("Sub-feature 4.1: Shifts Frontend (ShiftsPage)", () => {
       expect(screen.getByText(/Assigned Shift:/)).toBeInTheDocument();
       expect(screen.getByText("General Day Shift")).toBeInTheDocument();
     });
+
+    // Can toggle between Weekly Shift Schedule and Monthly Calendar
+    expect(screen.getByRole("button", { name: /Weekly Shift Schedule/i })).toBeInTheDocument();
+    const monthlyBtn = screen.getByRole("button", { name: /Monthly Calendar/i });
+    expect(monthlyBtn).toBeInTheDocument();
+
+    fireEvent.click(monthlyBtn);
+    await waitFor(() => {
+      expect(screen.getByText("Monthly Attendance Calendar")).toBeInTheDocument();
+    });
   });
 
   it("creates a new shift when HR fills the shift form", async () => {

@@ -39,6 +39,7 @@ export function ShiftsPage() {
   const [activeTab, setActiveTab] = useState<"company" | "my_schedule">(
     isHr && !hasEmployeeProfile ? "company" : "company"
   );
+  const [scheduleView, setScheduleView] = useState<"weekly" | "monthly">("weekly");
 
   const { page, limit, setPage } = usePagination();
   const queryClient = useQueryClient();
@@ -196,137 +197,165 @@ export function ShiftsPage() {
             </div>
           ) : (
             <>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "1rem", marginBottom: "1.25rem" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem", marginBottom: "1.25rem" }}>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
-                    <h2 style={{ fontSize: "1.15rem", fontWeight: 600, margin: 0 }}>My Weekly Shift Schedule</h2>
+                    <h2 style={{ fontSize: "1.15rem", fontWeight: 600, margin: 0 }}>
+                      {scheduleView === "weekly" ? "My Weekly Shift Schedule" : "Monthly Attendance Calendar"}
+                    </h2>
                     <span className="badge badge-primary" style={{ fontSize: "0.75rem" }}>Active</span>
                   </div>
                   <p className="text-muted" style={{ margin: 0, fontSize: "0.875rem" }}>
                     Assigned Shift: <strong>{activeShiftName}</strong> ({activeShiftStart} - {activeShiftEnd}, {breakMinutes} min break)
                   </p>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", color: "var(--color-text-secondary)" }}>
-                  <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", backgroundColor: "#10b981" }} /> Working Day
-                  <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", backgroundColor: "#94a3b8", marginLeft: "0.75rem" }} /> Weekly Off
+                {/* View switcher pills/buttons */}
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", backgroundColor: "var(--color-bg-secondary, #f1f5f9)", padding: "4px", borderRadius: "8px" }}>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${scheduleView === "weekly" ? "btn-primary" : "btn-ghost"}`}
+                    style={{ borderRadius: "6px", fontSize: "0.825rem", padding: "4px 12px" }}
+                    onClick={() => setScheduleView("weekly")}
+                  >
+                    📅 Weekly Shift Schedule
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${scheduleView === "monthly" ? "btn-primary" : "btn-ghost"}`}
+                    style={{ borderRadius: "6px", fontSize: "0.825rem", padding: "4px 12px" }}
+                    onClick={() => setScheduleView("monthly")}
+                  >
+                    🗓️ Monthly Calendar
+                  </button>
                 </div>
               </div>
 
-              {/* 7-Day Calendar Grid */}
-              <div
-                className="shift-schedule-grid"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-                  gap: "0.75rem",
-                }}
-              >
-                {DAYS_OF_WEEK.map((day, idx) => {
-                  const dayDate = new Date(monday);
-                  dayDate.setDate(monday.getDate() + idx);
-                  const isToday = dayDate.toISOString().slice(0, 10) === todayIsoString;
-                  const dateNumber = dayDate.getDate();
-                  const monthName = dayDate.toLocaleDateString("en-US", { month: "short" });
+              {/* View 1: 7-Day Weekly Shift Schedule Grid */}
+              {scheduleView === "weekly" && (
+                <>
+                  <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", color: "var(--color-text-secondary)", marginBottom: "0.75rem" }}>
+                    <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", backgroundColor: "#10b981" }} /> Working Day
+                    <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", backgroundColor: "#94a3b8", marginLeft: "0.75rem" }} /> Weekly Off
+                  </div>
 
-                  return (
-                    <div
-                      key={day.key}
-                      style={{
-                        padding: "1rem 0.85rem",
-                        borderRadius: "10px",
-                        border: isToday
-                          ? "2px solid var(--color-primary, #2563eb)"
-                          : "1px solid var(--color-border, #e2e8f0)",
-                        backgroundColor: isToday
-                          ? "var(--color-primary-subtle, #eff6ff)"
-                          : day.isWeekend
-                            ? "var(--color-bg-secondary, #f8fafc)"
-                            : "var(--color-bg, #ffffff)",
-                        boxShadow: isToday ? "0 4px 12px rgba(37, 99, 235, 0.12)" : "none",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "0.5rem",
-                        position: "relative",
-                      }}
-                    >
-                      {isToday && (
-                        <span
+                  <div
+                    className="shift-schedule-grid"
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                      gap: "0.75rem",
+                    }}
+                  >
+                    {DAYS_OF_WEEK.map((day, idx) => {
+                      const dayDate = new Date(monday);
+                      dayDate.setDate(monday.getDate() + idx);
+                      const isToday = dayDate.toISOString().slice(0, 10) === todayIsoString;
+                      const dateNumber = dayDate.getDate();
+                      const monthName = dayDate.toLocaleDateString("en-US", { month: "short" });
+
+                      return (
+                        <div
+                          key={day.key}
                           style={{
-                            position: "absolute",
-                            top: "-8px",
-                            right: "8px",
-                            fontSize: "0.65rem",
-                            fontWeight: 700,
-                            backgroundColor: "var(--color-primary, #2563eb)",
-                            color: "#fff",
-                            padding: "1px 6px",
-                            borderRadius: "9999px",
-                            textTransform: "uppercase",
-                            letterSpacing: "0.05em",
+                            padding: "1rem 0.85rem",
+                            borderRadius: "10px",
+                            border: isToday
+                              ? "2px solid var(--color-primary, #2563eb)"
+                              : "1px solid var(--color-border, #e2e8f0)",
+                            backgroundColor: isToday
+                              ? "var(--color-primary-subtle, #eff6ff)"
+                              : day.isWeekend
+                                ? "var(--color-bg-secondary, #f8fafc)"
+                                : "var(--color-bg, #ffffff)",
+                            boxShadow: isToday ? "0 4px 12px rgba(37, 99, 235, 0.12)" : "none",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "0.5rem",
+                            position: "relative",
                           }}
                         >
-                          Today
-                        </span>
-                      )}
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>{day.short}</span>
-                        <span style={{ fontSize: "0.8rem", color: "var(--color-text-secondary, #64748b)" }}>
-                          {dateNumber} {monthName}
-                        </span>
-                      </div>
+                          {isToday && (
+                            <span
+                              style={{
+                                position: "absolute",
+                                top: "-8px",
+                                right: "8px",
+                                fontSize: "0.65rem",
+                                fontWeight: 700,
+                                backgroundColor: "var(--color-primary, #2563eb)",
+                                color: "#fff",
+                                padding: "1px 6px",
+                                borderRadius: "9999px",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.05em",
+                              }}
+                            >
+                              Today
+                            </span>
+                          )}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                            <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>{day.short}</span>
+                            <span style={{ fontSize: "0.8rem", color: "var(--color-text-secondary, #64748b)" }}>
+                              {dateNumber} {monthName}
+                            </span>
+                          </div>
 
-                      {day.isWeekend ? (
-                        <div style={{ marginTop: "0.5rem" }}>
-                          <div
-                            style={{
-                              display: "inline-block",
-                              padding: "3px 8px",
-                              borderRadius: "6px",
-                              fontSize: "0.75rem",
-                              fontWeight: 600,
-                              backgroundColor: "#f1f5f9",
-                              color: "#64748b",
-                            }}
-                          >
-                            Weekly Off
-                          </div>
-                          <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "0.35rem" }}>Weekend</div>
+                          {day.isWeekend ? (
+                            <div style={{ marginTop: "0.5rem" }}>
+                              <div
+                                style={{
+                                  display: "inline-block",
+                                  padding: "3px 8px",
+                                  borderRadius: "6px",
+                                  fontSize: "0.75rem",
+                                  fontWeight: 600,
+                                  backgroundColor: "#f1f5f9",
+                                  color: "#64748b",
+                                }}
+                              >
+                                Weekly Off
+                              </div>
+                              <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "0.35rem" }}>Weekend</div>
+                            </div>
+                          ) : (
+                            <div style={{ marginTop: "0.5rem" }}>
+                              <div
+                                style={{
+                                  display: "inline-block",
+                                  padding: "3px 8px",
+                                  borderRadius: "6px",
+                                  fontSize: "0.75rem",
+                                  fontWeight: 600,
+                                  backgroundColor: "#dcfce7",
+                                  color: "#15803d",
+                                }}
+                              >
+                                Regular Shift
+                              </div>
+                              <div style={{ fontSize: "0.8rem", fontWeight: 600, marginTop: "0.4rem", color: "var(--color-text, #1e293b)" }}>
+                                {activeShiftStart} - {activeShiftEnd}
+                              </div>
+                              <div style={{ fontSize: "0.725rem", color: "var(--color-text-secondary, #64748b)" }}>
+                                {breakMinutes}m break
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <div style={{ marginTop: "0.5rem" }}>
-                          <div
-                            style={{
-                              display: "inline-block",
-                              padding: "3px 8px",
-                              borderRadius: "6px",
-                              fontSize: "0.75rem",
-                              fontWeight: 600,
-                              backgroundColor: "#dcfce7",
-                              color: "#15803d",
-                            }}
-                          >
-                            Regular Shift
-                          </div>
-                          <div style={{ fontSize: "0.8rem", fontWeight: 600, marginTop: "0.4rem", color: "var(--color-text, #1e293b)" }}>
-                            {activeShiftStart} - {activeShiftEnd}
-                          </div>
-                          <div style={{ fontSize: "0.725rem", color: "var(--color-text-secondary, #64748b)" }}>
-                            {breakMinutes}m break
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
 
-              {/* Monthly Attendance Calendar */}
-              <div style={{ marginTop: "2rem", borderTop: "1px solid var(--color-border, #e2e8f0)", paddingTop: "1.5rem" }}>
-                <AttendanceCalendar
-                  employeeId={user?.employee?.id}
-                  employeeName={user?.employee ? `${user.employee.first_name} ${user.employee.last_name || ""}`.trim() : undefined}
-                />
-              </div>
+              {/* View 2: Monthly Attendance Calendar */}
+              {scheduleView === "monthly" && (
+                <div style={{ marginTop: "0.5rem" }}>
+                  <AttendanceCalendar
+                    employeeId={user?.employee?.id}
+                    employeeName={user?.employee ? `${user.employee.first_name} ${user.employee.last_name || ""}`.trim() : undefined}
+                  />
+                </div>
+              )}
             </>
           )}
         </div>
