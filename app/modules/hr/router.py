@@ -184,10 +184,8 @@ def _to_employee_response(
 
     # Compute masked PAN if pan_last3 or pan_enc is present
     if employee.pan_last3:
-        resp.pan = f"•••••••{employee.pan_last3}"
         resp.pan_last3 = employee.pan_last3
     else:
-        resp.pan = None
         resp.pan_last3 = None
 
     return resp

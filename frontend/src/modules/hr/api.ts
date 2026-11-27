@@ -73,7 +73,6 @@ export interface Employee {
   manager_name?: string | null;
   manager_email?: string | null;
   manager_position?: string | null;
-  pan?: string | null;
   pan_last3?: string | null;
   created_at: string;
 }

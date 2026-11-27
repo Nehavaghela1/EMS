@@ -50,8 +50,12 @@ def test_employee_pan_validation_and_rejection(
     )
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["pan"] == MASKED_PAN
+    assert "pan" not in body
     assert body["pan_last3"] == LAST3
+    # Reveal endpoint gives full value
+    reveal_res = client.post(f"/api/v1/employees/{emp_id}/pan/reveal", headers=hr_headers)
+    assert reveal_res.status_code == 200
+    assert reveal_res.json()["pan"] == "ABCDE1234F"
 
     # Invalid PAN - wrong format
     invalid_val = "INVALID123"

@@ -333,7 +333,6 @@ class EmployeeResponse(BaseModel):
     manager_name: str | None = None
     manager_email: str | None = None
     manager_position: str | None = None
-    pan: str | None = None
     pan_last3: str | None = None
     created_at: datetime
 

@@ -1352,9 +1352,9 @@ export function EmployeeProfilePage() {
                   value={
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
                       <span>
-                        {revealedPan ?? (e.pan || (e.pan_last3 ? `•••••••${e.pan_last3}` : "Not on record"))}
+                        {revealedPan ?? (e.pan_last3 ? `•••••••${e.pan_last3}` : "Not on record")}
                       </span>
-                      {(e.pan || e.pan_last3) && (
+                      {e.pan_last3 && (
                         <button
                           type="button"
                           disabled={revealingPan}
