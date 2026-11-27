@@ -172,6 +172,18 @@ export function TodayAttendanceCard({
 
   const todayRecord = todayQuery.data?.items[0] ?? null;
 
+  // Determine current clock-in state:
+  // If punches are present, the last punch direction is the authoritative state.
+  // Otherwise fall back to check_in && !check_out.
+  const lastPunchDirection =
+    todayRecord?.punches && todayRecord.punches.length > 0
+      ? todayRecord.punches[todayRecord.punches.length - 1].direction
+      : null;
+  const isCurrentlyClockedIn =
+    lastPunchDirection != null
+      ? lastPunchDirection === "in"
+      : Boolean(todayRecord?.check_in && !todayRecord.check_out);
+
   if (!user?.employee && !showWhenNoEmployee) return null;
 
   const assignedShift = assignedShiftQuery.data?.shift;
@@ -374,11 +386,17 @@ export function TodayAttendanceCard({
               </div>
             )}
 
-            {todayRecord?.check_in && !todayRecord.check_out && (
+            {isCurrentlyClockedIn && (
               <div className="row-between">
                 <div>
                   <div style={{ fontWeight: 600, color: "#059669" }}>
-                    Clocked in since {formatPunchTime(todayRecord.check_in)}
+                    Clocked in since{" "}
+                    {todayRecord?.punches && todayRecord.punches.length > 0
+                      ? formatPunchTime(
+                          [...todayRecord.punches].reverse().find((p) => p.direction === "in")?.punched_at ||
+                            todayRecord.check_in!
+                        )
+                      : formatPunchTime(todayRecord!.check_in!)}
                   </div>
                   <div className="text-muted text-xs">Still clocked in · Active session</div>
                 </div>
@@ -393,11 +411,12 @@ export function TodayAttendanceCard({
               </div>
             )}
 
-            {todayRecord?.check_in && todayRecord.check_out && (
+            {!isCurrentlyClockedIn && todayRecord?.check_in && (
               <div className="row-between">
                 <div>
                   <div style={{ fontWeight: 600, color: "#475569" }}>
-                    Clocked out at {formatPunchTime(todayRecord.check_out)}
+                    Clocked out
+                    {todayRecord.check_out ? ` at ${formatPunchTime(todayRecord.check_out)}` : ""}
                   </div>
                   <div className="text-muted text-xs">Day open · You can clock back in</div>
                 </div>

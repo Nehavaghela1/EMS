@@ -40,7 +40,6 @@ from app.modules.time_leave.schemas import (
     AttendanceRegularizationResponse,
     AttendanceRegularizeRequest,
     AttendanceResponse,
-    AttendancePunchResponse,
     CalendarResponse,
     CheckInRequest,
     EmployeeShiftResponse,
@@ -111,9 +110,7 @@ def _to_attendance_response(record: Attendance, db: Session | None = None) -> At
         punches = AttendanceRepository(db).list_punches_for_attendance(record.company_id, record.id)
         res.punches = [AttendancePunchResponse.model_validate(p) for p in punches]
 
-        punches = AttendanceRepository(db).list_punches_for_attendance(
-            record.company_id, record.id
-        )
+        punches = AttendanceRepository(db).list_punches_for_attendance(record.company_id, record.id)
         res.punches = [AttendancePunchResponse.model_validate(p) for p in punches]
 
     return res

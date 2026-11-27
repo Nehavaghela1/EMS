@@ -207,7 +207,7 @@ export function ShiftsPage() {
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
                     <h2 style={{ fontSize: "1.15rem", fontWeight: 600, margin: 0 }}>
-                      {scheduleView === "weekly" ? "My Weekly Shift Schedule" : "Monthly Attendance Calendar"}
+                      {scheduleView === "weekly" ? "Weekly Shift Schedule Overview" : "Monthly Attendance Overview"}
                     </h2>
                     <span className="badge badge-primary" style={{ fontSize: "0.75rem" }}>Active</span>
                   </div>

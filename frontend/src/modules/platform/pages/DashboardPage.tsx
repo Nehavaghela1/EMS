@@ -328,27 +328,63 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
     }
   }
 
+  // Determine current clock-in state:
+  // If punches are present, the last punch determines whether currently clocked in.
+  // Otherwise fall back to check_in && !check_out.
+  const lastPunchDirection =
+    todayRecord?.punches && todayRecord.punches.length > 0
+      ? todayRecord.punches[todayRecord.punches.length - 1].direction
+      : null;
+  const isCurrentlyClockedIn =
+    lastPunchDirection != null
+      ? lastPunchDirection === "in"
+      : Boolean(todayRecord?.check_in && !todayRecord.check_out);
+
   // Calculate live elapsed work time
   let elapsedFormatted = "00h 00m 00s";
   let elapsedPercent = 0; // of 8 hours (28800s)
-  if (todayRecord?.check_in && !todayRecord.check_out) {
-    const startMs = new Date(todayRecord.check_in).getTime();
-    const nowMs = currentTime.getTime();
-    const diffSec = Math.max(0, Math.floor((nowMs - startMs) / 1000));
-    const h = Math.floor(diffSec / 3600);
-    const m = Math.floor((diffSec % 3600) / 60);
-    const s = diffSec % 60;
+
+  if (isCurrentlyClockedIn) {
+    let totalWorkedSec = 0;
+    if (todayRecord?.punches && todayRecord.punches.length > 0) {
+      let openInTime: number | null = null;
+      for (const p of todayRecord.punches) {
+        const pTime = new Date(p.punched_at).getTime();
+        if (p.direction === "in") {
+          openInTime = pTime;
+        } else if (p.direction === "out" && openInTime !== null) {
+          totalWorkedSec += Math.max(0, Math.floor((pTime - openInTime) / 1000));
+          openInTime = null;
+        }
+      }
+      if (openInTime !== null) {
+        totalWorkedSec += Math.max(0, Math.floor((currentTime.getTime() - openInTime) / 1000));
+      }
+    } else if (todayRecord?.check_in) {
+      const startMs = new Date(todayRecord.check_in).getTime();
+      totalWorkedSec = Math.max(0, Math.floor((currentTime.getTime() - startMs) / 1000));
+    }
+    const h = Math.floor(totalWorkedSec / 3600);
+    const m = Math.floor((totalWorkedSec % 3600) / 60);
+    const s = totalWorkedSec % 60;
     elapsedFormatted = `${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
-    elapsedPercent = Math.min(100, Math.round((diffSec / (8 * 3600)) * 100));
-  } else if (todayRecord?.check_in && todayRecord.check_out) {
-    const startMs = new Date(todayRecord.check_in).getTime();
-    const endMs = new Date(todayRecord.check_out).getTime();
-    const diffSec = Math.max(0, Math.floor((endMs - startMs) / 1000));
-    const h = Math.floor(diffSec / 3600);
-    const m = Math.floor((diffSec % 3600) / 60);
-    const s = diffSec % 60;
+    elapsedPercent = Math.min(100, Math.round((totalWorkedSec / (8 * 3600)) * 100));
+  } else if (todayRecord?.check_in) {
+    let totalWorkedSec = 0;
+    if (todayRecord?.worked_hours != null) {
+      totalWorkedSec = Math.round(Number(todayRecord.worked_hours) * 3600);
+    } else if (todayRecord?.hours_worked != null) {
+      totalWorkedSec = Math.round(Number(todayRecord.hours_worked) * 3600);
+    } else if (todayRecord.check_out) {
+      const startMs = new Date(todayRecord.check_in).getTime();
+      const endMs = new Date(todayRecord.check_out).getTime();
+      totalWorkedSec = Math.max(0, Math.floor((endMs - startMs) / 1000));
+    }
+    const h = Math.floor(totalWorkedSec / 3600);
+    const m = Math.floor((totalWorkedSec % 3600) / 60);
+    const s = totalWorkedSec % 60;
     elapsedFormatted = `${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
-    elapsedPercent = Math.min(100, Math.round((diffSec / (8 * 3600)) * 100));
+    elapsedPercent = Math.min(100, Math.round((totalWorkedSec / (8 * 3600)) * 100));
   }
 
   // Format today's date in Zoho style: e.g. Thursday, 8 October 2026
@@ -740,30 +776,28 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
                   textTransform: "uppercase",
                   padding: "4px 10px",
                   borderRadius: "20px",
-                  backgroundColor:
-                    todayRecord?.check_in && !todayRecord.check_out
-                      ? "#ecfdf5"
-                      : todayRecord?.check_out
-                      ? "#f1f5f9"
-                      : "#fffbeb",
-                  color:
-                    todayRecord?.check_in && !todayRecord.check_out
-                      ? "#059669"
-                      : todayRecord?.check_out
-                      ? "#475569"
-                      : "#d97706",
+                  backgroundColor: isCurrentlyClockedIn
+                    ? "#ecfdf5"
+                    : todayRecord?.check_in
+                    ? "#f1f5f9"
+                    : "#fffbeb",
+                  color: isCurrentlyClockedIn
+                    ? "#059669"
+                    : todayRecord?.check_in
+                    ? "#475569"
+                    : "#d97706",
                   border: `1px solid ${
-                    todayRecord?.check_in && !todayRecord.check_out
+                    isCurrentlyClockedIn
                       ? "#a7f3d0"
-                      : todayRecord?.check_out
+                      : todayRecord?.check_in
                       ? "#cbd5e1"
                       : "#fde68a"
                   }`,
                 }}
               >
-                {todayRecord?.check_in && !todayRecord.check_out
+                {isCurrentlyClockedIn
                   ? "Clocked In"
-                  : todayRecord?.check_out
+                  : todayRecord?.check_in
                   ? "Clocked Out"
                   : "Not Clocked In"}
               </span>
@@ -930,7 +964,7 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
               </button>
             )}
 
-            {todayRecord?.check_in && !todayRecord.check_out && (
+            {isCurrentlyClockedIn && (
               <button
                 type="button"
                 className="btn btn-primary"
@@ -960,7 +994,7 @@ function ZohoEmployeeDashboard({ data, user, announcements }: ZohoEmployeeDashbo
               </button>
             )}
 
-            {todayRecord?.check_in && todayRecord.check_out && (
+            {!isCurrentlyClockedIn && todayRecord?.check_in && (
               <button
                 type="button"
                 className="btn btn-primary"
