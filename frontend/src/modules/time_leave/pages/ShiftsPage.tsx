@@ -149,11 +149,17 @@ export function ShiftsPage() {
 
   const todayIsoString = now.toISOString().slice(0, 10);
 
+  const pageTitle =
+    !isHr || activeTab === "my_schedule"
+      ? scheduleView === "monthly"
+        ? "Monthly Attendance Calendar"
+        : "Shift Schedule"
+      : "Shift Schedule";
+
   return (
     <div>
       <PageHeader
-        title="Shift Schedule"
-        breadcrumb="Time & leave"
+        title={pageTitle}
         action={
           isHr ? (
             <button className="btn btn-primary" onClick={() => setEditing("new")}>

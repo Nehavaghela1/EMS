@@ -156,7 +156,7 @@ describe("Sub-feature 4.1: Shifts Frontend (ShiftsPage)", () => {
 
     fireEvent.click(monthlyBtn);
     await waitFor(() => {
-      expect(screen.getByText("Monthly Attendance Calendar")).toBeInTheDocument();
+      expect(screen.getAllByText("Monthly Attendance Calendar").length).toBeGreaterThanOrEqual(1);
     });
   });
 
